@@ -308,8 +308,8 @@ def _ensure_index_prices(db: sqlite3.Connection, earliest_score_date: str, today
             f"ak.stock_zh_index_daily_tx 列名变更，当前列：{list(df.columns)}"
         )
         date_col, close_col = "date", "close"
-        # 腾讯接口返回全量历史，过滤到所需范围
-        df = df[df["date"] >= start_date]
+        # 腾讯接口返回全量历史，过滤到所需范围（date 列为 datetime.date 对象）
+        df = df[df["date"].astype(str) >= start_date]
     else:
         # 东方财富接口列名（中文）
         assert "日期" in df.columns and "收盘" in df.columns, (
