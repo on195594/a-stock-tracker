@@ -2,28 +2,23 @@
 
 所有测试 mock _call_gemini 或 _check_cache/_write_cache，不发起真实网络请求。
 """
-import pytest
-from unittest.mock import patch, MagicMock
-from datetime import date, timedelta
+import io
+import json
+from unittest.mock import patch
 
 
 # ---------------------------------------------------------------------------
 # 1. 正常路径：Gemini 返回合法 JSON，写入缓存并返回
 # ---------------------------------------------------------------------------
-def test_normal_path(tmp_path, monkeypatch):
+def test_normal_path():
     """Gemini 正常返回，应写缓存并返回解析后的 dict。"""
-    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
-    monkeypatch.setattr("gemini_scorer.DB_PATH" if hasattr(__import__("gemini_scorer"), "DB_PATH") else "lib.cache.DB_PATH",
-                        str(tmp_path / "test.db"), raising=False)
-
     import gemini_scorer
-    gemini_scorer_module = gemini_scorer
 
-    with patch.object(gemini_scorer_module, "_check_cache", return_value=None), \
-         patch.object(gemini_scorer_module, "_call_gemini",
+    with patch.object(gemini_scorer, "_check_cache", return_value=None), \
+         patch.object(gemini_scorer, "_call_gemini",
                       return_value={"moat": 7, "market_pos": 4, "sentiment": 3}), \
-         patch.object(gemini_scorer_module, "_write_cache") as mock_write:
-        result = gemini_scorer_module.get_qualitative_score("600036", "招商银行")
+         patch.object(gemini_scorer, "_write_cache") as mock_write:
+        result = gemini_scorer.get_qualitative_score("600036", "招商银行")
 
     assert result == {"moat": 7, "market_pos": 4, "sentiment": 3}
     mock_write.assert_called_once_with("600036", {"moat": 7, "market_pos": 4, "sentiment": 3})
@@ -33,7 +28,7 @@ def test_normal_path(tmp_path, monkeypatch):
 # 2. 超时：_call_gemini 返回 None，触发 all-or-nothing fallback
 # ---------------------------------------------------------------------------
 def test_timeout_fallback():
-    """_call_gemini 返回 None（超时场景），应返回完整 FALLBACK 值。"""
+    """_call_gemini 返回 None（超时场景），应返回完整 FALLBACK 值且不写缓存。"""
     import gemini_scorer
 
     with patch.object(gemini_scorer, "_check_cache", return_value=None), \
@@ -46,15 +41,25 @@ def test_timeout_fallback():
 
 
 # ---------------------------------------------------------------------------
-# 3. 非 JSON 响应：_validate 返回 None，触发 fallback
+# 3. 非 JSON 响应：urlopen 返回非 JSON 文本，_call_gemini 应捕获并返回 None
 # ---------------------------------------------------------------------------
-def test_invalid_json_fallback():
-    """Gemini 响应非 JSON（_validate 返回 None），应返回 FALLBACK。"""
+def test_invalid_json_response(monkeypatch):
+    """Gemini API 返回非 JSON（如纯文本），_call_gemini 应捕获 JSONDecodeError 并 fallback。"""
     import gemini_scorer
 
-    with patch.object(gemini_scorer, "_check_cache", return_value=None), \
-         patch.object(gemini_scorer, "_call_gemini", return_value=None), \
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+
+    fake_body = json.dumps({
+        "candidates": [{"content": {"parts": [{"text": "对不起，我无法完成该请求。"}]}}]
+    }).encode()
+
+    with patch("urllib.request.urlopen") as mock_urlopen, \
+         patch.object(gemini_scorer, "_check_cache", return_value=None), \
          patch.object(gemini_scorer, "_write_cache") as mock_write:
+        mock_urlopen.return_value.__enter__ = lambda s: s
+        mock_urlopen.return_value.__exit__ = lambda s, *a: False
+        mock_urlopen.return_value.read.return_value = fake_body
+
         result = gemini_scorer.get_qualitative_score("000858", "五粮液")
 
     assert result == gemini_scorer.FALLBACK
