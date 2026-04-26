@@ -146,6 +146,13 @@ def get_db():
         close   REAL NOT NULL,
         PRIMARY KEY (symbol, date)
     )''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS qualitative_scores (
+        code        TEXT NOT NULL PRIMARY KEY,
+        moat        INTEGER NOT NULL,
+        market_pos  INTEGER NOT NULL,
+        sentiment   INTEGER NOT NULL,
+        scored_date TEXT NOT NULL
+    )''')
     conn.commit()
     return conn
 

@@ -184,19 +184,21 @@ def test_none_field_scores_zero():
 
 
 # ---------------------------------------------------------------------------
-# 11. Phase 1 固定字段不受 data 影响
+# 11. Phase 3：data 字典可覆盖固定字段；无值时回落 phase1_fixed
 # ---------------------------------------------------------------------------
-def test_phase1_fixed_defaults():
-    """moat_fixed/market_pos_fixed/sentiment_fixed 固定分值不受 data 内容影响。"""
-    result = score_stock("600036", "A", FULL_DATA, weights=WEIGHTS)
+def test_phase3_fixed_field_override():
+    """Phase 3 后，data 里提供的值会覆盖 phase1_fixed；未提供时回落默认值。"""
+    # 有值时使用 data 里的值（Gemini 注入场景）
+    data_with_gemini = {**FULL_DATA, "moat_fixed": 8, "market_pos_fixed": 4, "sentiment_fixed": 4}
+    result = score_stock("600036", "A", data_with_gemini, weights=WEIGHTS)
     cs = result["component_scores"]
-    assert cs["moat_fixed"] == pytest.approx(5.0)
-    assert cs["market_pos_fixed"] == pytest.approx(2.0)
-    assert cs["sentiment_fixed"] == pytest.approx(3.0)
+    assert cs["moat_fixed"] == pytest.approx(8.0)
+    assert cs["market_pos_fixed"] == pytest.approx(4.0)
+    assert cs["sentiment_fixed"] == pytest.approx(4.0)
 
-    # 即使 data 里乱填值也不影响固定字段
-    data_with_noise = {**FULL_DATA, "moat_fixed": 99.9, "sentiment_fixed": -1}
-    result2 = score_stock("600036", "A", data_with_noise, weights=WEIGHTS)
+    # 无值时回落到 phase1_fixed（fallback 场景）
+    result2 = score_stock("600036", "A", FULL_DATA, weights=WEIGHTS)
     cs2 = result2["component_scores"]
     assert cs2["moat_fixed"] == pytest.approx(5.0)
+    assert cs2["market_pos_fixed"] == pytest.approx(2.0)
     assert cs2["sentiment_fixed"] == pytest.approx(3.0)

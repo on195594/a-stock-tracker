@@ -45,17 +45,21 @@ pytest tests/test_pipeline.py -v
 ```
 a-stock-tracker/
 ├── scorer.py          # 评分引擎（breakpoints 线性插值，不调 AKShare）
-├── pipeline.py        # 主编排器（init / daily / outcome-update / accuracy-report）
-├── weights.json       # 模型权重（breakpoints 结构，只修改 frameworks 子树会触发 hash 更新）
+├── pipeline.py        # 主编排器（init / daily / weekly / outcome-update / accuracy-report）
+├── gemini_scorer.py   # Phase 3：Gemini 定性评分（30天缓存，all-or-nothing fallback）
+├── telegram_push.py   # Phase 3：Telegram 每日信号推送（≥55分触发）
+├── weights.json       # 模型权重（Phase3阈值：buy_strong=55，buy_moderate=45，buy_light=35）
 ├── config.py          # watchlist、DB_PATH、LOG_DIR
+├── .env               # API Keys（GEMINI_API_KEY / TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID）
 ├── requirements.txt   # akshare, pytest
 ├── cron-setup.sh      # 一键配置 crontab
 ├── tests/
-│   ├── test_scorer.py    # 11 个用例
-│   └── test_pipeline.py  # 15 个用例
+│   ├── test_scorer.py       # 11 个用例（含 Phase 3 固定字段覆盖测试）
+│   ├── test_pipeline.py     # 15 个用例
+│   └── test_gemini_scorer.py # 5 个用例（正常/超时/非JSON/越界/缓存命中）
 └── lib/               # 从 ~/.claude/skills/a-stock-research/ 复制，独立演进
     ├── fetcher.py     # 扩展版：新增 report_period 字段存储
-    └── cache.py       # 扩展版：新增 predictions + index_prices 表
+    └── cache.py       # 扩展版：新增 predictions + index_prices + qualitative_scores 表
 ```
 
 **lib/ 来源：** 从 `~/.claude/skills/a-stock-research/` 复制而来，**不是** symlink，
@@ -175,12 +179,39 @@ benchmark 失败：outcome 正常写入，benchmark_*d 留 NULL（不中断）
 
 ---
 
-## 扩展约定（Phase 2 预留）
+## Phase 3 说明（2026-04-26 上线）
+
+### 定性评分升级（Gemini 接入）
+
+- `gemini_scorer.get_qualitative_score(code, name)` 替代 phase1_fixed 硬编码值
+- 返回格式：`{"moat": int, "market_pos": int, "sentiment": int}`
+- 30 天缓存，缓存存储于 `qualitative_scores` 表
+- **all-or-nothing fallback**：任何字段失败 → 全部用 phase1_fixed（moat=5, market_pos=2, sentiment=3）
+- 值域：moat 1-10，market_pos 1-5，sentiment 1-5（与 weights.json max_score 一致）
+
+### 评分可比性注意事项
+
+- 2026-04-21 存量记录（9条）：定性分为固定值（moat=5, market_pos=2, sentiment=3）
+- Phase 3 后新记录：定性分由 Gemini 填写（可能 3-9 不等）
+- **weights_hash 不变**（weights.json frameworks 子树未修改）
+- accuracy-report 跨时期比较需注意"定性升级"造成的系统性偏移
+
+### benchmark 修复（P0-B）
+
+- `_ensure_index_prices` 新增腾讯 fallback：`ak.stock_zh_index_daily_tx(symbol="sh000300")`
+- 腾讯接口列名：`date`, `close`（已验证）；代码内有 assert 保护，列名变更会立即 raise
+
+### Telegram 推送
+
+- `telegram_push.push_daily_signals()` 在 cmd_daily 末尾调用
+- 评分 ≥ buy_strong（当前 55）触发推送
+- 需在 .env 中配置 TELEGRAM_BOT_TOKEN 和 TELEGRAM_CHAT_ID
+
+## 扩展约定（Phase 4 预留）
 
 - 新增 Framework B/C/D/E/F：在 `weights.json["frameworks"]` 下新增 key，`scorer.py` 中 `SUPPORTED_FRAMEWORKS` 集合加入新 framework
-- 接入 Claude API 定性评分：返回格式约定为 `{"moat_score": 7, "policy_risk": 2}`，temperature=0
-- 企业微信推送：参考 `~/code/project/work/企业微信机器人BYD/`，推"评分变化 >10 分"事件
-- optimizer.py：依赖 predictions 表 ≥ 100 条结案记录，训练集/验证集切分见设计文档 Phase 3
+- 评分变化告警（D5）：当定性分变化 >10 时推送，需 2-3 周历史基线后实现
+- optimizer.py：依赖 predictions 表 ≥ 100 条结案记录，训练集/验证集切分见设计文档 Phase 4
 
 ---
 

@@ -22,6 +22,7 @@ import akshare as ak
 
 import config
 from lib.cache import get_db, get_fundamentals
+from gemini_scorer import get_qualitative_score
 from scorer import InsufficientDataError, UnsupportedFrameworkError, score_stock
 
 assert sqlite3.sqlite_version_info >= (3, 31, 0), (
@@ -184,9 +185,15 @@ def cmd_daily() -> None:
             skipped.append(code)
             continue
 
-        data = fundamentals.get("data", fundamentals)
+        data = dict(fundamentals.get("data", fundamentals))
         report_period = data.get("report_period")
         price_at_score = snapshot_data.get(code)
+
+        # 注入 Gemini 定性评分（覆盖 phase1_fixed，失败自动 fallback）
+        qual = get_qualitative_score(code, name)
+        data["moat_fixed"] = qual["moat"]
+        data["market_pos_fixed"] = qual["market_pos"]
+        data["sentiment_fixed"] = qual["sentiment"]
 
         try:
             result = score_stock(code, "A", data, weights=weights)
@@ -236,6 +243,14 @@ def cmd_daily() -> None:
         f.write(log_line + "\n")
     db.close()
 
+    # Telegram 推送（≥55分触发，失败不阻断）
+    try:
+        import telegram_push
+        buy_threshold = weights.get("thresholds", {}).get("buy_strong", 55)
+        telegram_push.push_daily_signals(today, buy_threshold)
+    except Exception as e:
+        logger.warning(f"Telegram 推送失败（不影响 SQLite 数据）：{e}")
+
     # Sheets sync（独立后置步骤，失败不影响上方写入结果）
     try:
         import sheets_sync
@@ -281,13 +296,26 @@ def _ensure_index_prices(db: sqlite3.Connection, earliest_score_date: str, today
         start_date=start_date.replace("-", ""),
         end_date=today.replace("-", ""),
     )
-    if df is None:
-        logger.warning("沪深300历史数据拉取失败，benchmark 将为 NULL")
-        return
 
-    # 字段名：以 Step 0 验证为准，预期 "日期" 和 "收盘"
-    date_col = "日期" if "日期" in df.columns else df.columns[0]
-    close_col = "收盘" if "收盘" in df.columns else df.columns[4]
+    if df is None:
+        logger.warning("东方财富接口失败，尝试腾讯 fallback：ak.stock_zh_index_daily_tx")
+        df = _retry(ak.stock_zh_index_daily_tx, symbol="sh000300")
+        if df is None:
+            logger.warning("沪深300历史数据拉取失败（两个接口均失败），benchmark 将为 NULL")
+            return
+        # 腾讯接口列名（已验证：date, open, close, high, low, amount）
+        assert "date" in df.columns and "close" in df.columns, (
+            f"ak.stock_zh_index_daily_tx 列名变更，当前列：{list(df.columns)}"
+        )
+        date_col, close_col = "date", "close"
+        # 腾讯接口返回全量历史，过滤到所需范围
+        df = df[df["date"] >= start_date]
+    else:
+        # 东方财富接口列名（中文）
+        assert "日期" in df.columns and "收盘" in df.columns, (
+            f"ak.index_zh_a_hist 列名变更，当前列：{list(df.columns)}"
+        )
+        date_col, close_col = "日期", "收盘"
 
     inserted = 0
     for _, row in df.iterrows():

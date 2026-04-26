@@ -40,7 +40,7 @@ def _interpolate(value: float, breakpoints: list[list[float]]) -> float:
 def _score_field(field_name: str, value: float | None, field_cfg: dict) -> float:
     """对单个字段计算得分。fixed 字段直接返回固定值，其余走插值逻辑。"""
     if "phase1_fixed" in field_cfg:
-        return float(field_cfg["phase1_fixed"])
+        return float(value) if value is not None else float(field_cfg["phase1_fixed"])
     if value is None:
         return 0.0
     if field_cfg.get("interpolate") and "breakpoints" in field_cfg:
@@ -103,7 +103,7 @@ def score_stock(code: str, framework: str, data: dict[str, Any], weights: dict |
 
     for field_name, field_cfg in all_sections.items():
         is_fixed = "phase1_fixed" in field_cfg
-        value = data.get(field_name) if not is_fixed else None
+        value = data.get(field_name)
         score = _score_field(field_name, value, field_cfg)
         component_scores[field_name] = round(score, 2)
 
