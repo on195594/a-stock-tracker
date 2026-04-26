@@ -1,0 +1,65 @@
+{
+  "version": 2,
+  "updated_at": "2026-04-15",
+  "frameworks": {
+    "A": {
+      "fundamental": {
+        "roe_3y_avg": {
+          "max_score": 15,
+          "breakpoints": [[0, 0], [8, 5], [12, 9], [15, 15], [25, 15]],
+          "interpolate": true,
+          "note": "ROE%，越高越好。0→8%线性到5分，8→12%到9分，12→15%到15分，超过25%不再加分"
+        },
+        "net_profit_growth": {
+          "max_score": 10,
+          "breakpoints": [[-20, 0], [0, 2], [8, 6], [15, 10], [30, 10]],
+          "interpolate": true,
+          "note": "净利润增速%。负增长有基础分2分（避免惩罚周期低谷），正常增长8%及格"
+        },
+        "debt_ratio": {
+          "max_score": 10,
+          "breakpoints": [[30, 10], [50, 7], [65, 3], [80, 0]],
+          "interpolate": true,
+          "invert": true,
+          "note": "负债率%，越低越好。≤30%满分，≥80%得0分"
+        },
+        "gross_margin": {
+          "max_score": 10,
+          "breakpoints": [[0, 0], [15, 4], [25, 7], [35, 10], [60, 10]],
+          "interpolate": true,
+          "note": "毛利率%。若AKShare无此字段，Phase1改为phase1_fixed: 5"
+        },
+        "moat_fixed": {
+          "max_score": 10,
+          "phase1_fixed": 5,
+          "note": "Phase2改为LLM评分"
+        },
+        "market_pos_fixed": {
+          "max_score": 5,
+          "phase1_fixed": 2,
+          "note": "Phase2改为LLM评分"
+        }
+      },
+      "valuation": {
+        "pe_percentile_10y": {
+          "max_score": 15,
+          "breakpoints": [[5, 15], [20, 12], [40, 8], [60, 4], [80, 0]],
+          "interpolate": true,
+          "invert": true,
+          "note": "PE历史10年分位%，越低越好。分位≤5%满分，≥80%得0分"
+        },
+        "sentiment_fixed": {
+          "max_score": 5,
+          "phase1_fixed": 3,
+          "note": "Phase2改为半定量计算"
+        }
+      }
+    }
+  },
+  "thresholds": {
+    "buy_strong": 65,
+    "buy_moderate": 55,
+    "buy_light": 45,
+    "phase1_note": "Phase1实际上限约70分。若运行3个月后strong信号累计<5条，将buy_strong临时降至55，buy_moderate降至45，并在日志中标注threshold_adjusted=1"
+  }
+}
