@@ -188,7 +188,24 @@ def cmd_daily() -> None:
                     pass
         logger.info(f"spot_em 快照：{len(snapshot_data)} 只股票")
     except Exception as e:
-        logger.warning(f"spot_em 快照获取失败，price_at_score 将为 NULL：{e}")
+        logger.warning(f"spot_em 批量快照失败，降级为腾讯日线逐股获取：{e}")
+        # 取最近5日窗口，拿最新可用收盘价（16:30盘后运行时可取当日；盘中运行取T-1）
+        hist_start = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=5)).strftime("%Y%m%d")
+        hist_end = today.replace("-", "")
+        for item in config.WATCHLIST:
+            code = item["code"]
+            prefix = "sh" if code.startswith("6") else "sz"
+            try:
+                hist = _retry(ak.stock_zh_a_hist_tx, symbol=f"{prefix}{code}",
+                              start_date=hist_start, end_date=hist_end)
+                if hist is not None and not hist.empty:
+                    snapshot_data[code] = float(hist.iloc[-1]["close"])
+            except Exception as e2:
+                logger.debug(f"{code} 腾讯日线 fallback 失败：{e2}")
+        if snapshot_data:
+            logger.info(f"腾讯日线 fallback：获取到 {len(snapshot_data)} 只股票收盘价")
+        else:
+            logger.warning("腾讯日线 fallback 也全部失败，price_at_score 将为 NULL")
 
     skipped: list[str] = []
     written = 0

@@ -757,13 +757,17 @@ def test_outcome_update_continues_when_spot_em_fails(tmp_db, monkeypatch):
 def test_daily_writes_predictions_when_spot_em_fails(
     tmp_db, small_watchlist, fake_fetcher, fake_weights, monkeypatch
 ):
-    """spot_em 抛异常 → daily 仍写入评分记录，price_at_score=NULL。"""
+    """spot_em 与腾讯 fallback 均失败 → daily 仍写入评分记录，price_at_score=NULL。"""
     for item in small_watchlist:
         _insert_fundamentals(item["code"], item["name"], "银行", _full_data())
 
     monkeypatch.setattr(
         pipeline.ak, "stock_zh_a_spot_em",
         lambda: (_ for _ in ()).throw(ConnectionError("RemoteDisconnected")),
+    )
+    monkeypatch.setattr(
+        pipeline.ak, "stock_zh_a_hist_tx",
+        lambda **_: (_ for _ in ()).throw(ConnectionError("RemoteDisconnected")),
     )
 
     pipeline.cmd_daily()
@@ -775,4 +779,4 @@ def test_daily_writes_predictions_when_spot_em_fails(
     db.close()
     assert len(rows) == len(small_watchlist)
     for _, price in rows:
-        assert price is None  # spot_em 失败时为 NULL，但记录必须存在
+        assert price is None  # 两级 fallback 均失败时为 NULL，但记录必须存在
