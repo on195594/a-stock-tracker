@@ -1,8 +1,12 @@
 # a-stock-tracker 实施计划
 
 Generated: 2026-04-15
+Last updated: 2026-04-27（Phase 3 完成，追加步骤）
 Design ref: `docs/design.md`
-Status: APPROVED（/office-hours 2轮 + /plan-eng-review 工程审查）
+Status: **Phase 3 全部完成（2026-04-26/27）**
+
+Phase 1（Step 0-7）：✅ 完成
+Phase 3（Step 8-14）：✅ 完成
 
 ---
 
@@ -10,6 +14,7 @@ Status: APPROVED（/office-hours 2轮 + /plan-eng-review 工程审查）
 
 将 `~/.claude/skills/a-stock-research/` 改造为独立的自动化管道项目 `a-stock-tracker/`，
 实现每日自动评分 → 记录预测 → 追踪 30/60/90 天收益 → 输出准确率报告的完整闭环。
+Phase 3 新增：Gemini 定性评分 + Telegram 推送 + 双路 fallback 数据源。
 
 目标路径：`~/a-stock-tracker/`
 
@@ -670,3 +675,170 @@ if fin_df is not None and not isinstance(fin_df, (str, tuple)):
 
 _设计文档：`docs/design.md`_
 _测试计划：`docs/test-plan.md`_
+
+---
+
+## Phase 3 实施记录（2026-04-26/27）
+
+以下步骤为 Phase 3 实际实施内容，已全部完成。
+
+---
+
+## Step 8：P0 Bug 修复
+
+**已完成：2026-04-26**
+
+### P0-A：删除 price_at_score=NULL 存量记录
+
+score_date=2026-04-21 的 5 条 predictions 记录因 spot_em 故障导致 price_at_score=NULL，
+无法参与后续 outcome 计算。已手动删除，保留 4 条有效记录。
+
+```sql
+DELETE FROM predictions WHERE score_date='2026-04-21' AND price_at_score IS NULL;
+```
+
+### P0-B：benchmark 数据源修复（腾讯 fallback）
+
+东方财富 `ak.index_zh_a_hist` 自 2026-04-21 起持续故障，index_prices 表无新数据。
+新增腾讯 fallback：
+
+```python
+# pipeline.py _ensure_index_prices()
+try:
+    df = _retry(ak.index_zh_a_hist, ...)        # 东方财富主路径
+except:
+    df = _retry(ak.stock_zh_index_daily_tx, symbol="sh000300")  # 腾讯 fallback
+    assert "date" in df.columns and "close" in df.columns
+    df = df[df["date"].astype(str) >= start_date]  # datetime.date → str 比较
+```
+
+---
+
+## Step 9：qualitative_scores 表 DDL
+
+**已完成：2026-04-26**
+
+在 `lib/cache.py` 的 `get_db()` 中新增：
+
+```sql
+CREATE TABLE IF NOT EXISTS qualitative_scores (
+    code        TEXT NOT NULL PRIMARY KEY,
+    moat        INTEGER NOT NULL,
+    market_pos  INTEGER NOT NULL,
+    sentiment   INTEGER NOT NULL,
+    scored_date TEXT NOT NULL
+);
+```
+
+---
+
+## Step 10：gemini_scorer.py
+
+**已完成：2026-04-26**
+
+新文件，136 行，包含：
+- `FALLBACK = {"moat": 5, "market_pos": 2, "sentiment": 3}`
+- `VALID_RANGES = {"moat": (1, 10), "market_pos": (1, 5), "sentiment": (1, 5)}`
+- `CACHE_TTL_DAYS = 30`，`GEMINI_TIMEOUT_S = 10`
+- `GEMINI_MODEL = "gemini-2.5-flash"`（注：原设计为 gemini-2.0-flash，已于 2026-04-27 迁移）
+- `thinkingBudget: 0`（禁用思维链，避免 maxOutputTokens 被思考 token 消耗导致 JSON 截断）
+- `get_qualitative_score(code, name)` → 公开接口
+- `_check_cache / _write_cache / _call_gemini / _validate` → 内部实现
+
+**关键约束：** all-or-nothing fallback，`_validate` 任何字段不合法 → 全部返回 FALLBACK，不混用部分 Gemini 值。
+
+---
+
+## Step 11：scorer.py Phase 3 注入
+
+**已完成：2026-04-26**
+
+2 行改动（`_score_field` 函数）：
+
+```python
+# 改前：固定返回 phase1_fixed，data 中的值被忽略
+return float(field_cfg["phase1_fixed"])
+
+# 改后：data 中有值时优先使用（Gemini 注入），None 时回退 phase1_fixed
+return float(value) if value is not None else float(field_cfg["phase1_fixed"])
+```
+
+对应 `test_scorer.py` 中 `test_phase1_fixed_defaults` 更名为 `test_phase3_fixed_field_override`，
+测试覆盖 Gemini 高值覆盖场景和 None 回退场景。
+
+---
+
+## Step 12：pipeline.py Phase 3 集成
+
+**已完成：2026-04-26**
+
+4 处改动：
+
+1. **`_load_dotenv()`**：标准库 .env 加载（模块级调用），cron 环境无需手动 export
+2. **Gemini 注入**：
+   ```python
+   qual = get_qualitative_score(code, name)
+   data = dict(fundamentals.get("data", fundamentals))  # 必须 copy，避免污染缓存
+   data["moat_fixed"]       = qual["moat"]
+   data["market_pos_fixed"] = qual["market_pos"]
+   data["sentiment_fixed"]  = qual["sentiment"]
+   ```
+3. **spot_em fallback**：东方财富批量失败 → 腾讯日线逐股（`stock_zh_a_hist_tx`，5日窗口）
+4. **Telegram 推送**：`push_daily_signals()` 在 cmd_daily 末尾调用，try/except 包裹不阻断流程
+
+---
+
+## Step 13：telegram_push.py
+
+**已完成：2026-04-26**
+
+新文件，61 行：
+- 无 token 时静默返回（不 raise）
+- 查询 predictions WHERE total_score ≥ threshold AND score_date = today
+- 格式：Markdown 消息，含股票代码/名称/评分/信号级别
+- 推送失败只记 WARNING，不影响评分写入
+
+---
+
+## Step 14：weights.json 阈值下调 + .env 模板
+
+**已完成：2026-04-26**
+
+```json
+// 改前
+"buy_strong": 65, "buy_moderate": 55, "buy_light": 45
+
+// 改后（Phase 3 Gemini 接入后总分上限提升到约80）
+"buy_strong": 55, "buy_moderate": 45, "buy_light": 35
+```
+
+`.env` 模板（不提交 git，在 `.gitignore` 中）：
+```
+GEMINI_API_KEY=your_gemini_api_key_here
+TELEGRAM_BOT_TOKEN=your_bot_token_here
+TELEGRAM_CHAT_ID=your_chat_id_here
+```
+
+---
+
+## Step 15（后续）：Gemini 模型维护
+
+**已完成初步修复：2026-04-27**
+
+gemini-2.0-flash 对新用户停用（404），迁移至 gemini-2.5-flash。
+同时修复 gemini-2.5-flash 默认开启思维链导致 JSON 截断的问题：
+- `thinkingBudget: 0`（禁用思维链）
+- `maxOutputTokens: 64 → 256`
+- `temperature: 0 → 1`（thinking 模型推荐值）
+
+**维护建议：** 若 Gemini 再次 404，运行以下命令查看可用模型：
+```bash
+python3 -c "
+import os, json, urllib.request
+api_key = [l.split('=',1)[1].strip() for l in open('.env') if 'GEMINI_API_KEY' in l][0]
+url = f'https://generativelanguage.googleapis.com/v1beta/models?key={api_key}'
+with urllib.request.urlopen(url) as r:
+    print('\n'.join(m['name'] for m in json.loads(r.read())['models']))
+"
+```
+更新 `gemini_scorer.py` 中的 `GEMINI_MODEL` 常量即可。
