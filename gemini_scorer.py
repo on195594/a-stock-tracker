@@ -22,7 +22,7 @@ VALID_RANGES = {"moat": (1, 10), "market_pos": (1, 5), "sentiment": (1, 5)}
 
 CACHE_TTL_DAYS = 30
 GEMINI_TIMEOUT_S = 10
-GEMINI_MODEL = "gemini-2.0-flash"
+GEMINI_MODEL = "gemini-2.5-flash"
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
 
 
@@ -81,7 +81,7 @@ def _call_gemini(code: str, name: str) -> dict | None:
 
     payload = json.dumps({
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0, "maxOutputTokens": 64},
+        "generationConfig": {"temperature": 1, "maxOutputTokens": 256, "thinkingConfig": {"thinkingBudget": 0}},
     }).encode("utf-8")
 
     url = GEMINI_API_URL.format(model=GEMINI_MODEL, key=api_key)
