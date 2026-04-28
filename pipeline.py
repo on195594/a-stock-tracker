@@ -172,40 +172,24 @@ def cmd_daily() -> None:
             )
             sys.exit(1)
 
-    # 获取今日 spot_em 快照（用于提取 price_at_score）
+    # 获取今日 price_at_score（腾讯日线逐股，取最近5日内最新收盘价）
     snapshot_data: dict = {}
-    try:
-        spot_df = _retry(ak.stock_zh_a_spot_em)
-        if spot_df is None:
-            raise RuntimeError("spot_em 重试耗尽")
-        for _, row in spot_df.iterrows():
-            code = str(row.get("代码", "")).strip()
-            price = row.get("最新价")
-            if code and price is not None:
-                try:
-                    snapshot_data[code] = float(price)
-                except (ValueError, TypeError):
-                    pass
-        logger.info(f"spot_em 快照：{len(snapshot_data)} 只股票")
-    except Exception as e:
-        logger.warning(f"spot_em 批量快照失败，降级为腾讯日线逐股获取：{e}")
-        # 取最近5日窗口，拿最新可用收盘价（16:30盘后运行时可取当日；盘中运行取T-1）
-        hist_start = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=5)).strftime("%Y%m%d")
-        hist_end = today.replace("-", "")
-        for item in config.WATCHLIST:
-            code = item["code"]
-            prefix = "sh" if code.startswith("6") else "sz"
-            try:
-                hist = _retry(ak.stock_zh_a_hist_tx, symbol=f"{prefix}{code}",
-                              start_date=hist_start, end_date=hist_end)
-                if hist is not None and not hist.empty:
-                    snapshot_data[code] = float(hist.iloc[-1]["close"])
-            except Exception as e2:
-                logger.debug(f"{code} 腾讯日线 fallback 失败：{e2}")
-        if snapshot_data:
-            logger.info(f"腾讯日线 fallback：获取到 {len(snapshot_data)} 只股票收盘价")
-        else:
-            logger.warning("腾讯日线 fallback 也全部失败，price_at_score 将为 NULL")
+    hist_start = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=5)).strftime("%Y%m%d")
+    hist_end = today.replace("-", "")
+    for item in config.WATCHLIST:
+        code = item["code"]
+        prefix = "sh" if code.startswith("6") else "sz"
+        try:
+            hist = _retry(ak.stock_zh_a_hist_tx, symbol=f"{prefix}{code}",
+                          start_date=hist_start, end_date=hist_end)
+            if hist is not None and not hist.empty:
+                snapshot_data[code] = float(hist.iloc[-1]["close"])
+        except Exception as e:
+            logger.debug(f"{code} 腾讯日线获取失败：{e}")
+    if snapshot_data:
+        logger.info(f"腾讯日线：获取到 {len(snapshot_data)} 只股票收盘价")
+    else:
+        logger.warning("腾讯日线全部失败，price_at_score 将为 NULL")
 
     skipped: list[str] = []
     written = 0
@@ -323,33 +307,18 @@ def _ensure_index_prices(db: sqlite3.Connection, earliest_score_date: str, today
     if start_date > today:
         return
 
-    logger.info(f"拉取沪深300日线：{start_date} → {today}")
-    df = _retry(
-        ak.index_zh_a_hist,
-        symbol="000300", period="daily",
-        start_date=start_date.replace("-", ""),
-        end_date=today.replace("-", ""),
-    )
-
+    logger.info(f"拉取沪深300日线（腾讯）：{start_date} → {today}")
+    df = _retry(ak.stock_zh_index_daily_tx, symbol="sh000300")
     if df is None:
-        logger.warning("东方财富接口失败，尝试腾讯 fallback：ak.stock_zh_index_daily_tx")
-        df = _retry(ak.stock_zh_index_daily_tx, symbol="sh000300")
-        if df is None:
-            logger.warning("沪深300历史数据拉取失败（两个接口均失败），benchmark 将为 NULL")
-            return
-        # 腾讯接口列名（已验证：date, open, close, high, low, amount）
-        assert "date" in df.columns and "close" in df.columns, (
-            f"ak.stock_zh_index_daily_tx 列名变更，当前列：{list(df.columns)}"
-        )
-        date_col, close_col = "date", "close"
-        # 腾讯接口返回全量历史，过滤到所需范围（date 列为 datetime.date 对象）
-        df = df[df["date"].astype(str) >= start_date]
-    else:
-        # 东方财富接口列名（中文）
-        assert "日期" in df.columns and "收盘" in df.columns, (
-            f"ak.index_zh_a_hist 列名变更，当前列：{list(df.columns)}"
-        )
-        date_col, close_col = "日期", "收盘"
+        logger.warning("沪深300历史数据拉取失败（腾讯接口失败），benchmark 将为 NULL")
+        return
+    # 腾讯接口列名（已验证：date, open, close, high, low, amount）
+    assert "date" in df.columns and "close" in df.columns, (
+        f"ak.stock_zh_index_daily_tx 列名变更，当前列：{list(df.columns)}"
+    )
+    date_col, close_col = "date", "close"
+    # 腾讯接口返回全量历史，过滤到所需范围（date 列为 datetime.date 对象）
+    df = df[df["date"].astype(str) >= start_date]
 
     inserted = 0
     for _, row in df.iterrows():
@@ -373,23 +342,8 @@ def cmd_outcome_update() -> None:
     if earliest:
         _ensure_index_prices(db, earliest, today)
 
-    # 今日 spot_em 快照（用于获取股票今日收盘价，仅 target_date==today 时需要）
+    # target_date==today 的记录走 per-stock ak.stock_zh_a_hist 逐日查询（见下方循环）
     snapshot_data: dict = {}
-    try:
-        spot_df = _retry(ak.stock_zh_a_spot_em)
-        if spot_df is not None:
-            for _, row in spot_df.iterrows():
-                code = str(row.get("代码", "")).strip()
-                price = row.get("最新价")
-                if code and price is not None:
-                    try:
-                        snapshot_data[code] = float(price)
-                    except (ValueError, TypeError):
-                        pass
-        else:
-            logger.warning("spot_em 快照失败，outcome-update 将跳过需要今日价格的记录")
-    except Exception as e:
-        logger.warning(f"spot_em 快照失败，outcome-update 将跳过需要今日价格的记录：{e}")
 
     updated = 0
     for window, days in [("30d", 30), ("60d", 60), ("90d", 90)]:

@@ -128,6 +128,20 @@ def _fetch_spot_em() -> Any:
     return ak.stock_zh_a_spot_em()
 
 
+_spot_em_failed_today: str | None = None
+
+
+def _fetch_spot_em_safe(today: str) -> Any:
+    """spot_em 带今日失败记忆：进程内只尝试一次，避免 N 只股票 N 次无效调用。"""
+    global _spot_em_failed_today
+    if _spot_em_failed_today == today:
+        return None
+    result = timed_call(_fetch_spot_em, timeout=SPOT_EM_TIMEOUT)
+    if isinstance(result, (str, tuple)):  # 'TIMEOUT' or ('ERROR', msg)
+        _spot_em_failed_today = today
+    return result
+
+
 # ─── 计算辅助函数 ────────────────────────────────────────────────────────────
 
 def compute_dividend_yield(div_df: Any,
@@ -292,7 +306,7 @@ def cmd_fetch(args: list[str]) -> None:
     today    = datetime.now().strftime("%Y-%m-%d")
     snapshot = get_spot_em_snapshot(today)
     if snapshot is None:
-        spot_result = timed_call(_fetch_spot_em, timeout=SPOT_EM_TIMEOUT)
+        spot_result = _fetch_spot_em_safe(today)
         if isinstance(spot_result, str) or isinstance(spot_result, tuple):
             # 'TIMEOUT' or ('ERROR', msg)
             err = spot_result[1] if isinstance(spot_result, tuple) else spot_result
