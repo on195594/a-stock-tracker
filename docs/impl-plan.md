@@ -3,10 +3,11 @@
 Generated: 2026-04-15
 Last updated: 2026-04-27（Phase 3 完成，追加步骤）
 Design ref: `docs/design.md`
-Status: **Phase 3 全部完成（2026-04-26/27）**
+Status: **Phase 3.5 完成（2026-04-28）**
 
 Phase 1（Step 0-7）：✅ 完成
 Phase 3（Step 8-14）：✅ 完成
+Phase 3.5（Step 15-16）：✅ 完成
 
 ---
 
@@ -818,6 +819,46 @@ GEMINI_API_KEY=your_gemini_api_key_here
 TELEGRAM_BOT_TOKEN=your_bot_token_here
 TELEGRAM_CHAT_ID=your_chat_id_here
 ```
+
+---
+
+---
+
+## Phase 3.5 实施记录（2026-04-28）
+
+---
+
+## Step 16：东方财富死路径移除 + sheets_sync 重构
+
+**已完成：2026-04-28**
+
+### Step 16-A：移除东方财富死路径（pipeline.py + lib/fetcher.py）
+
+`ak.stock_zh_a_spot_em` 和 `ak.index_zh_a_hist` 自 2026-04 中旬起持续
+RemoteDisconnected，每日 daily cron 耗尽重试后输出 ERROR 噪音。
+
+改动：
+- `pipeline.py`：`cmd_daily` 直接走腾讯日线逐股（`stock_zh_a_hist_tx`），
+  移除 spot_em 尝试块；`_ensure_index_prices` 直接用 `stock_zh_index_daily_tx`
+- `lib/fetcher.py`：`_fetch_spot_em_safe` 新增今日失败记忆哨兵，同进程只尝试一次
+- `tests/test_pipeline.py`：全量更新 mock 目标，补 test 21（今日到期走 hist 路径）
+- 测试：21/21 PASSED
+
+### Step 16-B：sheets_sync.py 重构
+
+删除 `push_accuracy()` Python SQL 聚合，改由 Google Sheets 公式引擎计算。
+
+改动：
+- 删除 `push_accuracy()`（35 行 Python SQL）
+- 新增 `_init_accuracy_formula_tab()`：首次写入 COUNTIFS/AVERAGEIFS 公式字符串；
+  `value_input_option='USER_ENTERED'` 使 Sheets 解析 = 开头为公式；非空则跳过（幂等）
+- `push_predictions()`：`_cell()` 替代 `_fmt()`，数值保留 float/int 原生类型，
+  RAW 模式写入后 Sheets 存为数字，COUNTIFS 数字比较才能正确工作
+- `push_holdings_template()`：`enumerate` 动态行号 `f"=C{row_num}*D{row_num}"`，
+  修复原代码注释 `=C2*D2` 硬编码所有行的 bug；加 `value_input_option='USER_ENTERED'`
+- `sync_all()`：替换调用
+- 新增 `tests/test_sheets_sync.py`（3 用例，全 mock gspread，0.26s）
+- 测试：40/40 PASSED（含原有 37 个）
 
 ---
 
