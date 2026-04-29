@@ -548,10 +548,10 @@ def test_accuracy_report_ordering(tmp_db, capsys):
         db.commit()
         db.close()
 
-    _closed("000001", 70.0, 5.0)   # strong
-    _closed("000002", 60.0, 3.0)   # moderate
-    _closed("000003", 50.0, 1.0)   # light
-    _closed("000004", 30.0, -1.0)  # no-action
+    _closed("000001", 60.0, 5.0)   # strong   (>=55)
+    _closed("000002", 50.0, 3.0)   # moderate (45-55)
+    _closed("000003", 40.0, 1.0)   # light    (35-45)
+    _closed("000004", 25.0, -1.0)  # no-action (<35)
 
     pipeline.cmd_accuracy_report()
     out = capsys.readouterr().out
@@ -570,7 +570,7 @@ def test_accuracy_report_stat_warning(tmp_db, capsys):
     """已结案记录 < 100 → 头部带样本不足警告。"""
     today = date.today()
     score_date = (today - timedelta(days=30)).isoformat()
-    row_id = _insert_prediction("600036", score_date, 100.0, total_score=60.0)
+    row_id = _insert_prediction("600036", score_date, 100.0, total_score=50.0)
     db = cache_mod.get_db()
     db.execute(
         "UPDATE predictions SET outcome_30d=?, benchmark_30d=? WHERE id=?",
@@ -796,7 +796,7 @@ def test_outcome_update_non_today_expiry_via_hist(tmp_db, monkeypatch):
 def test_daily_writes_predictions_when_tencent_fails(
     tmp_db, small_watchlist, fake_fetcher, fake_weights, monkeypatch
 ):
-    """腾讯日线失败 → daily 仍写入评分记录，price_at_score=NULL。"""
+    """腾讯日线全部失败 → daily 阻断写入，predictions 保持空（不写 NULL price 记录）。"""
     for item in small_watchlist:
         _insert_fundamentals(item["code"], item["name"], "银行", _full_data())
 
@@ -812,9 +812,7 @@ def test_daily_writes_predictions_when_tencent_fails(
         "SELECT code, price_at_score FROM predictions ORDER BY code"
     ).fetchall()
     db.close()
-    assert len(rows) == len(small_watchlist) * 2  # 每只股票 A + B 两条
-    for _, price in rows:
-        assert price is None  # 腾讯失败时为 NULL，但记录必须存在
+    assert len(rows) == 0  # 价格全部失败时阻断写入，不写 NULL
 
 
 # ---------------------------------------------------------------------------
@@ -850,3 +848,69 @@ def test_outcome_update_today_expiry_via_hist(tmp_db, monkeypatch):
     assert row[0] == pytest.approx(8.0)   # (108/100-1)*100
     assert row[1] == pytest.approx(5.0)   # (4200/4000-1)*100
     assert row[2] == 0                    # 精确到期日，非估算
+
+
+# ---------------------------------------------------------------------------
+# 41. daily 价格全部失败 → 阻断写入，predictions 保持空
+# ---------------------------------------------------------------------------
+def test_daily_aborts_when_no_prices(tmp_db, small_watchlist, fake_fetcher,
+                                      fake_weights, monkeypatch):
+    """腾讯日线全部失败（返回空 DataFrame）→ cmd_daily 提前退出，不写 predictions。"""
+    for item in small_watchlist:
+        _insert_fundamentals(item["code"], item["name"], "银行", _full_data())
+
+    monkeypatch.setattr(pipeline.ak, "stock_zh_a_hist_tx",
+                        lambda **kw: pd.DataFrame(columns=["close", "date"]))
+
+    pipeline.cmd_daily()
+
+    db = cache_mod.get_db()
+    cnt = db.execute("SELECT COUNT(*) FROM predictions").fetchone()[0]
+    db.close()
+    assert cnt == 0
+
+
+# ---------------------------------------------------------------------------
+# 42. daily 回填近期 NULL price_at_score
+# ---------------------------------------------------------------------------
+def test_daily_backfills_null_prices(tmp_db, small_watchlist, fake_fetcher,
+                                      fake_weights, monkeypatch):
+    """DB 中存在近期 price_at_score=NULL 记录 → 今日 daily 成功时自动回填。"""
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    # 插入昨日 NULL 价格记录
+    db = cache_mod.get_db()
+    db.execute(
+        """INSERT INTO predictions
+           (code, name, framework, score_date, price_at_score,
+            quant_score, total_score, weights_hash, report_period, created_at)
+           VALUES ('600036','招商银行','A',?,NULL,45.0,55.0,'abc12345','2024-09-30',?)""",
+        (yesterday, yesterday + "T16:30:00"),
+    )
+    db.commit()
+    db.close()
+
+    for item in small_watchlist:
+        _insert_fundamentals(item["code"], item["name"], "银行", _full_data())
+
+    # 今日价格正常返回；昨日回填也由同一 mock 返回
+    def hist_effect(symbol: str, start_date: str, end_date: str, **kw):
+        code = symbol[2:]
+        prices = {"600036": 36.50, "000858": 130.00}
+        price = prices.get(code, 35.0)
+        # 返回含 start_date 当日的价格
+        from datetime import datetime as _dt
+        d = _dt.strptime(start_date, "%Y%m%d").strftime("%Y-%m-%d")
+        return pd.DataFrame([{"close": price, "date": d}])
+
+    monkeypatch.setattr(pipeline.ak, "stock_zh_a_hist_tx", hist_effect)
+
+    pipeline.cmd_daily()
+
+    db = cache_mod.get_db()
+    row = db.execute(
+        "SELECT price_at_score FROM predictions WHERE code='600036' AND score_date=?",
+        (yesterday,),
+    ).fetchone()
+    db.close()
+    assert row is not None
+    assert row[0] == pytest.approx(36.50)  # 回填成功

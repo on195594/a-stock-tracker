@@ -151,6 +151,55 @@ def cmd_weekly() -> None:
 # daily 命令
 # ──────────────────────────────────────────────
 
+def _backfill_null_prices(db: sqlite3.Connection, today: str) -> int:
+    """回填近 15 天内 price_at_score=NULL 的记录（不含今日）。
+
+    只在今日价格抓取成功后调用，用腾讯历史日线补齐存量缺失。
+    不修改 total_score / weights_hash，仅补 price_at_score。
+    """
+    cutoff = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=15)).strftime("%Y-%m-%d")
+    rows = db.execute(
+        """SELECT DISTINCT code, score_date FROM predictions
+           WHERE price_at_score IS NULL AND score_date >= ? AND score_date < ?
+           ORDER BY score_date""",
+        (cutoff, today),
+    ).fetchall()
+    if not rows:
+        return 0
+
+    updated = 0
+    for code, score_date in rows:
+        prefix = "sh" if code.startswith("6") else "sz"
+        d_start = score_date.replace("-", "")
+        d_end = (datetime.strptime(score_date, "%Y-%m-%d") + timedelta(days=3)).strftime("%Y%m%d")
+        try:
+            hist = _retry(ak.stock_zh_a_hist_tx, symbol=f"{prefix}{code}",
+                          start_date=d_start, end_date=d_end)
+            if hist is None or hist.empty:
+                logger.debug(f"  回填 {code} {score_date}：无历史数据")
+                continue
+            price = None
+            for _, row in hist.iterrows():
+                if str(row["date"])[:10] == score_date:
+                    price = float(row["close"])
+                    break
+            if price is None:
+                logger.debug(f"  回填 {code} {score_date}：未找到当日收盘价")
+                continue
+            db.execute(
+                "UPDATE predictions SET price_at_score=? WHERE code=? AND score_date=? AND price_at_score IS NULL",
+                (price, code, score_date),
+            )
+            db.commit()
+            updated += 1
+            logger.info(f"  回填 ✓ {code} {score_date} price={price}")
+        except Exception as e:
+            logger.warning(f"  回填 {code} {score_date} 失败：{e}")
+    if updated:
+        logger.info(f"价格回填完成：更新 {updated} 条记录")
+    return updated
+
+
 def cmd_daily() -> None:
     weights = _load_weights()
     weights_hash = _compute_weights_hash(weights)
@@ -188,8 +237,11 @@ def cmd_daily() -> None:
             logger.debug(f"{code} 腾讯日线获取失败：{e}")
     if snapshot_data:
         logger.info(f"腾讯日线：获取到 {len(snapshot_data)} 只股票收盘价")
+        _backfill_null_prices(db, today)
     else:
-        logger.warning("腾讯日线全部失败，price_at_score 将为 NULL")
+        logger.error("腾讯日线全部失败，今日评分中止（今日记录不写入，明日将写入明日数据）")
+        db.close()
+        return
 
     skipped: list[str] = []
     written = 0
@@ -420,6 +472,13 @@ def cmd_outcome_update() -> None:
     logger.info(f"outcome-update 完成：更新 {updated} 条")
     db.close()
 
+    # Sheets sync（独立后置步骤，失败不影响 SQLite 数据）
+    try:
+        import sheets_sync
+        sheets_sync.sync_all()
+    except Exception as e:
+        logger.warning(f"Sheets sync 失败（不影响 SQLite 数据）：{e}")
+
 
 # ──────────────────────────────────────────────
 # accuracy-report 命令
@@ -458,12 +517,17 @@ def cmd_accuracy_report() -> None:
     )
     lines.append("")
 
-    rows = db.execute("""
+    _w = _load_weights().get("thresholds", {})
+    _strong = _w.get("buy_strong", 55)
+    _moderate = _w.get("buy_moderate", 45)
+    _light = _w.get("buy_light", 35)
+
+    rows = db.execute(f"""
         SELECT
             CASE
-                WHEN total_score >= 65 THEN 'strong'
-                WHEN total_score >= 55 THEN 'moderate'
-                WHEN total_score >= 45 THEN 'light'
+                WHEN total_score >= {_strong}   THEN 'strong'
+                WHEN total_score >= {_moderate} THEN 'moderate'
+                WHEN total_score >= {_light}    THEN 'light'
                 ELSE 'no-action'
             END AS signal_tier,
             COUNT(*) AS predictions,

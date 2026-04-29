@@ -3,12 +3,13 @@ sheets_sync.py — Google Sheets 同步模块
 
 写入三个 tab：
   predictions_detail  每条预测记录 + outcome + alpha（每日全量覆盖）
-  accuracy_report     按分段命中率汇总（首次初始化写入公式，之后不覆盖）
+  accuracy_report     按分段命中率汇总（schema hash 未变则跳过，变则重写）
   holdings            持仓跟踪模板（首次初始化写入 watchlist，之后不覆盖）
 
 规则：Sheets sync 失败只记 WARNING，不影响 pipeline daily 主流程。
 """
 
+import hashlib
 import logging
 import os
 
@@ -108,47 +109,69 @@ _ACC_HEADERS = [
     "分段", "记录数",
     "30d命中率(绝对)", "30d命中率(vs沪深300)", "30d平均alpha",
     "60d命中率(绝对)", "60d命中率(vs沪深300)", "60d平均alpha",
+    "90d命中率(绝对)", "90d命中率(vs沪深300)", "90d平均alpha",
 ]
 
+# 分段与 weights.json thresholds 对齐：buy_strong=55 / buy_moderate=45 / buy_light=35
 _ACC_SEGMENTS = [
-    ("≥65分",  65, 200),
-    ("55-65分", 55,  65),
+    ("≥55分",  55, 200),
     ("45-55分", 45,  55),
-    ("<45分",    0,  45),
+    ("35-45分", 35,  45),
+    ("<35分",    0,  35),
     ("全部",     0, 200),
 ]
 
 _P = TAB_PREDICTIONS  # 公式引用的源 tab，与 TAB_PREDICTIONS 保持同步
 
 
+def _acc_schema_hash() -> str:
+    """_ACC_HEADERS + _ACC_SEGMENTS 的 md5[:6]，用于检测 schema 变更。"""
+    raw = str(_ACC_HEADERS) + str(_ACC_SEGMENTS)
+    return hashlib.md5(raw.encode()).hexdigest()[:6]
+
+
 def _acc_row(label: str, lo: int, hi: int) -> list:
-    """生成一个分段的8列内容（标签 + 7个 COUNTIFS/AVERAGEIFS 公式字符串）。"""
+    """生成一个分段的11列内容（标签 + 10个 COUNTIFS/AVERAGEIFS 公式字符串）。"""
     E = f"{_P}!E:E"
     H = f"{_P}!H:H"
     J = f"{_P}!J:J"
     K = f"{_P}!K:K"
     M = f"{_P}!M:M"
+    N = f"{_P}!N:N"
+    P = f"{_P}!P:P"
     sc = f'{E},">="&{lo},{E},"<"&{hi},'  # score range condition
 
-    count = f'=COUNTIFS({sc}{H},"<>")'
-    h30   = f'=IFERROR(COUNTIFS({sc}{H},">"&0)/COUNTIFS({sc}{H},"<>"),"")'
-    vs30  = f'=IFERROR(COUNTIFS({sc}{J},">"&0)/COUNTIFS({sc}{J},"<>"),"")'
-    avg30 = f'=IFERROR(AVERAGEIFS({J},{sc}{H},"<>"),"")'
-    h60   = f'=IFERROR(COUNTIFS({sc}{K},">"&0)/COUNTIFS({sc}{K},"<>"),"")'
-    vs60  = f'=IFERROR(COUNTIFS({sc}{M},">"&0)/COUNTIFS({sc}{M},"<>"),"")'
-    avg60 = f'=IFERROR(AVERAGEIFS({M},{sc}{K},"<>"),"")'
-    return [label, count, h30, vs30, avg30, h60, vs60, avg60]
+    count   = f'=COUNTIFS({sc}{H},"<>")'
+    h30     = f'=IFERROR(COUNTIFS({sc}{H},">"&0)/COUNTIFS({sc}{H},"<>"),"")'
+    vs30    = f'=IFERROR(COUNTIFS({sc}{J},">"&0)/COUNTIFS({sc}{J},"<>"),"")'
+    avg30   = f'=IFERROR(AVERAGEIFS({J},{sc}{H},"<>"),"")'
+    h60     = f'=IFERROR(COUNTIFS({sc}{K},">"&0)/COUNTIFS({sc}{K},"<>"),"")'
+    vs60    = f'=IFERROR(COUNTIFS({sc}{M},">"&0)/COUNTIFS({sc}{M},"<>"),"")'
+    avg60   = f'=IFERROR(AVERAGEIFS({M},{sc}{K},"<>"),"")'
+    h90     = f'=IFERROR(COUNTIFS({sc}{N},">"&0)/COUNTIFS({sc}{N},"<>"),"")'
+    vs90    = f'=IFERROR(COUNTIFS({sc}{P},">"&0)/COUNTIFS({sc}{P},"<>"),"")'
+    avg90   = f'=IFERROR(AVERAGEIFS({P},{sc}{N},"<>"),"")'
+    return [label, count, h30, vs30, avg30, h60, vs60, avg60, h90, vs90, avg90]
 
 
 def _init_accuracy_formula_tab(sh: gspread.Spreadsheet) -> None:
-    """首次初始化 accuracy_report tab：写入 COUNTIFS/AVERAGEIFS 公式。非空则跳过。"""
+    """初始化 accuracy_report tab：写入 COUNTIFS/AVERAGEIFS 公式。
+    schema hash 未变则跳过；hash 变更（分段/列名修改）则自动重写。
+    hash 存储在 header 行末尾的额外列，不影响数据区公式。
+    """
     ws = _get_or_create_tab(sh, TAB_ACCURACY)
-    if ws.get_all_values():
-        logger.info("accuracy_report tab 已存在，跳过初始化")
-        return
-    data = [_ACC_HEADERS] + [_acc_row(label, lo, hi) for label, lo, hi in _ACC_SEGMENTS]
+    existing = ws.get_all_values()
+    if existing:
+        first_row = existing[0]
+        stored_hash = first_row[len(_ACC_HEADERS)] if len(first_row) > len(_ACC_HEADERS) else None
+        if stored_hash == _acc_schema_hash():
+            logger.info("accuracy_report tab schema 未变，跳过初始化")
+            return
+        logger.info("accuracy_report schema 变更（%s → %s），重写", stored_hash, _acc_schema_hash())
+    current_hash = _acc_schema_hash()
+    data = [_ACC_HEADERS + [current_hash]] + [_acc_row(label, lo, hi) for label, lo, hi in _ACC_SEGMENTS]
     ws.update(range_name="A1", values=data, value_input_option="USER_ENTERED")
-    logger.info("accuracy_report 公式写入完成（%d 分段）", len(_ACC_SEGMENTS))
+    logger.info("accuracy_report 公式写入完成（%d 分段，schema=%s）", len(_ACC_SEGMENTS), current_hash)
 
 
 # ─── Tab 3：holdings ─────────────────────────────────────────────────────────
