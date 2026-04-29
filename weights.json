@@ -54,6 +54,59 @@
           "note": "Phase2改为半定量计算"
         }
       }
+    },
+    "B": {
+      "fundamental": {
+        "roe_3y_avg": {
+          "max_score": 20,
+          "breakpoints": [[0, 0], [8, 7], [12, 12], [15, 20], [25, 20]],
+          "interpolate": true,
+          "note": "质量优先：ROE 权重提升（15→20）。breakpoints 等比缩放。"
+        },
+        "net_profit_growth": {
+          "max_score": 10,
+          "breakpoints": [[-20, 0], [0, 2], [8, 6], [15, 10], [30, 10]],
+          "interpolate": true,
+          "note": "与 Framework A 相同"
+        },
+        "debt_ratio": {
+          "max_score": 10,
+          "breakpoints": [[30, 10], [50, 7], [65, 3], [80, 0]],
+          "interpolate": true,
+          "invert": true,
+          "note": "与 Framework A 相同"
+        },
+        "gross_margin": {
+          "max_score": 15,
+          "breakpoints": [[0, 0], [15, 6], [25, 11], [35, 15], [60, 15]],
+          "interpolate": true,
+          "note": "质量优先：毛利率权重提升（10→15），高护城河信号。"
+        },
+        "moat_fixed": {
+          "max_score": 10,
+          "phase1_fixed": 5,
+          "note": "Phase2改为LLM评分"
+        },
+        "market_pos_fixed": {
+          "max_score": 5,
+          "phase1_fixed": 2,
+          "note": "Phase2改为LLM评分"
+        }
+      },
+      "valuation": {
+        "pe_percentile_10y": {
+          "max_score": 5,
+          "breakpoints": [[5, 5], [20, 4], [40, 3], [60, 1], [80, 0]],
+          "interpolate": true,
+          "invert": true,
+          "note": "质量优先：PE 估值权重降低（15→5），质量比价格更重要。"
+        },
+        "sentiment_fixed": {
+          "max_score": 5,
+          "phase1_fixed": 3,
+          "note": "Phase2改为半定量计算"
+        }
+      }
     }
   },
   "thresholds": {

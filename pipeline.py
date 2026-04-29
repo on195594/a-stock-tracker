@@ -40,7 +40,7 @@ import akshare as ak
 import config
 from lib.cache import get_db, get_fundamentals
 from gemini_scorer import get_qualitative_score
-from scorer import InsufficientDataError, UnsupportedFrameworkError, score_stock
+from scorer import SUPPORTED_FRAMEWORKS, InsufficientDataError, UnsupportedFrameworkError, score_stock
 
 assert sqlite3.sqlite_version_info >= (3, 31, 0), (
     f"需要 SQLite ≥ 3.31.0（当前 {sqlite3.sqlite_version}），请升级系统 SQLite"
@@ -213,44 +213,43 @@ def cmd_daily() -> None:
         data["market_pos_fixed"] = qual["market_pos"]
         data["sentiment_fixed"] = qual["sentiment"]
 
-        try:
-            result = score_stock(code, "A", data, weights=weights)
-        except InsufficientDataError as e:
-            logger.warning(f"  跳过 {code}：{e}")
-            skipped.append(code)
-            continue
-        except UnsupportedFrameworkError as e:
-            logger.error(f"  错误 {code}：{e}")
-            skipped.append(code)
-            continue
-
         thresholds = weights.get("thresholds", {})
-        threshold_adjusted = 0
-        if thresholds.get("_adjusted"):
-            threshold_adjusted = 1
+        threshold_adjusted = 1 if thresholds.get("_adjusted") else 0
 
-        try:
-            db.execute(
-                """INSERT OR IGNORE INTO predictions
-                   (code, name, framework, score_date, price_at_score,
-                    quant_score, total_score, weights_hash, report_period,
-                    threshold_adjusted, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    code, name, "A", today, price_at_score,
-                    result["quant_score"], result["total_score"],
-                    weights_hash, report_period,
-                    threshold_adjusted, datetime.now().isoformat(),
-                ),
-            )
-            db.commit()
-            written += 1
-            logger.info(
-                f"  ✓ {code} {name}  总分={result['total_score']}  "
-                f"data_quality={result['data_quality']}"
-            )
-        except Exception as e:
-            logger.error(f"  写入 {code} 失败：{e}")
+        for framework in sorted(SUPPORTED_FRAMEWORKS):
+            try:
+                result = score_stock(code, framework, data, weights=weights)
+            except InsufficientDataError as e:
+                logger.warning(f"  跳过 {code}/{framework}：{e}")
+                skipped.append(f"{code}/{framework}")
+                continue
+            except UnsupportedFrameworkError as e:
+                logger.error(f"  错误 {code}/{framework}：{e}")
+                skipped.append(f"{code}/{framework}")
+                continue
+
+            try:
+                db.execute(
+                    """INSERT OR IGNORE INTO predictions
+                       (code, name, framework, score_date, price_at_score,
+                        quant_score, total_score, weights_hash, report_period,
+                        threshold_adjusted, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        code, name, framework, today, price_at_score,
+                        result["quant_score"], result["total_score"],
+                        weights_hash, report_period,
+                        threshold_adjusted, datetime.now().isoformat(),
+                    ),
+                )
+                db.commit()
+                written += 1
+                logger.info(
+                    f"  ✓ {code} {name} [{framework}]  总分={result['total_score']}  "
+                    f"data_quality={result['data_quality']}"
+                )
+            except Exception as e:
+                logger.error(f"  写入 {code}/{framework} 失败：{e}")
 
     log_line = (
         f"{today} daily 完成：写入 {written} 条，跳过 {len(skipped)} 条"

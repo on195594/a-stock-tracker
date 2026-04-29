@@ -83,9 +83,9 @@ def test_happy_path_all_fields():
 # 2. 不支持的 framework
 # ---------------------------------------------------------------------------
 def test_unsupported_framework():
-    """framework='B' 应抛出 UnsupportedFrameworkError。"""
+    """未实现的 framework 应抛出 UnsupportedFrameworkError。"""
     with pytest.raises(UnsupportedFrameworkError):
-        score_stock("600036", "B", FULL_DATA, weights=WEIGHTS)
+        score_stock("600036", "Z", FULL_DATA, weights=WEIGHTS)
 
 
 # ---------------------------------------------------------------------------

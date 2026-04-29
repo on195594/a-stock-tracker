@@ -110,6 +110,42 @@ def fake_weights(tmp_path, monkeypatch):
         },
         "thresholds": {"buy_strong": 65, "buy_moderate": 55, "buy_light": 45},
     }
+    weights["frameworks"]["B"] = {
+        "fundamental": {
+            "roe_3y_avg": {
+                "max_score": 20,
+                "breakpoints": [[0, 0], [8, 7], [12, 12], [15, 20], [25, 20]],
+                "interpolate": True,
+            },
+            "net_profit_growth": {
+                "max_score": 10,
+                "breakpoints": [[-20, 0], [0, 2], [8, 6], [15, 10], [30, 10]],
+                "interpolate": True,
+            },
+            "debt_ratio": {
+                "max_score": 10,
+                "breakpoints": [[30, 10], [50, 7], [65, 3], [80, 0]],
+                "interpolate": True,
+                "invert": True,
+            },
+            "gross_margin": {
+                "max_score": 15,
+                "breakpoints": [[0, 0], [15, 6], [25, 11], [35, 15], [60, 15]],
+                "interpolate": True,
+            },
+            "moat_fixed": {"max_score": 10, "phase1_fixed": 5},
+            "market_pos_fixed": {"max_score": 5, "phase1_fixed": 2},
+        },
+        "valuation": {
+            "pe_percentile_10y": {
+                "max_score": 5,
+                "breakpoints": [[5, 5], [20, 4], [40, 3], [60, 1], [80, 0]],
+                "interpolate": True,
+                "invert": True,
+            },
+            "sentiment_fixed": {"max_score": 5, "phase1_fixed": 3},
+        },
+    }
     p = tmp_path / "weights.json"
     p.write_text(json.dumps(weights, ensure_ascii=False), encoding="utf-8")
     monkeypatch.setattr(config, "WEIGHTS_PATH", str(p))
@@ -213,7 +249,7 @@ def test_daily_happy_path(tmp_db, small_watchlist, fake_fetcher, fake_weights,
         "FROM predictions"
     ).fetchall()
     db.close()
-    assert len(rows) == 2
+    assert len(rows) == 4  # 2 stocks × 2 frameworks (A + B)
     codes = {r[0]: r for r in rows}
     assert codes["600036"][1] == pytest.approx(35.20)
     assert codes["000858"][1] == pytest.approx(128.40)
@@ -239,7 +275,7 @@ def test_daily_idempotent(tmp_db, small_watchlist, fake_fetcher, fake_weights,
     db = cache_mod.get_db()
     cnt = db.execute("SELECT COUNT(*) FROM predictions").fetchone()[0]
     db.close()
-    assert cnt == 2
+    assert cnt == 4  # 2 stocks × 2 frameworks，重跑不新增
 
 
 # ---------------------------------------------------------------------------
@@ -259,7 +295,8 @@ def test_daily_one_stock_fails(tmp_db, small_watchlist, fake_fetcher, fake_weigh
     db = cache_mod.get_db()
     rows = db.execute("SELECT code FROM predictions").fetchall()
     db.close()
-    assert [r[0] for r in rows] == ["600036"]
+    assert {r[0] for r in rows} == {"600036"}  # 只有 600036 的 A/B 两条
+    assert len(rows) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -775,7 +812,7 @@ def test_daily_writes_predictions_when_tencent_fails(
         "SELECT code, price_at_score FROM predictions ORDER BY code"
     ).fetchall()
     db.close()
-    assert len(rows) == len(small_watchlist)
+    assert len(rows) == len(small_watchlist) * 2  # 每只股票 A + B 两条
     for _, price in rows:
         assert price is None  # 腾讯失败时为 NULL，但记录必须存在
 

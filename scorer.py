@@ -14,7 +14,7 @@ class InsufficientDataError(Exception):
     pass
 
 
-SUPPORTED_FRAMEWORKS = {"A"}
+SUPPORTED_FRAMEWORKS = {"A", "B"}
 
 # Phase 1 非固定字段（计入 data_quality 分母）
 NON_FIXED_FIELDS = {"roe_3y_avg", "net_profit_growth", "debt_ratio", "gross_margin", "pe_percentile_10y"}
