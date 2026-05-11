@@ -221,3 +221,21 @@ benchmark 失败：outcome 正常写入，benchmark_*d 留 NULL（不中断）
 2. **选择性偏差**：watchlist 是手动维护的已知标的，命中率不代表框架泛化能力
 3. **牛市通胀**：`hit_rate_30d_abs > 50%` 不代表框架有效，看 `hit_rate_30d_vs_300`
 4. **Phase 1 目标**：数据积累，不是得出结论
+
+## Skill routing
+
+When the user's request matches an available skill, invoke it via the Skill tool. When in doubt, invoke the skill.
+
+Key routing rules:
+- Product ideas/brainstorming → invoke /office-hours
+- Strategy/scope → invoke /plan-ceo-review
+- Architecture → invoke /plan-eng-review
+- Design system/plan review → invoke /design-consultation or /plan-design-review
+- Full review pipeline → invoke /autoplan
+- Bugs/errors → invoke /investigate
+- QA/testing site behavior → invoke /qa or /qa-only
+- Code review/diff check → invoke /review
+- Visual polish → invoke /design-review
+- Ship/deploy/PR → invoke /ship or /land-and-deploy
+- Save progress → invoke /context-save
+- Resume context → invoke /context-restore
