@@ -10,6 +10,7 @@ sheets_sync.py — Google Sheets 同步模块
 """
 
 import hashlib
+import json
 import logging
 import os
 
@@ -21,10 +22,7 @@ from lib.cache import get_db
 
 logger = logging.getLogger(__name__)
 
-SHEET_URL = os.environ.get(
-    "SHEETS_URL",
-    "https://docs.google.com/spreadsheets/d/1-zTm43GnD-ASC6pQres82zuF5YSVAA20fKSXwjbJSHg/edit",
-)
+SHEET_URL = os.environ.get("SHEETS_URL")
 CREDENTIALS_PATH = os.path.join(os.path.dirname(__file__), "credentials", "service_account.json")
 
 SCOPES = [
@@ -112,13 +110,25 @@ _ACC_HEADERS = [
     "90d命中率(绝对)", "90d命中率(vs沪深300)", "90d平均alpha",
 ]
 
-# 分段与 weights.json thresholds 对齐：buy_strong=55 / buy_moderate=45 / buy_light=35
+def _load_thresholds() -> dict:
+    try:
+        with open(os.path.join(os.path.dirname(__file__), "weights.json"), encoding="utf-8") as _f:
+            return json.load(_f).get("thresholds", {})
+    except Exception:
+        return {}
+
+_thr      = _load_thresholds()
+_STR      = _thr.get("buy_strong",   44)
+_MOD      = _thr.get("buy_moderate", 35)
+_LGT      = _thr.get("buy_light",    26)
+
+# 分段从 weights.json thresholds 动态读取，hash 自动感知阈值变更
 _ACC_SEGMENTS = [
-    ("≥55分",  55, 200),
-    ("45-55分", 45,  55),
-    ("35-45分", 35,  45),
-    ("<35分",    0,  35),
-    ("全部",     0, 200),
+    (f"≥{_STR}分",            _STR,  200),
+    (f"{_MOD}-{_STR}分",      _MOD,  _STR),
+    (f"{_LGT}-{_MOD}分",      _LGT,  _MOD),
+    (f"<{_LGT}分",            0,     _LGT),
+    ("全部",                   0,     200),
 ]
 
 _P = TAB_PREDICTIONS  # 公式引用的源 tab，与 TAB_PREDICTIONS 保持同步
@@ -224,6 +234,9 @@ def push_holdings_template(sh: gspread.Spreadsheet) -> None:
 
 def sync_all() -> None:
     """全量同步：写入 predictions_detail；首次初始化 accuracy_report 公式和 holdings 模板。"""
+    if not SHEET_URL:
+        logger.warning("SHEETS_URL 未设置，跳过 Sheets sync（请在 .env 中配置）")
+        return
     try:
         gc = _get_client()
         sh = gc.open_by_url(SHEET_URL)

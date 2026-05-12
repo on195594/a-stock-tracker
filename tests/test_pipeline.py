@@ -98,7 +98,7 @@ def fake_weights(tmp_path, monkeypatch):
                     "market_pos_fixed": {"max_score": 5, "phase1_fixed": 2},
                 },
                 "valuation": {
-                    "pe_percentile_10y": {
+                    "pb_percentile_10y": {
                         "max_score": 15,
                         "breakpoints": [[5, 15], [20, 12], [40, 8], [60, 4], [80, 0]],
                         "interpolate": True,
@@ -137,7 +137,7 @@ def fake_weights(tmp_path, monkeypatch):
             "market_pos_fixed": {"max_score": 5, "phase1_fixed": 2},
         },
         "valuation": {
-            "pe_percentile_10y": {
+            "pb_percentile_10y": {
                 "max_score": 5,
                 "breakpoints": [[5, 5], [20, 4], [40, 3], [60, 1], [80, 0]],
                 "interpolate": True,
@@ -178,7 +178,7 @@ def _full_data(report_period: str = "2024-09-30") -> dict:
         "net_profit_growth": 5.5,
         "debt_ratio": 45.0,
         "gross_margin": 56.8,
-        "pe_percentile_10y": 18.0,
+        "pb_percentile_10y": 18.0,
         "report_period": report_period,
     }
 
@@ -249,7 +249,7 @@ def test_daily_happy_path(tmp_db, small_watchlist, fake_fetcher, fake_weights,
         "FROM predictions"
     ).fetchall()
     db.close()
-    assert len(rows) == 4  # 2 stocks × 2 frameworks (A + B)
+    assert len(rows) == 2  # 2 stocks × 1 framework (A only, B paused)
     codes = {r[0]: r for r in rows}
     assert codes["600036"][1] == pytest.approx(35.20)
     assert codes["000858"][1] == pytest.approx(128.40)
@@ -275,7 +275,7 @@ def test_daily_idempotent(tmp_db, small_watchlist, fake_fetcher, fake_weights,
     db = cache_mod.get_db()
     cnt = db.execute("SELECT COUNT(*) FROM predictions").fetchone()[0]
     db.close()
-    assert cnt == 4  # 2 stocks × 2 frameworks，重跑不新增
+    assert cnt == 2  # 2 stocks × 1 framework（A only，幂等不新增）
 
 
 # ---------------------------------------------------------------------------
@@ -295,8 +295,8 @@ def test_daily_one_stock_fails(tmp_db, small_watchlist, fake_fetcher, fake_weigh
     db = cache_mod.get_db()
     rows = db.execute("SELECT code FROM predictions").fetchall()
     db.close()
-    assert {r[0] for r in rows} == {"600036"}  # 只有 600036 的 A/B 两条
-    assert len(rows) == 2
+    assert {r[0] for r in rows} == {"600036"}  # 只有 600036，Framework A 1 条
+    assert len(rows) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -419,10 +419,10 @@ def test_outcome_update_estimate_flag(tmp_db, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# 8. outcome-update 超出 5 日 → NULL
+# 8. outcome-update 超出 10 日 → NULL
 # ---------------------------------------------------------------------------
-def test_outcome_update_null_beyond_5_days(tmp_db, monkeypatch):
-    """5 日内都无可用价 → outcome 保持 NULL，不写异常值。"""
+def test_outcome_update_null_beyond_10_days(tmp_db, monkeypatch):
+    """10 日内都无可用价 → outcome 保持 NULL，不写异常值。"""
     today = date.today()
     score_date = (today - timedelta(days=35)).isoformat()
     _insert_prediction("600036", score_date, 100.0)
@@ -548,10 +548,10 @@ def test_accuracy_report_ordering(tmp_db, capsys):
         db.commit()
         db.close()
 
-    _closed("000001", 60.0, 5.0)   # strong   (>=55)
-    _closed("000002", 50.0, 3.0)   # moderate (45-55)
-    _closed("000003", 40.0, 1.0)   # light    (35-45)
-    _closed("000004", 25.0, -1.0)  # no-action (<35)
+    _closed("000001", 60.0, 5.0)   # strong   (>=44)
+    _closed("000002", 40.0, 3.0)   # moderate (35-44)
+    _closed("000003", 30.0, 1.0)   # light    (26-35)
+    _closed("000004", 20.0, -1.0)  # no-action (<26)
 
     pipeline.cmd_accuracy_report()
     out = capsys.readouterr().out
@@ -570,7 +570,7 @@ def test_accuracy_report_stat_warning(tmp_db, capsys):
     """已结案记录 < 100 → 头部带样本不足警告。"""
     today = date.today()
     score_date = (today - timedelta(days=30)).isoformat()
-    row_id = _insert_prediction("600036", score_date, 100.0, total_score=50.0)
+    row_id = _insert_prediction("600036", score_date, 100.0, total_score=40.0)  # moderate (35-44)
     db = cache_mod.get_db()
     db.execute(
         "UPDATE predictions SET outcome_30d=?, benchmark_30d=? WHERE id=?",
@@ -914,3 +914,171 @@ def test_daily_backfills_null_prices(tmp_db, small_watchlist, fake_fetcher,
     db.close()
     assert row is not None
     assert row[0] == pytest.approx(36.50)  # 回填成功
+
+
+# ---------------------------------------------------------------------------
+# 43. TTL 回归：get_fundamentals 在缓存过期时返回 None
+# ---------------------------------------------------------------------------
+def test_ttl_expiry_regression(tmp_db):
+    """回归测试：ttl_hours=24 的缓存在超过 24h 后应过期返回 None；改为 168h 后不过期。
+    这是 2026-05-11 修复的 bug：行业识别失败时 TTL=24h，weekly cron 周六刷新后
+    周一 daily（54.5h后）运行时缓存全部过期，34/35只股票被跳过。
+    """
+    import json as _json
+    from datetime import datetime, timedelta
+
+    db = cache_mod.get_db()
+    old_updated = (datetime.now() - timedelta(hours=25)).isoformat()
+    db.execute(
+        """INSERT OR REPLACE INTO stock_fundamentals
+           (code, name, industry, data, updated_at, ttl_hours)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        ("601939", "建设银行", "未知", _json.dumps({"roe_3y_avg": 12.0}), old_updated, 24),
+    )
+    db.commit()
+    db.close()
+
+    # TTL=24h，25h 前写入 → 应过期
+    assert cache_mod.get_fundamentals("601939") is None
+
+    # 改为 168h → 不过期
+    db = cache_mod.get_db()
+    db.execute("UPDATE stock_fundamentals SET ttl_hours=168 WHERE code='601939'")
+    db.commit()
+    db.close()
+    assert cache_mod.get_fundamentals("601939") is not None
+
+
+# ---------------------------------------------------------------------------
+# 44. _refresh_fundamentals：成功和失败计数正确，返回 (success, failed)
+# ---------------------------------------------------------------------------
+def test_refresh_fundamentals_counts(tmp_db, small_watchlist, monkeypatch):
+    """_refresh_fundamentals 正确统计成功/失败次数并返回元组。"""
+    import types
+    call_count = [0]
+
+    def fake_cmd_fetch(args):
+        call_count[0] += 1
+        if args[0] == "000858":  # 五粮液失败
+            raise RuntimeError("fetch failed")
+
+    fake_fetcher_mod = types.ModuleType("fetcher")
+    fake_fetcher_mod.cmd_fetch = fake_cmd_fetch
+    monkeypatch.setitem(sys.modules, "fetcher", fake_fetcher_mod)
+
+    success, failed = pipeline._refresh_fundamentals("test")
+    assert success == 1  # 600036 成功
+    assert failed == 1   # 000858 失败
+    assert call_count[0] == 2
+
+
+# ---------------------------------------------------------------------------
+# 45. cmd_remove：删除已有股票；对未知股票发 WARNING 但不报错
+# ---------------------------------------------------------------------------
+def test_cmd_remove(tmp_db, monkeypatch):
+    """cmd_remove 删除 predictions + stock_fundamentals；股票不存在时无异常。"""
+    import json as _json
+    from datetime import datetime
+
+    db = cache_mod.get_db()
+    # 插入基本面缓存
+    db.execute(
+        """INSERT INTO stock_fundamentals (code, name, industry, data, updated_at, ttl_hours)
+           VALUES ('600036','招商银行','银行Ⅱ','{}',?,168)""",
+        (datetime.now().isoformat(),),
+    )
+    # 插入 predictions 记录
+    db.execute(
+        """INSERT INTO predictions
+           (code, name, framework, score_date, quant_score, total_score,
+            weights_hash, created_at)
+           VALUES ('600036','招商银行','A','2026-04-21',40.0,55.0,'abc12345',?)""",
+        (datetime.now().isoformat(),),
+    )
+    db.commit()
+    db.close()
+
+    pipeline.cmd_remove("600036")
+
+    db = cache_mod.get_db()
+    assert db.execute("SELECT COUNT(*) FROM predictions WHERE code='600036'").fetchone()[0] == 0
+    assert db.execute("SELECT COUNT(*) FROM stock_fundamentals WHERE code='600036'").fetchone()[0] == 0
+    db.close()
+
+    # 对不存在的股票不应抛出异常
+    pipeline.cmd_remove("999999")
+
+
+# ---------------------------------------------------------------------------
+# 46. accuracy-report：Gemini 仅首次评分（无后续重打分数据）→ 显示预计重打分日期
+# ---------------------------------------------------------------------------
+def test_accuracy_report_gemini_no_rescore(tmp_db, capsys):
+    """qualitative_scores 每只股只有1条记录 → 显示尚无重评数据 + 预计首批重评。"""
+    db = cache_mod.get_db()
+    db.execute(
+        """INSERT INTO qualitative_scores (code, moat, market_pos, sentiment, scored_date)
+           VALUES ('600036', 7, 3, 4, '2026-04-12')"""
+    )
+    db.commit()
+    db.close()
+
+    pipeline.cmd_accuracy_report()
+    out = capsys.readouterr().out
+    assert "尚无重评数据" in out
+    assert "2026-05-12" in out  # 2026-04-12 + 30天
+
+
+# ---------------------------------------------------------------------------
+# 47. accuracy-report：Gemini 漂移检测（2条记录，moat差值>2）→ 标记 low_confidence
+# ---------------------------------------------------------------------------
+def test_accuracy_report_gemini_drift_detected(tmp_db, capsys):
+    """同一股票有首次和重打分两条记录，且 moat 差值 > 2 → ⚠️ low_confidence 标记。"""
+    db = cache_mod.get_db()
+    db.execute(
+        """INSERT INTO qualitative_scores (code, moat, market_pos, sentiment, scored_date)
+           VALUES ('600036', 5, 3, 3, '2026-03-01')"""
+    )
+    db.execute(
+        """INSERT INTO qualitative_scores (code, moat, market_pos, sentiment, scored_date)
+           VALUES ('600036', 9, 3, 3, '2026-04-01')"""
+    )
+    db.commit()
+    db.close()
+
+    pipeline.cmd_accuracy_report()
+    out = capsys.readouterr().out
+    assert "low_confidence" in out
+    assert "600036" in out
+
+
+# ---------------------------------------------------------------------------
+# 48. accuracy-report：Framework B 门槛 1 未满足
+# ---------------------------------------------------------------------------
+def test_accuracy_report_b_progress_not_met(tmp_db, capsys, fake_weights, monkeypatch):
+    """A框 30d 结案 < 100 → 门槛 1 显示 ❌。"""
+    today = date.today()
+    score_date = (today - timedelta(days=30)).isoformat()
+    row_id = _insert_prediction("600036", score_date, 100.0, total_score=50.0)
+    db = cache_mod.get_db()
+    db.execute(
+        "UPDATE predictions SET outcome_30d=5.0, benchmark_30d=2.0 WHERE id=?", (row_id,)
+    )
+    db.commit()
+    db.close()
+
+    pipeline.cmd_accuracy_report()
+    out = capsys.readouterr().out
+    assert "门槛 1" in out
+    assert "❌" in out
+
+
+# ---------------------------------------------------------------------------
+# 49. accuracy-report：Framework B 门槛进度显示存在
+# ---------------------------------------------------------------------------
+def test_accuracy_report_b_progress_section_present(tmp_db, capsys):
+    """accuracy-report 末尾始终包含 Framework B 重启门槛进度节。"""
+    pipeline.cmd_accuracy_report()
+    out = capsys.readouterr().out
+    assert "Framework B 重启门槛进度" in out
+    assert "门槛 1" in out
+    assert "门槛 2" in out

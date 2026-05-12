@@ -41,12 +41,12 @@
         }
       },
       "valuation": {
-        "pe_percentile_10y": {
+        "pb_percentile_10y": {
           "max_score": 15,
           "breakpoints": [[5, 15], [20, 12], [40, 8], [60, 4], [80, 0]],
           "interpolate": true,
           "invert": true,
-          "note": "PE历史10年分位%，越低越好。分位≤5%满分，≥80%得0分"
+          "note": "PB历史10年分位%，越低越好。分位≤5%满分，≥80%得0分。2026-05-12起替代pe_percentile_10y"
         },
         "sentiment_fixed": {
           "max_score": 5,
@@ -94,12 +94,12 @@
         }
       },
       "valuation": {
-        "pe_percentile_10y": {
+        "pb_percentile_10y": {
           "max_score": 5,
           "breakpoints": [[5, 5], [20, 4], [40, 3], [60, 1], [80, 0]],
           "interpolate": true,
           "invert": true,
-          "note": "质量优先：PE 估值权重降低（15→5），质量比价格更重要。"
+          "note": "质量优先：PB 估值权重降低（A框15→B框5），质量比价格更重要。2026-05-12起替代pe_percentile_10y"
         },
         "sentiment_fixed": {
           "max_score": 5,
@@ -110,9 +110,10 @@
     }
   },
   "thresholds": {
-    "buy_strong": 55,
-    "buy_moderate": 45,
-    "buy_light": 35,
-    "phase3_note": "Phase3 Gemini接入后定性分由AI填写，total_score上限提升到约80分。阈值已从65/55/45调整为55/45/35。"
+    "buy_strong": 44,
+    "buy_moderate": 35,
+    "buy_light": 26,
+    "phase3_note": "Phase3 Gemini接入后定性分由AI填写，total_score上限提升到约80分。阈值已从65/55/45调整为55/45/35。",
+    "phase4_calibration_note": "2026-05-12 CEO review 校准：gross_margin 和 pe_percentile_10y 对所有股票均为 NULL，实际可得分上限 55/80。阈值从 55/45/35 调整为 44/35/26（约为可得分上限的 80%/63%/47%）。历史记录（threshold_adjusted 字段）保持不变，跨期比较时需注意此次阈值变更。"
   }
 }

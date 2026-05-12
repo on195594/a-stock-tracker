@@ -42,12 +42,12 @@ DB_PATH = os.path.expanduser('~/a-stock-tracker/tracker.db')
 
 # ② 行业 → TTL 映射（关键词匹配，越靠前优先级越高）
 INDUSTRY_TTL_MAP = [
-    # 72h：季报驱动、基本面变化慢
+    # 168h：季报驱动、基本面变化慢（对齐 weekly cron 7天刷新周期）
     (['银行', '保险', '券商', '国有大行', '股份制银行', '城商行', '农商行',
-      '水电', '公用事业', '电网', '水务', '燃气', '高速'], 72),
-    # 12h：情绪/渠道敏感
-    (['白酒', '消费', '食品', '零售', '饮料', '乳制品'], 12),
-    # 24h：默认（能源/科技/制造等）
+      '水电', '公用事业', '电网', '水务', '燃气', '高速'], 168),
+    # 48h：情绪/渠道敏感，但 daily 最多两天不刷新
+    (['白酒', '消费', '食品', '零售', '饮料', '乳制品'], 48),
+    # 168h：默认，对齐 weekly cron（行业未知时财务数据也是季度更新的）
 ]
 
 
@@ -56,7 +56,7 @@ def get_industry_ttl(industry: str) -> int:
     for keywords, ttl in INDUSTRY_TTL_MAP:
         if any(kw in industry for kw in keywords):
             return ttl
-    return 24
+    return 168
 
 
 def get_db():
@@ -67,7 +67,7 @@ def get_db():
         industry TEXT,
         data JSON,
         updated_at TEXT,
-        ttl_hours INTEGER DEFAULT 24
+        ttl_hours INTEGER DEFAULT 168
     )''')
     conn.execute('''CREATE TABLE IF NOT EXISTS analysis_results (
         code TEXT,
@@ -147,12 +147,28 @@ def get_db():
         PRIMARY KEY (symbol, date)
     )''')
     conn.execute('''CREATE TABLE IF NOT EXISTS qualitative_scores (
-        code        TEXT NOT NULL PRIMARY KEY,
+        code        TEXT NOT NULL,
         moat        INTEGER NOT NULL,
         market_pos  INTEGER NOT NULL,
         sentiment   INTEGER NOT NULL,
-        scored_date TEXT NOT NULL
+        scored_date TEXT NOT NULL,
+        PRIMARY KEY (code, scored_date)
     )''')
+    # 迁移：旧表 PK=(code) 单列 → 新表 PK=(code, scored_date) 复合
+    # 检测：旧表 pk 列数 = 1，新表 = 2；DROP 重建即可（旧数据无漂移比较价值）
+    pk_cols = conn.execute(
+        "SELECT COUNT(*) FROM pragma_table_info('qualitative_scores') WHERE pk > 0"
+    ).fetchone()[0]
+    if pk_cols == 1:
+        conn.execute("DROP TABLE qualitative_scores")
+        conn.execute('''CREATE TABLE qualitative_scores (
+            code        TEXT NOT NULL,
+            moat        INTEGER NOT NULL,
+            market_pos  INTEGER NOT NULL,
+            sentiment   INTEGER NOT NULL,
+            scored_date TEXT NOT NULL,
+            PRIMARY KEY (code, scored_date)
+        )''')
     conn.commit()
     return conn
 

@@ -1,8 +1,8 @@
 """tests/test_sheets_sync.py — sheets_sync 单元测试，全部 mock gspread。"""
 from unittest.mock import MagicMock
 
-import gspread
 import pytest
+gspread = pytest.importorskip("gspread")
 
 
 # ─── Test 1: holdings 行号公式正确性 ─────────────────────────────────────────

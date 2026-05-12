@@ -42,7 +42,7 @@ WEIGHTS = {
                 "market_pos_fixed": {"max_score": 5, "phase1_fixed": 2},
             },
             "valuation": {
-                "pe_percentile_10y": {
+                "pb_percentile_10y": {
                     "max_score": 15,
                     "breakpoints": [[5, 15], [20, 12], [40, 8], [60, 4], [80, 0]],
                     "interpolate": True,
@@ -60,7 +60,7 @@ FULL_DATA = {
     "net_profit_growth": 5.5,
     "debt_ratio": 91.2,
     "gross_margin": 56.8,
-    "pe_percentile_10y": 18.0,
+    "pb_percentile_10y": 18.0,
 }
 
 
@@ -98,7 +98,7 @@ def test_insufficient_data():
         "net_profit_growth": 10.0,
         "debt_ratio": None,
         "gross_margin": None,
-        "pe_percentile_10y": None,
+        "pb_percentile_10y": None,
     }
     with pytest.raises(InsufficientDataError):
         score_stock("600036", "A", sparse, weights=WEIGHTS)
@@ -114,11 +114,11 @@ def test_boundary_data_quality():
         "net_profit_growth": 10.0,
         "debt_ratio": 40.0,
         "gross_margin": None,
-        "pe_percentile_10y": None,
+        "pb_percentile_10y": None,
     }
     result = score_stock("600036", "A", data, weights=WEIGHTS)
     assert result["data_quality"] == pytest.approx(0.6)
-    assert set(result["missing_fields"]) == {"gross_margin", "pe_percentile_10y"}
+    assert set(result["missing_fields"]) == {"gross_margin", "pb_percentile_10y"}
 
 
 # ---------------------------------------------------------------------------
@@ -156,20 +156,40 @@ def test_breakpoint_above_max():
 # 8. invert 字段低值端（低分位 → 高分）
 # ---------------------------------------------------------------------------
 def test_invert_field_low_value():
-    """pe_percentile_10y=5（历史最低分位），breakpoints 第一点 [5,15]，应得满分 15。"""
-    data = {**FULL_DATA, "pe_percentile_10y": 5.0}
+    """pb_percentile_10y=5（历史最低分位），breakpoints 第一点 [5,15]，应得满分 15。"""
+    data = {**FULL_DATA, "pb_percentile_10y": 5.0}
     result = score_stock("600036", "A", data, weights=WEIGHTS)
-    assert result["component_scores"]["pe_percentile_10y"] == pytest.approx(15.0)
+    assert result["component_scores"]["pb_percentile_10y"] == pytest.approx(15.0)
 
 
 # ---------------------------------------------------------------------------
 # 9. invert 字段高值端（高分位 → 低分）
 # ---------------------------------------------------------------------------
 def test_invert_field_high_value():
-    """pe_percentile_10y=80（历史最高分位），breakpoints 最后点 [80,0]，应得 0 分。"""
-    data = {**FULL_DATA, "pe_percentile_10y": 80.0}
+    """pb_percentile_10y=80（历史最高分位），breakpoints 最后点 [80,0]，应得 0 分。"""
+    data = {**FULL_DATA, "pb_percentile_10y": 80.0}
     result = score_stock("600036", "A", data, weights=WEIGHTS)
-    assert result["component_scores"]["pe_percentile_10y"] == pytest.approx(0.0)
+    assert result["component_scores"]["pb_percentile_10y"] == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# 12. pb_percentile_10y 低分位满分（与 invert 规则一致）
+# ---------------------------------------------------------------------------
+def test_pb_percentile_low_gets_max_score():
+    """pb_percentile_10y=5 → breakpoints[0]=[5,15]，应得满分 15。"""
+    data = {**FULL_DATA, "pb_percentile_10y": 5.0}
+    result = score_stock("600036", "A", data, weights=WEIGHTS)
+    assert result["component_scores"]["pb_percentile_10y"] == pytest.approx(15.0)
+
+
+# ---------------------------------------------------------------------------
+# 13. pb_percentile_10y 高分位得 0 分
+# ---------------------------------------------------------------------------
+def test_pb_percentile_high_gets_zero():
+    """pb_percentile_10y=80 → breakpoints[-1]=[80,0]，应得 0 分。"""
+    data = {**FULL_DATA, "pb_percentile_10y": 80.0}
+    result = score_stock("600036", "A", data, weights=WEIGHTS)
+    assert result["component_scores"]["pb_percentile_10y"] == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------

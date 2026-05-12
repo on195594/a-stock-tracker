@@ -21,7 +21,7 @@ from cache import (get_spot_em_snapshot, set_spot_em_snapshot,
 logger = logging.getLogger(__name__)
 
 API_TIMEOUT      = 10   # 每个 AKShare 调用的超时秒数
-PE_TIMEOUT       = 30   # PE 历史分位计算允许更长时间（需拉历史价格）
+PB_TIMEOUT       = 30   # PB 历史分位计算允许更长时间（需拉历史 PB 序列）
 SPOT_EM_TIMEOUT  = 180  # 全量快照允许3分钟
 
 # 字段注册表：key → (显示标签, 数据来源层)
@@ -35,7 +35,7 @@ FIELDS = {
     'net_profit_growth':  ('净利润增速近3年均值(%)',      'akshare'),
     'debt_ratio':         ('资产负债率(%)',               'akshare'),
     'dividend_yield':     ('股息率(%)',                   'akshare'),
-    'pe_percentile_10y':  ('PE历史10年分位(%)',           'computed'),
+    'pb_percentile_10y':  ('PB历史10年分位(%)',           'computed'),
     'float_to_total_ratio': ('流通/总市值比(%)',           'akshare'),
     'gross_margin':       ('毛利率(%)',                   'web'),
     'nim':                ('净息差（银行）',               'web'),
@@ -185,57 +185,27 @@ def compute_dividend_yield(div_df: Any,
     return None, '派息为0'
 
 
-def compute_pe_percentile(code: str, current_pe: float | None,
-                          fin_df: Any, years: int = 10) -> float | None:
+def _fetch_pb_percentile(code: str) -> float | None:
+    """获取当前 PB 在过去 10 年历史分布中的百分位（0.0–100.0）。
+    使用 ak.stock_zh_valuation_baidu，约 731 行月度数据。
+    数据不足 12 个月时返回 None。负 PB（资不抵债）正常参与计算。
     """
-    构造历史 PE 时序，计算当前 PE 处于过去 N 年的百分位。
-
-    修复 look-ahead bias：年报最晚在次年 4 月 30 日披露，因此 EPS 生效日期
-    设为 year+1-05-01，用 merge_asof backward-fill，确保每个交易日只使用
-    已公开的 EPS 数据。
-    """
-    import pandas as pd
-    if not current_pe or current_pe <= 0:
+    import akshare as ak
+    result = timed_call(
+        ak.stock_zh_valuation_baidu,
+        code, timeout=PB_TIMEOUT,
+        indicator='市净率', period='近十年',
+    )
+    if isinstance(result, (str, tuple)) or result is None:
         return None
-
-    end_dt   = date.today().strftime('%Y%m%d')
-    start_dt = (date.today() - timedelta(days=years * 366)).strftime('%Y%m%d')
-
-    price_df = timed_call(_fetch_price_history, code, start_dt, end_dt,
-                           timeout=PE_TIMEOUT)
-    if isinstance(price_df, str) or price_df is None or isinstance(price_df, tuple):
+    df = result
+    assert 'value' in df.columns, f"stock_zh_valuation_baidu 列名变更，期望含 'value'，实际：{df.columns.tolist()}"
+    values = df['value'].dropna()
+    if len(values) < 12:
         return None
-    if price_df.empty:
-        return None
-
-    price_df = price_df[['日期', '收盘']].copy()
-    price_df['date'] = pd.to_datetime(price_df['日期']).astype('datetime64[us]')
-    price_df = price_df.sort_values('date').reset_index(drop=True)
-
-    # 构造 EPS 生效时间表：年报年份 yr 的 EPS 在 yr+1-05-01 才可用
-    eps_records = []
-    for _, row in fin_df.iterrows():
-        yr  = int(row['报告期'])
-        eps = parse_float(row['基本每股收益'])
-        if eps and eps > 0:
-            effective_date = pd.Timestamp(f'{yr + 1}-05-01').as_unit('us')
-            eps_records.append({'date': effective_date, 'eps': eps})
-
-    if not eps_records:
-        return None
-
-    eps_df = pd.DataFrame(eps_records).sort_values('date').reset_index(drop=True)
-    eps_df['date'] = eps_df['date'].astype('datetime64[us]')
-
-    # merge_asof：每个交易日取"已生效的最新 EPS"（backward-fill）
-    merged = pd.merge_asof(price_df, eps_df, on='date', direction='backward')
-    merged['pe'] = merged['收盘'] / merged['eps']
-    valid_pe = merged['pe'].dropna()
-    valid_pe = valid_pe[(valid_pe > 0) & (valid_pe < 300)]
-
-    if len(valid_pe) < 100:   # 数据点不足，分位无意义
-        return None
-    return round(float((valid_pe < current_pe).mean() * 100), 1)
+    current_pb = float(values.iloc[-1])
+    pct = float((values < current_pb).sum() / len(values) * 100)
+    return round(pct, 1)
 
 
 # ─── 命令实现 ────────────────────────────────────────────────────────────────
@@ -377,19 +347,15 @@ def cmd_fetch(args: list[str]) -> None:
             null_reasons['dividend_yield'] = dy_reason
             logger.warning("  ⚠️ 股息率无法计算: %s", dy_reason)
 
-    # ── Step 5：PE 历史10年分位（需拉历史价格，允许30s）──
-    print("  [5/6] 计算 PE 历史10年分位...", flush=True)
-    if fin_df is not None and not isinstance(fin_df, (str, tuple)) and results.get('pe_ttm'):
-        pct = compute_pe_percentile(code, results['pe_ttm'], fin_df, years=10)
-        if pct is not None:
-            results['pe_percentile_10y'] = pct
-            print(f"  ✅ PE历史10年分位={pct}%")
-        else:
-            null_reasons['pe_percentile_10y'] = '历史数据不足（<100个有效数据点）'
-            logger.warning("  ⚠️ 数据点不足，跳过")
+    # ── Step 5：PB 历史10年分位（调 Baidu 估值接口，允许30s）──
+    print("  [5/6] 计算 PB 历史10年分位...", flush=True)
+    pct = _fetch_pb_percentile(code)
+    if pct is not None:
+        results['pb_percentile_10y'] = pct
+        print(f"  ✅ PB历史10年分位={pct}%")
     else:
-        null_reasons['pe_percentile_10y'] = 'PE_TTM或财务数据不可用'
-        logger.warning("  ⚠️ 跳过（依赖数据不可用）")
+        null_reasons['pb_percentile_10y'] = 'PB历史数据不足（<12个月）或接口失败'
+        logger.warning("  ⚠️ PB历史分位获取失败，跳过")
 
     # ── Step 6：写入 cache ──
     print("  [6/6] 写入缓存...", flush=True)

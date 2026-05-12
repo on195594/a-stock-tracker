@@ -97,42 +97,11 @@ def _add_days(d: str, n: int) -> str:
     return (date.fromisoformat(d) + timedelta(days=n)).isoformat()
 
 
-# ──────────────────────────────────────────────
-# init 命令
-# ──────────────────────────────────────────────
-
-def cmd_init() -> None:
-    """对 WATCHLIST 每只股票执行首次 fetch，填充 stock_fundamentals 表。"""
+def _refresh_fundamentals(label: str) -> tuple[int, int]:
+    """对 WATCHLIST 每只股票执行 fetch，刷新 stock_fundamentals 缓存。返回 (success, failed)。"""
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "lib"))
     import fetcher
 
-    logger.info(f"=== pipeline init：共 {len(config.WATCHLIST)} 只股票 ===")
-    for item in config.WATCHLIST:
-        code = item["code"]
-        logger.info(f"  fetch {code} {item['name']} ...")
-        try:
-            fetcher.cmd_fetch([code])
-            logger.info(f"  ✓ {code}")
-        except (Exception, SystemExit) as e:
-            logger.error(f"  ✗ {code} fetch 失败：{e}")
-    logger.info("init 完成")
-
-
-# ──────────────────────────────────────────────
-# weekly 命令（每周刷新基本面缓存，取代 daily 内的批量 fetch）
-# ──────────────────────────────────────────────
-
-def cmd_weekly() -> None:
-    """每周刷新 WATCHLIST 所有股票的基本面缓存（财务/PE/分红），供 daily 评分使用。
-
-    与 init 的区别：init 是首次建立缓存，weekly 是周期性刷新已有缓存。
-    两者实现相同，分开命名以便 cron 管理。
-    """
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "lib"))
-    import fetcher
-
-    today = _today()
-    logger.info(f"=== pipeline weekly：批量刷新基本面数据（{today}）共 {len(config.WATCHLIST)} 只 ===")
     success = failed = 0
     for item in config.WATCHLIST:
         code = item["code"]
@@ -144,7 +113,28 @@ def cmd_weekly() -> None:
         except (Exception, SystemExit) as e:
             logger.error(f"  ✗ {code} fetch 失败：{e}")
             failed += 1
-    logger.info(f"weekly 完成：成功 {success} 只，失败 {failed} 只")
+    logger.info(f"{label} 完成：成功 {success} 只，失败 {failed} 只")
+    return success, failed
+
+
+# ──────────────────────────────────────────────
+# init 命令
+# ──────────────────────────────────────────────
+
+def cmd_init() -> None:
+    """对 WATCHLIST 每只股票执行首次 fetch，填充 stock_fundamentals 表。"""
+    logger.info(f"=== pipeline init：共 {len(config.WATCHLIST)} 只股票 ===")
+    _refresh_fundamentals("init")
+
+
+# ──────────────────────────────────────────────
+# weekly 命令（每周刷新基本面缓存，取代 daily 内的批量 fetch）
+# ──────────────────────────────────────────────
+
+def cmd_weekly() -> None:
+    """每周刷新 WATCHLIST 所有股票的基本面缓存（财务/PE/分红），供 daily 评分使用。"""
+    logger.info(f"=== pipeline weekly：批量刷新基本面数据（{_today()}）共 {len(config.WATCHLIST)} 只 ===")
+    _refresh_fundamentals("weekly")
 
 
 # ──────────────────────────────────────────────
@@ -265,8 +255,7 @@ def cmd_daily() -> None:
         data["market_pos_fixed"] = qual["market_pos"]
         data["sentiment_fixed"] = qual["sentiment"]
 
-        thresholds = weights.get("thresholds", {})
-        threshold_adjusted = 1 if thresholds.get("_adjusted") else 0
+        threshold_adjusted = 0
 
         for framework in sorted(SUPPORTED_FRAMEWORKS):
             try:
@@ -281,7 +270,7 @@ def cmd_daily() -> None:
                 continue
 
             try:
-                db.execute(
+                cursor = db.execute(
                     """INSERT OR IGNORE INTO predictions
                        (code, name, framework, score_date, price_at_score,
                         quant_score, total_score, weights_hash, report_period,
@@ -295,7 +284,8 @@ def cmd_daily() -> None:
                     ),
                 )
                 db.commit()
-                written += 1
+                if cursor.rowcount > 0:
+                    written += 1
                 logger.info(
                     f"  ✓ {code} {name} [{framework}]  总分={result['total_score']}  "
                     f"data_quality={result['data_quality']}"
@@ -333,8 +323,8 @@ def cmd_daily() -> None:
 # ──────────────────────────────────────────────
 
 def _get_index_price(db: sqlite3.Connection, symbol: str, target_date: str) -> float | None:
-    """从 index_prices 表查收盘价，向前找最近 5 个交易日。"""
-    for delta in range(6):
+    """从 index_prices 表查收盘价，向前找最近 10 个自然日（覆盖黄金周 7 天停牌）。"""
+    for delta in range(11):
         d = _add_days(target_date, -delta)
         row = db.execute(
             "SELECT close FROM index_prices WHERE symbol=? AND date=?", (symbol, d)
@@ -413,7 +403,7 @@ def cmd_outcome_update() -> None:
         for row_id, code, score_date, price_at_score in rows:
             target_date = _add_days(score_date, days)
 
-            # 获取股票到期价格（向前找 5 个交易日）
+            # 获取股票到期价格（向前找 10 个自然日，覆盖黄金周 7 天停牌）
             outcome_price = None
             estimate_flag = 0
             exact_price = snapshot_data.get(code) if target_date == today else None
@@ -422,12 +412,12 @@ def cmd_outcome_update() -> None:
                 outcome_price = exact_price
             else:
                 # 尝试历史价格
-                for delta in range(6):
+                for delta in range(11):
                     d = _add_days(target_date, -delta)
                     if d > today:
                         continue
                     try:
-                        hist = ak.stock_zh_a_hist(
+                        hist = _retry(ak.stock_zh_a_hist,
                             symbol=code, period="daily",
                             start_date=d.replace("-", ""),
                             end_date=d.replace("-", ""),
@@ -443,7 +433,7 @@ def cmd_outcome_update() -> None:
                         continue
 
             if outcome_price is None:
-                logger.info(f"  {code} {window} 到期日 {target_date} 无可用价格（5日内），置 NULL")
+                logger.info(f"  {code} {window} 到期日 {target_date} 无可用价格（10日内），置 NULL")
                 continue
 
             outcome_val = (outcome_price / price_at_score - 1) * 100
@@ -517,37 +507,52 @@ def cmd_accuracy_report() -> None:
     )
     lines.append("")
 
+    # per-framework 记录摘要
+    fw_rows = db.execute(
+        """SELECT framework, COUNT(*), COUNT(outcome_30d),
+                  ROUND(COUNT(CASE WHEN alpha_30d > 0 THEN 1 END) * 1.0
+                        / NULLIF(COUNT(alpha_30d), 0), 3)
+           FROM predictions
+           GROUP BY framework ORDER BY framework"""
+    ).fetchall()
+    if fw_rows:
+        lines.append("── 分 Framework 统计 ──")
+        lines.append(f"{'Framework':<12} {'总记录':>6}  {'30d结案':>8}  {'超额命中30d':>12}")
+        for fw, total, closed30, hr30 in fw_rows:
+            lines.append(
+                f"{fw:<12} {total:>6}  {closed30:>8}  {_fmt(hr30):>12}"
+            )
+        lines.append("")
+
     _w = _load_weights().get("thresholds", {})
     _strong = _w.get("buy_strong", 55)
     _moderate = _w.get("buy_moderate", 45)
     _light = _w.get("buy_light", 35)
 
-    rows = db.execute(f"""
-        SELECT
-            CASE
-                WHEN total_score >= {_strong}   THEN 'strong'
-                WHEN total_score >= {_moderate} THEN 'moderate'
-                WHEN total_score >= {_light}    THEN 'light'
-                ELSE 'no-action'
-            END AS signal_tier,
-            COUNT(*) AS predictions,
-            ROUND(AVG(CASE WHEN outcome_30d > 0 THEN 1.0 ELSE 0.0 END), 3) AS hit_abs_30d,
-            ROUND(AVG(CASE WHEN alpha_30d > 0 THEN 1.0 ELSE 0.0 END), 3) AS hit_vs300_30d,
-            ROUND(AVG(CASE WHEN alpha_60d > 0 THEN 1.0 ELSE 0.0 END), 3) AS hit_vs300_60d,
-            ROUND(AVG(CASE WHEN alpha_90d > 0 THEN 1.0 ELSE 0.0 END), 3) AS hit_vs300_90d,
-            ROUND(AVG(alpha_30d), 2) AS avg_alpha_30d,
-            ROUND(AVG(alpha_60d), 2) AS avg_alpha_60d,
-            ROUND(AVG(alpha_90d), 2) AS avg_alpha_90d
+    _tier_query = """
+        SELECT COUNT(*),
+               ROUND(COUNT(CASE WHEN outcome_30d > 0 THEN 1 END) * 1.0 / NULLIF(COUNT(outcome_30d), 0), 3),
+               ROUND(COUNT(CASE WHEN alpha_30d  > 0 THEN 1 END) * 1.0 / NULLIF(COUNT(alpha_30d),  0), 3),
+               ROUND(COUNT(CASE WHEN alpha_60d  > 0 THEN 1 END) * 1.0 / NULLIF(COUNT(alpha_60d),  0), 3),
+               ROUND(COUNT(CASE WHEN alpha_90d  > 0 THEN 1 END) * 1.0 / NULLIF(COUNT(alpha_90d),  0), 3),
+               ROUND(AVG(alpha_30d), 2),
+               ROUND(AVG(alpha_60d), 2),
+               ROUND(AVG(alpha_90d), 2)
         FROM predictions
         WHERE outcome_30d IS NOT NULL
-        GROUP BY signal_tier
-        ORDER BY CASE signal_tier
-            WHEN 'strong'   THEN 1
-            WHEN 'moderate' THEN 2
-            WHEN 'light'    THEN 3
-            ELSE 4
-        END
-    """).fetchall()
+          AND framework = 'A'
+          AND total_score >= ? AND total_score < ?
+    """
+    rows = []
+    for tier, lo, hi in [
+        ("strong",    _strong,   9999),
+        ("moderate",  _moderate, _strong),
+        ("light",     _light,    _moderate),
+        ("no-action", 0,         _light),
+    ]:
+        r = db.execute(_tier_query, (lo, hi)).fetchone()
+        if r and r[0] > 0:
+            rows.append((tier,) + r)
 
     if not rows:
         lines.append("暂无已结案记录（outcome_30d 全部为 NULL）。")
@@ -563,9 +568,95 @@ def cmd_accuracy_report() -> None:
                 f"{_fmt(a30):>7}  {_fmt(a60):>7}  {_fmt(a90):>7}"
             )
 
+    # 五分位排名分析（单调性检验：分数越高超额收益是否越高）
+    q_rows = db.execute(
+        """SELECT quintile,
+                  COUNT(*) as cnt,
+                  ROUND(MIN(total_score), 1) as lo,
+                  ROUND(MAX(total_score), 1) as hi,
+                  ROUND(AVG(alpha_30d), 2) as avg_a30
+           FROM (
+               SELECT total_score, alpha_30d,
+                      NTILE(5) OVER (ORDER BY total_score) as quintile
+               FROM predictions
+               WHERE outcome_30d IS NOT NULL AND framework = 'A'
+           ) GROUP BY quintile ORDER BY quintile DESC"""
+    ).fetchall()
+    if q_rows and len(q_rows) >= 3:
+        lines.append("")
+        lines.append("── 五分位单调性检验（Framework A，分数最高→最低）──")
+        lines.append(f"{'分位':>4}  {'样本':>5}  {'分数范围':>12}  {'α30d均值':>10}")
+        for qnum, cnt, lo, hi, a30 in q_rows:
+            label = {5: "Q5(高)", 4: "Q4", 3: "Q3", 2: "Q2", 1: "Q1(低)"}.get(qnum, f"Q{qnum}")
+            lines.append(f"{label:>6}  {cnt:>5}  [{lo:>5} ~{hi:>5}]  {_fmt(a30):>10}")
+        lines.append("  理想：Q5 alpha > Q4 > Q3 > ... > Q1（单调递减 = 框架有序预测力）")
+
     lines.append("")
     lines.append("解读：hit_vs300 > 55% 才开始有意义；avg_alpha > 2% 且样本≥20 可认为有初步信号")
     lines.append("      不同 weights_hash 的记录代表不同实验，请分开解读")
+
+    # ── Gemini 评分漂移检测 ──
+    lines.append("")
+    lines.append("── Gemini 评分稳定性 ──")
+    drift_rows = db.execute(
+        """SELECT q1.code, q1.moat AS first_moat, q2.moat AS latest_moat,
+                  q1.sentiment AS first_sent, q2.sentiment AS latest_sent,
+                  q1.scored_date AS first_date, q2.scored_date AS latest_date
+           FROM qualitative_scores q1
+           JOIN qualitative_scores q2 ON q1.code = q2.code
+           WHERE q1.scored_date = (SELECT MIN(scored_date) FROM qualitative_scores WHERE code=q1.code)
+             AND q2.scored_date = (SELECT MAX(scored_date) FROM qualitative_scores WHERE code=q1.code)
+             AND q1.scored_date != q2.scored_date"""
+    ).fetchall()
+    stock_count = db.execute(
+        "SELECT COUNT(DISTINCT code) FROM qualitative_scores"
+    ).fetchone()[0]
+    first_date_row = db.execute(
+        "SELECT MIN(scored_date) FROM qualitative_scores"
+    ).fetchone()[0]
+
+    if not drift_rows:
+        if first_date_row:
+            next_reeval = (date.fromisoformat(first_date_row) + timedelta(days=30)).isoformat()
+            lines.append(f"{stock_count} 只股已评，尚无重评数据")
+            lines.append(f"预计首批重评：{next_reeval}（30天缓存到期）")
+        else:
+            lines.append("尚无 Gemini 评分记录")
+    else:
+        lines.append(f"{'股票':<8} {'首次日期':<12} {'最新日期':<12} {'moat变化':>8} {'sent变化':>8} 状态")
+        lines.append("-" * 56)
+        for code, fm, lm, fs, ls, fd, ld in drift_rows:
+            moat_delta = lm - fm
+            sent_delta = ls - fs
+            flag = " ⚠️ low_confidence" if abs(moat_delta) > 2 or abs(sent_delta) > 2 else ""
+            lines.append(
+                f"{code:<8} {fd:<12} {ld:<12} {moat_delta:>+8} {sent_delta:>+8}{flag}"
+            )
+
+    # ── Framework B 重启门槛进度 ──
+    lines.append("")
+    lines.append("── Framework B 重启门槛进度 ──")
+    current_hash = _compute_weights_hash(_load_weights())
+    closed_a = db.execute(
+        "SELECT COUNT(*) FROM predictions WHERE framework='A' AND outcome_30d IS NOT NULL AND weights_hash=?",
+        (current_hash,),
+    ).fetchone()[0]
+    threshold1_met = closed_a >= 100
+    lines.append(f"门槛 1：A框 30d 结案 ≥ 100（当前权重）：当前 {closed_a} / 100  {'✅' if threshold1_met else '❌'}")
+
+    threshold2_met = False
+    if rows:
+        for row in rows:
+            tier, cnt, h30, hb30, hb60, hb90, a30, a60, a90 = row
+            if hb30 is not None and hb30 > 0.55 and cnt >= 20:
+                threshold2_met = True
+                break
+    lines.append(f"门槛 2：任一层级 hit_rate_vs_300 > 55%（≥20条）：{'✅ 已满足' if threshold2_met else '❌ 尚未满足'}")
+
+    if threshold1_met and threshold2_met:
+        lines.append("→ 两个门槛同时满足，可重启 Framework B（需人工决策）")
+    else:
+        lines.append("→ 继续积累数据，不自动重启")
 
     report = "\n".join(lines)
     print(report)

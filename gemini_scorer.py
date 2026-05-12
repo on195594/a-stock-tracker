@@ -1,6 +1,6 @@
 """
 Gemini 定性评分模块。
-对 moat / market_pos / sentiment 三个字段调用 Gemini 2.0 Flash，结果缓存 30 天。
+对 moat / market_pos / sentiment 三个字段调用 Gemini 2.5 Flash，结果缓存 30 天。
 任何字段缺失/越界/超时/非JSON → all-or-nothing fallback 到 phase1_fixed 值。
 """
 import json
@@ -27,10 +27,11 @@ GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model
 
 
 def _check_cache(code: str) -> dict | None:
-    """查询 qualitative_scores 缓存，30天内有效则返回，否则 None。"""
+    """查询 qualitative_scores 缓存，取最新一条，30天内有效则返回，否则 None。"""
     db = get_db()
     row = db.execute(
-        "SELECT moat, market_pos, sentiment, scored_date FROM qualitative_scores WHERE code=?",
+        "SELECT moat, market_pos, sentiment, scored_date FROM qualitative_scores"
+        " WHERE code=? ORDER BY scored_date DESC LIMIT 1",
         (code,),
     ).fetchone()
     db.close()
@@ -45,7 +46,7 @@ def _check_cache(code: str) -> dict | None:
 def _write_cache(code: str, scores: dict) -> None:
     db = get_db()
     db.execute(
-        """INSERT OR REPLACE INTO qualitative_scores
+        """INSERT OR IGNORE INTO qualitative_scores
            (code, moat, market_pos, sentiment, scored_date) VALUES (?,?,?,?,?)""",
         (code, scores["moat"], scores["market_pos"], scores["sentiment"], date.today().isoformat()),
     )

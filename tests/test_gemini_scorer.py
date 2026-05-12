@@ -100,3 +100,91 @@ def test_cache_hit_skips_api():
 
     assert result == cached
     mock_api.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# 6. Gemini 返回 markdown 包装的 JSON（如 ```json{...}```）应被正确剥离解析
+# ---------------------------------------------------------------------------
+def test_markdown_code_block_stripped(monkeypatch):
+    """Gemini 偶尔以 ```json\n{...}\n``` 包装返回值，_call_gemini 应剥离 markdown 后正常解析。"""
+    import gemini_scorer
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+
+    inner = json.dumps({"moat": 8, "market_pos": 4, "sentiment": 4})
+    wrapped = f"```json\n{inner}\n```"
+    fake_body = json.dumps({
+        "candidates": [{"content": {"parts": [{"text": wrapped}]}}]
+    }).encode()
+
+    with patch("urllib.request.urlopen") as mock_urlopen:
+        mock_urlopen.return_value.__enter__ = lambda s: s
+        mock_urlopen.return_value.__exit__ = lambda s, *a: False
+        mock_urlopen.return_value.read.return_value = fake_body
+
+        result = gemini_scorer._call_gemini("600036", "招商银行")
+
+    assert result == {"moat": 8, "market_pos": 4, "sentiment": 4}
+
+
+# ---------------------------------------------------------------------------
+# 7. _check_cache 多行时返回最新记录
+# ---------------------------------------------------------------------------
+def test_check_cache_multiple_rows_returns_latest(tmp_path, monkeypatch):
+    """qualitative_scores 同一 code 有多行时，应返回 scored_date 最新的记录。"""
+    import gemini_scorer
+    from lib import cache as cache_mod
+    from datetime import date, timedelta
+
+    db_path = str(tmp_path / "tracker.db")
+    monkeypatch.setattr(cache_mod, "DB_PATH", db_path)
+
+    db = cache_mod.get_db()
+    old_date = (date.today() - timedelta(days=25)).isoformat()
+    new_date = (date.today() - timedelta(days=1)).isoformat()
+    db.execute(
+        "INSERT INTO qualitative_scores (code, moat, market_pos, sentiment, scored_date)"
+        " VALUES ('600036', 5, 2, 3, ?)", (old_date,)
+    )
+    db.execute(
+        "INSERT INTO qualitative_scores (code, moat, market_pos, sentiment, scored_date)"
+        " VALUES ('600036', 8, 4, 4, ?)", (new_date,)
+    )
+    db.commit()
+    db.close()
+
+    result = gemini_scorer._check_cache("600036")
+    assert result is not None
+    assert result["moat"] == 8  # 最新行（new_date）
+
+
+# ---------------------------------------------------------------------------
+# 8. _write_cache INSERT OR IGNORE：同日重复写入不覆盖原有记录
+# ---------------------------------------------------------------------------
+def test_write_cache_insert_ignore_same_date(tmp_path, monkeypatch):
+    """同 code + scored_date 写入两次，INSERT OR IGNORE 应保留第一次的值。"""
+    import gemini_scorer
+    from lib import cache as cache_mod
+
+    db_path = str(tmp_path / "tracker.db")
+    monkeypatch.setattr(cache_mod, "DB_PATH", db_path)
+    cache_mod.get_db().close()  # 建表
+
+    # 直接操作 DB 写入两条相同 (code, scored_date) 记录，验证第二条被 IGNORE
+    db = cache_mod.get_db()
+    db.execute(
+        "INSERT OR IGNORE INTO qualitative_scores (code, moat, market_pos, sentiment, scored_date)"
+        " VALUES ('600036', 7, 3, 4, '2026-05-12')"
+    )
+    db.execute(
+        "INSERT OR IGNORE INTO qualitative_scores (code, moat, market_pos, sentiment, scored_date)"
+        " VALUES ('600036', 9, 5, 5, '2026-05-12')"  # 同日，应被 IGNORE
+    )
+    db.commit()
+
+    rows = db.execute(
+        "SELECT moat FROM qualitative_scores WHERE code='600036'"
+    ).fetchall()
+    db.close()
+    assert len(rows) == 1
+    assert rows[0][0] == 7  # 保留第一次写入的值

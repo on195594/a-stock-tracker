@@ -80,7 +80,7 @@ a-stock-tracker/
 | `outcome_*d` | `(outcome_price / price_at_score - 1) * 100`，**百分比格式**（如 +5.2，不是绝对价格）|
 | `benchmark_*d` | 沪深300同期涨跌幅%，取法相同 |
 | `alpha_*d` | SQLite GENERATED COLUMN = outcome - benchmark，**不要直接写此列** |
-| `estimate_flag` | 1 = outcome 用的是最近可用价（到期日停牌，5 日内找到替代价）|
+| `estimate_flag` | 1 = outcome 用的是最近可用价（到期日停牌，10 日内找到替代价）|
 
 ### index_prices 表
 
@@ -108,6 +108,7 @@ a-stock-tracker/
 - **新增测试用例**：必须用 `tmp_path` fixture 隔离数据库，不使用真实 `tracker.db`
 - **pipeline 启动时**：必须保留 `assert sqlite3.sqlite_version_info >= (3, 31, 0)` 检查（Generated Column 依赖）
 - **accuracy-report 输出**：记录数 < 100 时头部必须显示样本不足警告；必须包含选择性偏差免责声明
+- **评分上限系统性偏移警告（2026-05-11 确认，2026-05-12 部分修复）**：`gross_margin` 对所有 38 只股票均为 NULL；`pe_percentile_10y` 已于 2026-05-12 被 `pb_percentile_10y`（来源：百度估值接口）替代并可正常填充，weights_hash 同步变更。2026-05-12 前后的历史记录不可跨期直接比较。Phase 4 optimizer 训练时需注意此系统性偏差。
 
 ---
 
@@ -129,12 +130,12 @@ def interpolate(value, breakpoints):
             return y0 + (value - x0) / (x1 - x0) * (y1 - y0)
 ```
 
-`invert: true` 字段（`debt_ratio`, `pe_percentile_10y`）的 breakpoints 已经按
+`invert: true` 字段（`debt_ratio`, `pb_percentile_10y`）的 breakpoints 已经按
 "metric 值从小到大，score 从大到小"排列。**不需要对输入值做任何变换，直接传入插值函数**。
 
 ### data_quality 计算
 
-- 分母 = **非固定字段数**（Phase 1 = 5：roe_3y_avg / net_profit_growth / debt_ratio / gross_margin / pe_percentile_10y）
+- 分母 = **非固定字段数**（Phase 1 = 5：roe_3y_avg / net_profit_growth / debt_ratio / gross_margin / pb_percentile_10y）
 - 固定字段（moat_fixed / market_pos_fixed / sentiment_fixed）不计入分母
 - `data_quality < 0.5` → 抛出 `InsufficientDataError`（pipeline 跳过该股，记日志）
 
@@ -155,8 +156,8 @@ weights_hash = hashlib.md5(
 ```
 到期判断：score_date + 30 自然日 ≤ today → 30d 到期
 价格查找：先查 index_prices / spot_em 精确到期日价格
-停牌处理：向前找最近 5 交易日内可用价 → estimate_flag=1
-超出 5 日：outcome 置 NULL（estimate_flag 保持 0）
+停牌处理：向前找最近 10 自然日内可用价 → estimate_flag=1（覆盖黄金周 7 天停牌）
+超出 10 日：outcome 置 NULL（estimate_flag 保持 0）
 benchmark 失败：outcome 正常写入，benchmark_*d 留 NULL（不中断）
 60d/90d：未到期的跳过，不覆盖
 ```
@@ -175,7 +176,7 @@ benchmark 失败：outcome 正常写入，benchmark_*d 留 NULL（不中断）
 | accuracy-report 的 AVG 跳过 NULL | SQLite `AVG()` 自动忽略 NULL，60d/90d 未到期列不需要额外 WHERE |
 | 重新运行 daily 新增了行 | 检查 UNIQUE(code, framework, score_date) 约束是否生效 |
 | `alpha_30d` 查询为 NULL | 检查 `outcome_30d` 和 `benchmark_30d` 是否都有值（VIRTUAL 列任一为 NULL → 结果 NULL）|
-| Phase 1 strong 信号 < 5 条 | 将 `buy_strong` 临时降至 55，记录 `threshold_adjusted=1`，**不删除旧记录** |
+| Phase 1 strong 信号 < 5 条 | 检查 `accuracy-report` 分层统计；阈值已于 2026-05-12 永久校准为 44/35/26，`threshold_adjusted` 字段保留但恒为 0（`_adjusted` key 已废弃）|
 
 ---
 
@@ -204,14 +205,15 @@ benchmark 失败：outcome 正常写入，benchmark_*d 留 NULL（不中断）
 ### Telegram 推送
 
 - `telegram_push.push_daily_signals()` 在 cmd_daily 末尾调用
-- 评分 ≥ buy_strong（当前 55）触发推送
+- 评分 ≥ buy_strong（当前 44）触发推送
 - 需在 .env 中配置 TELEGRAM_BOT_TOKEN 和 TELEGRAM_CHAT_ID
 
 ## 扩展约定（Phase 4 预留）
 
 - 新增 Framework B/C/D/E/F：在 `weights.json["frameworks"]` 下新增 key，`scorer.py` 中 `SUPPORTED_FRAMEWORKS` 集合加入新 framework
 - 评分变化告警（D5）：当定性分变化 >10 时推送，需 2-3 周历史基线后实现
-- optimizer.py：依赖 predictions 表 ≥ 100 条结案记录，训练集/验证集切分见设计文档 Phase 4
+- optimizer.py：**明确启动门槛（2026-05-12 CEO review）：** ① Framework A 30d 结案 ≥ 100 条 AND ② accuracy-report 任一信号层级 `hit_rate_vs_300 > 55%` 且样本 ≥ 20。预期 2026-06/07。
+- **Framework B 当前暂停（2026-05-12）**：已有 73 条历史记录保留，SUPPORTED_FRAMEWORKS={"A"} 不产生新记录。重启：在 scorer.py 加回 "B"。
 
 ---
 
