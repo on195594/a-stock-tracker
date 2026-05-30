@@ -58,11 +58,16 @@ def small_watchlist(monkeypatch):
 
 @pytest.fixture
 def fake_fetcher(monkeypatch):
-    """把 lib/fetcher 替换成 mock，避免真实 AKShare 调用。"""
+    """把 lib/fetcher 与默认 L3 日线替换成 mock，避免真实 AKShare 调用。"""
     fake = types.ModuleType("fetcher")
     fake.cmd_batch = MagicMock()
     fake.cmd_fetch = MagicMock()
     monkeypatch.setitem(sys.modules, "fetcher", fake)
+    monkeypatch.setattr(
+        pipeline.ak,
+        "stock_zh_a_hist",
+        lambda **kw: pd.DataFrame(columns=["日期", "收盘", "成交量"]),
+    )
     return fake
 
 
@@ -201,6 +206,40 @@ def _index_tx_df(pairs: list[tuple[str, float]]) -> pd.DataFrame:
     return pd.DataFrame([{"date": d, "close": c} for d, c in pairs])
 
 
+def _entry_hist_df(closes: list[float], volumes: list[float] | None = None) -> pd.DataFrame:
+    """构造 AKShare stock_zh_a_hist 的中文列名日线返回。"""
+    if volumes is None:
+        volumes = [100.0] * len(closes)
+    start = date.today() - timedelta(days=len(closes) + 10)
+    return pd.DataFrame(
+        {
+            "日期": [(start + timedelta(days=i)).isoformat() for i in range(len(closes))],
+            "收盘": closes,
+            "成交量": volumes,
+        }
+    )
+
+
+def _entry_hist_side_effect(code_bars: dict[str, pd.DataFrame]):
+    def _side(symbol: str, **kw):
+        return code_bars.get(symbol, pd.DataFrame(columns=["日期", "收盘", "成交量"]))
+
+    return _side
+
+
+def _daily_ready_stock(code: str, name: str, industry: str = "银行") -> None:
+    _insert_fundamentals(code, name, industry, _full_data())
+
+
+def _prediction_l3_rows() -> dict[str, tuple[int | None, str | None]]:
+    db = cache_mod.get_db()
+    rows = db.execute(
+        "SELECT code, entry_signal, entry_signal_version FROM predictions WHERE framework='A'"
+    ).fetchall()
+    db.close()
+    return {code: (entry_signal, entry_signal_version) for code, entry_signal, entry_signal_version in rows}
+
+
 def _insert_prediction(
     code: str, score_date: str, price_at_score: float,
     weights_hash: str = "abc12345", total_score: float = 60.0,
@@ -312,7 +351,104 @@ def test_get_db_adds_l3_entry_signal_columns_to_legacy_predictions(tmp_path, mon
 
 
 # ---------------------------------------------------------------------------
-# 1. daily 快乐路径
+# 1. daily 写入 L3 entry signal
+# ---------------------------------------------------------------------------
+def test_daily_writes_l3_entry_signal_when_history_passes(tmp_db, small_watchlist, fake_fetcher, fake_weights, monkeypatch):
+    """日线历史足够且三项 AND 通过时，daily 写入 entry_signal=1/v1。"""
+    for item in small_watchlist:
+        _daily_ready_stock(item["code"], item["name"])
+
+    monkeypatch.setattr(
+        pipeline.ak,
+        "stock_zh_a_hist_tx",
+        _tencent_hist_side_effect({"600036": 35.20, "000858": 128.40}),
+    )
+    monkeypatch.setattr(
+        pipeline.ak,
+        "stock_zh_a_hist",
+        _entry_hist_side_effect({
+            "600036": _entry_hist_df([100.0] * 119 + [130.0], [100.0] * 115 + [300.0] * 5),
+            "000858": _entry_hist_df([100.0] * 119 + [130.0], [100.0] * 115 + [300.0] * 5),
+        }),
+    )
+
+    pipeline.cmd_daily()
+
+    assert _prediction_l3_rows() == {
+        "600036": (1, "v1"),
+        "000858": (1, "v1"),
+    }
+
+
+def test_daily_writes_l3_null_v1_when_history_is_insufficient(tmp_db, small_watchlist, fake_fetcher, fake_weights, monkeypatch):
+    """日线不足时仍写入基础评分，同时 L3 为 NULL/v1。"""
+    for item in small_watchlist:
+        _daily_ready_stock(item["code"], item["name"])
+
+    monkeypatch.setattr(
+        pipeline.ak,
+        "stock_zh_a_hist_tx",
+        _tencent_hist_side_effect({"600036": 35.20, "000858": 128.40}),
+    )
+    monkeypatch.setattr(
+        pipeline.ak,
+        "stock_zh_a_hist",
+        _entry_hist_side_effect({
+            "600036": _entry_hist_df([100.0] * 119, [100.0] * 119),
+            "000858": _entry_hist_df([100.0] * 119, [100.0] * 119),
+        }),
+    )
+
+    pipeline.cmd_daily()
+
+    assert _prediction_l3_rows() == {
+        "600036": (None, "v1"),
+        "000858": (None, "v1"),
+    }
+
+
+def test_daily_does_not_update_legacy_l3_null_null_rows(tmp_db, small_watchlist, fake_fetcher, fake_weights, monkeypatch):
+    """daily 只写今日新记录，不回写历史 NULL/NULL 记录。"""
+    legacy_date = (date.today() - timedelta(days=1)).isoformat()
+    _insert_prediction("600036", legacy_date, 30.0, total_score=66.0)
+    for item in small_watchlist:
+        _daily_ready_stock(item["code"], item["name"])
+
+    monkeypatch.setattr(
+        pipeline.ak,
+        "stock_zh_a_hist_tx",
+        _tencent_hist_side_effect({"600036": 35.20, "000858": 128.40}),
+    )
+    monkeypatch.setattr(
+        pipeline.ak,
+        "stock_zh_a_hist",
+        _entry_hist_side_effect({
+            "600036": _entry_hist_df([100.0] * 119 + [130.0], [100.0] * 115 + [300.0] * 5),
+            "000858": _entry_hist_df([100.0] * 119 + [130.0], [100.0] * 115 + [300.0] * 5),
+        }),
+    )
+
+    pipeline.cmd_daily()
+
+    db = cache_mod.get_db()
+    legacy_row = db.execute(
+        """SELECT entry_signal, entry_signal_version FROM predictions
+           WHERE code='600036' AND score_date=?""",
+        (legacy_date,),
+    ).fetchone()
+    today_rows = db.execute(
+        """SELECT COUNT(*) FROM predictions
+           WHERE score_date=? AND entry_signal=1 AND entry_signal_version='v1'""",
+        (date.today().isoformat(),),
+    ).fetchone()[0]
+    db.close()
+
+    assert legacy_row == (None, None)
+    assert today_rows == 2
+
+
+# ---------------------------------------------------------------------------
+# 2. daily 快乐路径
 # ---------------------------------------------------------------------------
 def test_daily_happy_path(tmp_db, small_watchlist, fake_fetcher, fake_weights,
                            monkeypatch):

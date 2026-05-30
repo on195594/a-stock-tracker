@@ -39,6 +39,7 @@ import akshare as ak
 
 import config
 from lib.cache import get_db, get_fundamentals
+from lib.entry_signal import ENTRY_SIGNAL_VERSION, EntrySignalResult, compute_entry_signal
 from gemini_scorer import get_qualitative_score
 from scorer import (
     SUPPORTED_FRAMEWORKS,
@@ -105,6 +106,37 @@ def _add_days(d: str, n: int) -> str:
 
 def _compute_daily_pb_percentile(price: float, data: dict) -> float | None:
     return compute_daily_pb_percentile(price, data)
+
+
+def _normalize_entry_signal_bars(hist) -> object:
+    """把 AKShare 日线中文列名归一化为 entry_signal 纯函数输入。"""
+    if hist is None or getattr(hist, "empty", False):
+        return hist
+    rename_map = {"日期": "date", "收盘": "close", "成交量": "volume"}
+    normalized = hist.rename(columns=rename_map)
+    required = {"date", "close", "volume"}
+    if not required.issubset(set(normalized.columns)):
+        return normalized
+    return normalized[["date", "close", "volume"]]
+
+
+def _compute_stock_entry_signal(code: str, today: str) -> EntrySignalResult:
+    """读取 120+ 交易日窗口并计算 L3；失败返回 NULL/v1，不阻断基础评分。"""
+    start_date = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=220)).strftime("%Y%m%d")
+    end_date = today.replace("-", "")
+    try:
+        hist = _retry(
+            ak.stock_zh_a_hist,
+            symbol=code,
+            period="daily",
+            start_date=start_date,
+            end_date=end_date,
+            adjust="",
+        )
+        return compute_entry_signal(_normalize_entry_signal_bars(hist))
+    except Exception as e:
+        logger.warning(f"  {code} L3 买点层计算失败：{e}")
+        return EntrySignalResult(None, ENTRY_SIGNAL_VERSION, "L3_ERROR")
 
 
 def _refresh_fundamentals(label: str) -> tuple[int, int]:
@@ -275,6 +307,7 @@ def cmd_daily() -> None:
         data["sentiment_fixed"] = qual["sentiment"]
 
         threshold_adjusted = 0
+        entry_signal_result = _compute_stock_entry_signal(code, today)
 
         for framework in sorted(SUPPORTED_FRAMEWORKS):
             try:
@@ -293,13 +326,14 @@ def cmd_daily() -> None:
                     """INSERT OR IGNORE INTO predictions
                        (code, name, framework, score_date, price_at_score,
                         quant_score, total_score, weights_hash, report_period,
-                        threshold_adjusted, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        threshold_adjusted, entry_signal, entry_signal_version, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         code, name, framework, today, price_at_score,
                         result["quant_score"], result["total_score"],
                         weights_hash, report_period,
-                        threshold_adjusted, datetime.now().isoformat(),
+                        threshold_adjusted, entry_signal_result.signal,
+                        entry_signal_result.version, datetime.now().isoformat(),
                     ),
                 )
                 db.commit()
