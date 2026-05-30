@@ -1,11 +1,26 @@
 # a-stock-tracker
 
-A 股自动评分管道。每日盘后对 watchlist 股票运行 Framework A 定量评分，
-记录到 SQLite predictions 表，追踪 30/60/90 天收益率，输出 benchmark 相对命中率报告。
+A 股选股与方法论验证项目。当前定位是 **Framework A 定量评分 + 数据治理 + 只读审查辅助**：每日对 watchlist 股票评分，记录到 SQLite，跟踪 30/60/90 天收益率，并用 accuracy-report 评估相对沪深 300 的命中情况。
 
-## 首次运行步骤
+> 当前阶段目标是数据积累与框架验证，不是自动交易、持仓管理或投资建议系统。
 
-### 1. 创建虚拟环境并安装依赖
+## 当前状态
+
+- 主线分支：`master`
+- 当前治理阶段：Phase A-F 已完成
+- 最近验证：`pytest tests/ -q` → `92 passed, 1 skipped`
+- 数据治理计划：`docs/plans/2026-05-30-data-governance-structure-boundary-execution-plan.md`
+- 数据源 registry：`docs/data-source-registry.yaml`
+
+已落地的治理能力：
+
+- 数据源 registry：记录 scorer 输入、报告字段、缓存位置、刷新频率与失败语义。
+- accuracy-report 合约测试：固定 Framework A 结案样本数必须与 DB anchor 一致，避免被全局样本污染。
+- 数据质量模型：`lib/data_quality.py` 表达 required/degradable/derived 字段，以及 ok/missing/fallback/stale 状态。
+- PB 分位 seam：`scorer.compute_daily_pb_percentile()` 负责 PB 分位纯计算，`pipeline.py` 只保留兼容 wrapper。
+- 只读 reviewer schema：`lib/agent_reviewer.py` 限制 reviewer 只能输出说明性 commentary，不能覆盖 score、threshold、trade_action 或 DB write 指令。
+
+## 安装
 
 ```bash
 cd ~/a-stock-tracker
@@ -14,99 +29,42 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. 配置 API Keys（Phase 3）
+## 配置
 
-复制模板并填入真实密钥：
+复制或创建 `.env`，按需填写：
 
 ```bash
-cp .env.example .env   # 如无 .env.example，直接创建 .env
+cp .env.example .env  # 如无 .env.example，则手动创建 .env
 ```
 
-`.env` 内容格式（三项均为可选，未填写时自动降级到固定评分 / 跳过推送）：
+`.env` 示例：
 
-```
+```text
 GEMINI_API_KEY=你的_Gemini_API_Key
 TELEGRAM_BOT_TOKEN=你的_Bot_Token
 TELEGRAM_CHAT_ID=你的_Chat_ID
 ```
 
-**获取方式：**
-- `GEMINI_API_KEY`：前往 [Google AI Studio](https://aistudio.google.com/) 创建 API Key
-- `TELEGRAM_BOT_TOKEN`：在 Telegram 中向 [@BotFather](https://t.me/BotFather) 发送 `/newbot`
-- `TELEGRAM_CHAT_ID`：向 [@userinfobot](https://t.me/userinfobot) 发 `/start` 获取你的 chat_id
+说明：
 
-> **注意：** `.env` 已加入 `.gitignore`，不会被提交。
+- 三项均可选。
+- 未配置 Gemini 时，定性评分走固定 fallback。
+- 未配置 Telegram 时，推送静默跳过，不影响评分流程。
+- `.env` 必须保持在 git 外，不要提交真实密钥。
 
-### 3. 初始化 watchlist 数据
+## 常用命令
 
-为 watchlist 中的每只股票预填财报数据：
+### 初始化基本面缓存
 
 ```bash
 python3 pipeline.py init
 ```
 
-**预计耗时：** 15 分钟左右（取决于网络和 watchlist 规模）
+预计耗时约 15 分钟，取决于网络和 watchlist 规模。
 
-### 4. 配置定时任务
-
-```bash
-bash cron-setup.sh
-```
-
-自动配置以下两条 cron 规则：
-- **daily**：每个工作日 16:30 运行评分
-- **outcome-update**：每个工作日 17:00 更新到期预测结果
-
-### 5. 查看准确率报告（可选）
-
-等待 30 天后有结案记录：
+### 手动运行每日评分
 
 ```bash
-python3 pipeline.py accuracy-report
-```
-
----
-
-## Phase 3 功能说明
-
-### Gemini 定性评分
-
-`daily` 运行时自动调用 Gemini API，对每只股票评估三个维度：
-
-| 字段 | 说明 | 值域 |
-|------|------|------|
-| `moat` | 护城河（品牌/专利/网络效应等竞争壁垒） | 1–10 整数 |
-| `market_pos` | 市场地位（行业排名/份额） | 1–5 整数 |
-| `sentiment` | 近期市场情绪 / 消息面 | 1–5 整数 |
-
-**fallback 机制：** 任何字段校验失败（或 API 超时/未配置），三个字段全部回退到固定值 `{moat: 5, market_pos: 2, sentiment: 3}`，保证评分始终产出。
-
-**30 天缓存：** 评分结果缓存在 `qualitative_scores` 表，同一股票 30 天内不重复调用 API，降低成本。
-
-### Telegram 每日推送
-
-`daily` 完成后，若有股票总分 ≥ 55 分（`buy_strong` 阈值），自动推送信号到配置的 Telegram 聊天。
-
-未配置 `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` 时静默跳过，不影响评分流程。
-
-### 评分阈值（Phase 3）
-
-| 信号级别 | 阈值 | 说明 |
-|----------|------|------|
-| 强买入 `buy_strong` | ≥ 55 | 触发 Telegram 推送 |
-| 中买入 `buy_moderate` | ≥ 45 | 报告中标注 |
-| 轻买入 `buy_light` | ≥ 35 | 报告中标注 |
-
-> Phase 3 接入 Gemini 后定性分由 AI 填写，total_score 上限从约 64 提升到约 80，阈值已从 65/55/45 下调至 55/45/35。
-
----
-
-## 日常使用
-
-### 手动运行评分
-
-```bash
-source .venv/bin/activate
 python3 pipeline.py daily
 ```
 
@@ -122,19 +80,30 @@ python3 pipeline.py outcome-update
 python3 pipeline.py accuracy-report
 ```
 
-### 查看执行日志
+注意：当前测试/报告流程可能会更新 tracked 文件 `accuracy_report.txt`。如果只是验证代码，运行后确认是否需要恢复：
 
 ```bash
-tail -f ~/a-stock-tracker/logs/daily.log
-tail -f ~/a-stock-tracker/logs/outcome.log
+git status --short
+git restore accuracy_report.txt
 ```
 
-## Watchlist 更新
+### 配置 cron
 
-### 添加新股票
+```bash
+bash cron-setup.sh
+```
 
-1. 编辑 `config.py` 中的 `WATCHLIST` 列表，添加新股票代码（如 `'600000'`）
-2. 重新运行初始化命令为新股票预填数据：
+默认规则：
+
+- 工作日 16:30：运行 `daily`
+- 工作日 17:00：运行 `outcome-update`
+
+## Watchlist 维护
+
+### 添加股票
+
+1. 编辑 `config.py` 中的 `WATCHLIST`。
+2. 运行初始化命令补齐新股票缓存：
 
 ```bash
 python3 pipeline.py init
@@ -142,168 +111,151 @@ python3 pipeline.py init
 
 ### 删除股票
 
-需要两步操作，缺一不可：
+如果只是停止后续跟踪，只从 `config.py` 删除即可，历史记录会保留。
 
-1. 编辑 `config.py`，从 `WATCHLIST` 中删除对应条目
-2. 清理数据库中的历史数据：
+如果要删除该股票的本地历史数据：
 
 ```bash
 python3 pipeline.py remove <股票代码>
-# 例如：
+# 示例
 python3 pipeline.py remove 601857
 ```
 
-该命令会同时删除 `stock_fundamentals`（基本面缓存）和 `predictions`（历史预测）中该股票的所有记录，并输出删除行数确认。
+该命令会删除 `stock_fundamentals` 和 `predictions` 中对应股票记录。删除后不可恢复，执行前确认目标代码。
 
-> **注意：** 删除后历史预测不可恢复。如需保留历史数据仅停止跟踪，只改 `config.py` 不执行 remove 即可——后续 daily 不会再对该股评分，历史记录仍保留在准确率报告中。
+## 核心模块
 
-## 重要注意事项
+- `pipeline.py`：主编排器，支持 `init` / `daily` / `outcome-update` / `accuracy-report`。
+- `scorer.py`：Framework A 定量评分和 PB 分位纯计算。
+- `gemini_scorer.py`：Gemini 定性评分；失败或未配置时 fallback。
+- `telegram_push.py`：Telegram 每日信号推送。
+- `lib/cache.py`：SQLite 缓存与 predictions 表管理。
+- `lib/fetcher.py`：AKShare 等数据源读取。
+- `lib/data_quality.py`：数据质量状态模型，纯逻辑，无 DB/API/文件写入。
+- `lib/agent_reviewer.py`：schema-only/fake reviewer，限制 reviewer 只输出只读 commentary。
+- `weights.json`：评分权重与阈值。
+- `config.py`：watchlist、数据库路径、日志目录。
+- `docs/data-source-registry.yaml`：数据源、缓存、刷新与失败语义登记。
 
-### Phase 1 规模限制
+## 数据治理边界
 
-- **Watchlist 规模：** ≤ 20 只股票
-- **预填耗时：** 约 15 分钟（init 命令）
-- **日运行耗时：** 约 5-10 分钟（daily 命令）
-- **确保完成时间：** 17:00 outcome-update 运行前必须完成 daily
+当前项目明确不做：
 
-### 数据统计声明
+- 自动交易、下单、持仓账户管理。
+- 修改真实 DB 历史记录来“修好”报告。
+- cron、Telegram、Gemini、Google Sheets 的隐式启用。
+- 把 reviewer/LLM 输出作为 score、threshold、trade_action 或 DB 写入指令。
+- 在测试中发起真实 AKShare、Gemini、Telegram 或 Google Sheets 调用。
 
-1. **样本不足**：20 只股票 × 3 个月 ≈ 60 条 30d 结案记录，不具备统计显著性
-2. **选择性偏差**：watchlist 是手动维护的已知标的，命中率不代表框架泛化能力
-3. **牛市通胀**：`hit_rate_30d_abs > 50%` 不代表框架有效，看 `hit_rate_30d_vs_300`（相对沪深300）
-4. **Phase 1 目标**：数据积累与方法论验证，不是得出投资结论
+关键规则：
 
-### 禁止事项
-
-- ❌ 直接修改 `alpha_*d` 列（SQLite Generated Column，自动计算）
-- ❌ 手动 UPDATE predictions 表中的 `total_score` 或 `weights_hash`（破坏可比性）
-- ❌ 修改 lib/cache.py 指回 `~/.claude/skills/a-stock-research/cache.db`
-- ❌ 测试中发起真实 AKShare 网络请求（必须 Mock）
-
-## 文件说明
-
-| 文件 | 说明 |
-|------|------|
-| `pipeline.py` | 主编排器（init / daily / outcome-update / accuracy-report） |
-| `scorer.py` | 评分引擎（breakpoints 线性插值） |
-| `gemini_scorer.py` | Gemini 定性评分（30天缓存，all-or-nothing fallback） |
-| `telegram_push.py` | Telegram 每日信号推送（≥55分触发） |
-| `weights.json` | 模型权重 + 评分阈值配置 |
-| `config.py` | watchlist / 数据库路径 / 日志目录 |
-| `.env` | API Keys（不提交 git） |
-| `cron-setup.sh` | 自动配置 crontab |
-| `lib/fetcher.py` | 数据获取（从 a-stock-research skill 复制） |
-| `lib/cache.py` | SQLite 缓存管理（从 a-stock-research skill 复制） |
-| `tracker.db` | SQLite 数据库（自动生成） |
+- `predictions` 中的历史评分、`weights_hash` 和收益结果是审计数据，不应手动改写。
+- `accuracy-report` 解释 Framework A 时，样本 anchor 必须过滤 `framework = 'A'`。
+- `pb_percentile_10y` 的日度可计算性依赖 `price_at_score`、`bps` 和至少 12 项 `pb_hist_monthly`。
+- reviewer 只能补充解释、异议、缺失数据说明和人工问题，不能覆盖 deterministic score/decision。
 
 ## 测试
 
 ```bash
-# 全部测试（36 个用例）
-pytest tests/ -v
+# 全部测试
+pytest tests/ -q
 
-# 单模块测试
-pytest tests/test_scorer.py -v        # 11 个用例：scorer 插值、边界、异常
-pytest tests/test_pipeline.py -v      # 15 个用例：daily / outcome-update / accuracy-report
-pytest tests/test_gemini_scorer.py -v # 5 个用例：正常/超时/非JSON/越界/缓存命中（全部 mock，不调真实 API）
+# 数据源 registry
+pytest tests/test_data_source_registry.py -q
+
+# 数据质量模型
+pytest tests/test_data_quality.py -q
+
+# scorer 与 PB 分位计算
+pytest tests/test_scorer.py -q
+
+# pipeline / accuracy-report 合约
+pytest tests/test_pipeline.py -q
+
+# reviewer schema
+pytest tests/test_agent_reviewer.py -q
+
+# spec / plan 结构检查
+pytest tests/test_spec_structure.py -q
+```
+
+当前全量结果：
+
+```text
+92 passed, 1 skipped
 ```
 
 ## 代码质量
 
 ```bash
 source .venv/bin/activate
-
-# Lint（auto-fix 安全修复）
 ruff check . --exclude .venv
-ruff check . --exclude .venv --fix
-
-# 类型检查
 mypy pipeline.py scorer.py --ignore-missing-imports
 ```
 
-## 设计文档
+提交前建议至少运行：
 
-详细的设计和实现细节见：
-- `docs/design.md` — 整体架构
-- `docs/test-plan.md` — 测试计划
-- `docs/impl-plan.md` — 实施计划
+```bash
+pytest tests/ -q
+git diff --check
+git status --short
+```
+
+如果 `accuracy_report.txt` 只是由测试生成的非目标变更，提交前恢复它。
+
+## 设计与计划文档
+
+- `docs/specs/2026-05-29-agent-engineering-governance-spec.md`：数据治理与结构边界 Spec。
+- `docs/plans/2026-05-30-data-governance-structure-boundary-execution-plan.md`：Phase B-F 执行计划与 ledger。
+- `docs/data-source-registry.yaml`：字段级数据源 registry。
+- `docs/reviews/`：计划或实现审查记录。
+- `docs/design.md`：早期整体架构说明。
+- `docs/test-plan.md`：测试计划。
+- `docs/impl-plan.md`：早期实施计划。
 
 ## 问题排查
 
-### 问题：daily 执行超时
+### daily 执行超时
 
-**原因：** watchlist 规模过大或网络慢
+原因通常是 watchlist 过大或网络慢。先减少 watchlist，或改为手动分批运行。
 
-**解决：** 减少 watchlist 规模到 ≤ 20 只
+### outcome-update 查询失败
 
-### 问题：outcome-update 查询失败
+通常是 16:30-17:00 间网络波动。可手动重跑：
 
-**原因：** 16:30-17:00 间网络波动
+```bash
+python3 pipeline.py outcome-update
+```
 
-**解决：** 手动重新运行 `python3 pipeline.py outcome-update`
+### predictions 表出现重复记录
 
-### 问题：predictions 表有重复记录
+正常情况下不会发生，`code/framework/score_date` 有唯一约束和 `INSERT OR IGNORE` 保护。检查命令：
 
-**原因：** 通常不会发生（`code/framework/score_date` 有 UNIQUE 约束，INSERT OR IGNORE 保护）。
-若出现，多为早期直接操作数据库留下的脏数据。
-
-**检查：** 
 ```bash
 sqlite3 tracker.db "SELECT COUNT(*), code, framework, score_date FROM predictions GROUP BY code, framework, score_date HAVING COUNT(*) > 1;"
 ```
 
-### 问题：准确率报告数据过少
+### accuracy-report 样本不足
 
-**原因：** 样本不足（< 100 条结案记录）
+样本数小于 100 时只能作为观察，不应解释为统计显著结论。重点看相对沪深 300 的表现，而不是绝对收益命中率。
 
-**说明：** Phase 1 预期，等待 3-6 个月数据积累
+### Gemini 全部使用 fallback
 
-### 问题：Gemini 全部使用 fallback 评分
+可能原因：
 
-**可能原因：**
+- 未配置 `GEMINI_API_KEY`
+- 模型不可用或 API 返回 404
+- quota 超限
+- 网络不可达
 
-1. **未配置 API Key**：检查 `.env` 是否存在且 `GEMINI_API_KEY` 有值
-2. **模型已停用（404）**：运行以下命令检查可用模型列表
-   ```bash
-   source .venv/bin/activate
-   python3 -c "
-   import os, json, urllib.request
-   api_key = [l.split('=',1)[1].strip() for l in open('.env') if 'GEMINI_API_KEY' in l][0]
-   url = f'https://generativelanguage.googleapis.com/v1beta/models?key={api_key}'
-   with urllib.request.urlopen(url) as r:
-       models = [m['name'] for m in json.loads(r.read())['models'] if 'generateContent' in m.get('supportedGenerationMethods',[])]
-       print('\n'.join(models[:8]))
-   "
-   ```
-   将 `gemini_scorer.py` 中 `GEMINI_MODEL` 更新为列表中可用的模型名。
-3. **quota 超限（429）**：免费额度耗尽，等次日重置或升级套餐
-4. **网络问题**：检查能否访问 `generativelanguage.googleapis.com`
+先确认 `.env` 存在且 key 有值，再用只读方式检查当前配置；不要把真实 key 打印到日志或提交到 git。
 
-### 问题：Telegram 推送未收到消息
+### Telegram 未收到推送
 
-**排查步骤：**
+排查顺序：
 
-1. 确认 `.env` 中 `TELEGRAM_BOT_TOKEN` 和 `TELEGRAM_CHAT_ID` 已填写
-2. 检查当日是否有 ≥ 55 分的信号（低于阈值时正常跳过，不是错误）：
-   ```bash
-   sqlite3 tracker.db "SELECT code, total_score FROM predictions WHERE score_date = date('now') ORDER BY total_score DESC LIMIT 5;"
-   ```
-3. 测试 Bot 是否正常：
-   ```bash
-   source .venv/bin/activate
-   python3 -c "
-   import os
-   [os.environ.setdefault(*l.strip().split('=',1)) for l in open('.env') if '=' in l]
-   import telegram_push
-   # 临时降低阈值测试推送
-   telegram_push.push_daily_signals('$(date +%Y-%m-%d)', threshold=0)
-   "
-   ```
+1. 确认 `.env` 中 `TELEGRAM_BOT_TOKEN` 和 `TELEGRAM_CHAT_ID` 已填写。
+2. 确认当日是否有达到推送阈值的信号。
+3. 查看 `logs/` 下的运行日志。
 
-### 问题：spot_em 快照失败（price_at_score=NULL）
-
-**原因：** AKShare 东方财富数据源偶发故障
-
-**影响：** 当日评分记录会写入 `price_at_score=NULL`，30 天后无法计算收益率（`outcome_30d` 置 NULL）
-
-**处理：** 外部问题，等待 AKShare 恢复。若当日数据对你很重要，可在接口恢复后手动运行 `daily`（UNIQUE 约束会跳过已有记录，不会重复写入）
+低于阈值时不推送是正常行为。
