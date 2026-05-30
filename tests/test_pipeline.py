@@ -675,6 +675,11 @@ def test_accuracy_report_contract_matches_framework_a_sql_anchor(
     assert "Framework A 2 条已结案记录" in out
 
 
+def test_pipeline_pb_percentile_wrapper_uses_scorer() -> None:
+    hist = [1.0] * 12
+    assert pipeline._compute_daily_pb_percentile(20.0, {"bps": 10.0, "pb_hist_monthly": hist}) == 100.0
+
+
 # ---------------------------------------------------------------------------
 # 14. _ensure_index_prices 首次拉取
 # ---------------------------------------------------------------------------

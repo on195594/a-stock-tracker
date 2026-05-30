@@ -22,6 +22,19 @@ SUPPORTED_FRAMEWORKS = {"A"}
 NON_FIXED_FIELDS = {"roe_3y_avg", "net_profit_growth", "debt_ratio", "gross_margin", "pb_percentile_10y"}
 
 
+def compute_daily_pb_percentile(price: float, data: dict[str, Any]) -> float | None:
+    """用当日价格 + 缓存 BPS/PB 历史序列计算实时 PB 历史分位。纯函数，不写 DB。"""
+    bps = data.get("bps")
+    hist = data.get("pb_hist_monthly")
+    if not bps or bps <= 0 or not hist or len(hist) < 12:
+        return None
+    current_pb = price / bps
+    if current_pb <= 0:
+        return None
+    pct = sum(1 for x in hist if float(x) < current_pb) / len(hist) * 100
+    return round(pct, 1)
+
+
 def _interpolate(value: float, breakpoints: list[list[float]]) -> float:
     """在 breakpoints 上做线性插值。
     低于最小值取最小 score，高于最大值取最大 score，中间线性插值。

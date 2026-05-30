@@ -222,3 +222,15 @@ def test_phase3_fixed_field_override():
     assert cs2["moat_fixed"] == pytest.approx(5.0)
     assert cs2["market_pos_fixed"] == pytest.approx(2.0)
     assert cs2["sentiment_fixed"] == pytest.approx(3.0)
+
+
+def test_compute_daily_pb_percentile_matches_pipeline_contract() -> None:
+    from scorer import compute_daily_pb_percentile
+
+    hist = [0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.2, 2.4, 2.6, 2.8, 3.0]
+    data = {"bps": 10.0, "pb_hist_monthly": hist}
+
+    assert compute_daily_pb_percentile(20.0, data) == 50.0
+    assert compute_daily_pb_percentile(0, data) is None
+    assert compute_daily_pb_percentile(20.0, {"bps": 0, "pb_hist_monthly": hist}) is None
+    assert compute_daily_pb_percentile(20.0, {"bps": 10.0, "pb_hist_monthly": hist[:3]}) is None

@@ -40,7 +40,13 @@ import akshare as ak
 import config
 from lib.cache import get_db, get_fundamentals
 from gemini_scorer import get_qualitative_score
-from scorer import SUPPORTED_FRAMEWORKS, InsufficientDataError, UnsupportedFrameworkError, score_stock
+from scorer import (
+    SUPPORTED_FRAMEWORKS,
+    InsufficientDataError,
+    UnsupportedFrameworkError,
+    compute_daily_pb_percentile,
+    score_stock,
+)
 
 assert sqlite3.sqlite_version_info >= (3, 31, 0), (
     f"需要 SQLite ≥ 3.31.0（当前 {sqlite3.sqlite_version}），请升级系统 SQLite"
@@ -98,16 +104,7 @@ def _add_days(d: str, n: int) -> str:
 
 
 def _compute_daily_pb_percentile(price: float, data: dict) -> float | None:
-    """用当日收盘价 + 缓存的 BPS/历史序列，计算实时 PB 历史分位（纯内存，不写 DB）。"""
-    bps = data.get("bps")
-    hist = data.get("pb_hist_monthly")
-    if not bps or bps <= 0 or not hist or len(hist) < 12:
-        return None
-    current_pb = price / bps
-    if current_pb <= 0:
-        return None
-    pct = sum(1 for x in hist if float(x) < current_pb) / len(hist) * 100
-    return round(pct, 1)
+    return compute_daily_pb_percentile(price, data)
 
 
 def _refresh_fundamentals(label: str) -> tuple[int, int]:
