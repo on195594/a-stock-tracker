@@ -87,10 +87,10 @@
 **设计原则：**
 - L3 买点信号是**过滤层**，不修改 L1/L2 的 total_score，不能反向影响公司质量评分
 - L3 使用趋势/动量类信号（均线、成交量、行业指数）作为**入场确认**，这是允许的；但这些信号只在 L3 层生效，不得渗入 L1/L2 评分逻辑（见第四节边界说明）
-- 格式：`entry_signal: int`（0/1），只有评分 ≥ 阈值 AND `entry_signal=1` 时才触发推送
+- 格式：`entry_signal: int`（0/1/NULL），只有评分 ≥ `buy_strong` AND `entry_signal=1` 时才触发推送
 - 信号生效不改变 `weights_hash`，不影响 total_score 历史数据可比性
 - **版本化约束**：L3 规则变更时须同步更新 `entry_signal_version`（字符串，格式 `v{N}`，存入 predictions 表），使回测可区分不同版本规则下的信号记录
-- **空值语义**：旧记录 `entry_signal=NULL` 表示"规则尚未实装"，与 `entry_signal=0`（实装后主动不通过）含义不同，回测时必须过滤 NULL 行
+- **空值语义**：旧记录为 `entry_signal=NULL AND entry_signal_version IS NULL`；L3 v1 已运行但不可计算为 `entry_signal=NULL AND entry_signal_version='v1'`；二者必须分开统计
 - **报告约束**：`accuracy-report` 必须包含 L3 买点层 section，且将 `NULL`、`0`、`1` 分开统计；样本不足时不得输出确定性结论
 
 **候选信号（按实现难度排序）：**
@@ -104,11 +104,11 @@
 
 **实施方案：**
 1. `pipeline.py` 新增 `_compute_entry_signal(code, data)` 函数（纯计算，不写 DB）
-2. `telegram_push.py` 新增 L3 过滤逻辑：推送条件从 `score >= 55` 改为 `score >= 55 AND entry_signal=1`
+2. `telegram_push.py` 新增 L3 过滤逻辑：推送条件从 `score >= buy_strong` 改为 `score >= buy_strong AND entry_signal=1`
 3. `predictions` 表新增 `entry_signal INT` 列（NULL/0/1）和 `entry_signal_version TEXT` 列
 4. `get_db()` 建表 DDL 同步更新，INSERT 语句包含新列
 
-**成功标准：** L3 过滤后，strong 信号从当前约 6/35 = 17% 降至 3-5%，精度提升
+**预期观测范围：** L3 过滤后，strong 信号从当前约 6/35 = 17% 降至 3-5%。这是产品/策略观察目标，不是 CI 通过条件；工程验收以字段语义、推送过滤和 accuracy-report 统计正确为准。
 
 **项目文档：**
 - Spec：`docs/specs/2026-05-30-phase5-l3-entry-signal-spec.md`

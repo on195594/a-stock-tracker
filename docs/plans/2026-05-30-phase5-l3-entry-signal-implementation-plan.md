@@ -51,7 +51,7 @@
 
 1. RED：新增测试，创建新 DB 后检查 `PRAGMA table_info(predictions)` 包含两个字段。
 2. RED：构造旧 schema DB，调用 `get_db()` 后检查自动补列。
-3. GREEN：在建表 DDL 中加入字段，并补充旧库迁移逻辑。
+3. GREEN：在建表 DDL 中加入字段，并补充旧库迁移逻辑；对 `predictions` 只允许 `ALTER TABLE ADD COLUMN`，禁止 `DROP TABLE` / 重建表。
 4. REFACTOR：抽出 schema ensure helper（如已有迁移模式则沿用）。
 
 ### 验证命令
@@ -95,6 +95,9 @@ class EntrySignalResult:
     version: str | None
     reason: str
 
+# reason 使用固定常量，便于报告聚合：
+# PASS / BELOW_MA60 / BELOW_MA120 / LOW_VOLUME / INSUFFICIENT_DATA / MISSING_COLUMNS
+
 
 def compute_entry_signal(daily_bars) -> EntrySignalResult:
     ...
@@ -102,14 +105,17 @@ def compute_entry_signal(daily_bars) -> EntrySignalResult:
 
 ### 规则
 
+- 输入 schema 固定为归一化后的 `date/close/volume`，不在纯函数内处理 AKShare 中文列名。
 - `close > MA60`
 - `close > MA120`
 - `volume_5d_avg > volume_20d_avg`
-- 不足 120 个交易日或缺列：`signal=None`, `version=None`
+- 三项采用 AND 语义：三项必须全部满足才 `signal=1, version="v1"`。
+- 任一条件不满足：`signal=0, version="v1"`。
+- 不足 120 个交易日或缺列：`signal=None, version="v1"`，不得写 `version=None`。
 
 ### TDD 步骤
 
-1. RED：通过、跌破均线、量能不足、窗口不足、缺列五类测试。
+1. RED：通过、跌破 MA60、只过 MA60 未过 MA120、量能不足、窗口不足、缺列六类测试。
 2. GREEN：实现最小 pandas/stdlib 计算逻辑。
 3. REFACTOR：让返回 reason 稳定，便于报告解释。
 
@@ -141,15 +147,16 @@ git restore lib/entry_signal.py tests/test_l3_entry_signal.py
 
 ### 设计
 
-- 数据读取：复用/扩展现有 Tencent 日线路径，允许增加历史窗口读取。
+- 数据读取：使用 `ak.stock_zh_a_hist(symbol=code, period="daily", start_date=..., end_date=..., adjust="")` 增加 120+ 交易日日线窗口读取。
+- 归一化：pipeline 边界层把 AKShare `日期/收盘/成交量` 归一化为 P2 纯函数需要的 `date/close/volume`。
 - 计算：调用 P2 的纯函数。
 - 写入：INSERT 包含 `entry_signal`、`entry_signal_version`。
-- 失败：L3 不可计算时写 `NULL/NULL`，不得阻断基础评分。
+- 失败：L3 不可计算时写 `entry_signal=NULL, entry_signal_version="v1"`，不得阻断基础评分。
 
 ### TDD 步骤
 
 1. RED：mock 日线历史足够且通过 L3，daily 后 DB 行 `entry_signal=1`。
-2. RED：mock 日线不足，daily 后 DB 行 `entry_signal IS NULL`。
+2. RED：mock 日线不足，daily 后 DB 行 `entry_signal IS NULL AND entry_signal_version='v1'`。
 3. RED：确认旧历史行不会被 UPDATE。
 4. GREEN：接入读取、计算、INSERT。
 
@@ -227,17 +234,19 @@ L3 买点层
 最小统计：
 
 - v1 记录数。
-- `entry_signal=1/0/NULL` 数量。
+- `entry_signal=1/0/NULL` 数量，并区分 `NULL/NULL` 与 `NULL/v1`。
 - strong 候选中 L3 通过/拒绝数量。
 - L3 30d 已结案样本不足提示。
+- L3 30d 命中率：分母固定为 `framework='A' AND entry_signal=1 AND entry_signal_version='v1' AND outcome_30d IS NOT NULL`；命中固定为 `alpha_30d > 0`。
 
 ### TDD 步骤
 
 1. RED：空表也显示 L3 section。
-2. RED：NULL 与 0 分开统计。
+2. RED：`NULL/NULL`、`NULL/v1` 与 `0/v1` 分开统计。
 3. RED：strong 候选中通过/拒绝数量正确。
-4. RED：L3 30d 样本 `<30` 时显示样本不足。
-5. GREEN：新增 SQL helper 与报告渲染。
+4. RED：L3 30d 命中率使用 `alpha_30d > 0`，且只统计 Framework A 的 `entry_signal=1/v1` 已结案样本。
+5. RED：L3 30d 样本 `<30` 时显示样本不足。
+6. GREEN：新增 SQL helper 与报告渲染。
 
 ### 验证命令
 

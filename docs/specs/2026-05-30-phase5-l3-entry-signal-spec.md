@@ -97,19 +97,23 @@ Telegram 推送从“只看分数阈值”升级为“分数阈值 + L3 入场�
 新增字段：
 
 - `entry_signal INTEGER NULL`
-  - `NULL`：规则尚未实装、未计算或历史记录。
+  - `NULL`：当前版本已运行但不可计算，或历史记录尚未实装 L3。
   - `0`：规则已实装且主动拒绝。
   - `1`：规则已实装且通过。
 - `entry_signal_version TEXT NULL`
-  - L3 v1 固定为 `v1`。
+  - 历史 pre-L3 记录保持 `NULL`。
+  - L3 v1 运行过的记录固定写入 `v1`，即使 `entry_signal=NULL`（例如窗口不足或缺列）。
   - 规则变更必须升级版本号，如 `v2`。
 
 ### R2. 历史语义不可混淆
 
-`NULL` 不得被当作 `0`。报告和测试必须证明：
+`NULL` 不得被当作 `0`。`entry_signal_version` 用于区分两类 `NULL`：
 
-- 历史 `NULL` 行不参与 L3 v1 命中率分母。
-- `entry_signal=0` 表示有规则判断后的拒绝。
+- `entry_signal IS NULL AND entry_signal_version IS NULL`：pre-L3 历史记录，规则尚未实装。
+- `entry_signal IS NULL AND entry_signal_version='v1'`：L3 v1 已运行但不可计算。
+- `entry_signal=0 AND entry_signal_version='v1'`：L3 v1 已判断且主动拒绝。
+
+报告和测试必须证明历史 `NULL/NULL` 行不参与 L3 v1 命中率分母，且不可计算的 `NULL/v1` 行会计入 v1 覆盖/不可计算统计。
 
 ### R3. 迁移兼容
 
@@ -118,6 +122,7 @@ Telegram 推送从“只看分数阈值”升级为“分数阈值 + L3 入场�
 - 新库建表时包含新字段。
 - 旧库启动时能自动补列或明确失败并给出修复提示。
 - 迁移不得改写历史评分字段。
+- 对 `predictions` 只能使用 `ALTER TABLE ADD COLUMN` 类 additive migration；禁止 `DROP TABLE` / `CREATE TABLE AS` / 重建表迁移。
 
 ---
 
@@ -130,26 +135,32 @@ L3 v1 允许增加日线历史窗口读取，最小需要：
 - 最近至少 120 个交易日收盘价。
 - 最近至少 20 个交易日成交量。
 
-数据源优先复用现有 AKShare/Tencent 日线调用路径，并在测试中全部 mock。
+数据源固定为 `ak.stock_zh_a_hist(symbol=code, period="daily", start_date=..., end_date=..., adjust="")`，由 pipeline 边界层把 AKShare 中文列名归一化为纯计算 seam 所需 schema：
+
+- `date`：交易日。
+- `close`：收盘价，对应 AKShare `收盘`。
+- `volume`：成交量，对应 AKShare `成交量`。
+
+纯计算函数只接受归一化后的 `date/close/volume`，不得直接依赖 AKShare 原始中文列名。测试中必须 mock 该输入，不发真实网络请求。
 
 ### R5. 初版规则
 
-`entry_signal=1` 的初版候选规则：
+`entry_signal=1` 的初版规则采用严格 AND 语义，三项必须全部满足：
 
 1. 最新收盘价 `close > MA60`。
 2. 最新收盘价 `close > MA120`。
 3. `volume_5d_avg > volume_20d_avg`。
 
-若价格窗口不足或数据缺列：
+任一条件不满足时输出 `entry_signal=0, entry_signal_version='v1'`。若价格窗口不足或数据缺列：
 
-- `entry_signal=NULL` 或明确的不可计算状态，不能默默写 `0`。
+- 输出 `entry_signal=NULL, entry_signal_version='v1'`，不能默默写 `0`，也不能写 `NULL/NULL`。
 - 日志/报告中应能看出不可计算数量。
 
 ### R6. 纯计算 seam
 
 L3 计算应先落为纯函数或清晰 seam，便于 TDD：
 
-- 输入：日线记录或 DataFrame。
+- 输入：已归一化为 `date/close/volume` 的日线记录或 DataFrame。
 - 输出：`entry_signal`、`entry_signal_version`、拒绝/不可计算原因。
 - 纯计算函数不得写 DB、不得发网络请求。
 
@@ -201,8 +212,17 @@ L3 买点层
 - `entry_signal IS NULL` 数量。
 - strong 候选中 L3 通过数量。
 - strong 候选中 L3 拒绝数量。
+- L3 v1 不可计算数量（`entry_signal IS NULL AND entry_signal_version='v1'`）。
 
-### R12. 样本不足提示
+### R12. L3 30d 命中率定义
+
+L3 30d 命中率必须沿用 Framework A 既有口径：
+
+- 分母：`framework='A' AND entry_signal=1 AND entry_signal_version='v1' AND outcome_30d IS NOT NULL`。
+- 命中：`alpha_30d > 0`，即跑赢沪深 300。
+- `entry_signal IS NULL` 和 `entry_signal=0` 不进入 L3 通过子集命中率分母，但可单独展示拒绝/不可计算样本的后验观察。
+
+### R13. 样本不足提示
 
 L3 30d 已结案样本 `< 30` 时，必须提示样本不足，不得输出确定性结论。
 
@@ -222,10 +242,11 @@ L3 30d 已结案样本 `< 30` 时，必须提示样本不足，不得输出确�
 至少覆盖：
 
 - 价格站上 MA60/MA120 且量能放大 → `entry_signal=1`。
-- 跌破 MA60 或 MA120 → `entry_signal=0`。
-- 量能未放大 → `entry_signal=0`。
-- 历史窗口不足 → `entry_signal=NULL` 或不可计算状态。
-- 缺少必要列 → `entry_signal=NULL` 或不可计算状态。
+- 跌破 MA60 或 MA120 → `entry_signal=0, entry_signal_version='v1'`。
+- 只站上 MA60 但未站上 MA120 → `entry_signal=0, entry_signal_version='v1'`，证明 AND 语义。
+- 量能未放大 → `entry_signal=0, entry_signal_version='v1'`。
+- 历史窗口不足 → `entry_signal=NULL, entry_signal_version='v1'`。
+- 缺少必要列 → `entry_signal=NULL, entry_signal_version='v1'`。
 
 ### AC3. daily 写入测试
 
@@ -244,7 +265,8 @@ L3 30d 已结案样本 `< 30` 时，必须提示样本不足，不得输出确�
 测试证明：
 
 - 报告包含 `L3 买点层` section。
-- NULL 与 0 分开统计。
+- `NULL/NULL`、`NULL/v1`、`0/v1`、`1/v1` 分开统计。
+- L3 30d 命中率使用 `framework='A'`、`entry_signal=1`、`entry_signal_version='v1'`、`outcome_30d IS NOT NULL` 作为分母，使用 `alpha_30d > 0` 作为命中。
 - 样本不足时有提示。
 - L3 统计不污染 Framework A 原有 DB anchor。
 
@@ -267,7 +289,7 @@ git status --short
 1. 需要改写历史 `predictions`。
 2. 需要修改 `weights.json` frameworks 子树。
 3. 测试需要真实网络请求才能通过。
-4. L3 统计会把 `NULL` 当作 `0`。
+4. L3 统计会把 `NULL` 当作 `0`，或无法区分 `NULL/NULL` 与 `NULL/v1`。
 5. Telegram 推送变更无法用 mock 测试证明。
 6. 日线历史窗口读取显著改变 daily 的失败语义，但没有 fallback/日志策略。
 
