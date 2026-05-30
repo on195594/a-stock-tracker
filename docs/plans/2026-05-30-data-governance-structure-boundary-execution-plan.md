@@ -111,11 +111,11 @@
 ## 5. Phase Ledger
 
 - Phase A — 数据源治理 Spec 落地：`done`
-- Phase B — 数据源 registry 与数据质量矩阵：`not_started`
-- Phase C — 报告/DB 一致性测试加固：`not_started`
-- Phase D — 数据质量结果模型：`not_started`
-- Phase E — 代码 seam 小步拆分：`not_started`
-- Phase F — Agent reviewer schema-only：`not_started`
+- Phase B — 数据源 registry 与数据质量矩阵：`done`
+- Phase C — 报告/DB 一致性测试加固：`done`
+- Phase D — 数据质量结果模型：`done`
+- Phase E — 代码 seam 小步拆分：`done`
+- Phase F — Agent reviewer schema-only：`done`
 
 进入任意 Phase 前，先确认前序 Phase 状态为 `done`。
 
