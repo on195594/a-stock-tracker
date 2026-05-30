@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "updated_at": "2026-04-15",
+  "updated_at": "2026-05-21",
   "frameworks": {
     "A": {
       "fundamental": {
@@ -43,10 +43,10 @@
       "valuation": {
         "pb_percentile_10y": {
           "max_score": 15,
-          "breakpoints": [[5, 15], [20, 12], [40, 8], [60, 4], [80, 0]],
+          "breakpoints": [[0, 15], [5, 13], [20, 11], [40, 7], [60, 3], [80, 0]],
           "interpolate": true,
           "invert": true,
-          "note": "PB历史10年分位%，越低越好。分位≤5%满分，≥80%得0分。2026-05-12起替代pe_percentile_10y"
+          "note": "PB历史10年分位%，越低越好。0%=15满分，5%=13，≥80%得0分。2026-05-15起日度计算，2026-05-21增加0-5%梯度"
         },
         "sentiment_fixed": {
           "max_score": 5,

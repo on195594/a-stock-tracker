@@ -34,10 +34,12 @@ FIELDS = {
     'roe_3y_avg':         ('ROE近3年均值(%)',            'akshare'),
     'net_profit_growth':  ('净利润增速近3年均值(%)',      'akshare'),
     'debt_ratio':         ('资产负债率(%)',               'akshare'),
+    'bps':                ('每股净资产(元)',               'akshare'),
     'dividend_yield':     ('股息率(%)',                   'akshare'),
     'pb_percentile_10y':  ('PB历史10年分位(%)',           'computed'),
+    'pb_hist_monthly':    ('PB月度历史序列(内部)',         'computed'),
     'float_to_total_ratio': ('流通/总市值比(%)',           'akshare'),
-    'gross_margin':       ('毛利率(%)',                   'web'),
+    'gross_margin':       ('毛利率(%)',                   'computed'),
     'nim':                ('净息差（银行）',               'web'),
     'npl_ratio':          ('不良贷款率（银行）',           'web'),
     'provision_coverage': ('拨备覆盖率（银行）',           'web'),
@@ -185,10 +187,11 @@ def compute_dividend_yield(div_df: Any,
     return None, '派息为0'
 
 
-def _fetch_pb_percentile(code: str) -> float | None:
-    """获取当前 PB 在过去 10 年历史分布中的百分位（0.0–100.0）。
-    使用 ak.stock_zh_valuation_baidu，约 731 行月度数据。
-    数据不足 12 个月时返回 None。负 PB（资不抵债）正常参与计算。
+def _fetch_pb_hist_and_percentile(code: str) -> tuple[float | None, list[float] | None]:
+    """调用 Baidu 估值接口，同时返回 (当前分位%, 月度历史序列)。
+
+    分位基于最新月度 PB（非实时价），序列供 cmd_daily 计算实时分位用。
+    序列约 731 个 float，序列化后约 6-8KB/股。
     """
     import akshare as ak
     result = timed_call(
@@ -197,15 +200,59 @@ def _fetch_pb_percentile(code: str) -> float | None:
         indicator='市净率', period='近十年',
     )
     if isinstance(result, (str, tuple)) or result is None:
-        return None
+        return None, None
     df = result
-    assert 'value' in df.columns, f"stock_zh_valuation_baidu 列名变更，期望含 'value'，实际：{df.columns.tolist()}"
+    assert 'value' in df.columns, (
+        f"stock_zh_valuation_baidu 列名变更，期望含 'value'，实际：{df.columns.tolist()}"
+    )
     values = df['value'].dropna()
     if len(values) < 12:
+        return None, None
+    series = [round(float(v), 4) for v in values]
+    current_pb = series[-1]
+    pct = round(float((values < current_pb).sum() / len(values) * 100), 1)
+    return pct, series
+
+
+_FINANCIAL_INDUSTRY_SKIP = frozenset({'银行', '保险', '证券', '信托', '期货',
+                                       '多元金融', '非银金融', '券商'})
+
+
+def _compute_gross_margin(code: str, industry: str) -> float | None:
+    """从新浪利润表计算近3年年报平均毛利率（金融行业返回 None）。
+
+    金融行业的营业收入≠传统产品收入，毛利率无意义。
+    建筑/钢铁/资源等非金融行业均正常计算（低毛利是行业特征，不跳过）。
+    """
+    if any(kw in industry for kw in _FINANCIAL_INDUSTRY_SKIP):
         return None
-    current_pb = float(values.iloc[-1])
-    pct = float((values < current_pb).sum() / len(values) * 100)
-    return round(pct, 1)
+    import pandas as pd
+    import akshare as ak
+    prefix = 'sh' if code.startswith('6') else 'sz'
+    result = timed_call(
+        ak.stock_financial_report_sina,
+        stock=f'{prefix}{code}', symbol='利润表',
+        timeout=API_TIMEOUT,
+    )
+    if isinstance(result, (str, tuple)) or result is None:
+        return None
+    df = result
+    required_cols = {'报告日', '营业收入', '营业成本'}
+    if not required_cols.issubset(df.columns):
+        return None
+    annual = df[df['报告日'].astype(str).str.endswith('1231')].sort_values('报告日', ascending=False).head(3)
+    rev = pd.to_numeric(annual['营业收入'], errors='coerce')
+    cos = pd.to_numeric(annual['营业成本'], errors='coerce')
+    valid_mask = rev > 0
+    rev_v, cos_v = rev[valid_mask], cos[valid_mask]
+    if len(rev_v) < 2:
+        return None
+    gm_series = (rev_v - cos_v) / rev_v * 100
+    result_val = round(float(gm_series.mean()), 2)
+    if not (-20 <= result_val <= 95):
+        logger.warning(f"  ⚠️ {code} 毛利率 {result_val}% 超出合理范围，置 None")
+        return None
+    return result_val
 
 
 # ─── 命令实现 ────────────────────────────────────────────────────────────────
@@ -222,7 +269,7 @@ def cmd_fetch(args: list[str]) -> None:
 
     # ── Step 1：基本信息（名称 / 行业 / 当前价格）──
     # 东方财富接口可能不稳定；失败时用代码作为名称、行业置"未知"，继续抓财务数据
-    print("  [1/6] 基本信息（名称/行业/价格）...", flush=True)
+    print("  [1/7] 基本信息（名称/行业/价格）...", flush=True)
     info = timed_call(_fetch_info, code, timeout=15)
     if isinstance(info, str) or isinstance(info, tuple) or not info:
         err = info[1] if isinstance(info, tuple) else (info or '接口超时/无数据')
@@ -237,7 +284,7 @@ def cmd_fetch(args: list[str]) -> None:
         print(f"  ✅ {name}({code}) | 行业: {industry} | 当前价: {current_price}")
 
     # ── Step 2：主要财务指标（ROE / 增速 / 负债率 / EPS / BPS）──
-    print("  [2/6] 财务指标（同花顺年度）...", flush=True)
+    print("  [2/7] 财务指标（同花顺年度）...", flush=True)
     fin_df = timed_call_with_retry(_fetch_financials, code, timeout=API_TIMEOUT)
     if isinstance(fin_df, str):   # 'TIMEOUT'
         reason = '财务API超时'
@@ -257,6 +304,10 @@ def cmd_fetch(args: list[str]) -> None:
         results['debt_ratio']        = parse_float(fin_df['资产负债率'].iloc[-1])
         eps = parse_float(fin_df['基本每股收益'].iloc[-1])
         bps = parse_float(fin_df['每股净资产'].iloc[-1])
+        if bps is not None:
+            results['bps'] = bps
+        else:
+            null_reasons['bps'] = '每股净资产数据缺失'
         # 记录最新财报所属期（供 predictions.report_period 使用）
         try:
             report_period_raw = fin_df.sort_values('报告期', ascending=False).iloc[0]['报告期']
@@ -272,7 +323,7 @@ def cmd_fetch(args: list[str]) -> None:
               f"负债率={results.get('debt_ratio')}% | EPS={eps} | BPS={bps}")
 
     # ── Step 3：PE / PB / 最新价（stock_zh_a_spot_em 当日快照）──
-    print("  [3/6] PE_TTM / PB / 最新价（spot_em 快照）...", flush=True)
+    print("  [3/7] PE_TTM / PB / 最新价（spot_em 快照）...", flush=True)
     today    = datetime.now().strftime("%Y-%m-%d")
     snapshot = get_spot_em_snapshot(today)
     if snapshot is None:
@@ -330,7 +381,7 @@ def cmd_fetch(args: list[str]) -> None:
                 null_reasons[k] = f'快照中未找到 {code}'
 
     # ── Step 4：股息率（分红历史 ÷ 当前价）──
-    print("  [4/6] 计算股息率...", flush=True)
+    print("  [4/7] 计算股息率...", flush=True)
     div_df = timed_call(_fetch_dividends, code, timeout=API_TIMEOUT)
     if isinstance(div_df, str):   # 'TIMEOUT'
         null_reasons['dividend_yield'] = '分红API超时'
@@ -347,20 +398,32 @@ def cmd_fetch(args: list[str]) -> None:
             null_reasons['dividend_yield'] = dy_reason
             logger.warning("  ⚠️ 股息率无法计算: %s", dy_reason)
 
-    # ── Step 5：PB 历史10年分位（调 Baidu 估值接口，允许30s）──
-    print("  [5/6] 计算 PB 历史10年分位...", flush=True)
-    pct = _fetch_pb_percentile(code)
+    # ── Step 4.5：毛利率（新浪利润表，近3年年报均值）──
+    print("  [4.5/7] 计算毛利率（新浪利润表）...", flush=True)
+    gm = _compute_gross_margin(code, industry)
+    if gm is not None:
+        results['gross_margin'] = gm
+        print(f"  ✅ 毛利率={gm}%")
+    else:
+        null_reasons['gross_margin'] = '金融行业跳过或接口失败或数据不足'
+        logger.warning("  ⚠️ 毛利率获取失败")
+
+    # ── Step 5：PB 历史10年分位 + 月度序列（Baidu，允许30s）──
+    print("  [5/7] PB 历史分位 + 月度序列...", flush=True)
+    pct, series = _fetch_pb_hist_and_percentile(code)
     if pct is not None:
         results['pb_percentile_10y'] = pct
-        print(f"  ✅ PB历史10年分位={pct}%")
+        results['pb_hist_monthly'] = series
+        print(f"  ✅ PB历史10年分位={pct}%，序列 {len(series)} 个数据点")
     else:
-        null_reasons['pb_percentile_10y'] = 'PB历史数据不足（<12个月）或接口失败'
-        logger.warning("  ⚠️ PB历史分位获取失败，跳过")
+        null_reasons['pb_percentile_10y'] = 'PB历史数据不足或接口失败'
+        null_reasons['pb_hist_monthly'] = '同上'
+        logger.warning("  ⚠️ PB历史分位获取失败")
 
     # ── Step 6：写入 cache ──
-    print("  [6/6] 写入缓存...", flush=True)
+    print("  [6/7] 写入缓存...", flush=True)
     cache_data = {k: results.get(k) for k in FIELDS if k in results or k in null_reasons}
-    msg = set_fundamentals(code, name, industry, cache_data)
+    msg = set_fundamentals(code, name, industry, cache_data, merge=True)
     print(f"  ✅ {msg}")
 
     # ── 汇总 ──

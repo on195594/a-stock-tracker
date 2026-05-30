@@ -97,6 +97,19 @@ def _add_days(d: str, n: int) -> str:
     return (date.fromisoformat(d) + timedelta(days=n)).isoformat()
 
 
+def _compute_daily_pb_percentile(price: float, data: dict) -> float | None:
+    """用当日收盘价 + 缓存的 BPS/历史序列，计算实时 PB 历史分位（纯内存，不写 DB）。"""
+    bps = data.get("bps")
+    hist = data.get("pb_hist_monthly")
+    if not bps or bps <= 0 or not hist or len(hist) < 12:
+        return None
+    current_pb = price / bps
+    if current_pb <= 0:
+        return None
+    pct = sum(1 for x in hist if float(x) < current_pb) / len(hist) * 100
+    return round(pct, 1)
+
+
 def _refresh_fundamentals(label: str) -> tuple[int, int]:
     """对 WATCHLIST 每只股票执行 fetch，刷新 stock_fundamentals 缓存。返回 (success, failed)。"""
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "lib"))
@@ -248,6 +261,15 @@ def cmd_daily() -> None:
         data = dict(fundamentals.get("data", fundamentals))
         report_period = data.get("report_period")
         price_at_score = snapshot_data.get(code)
+
+        # 注入日度实时 PB 分位（股价变化→分位变化→评分每日变化）
+        if price_at_score:
+            daily_pct = _compute_daily_pb_percentile(price_at_score, data)
+            if daily_pct is not None:
+                data["pb_percentile_10y"] = daily_pct
+                logger.debug(f"  {code} 实时PB分位={daily_pct}%（价={price_at_score}, bps={data.get('bps')}）")
+            else:
+                logger.debug(f"  {code} 无法计算实时PB分位（bps/hist缺失），使用缓存值")
 
         # 注入 Gemini 定性评分（覆盖 phase1_fixed，失败自动 fallback）
         qual = get_qualitative_score(code, name)
@@ -462,6 +484,12 @@ def cmd_outcome_update() -> None:
     logger.info(f"outcome-update 完成：更新 {updated} 条")
     db.close()
 
+    # Phase 4 里程碑检测（失败不阻断）
+    try:
+        _check_phase4_milestone()
+    except Exception as e:
+        logger.warning(f"Phase 4 里程碑检测失败（不影响数据）：{e}")
+
     # Sheets sync（独立后置步骤，失败不影响 SQLite 数据）
     try:
         import sheets_sync
@@ -481,8 +509,8 @@ def cmd_accuracy_report() -> None:
     null_count = db.execute(
         "SELECT COUNT(*) FROM predictions WHERE outcome_30d IS NULL"
     ).fetchone()[0]
-    total_closed = db.execute(
-        "SELECT COUNT(*) FROM predictions WHERE outcome_30d IS NOT NULL"
+    framework_a_closed = db.execute(
+        "SELECT COUNT(*) FROM predictions WHERE outcome_30d IS NOT NULL AND framework = 'A'"
     ).fetchone()[0]
 
     lines: list[str] = []
@@ -491,11 +519,11 @@ def cmd_accuracy_report() -> None:
     lines.append(f"生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}")
     lines.append("=" * 60)
 
-    if total_closed < 100:
+    if framework_a_closed < 100:
         lines.append(
-            f"\n⚠️  样本不足（{total_closed} 条已结案记录）\n"
+            f"\n⚠️  样本不足（Framework A {framework_a_closed} 条已结案记录）\n"
             "    结论仅供参考，请勿据此做交易决策。\n"
-            "    建议积累至 100 条以上再解读命中率。"
+            "    建议 Framework A 积累至 100 条以上再解读命中率。"
         )
 
     lines.append(
@@ -675,6 +703,119 @@ def _fmt(v) -> str:
 
 
 # ──────────────────────────────────────────────
+# Phase 4 里程碑检测
+# ──────────────────────────────────────────────
+
+_PHASE4_POST_FIX_DATE = "2026-05-15"   # gross_margin + pb_percentile 修复日
+_PHASE4_MILESTONES = [25, 50, 75, 100]
+
+
+def _check_phase4_milestone() -> None:
+    """统计 post-fix 30d 结案记录数，到达里程碑节点时发送 Telegram 通知。
+
+    状态持久化在 phase_milestones 表，重复运行不重复推送。
+    """
+    import os
+    import urllib.request, urllib.error
+
+    db = get_db()
+
+    count = db.execute(
+        """SELECT COUNT(*) FROM predictions
+           WHERE framework='A'
+             AND score_date >= ?
+             AND outcome_30d IS NOT NULL""",
+        (_PHASE4_POST_FIX_DATE,),
+    ).fetchone()[0]
+
+    notified = {
+        row[0]
+        for row in db.execute(
+            "SELECT milestone FROM phase_milestones WHERE phase='phase4_30d'"
+        ).fetchall()
+    }
+
+    for milestone in _PHASE4_MILESTONES:
+        if count >= milestone and milestone not in notified:
+            _send_phase4_notification(db, count, milestone)
+            db.execute(
+                "INSERT OR IGNORE INTO phase_milestones(phase, milestone, notified_at) VALUES(?,?,?)",
+                ("phase4_30d", milestone, datetime.now().isoformat()),
+            )
+            db.commit()
+            logger.info(f"Phase 4 里程碑 {milestone} 已通知")
+
+    db.close()
+
+
+def _send_phase4_notification(db, count: int, milestone: int) -> None:
+    """构造并发送 Phase 4 里程碑 Telegram 消息。"""
+    import os
+    import urllib.request, urllib.error, json as _json
+
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if not token or not chat_id:
+        logger.warning("Telegram 未配置，跳过 Phase 4 里程碑推送")
+        return
+
+    if milestone < 100:
+        # 进度更新
+        remaining = 100 - count
+        lines = [
+            f"Phase 4 进度 {count}/100 条",
+            f"post-fix 30d 结案记录已达 {milestone} 条里程碑",
+            f"距目标还差 {remaining} 条，预计约 {remaining} 个交易日",
+            "",
+            "系统正常运行中，无需操作。",
+        ]
+    else:
+        # 100 条达成：附简要 hit_rate 摘要
+        rows = db.execute(
+            """SELECT
+                 AVG(CASE WHEN alpha_30d > 0 THEN 1.0 ELSE 0.0 END) hit_rate,
+                 COUNT(*) n,
+                 AVG(outcome_30d) avg_ret,
+                 AVG(alpha_30d)   avg_alpha
+               FROM predictions
+               WHERE framework='A'
+                 AND score_date >= ?
+                 AND outcome_30d IS NOT NULL
+                 AND benchmark_30d IS NOT NULL""",
+            (_PHASE4_POST_FIX_DATE,),
+        ).fetchone()
+        hit_rate, n, avg_ret, avg_alpha = rows
+        hit_pct = f"{hit_rate * 100:.1f}%" if hit_rate is not None else "N/A"
+        avg_ret_s = f"{avg_ret:+.2f}%" if avg_ret is not None else "N/A"
+        avg_alpha_s = f"{avg_alpha:+.2f}%" if avg_alpha is not None else "N/A"
+
+        lines = [
+            "Phase 4 里程碑达成",
+            f"post-fix 30d 结案记录已达 {count} 条",
+            "",
+            f"跑赢沪深300胜率：{hit_pct}（样本 {n} 条）",
+            f"平均收益：{avg_ret_s}，平均 alpha：{avg_alpha_s}",
+            "",
+            "建议操作：",
+            "  运行 python pipeline.py accuracy-report 查看完整报告",
+            "  若 strong 层级 hit_rate_vs_300 > 55%，可启动 Phase 5（买点层）",
+        ]
+
+    text = "\n".join(lines)
+    payload = _json.dumps({"chat_id": chat_id, "text": text}).encode()
+    req = urllib.request.Request(
+        f"https://api.telegram.org/bot{token}/sendMessage",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            resp.read()
+    except Exception as e:
+        logger.warning(f"Phase 4 里程碑 Telegram 推送失败：{e}")
+
+
+# ──────────────────────────────────────────────
 # remove 命令
 # ──────────────────────────────────────────────
 
@@ -713,6 +854,7 @@ def main() -> None:
     sub.add_parser("daily", help="每日评分，写入 predictions 表（依赖 weekly 缓存）")
     sub.add_parser("outcome-update", help="更新到期预测的实际收益")
     sub.add_parser("accuracy-report", help="输出命中率报告")
+    sub.add_parser("phase-check", help="手动触发 Phase 4 里程碑检测（自动在 outcome-update 后运行）")
     p_remove = sub.add_parser("remove", help="从 DB 删除一只股票的所有数据（先从 config.py 移除）")
     p_remove.add_argument("code", help="股票代码，如 600036")
 
@@ -728,6 +870,8 @@ def main() -> None:
         cmd_outcome_update()
     elif args.cmd == "accuracy-report":
         cmd_accuracy_report()
+    elif args.cmd == "phase-check":
+        _check_phase4_milestone()
     elif args.cmd == "remove":
         cmd_remove(args.code)
 

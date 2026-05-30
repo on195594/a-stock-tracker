@@ -8,6 +8,8 @@ A 股自动评分管道。每日盘后对 watchlist 股票运行 Framework A 定
 **设计文档：** `docs/design.md`
 **测试计划：** `docs/test-plan.md`
 **实施计划：** `docs/impl-plan.md`
+**进化路线图：** `docs/evolution-roadmap.md`
+**踩坑知识库：** `docs/lessons-learned.md`
 **旧版设计（存档）：** `docs/design-archive-20260410.md`
 
 ---
@@ -82,6 +84,18 @@ a-stock-tracker/
 | `alpha_*d` | SQLite GENERATED COLUMN = outcome - benchmark，**不要直接写此列** |
 | `estimate_flag` | 1 = outcome 用的是最近可用价（到期日停牌，10 日内找到替代价）|
 
+### stock_fundamentals 表（重要字段说明）
+
+| 字段（data JSON key） | 说明 |
+|------|------|
+| `bps` | 每股净资产（元），来自同花顺财务接口 `每股净资产` 列 |
+| `pb_hist_monthly` | PB月度历史序列（list[float]，约731个点），weekly fetch 从百度估值接口获取 |
+| `gross_margin` | 毛利率（%），`(营业收入-营业成本)/营业收入×100`，近3年年报均值，金融行业为NULL |
+
+**日度 PB 分位计算**：`cmd_daily()` 在评分前执行 `_compute_daily_pb_percentile(price, data)`，
+用当日收盘价÷bps=current_pb，ranked in pb_hist_monthly → `data["pb_percentile_10y"]`。
+此操作纯内存，不写数据库，不触碰 TTL，不需要额外 API 调用。
+
 ### index_prices 表
 
 缓存沪深300（000300）历史日收盘价。outcome-update 启动时增量更新，已有日期跳过。
@@ -108,7 +122,11 @@ a-stock-tracker/
 - **新增测试用例**：必须用 `tmp_path` fixture 隔离数据库，不使用真实 `tracker.db`
 - **pipeline 启动时**：必须保留 `assert sqlite3.sqlite_version_info >= (3, 31, 0)` 检查（Generated Column 依赖）
 - **accuracy-report 输出**：记录数 < 100 时头部必须显示样本不足警告；必须包含选择性偏差免责声明
-- **评分上限系统性偏移警告（2026-05-11 确认，2026-05-12 部分修复）**：`gross_margin` 对所有 38 只股票均为 NULL；`pe_percentile_10y` 已于 2026-05-12 被 `pb_percentile_10y`（来源：百度估值接口）替代并可正常填充，weights_hash 同步变更。2026-05-12 前后的历史记录不可跨期直接比较。Phase 4 optimizer 训练时需注意此系统性偏差。
+- **评分上限系统性偏移警告（2026-05-11 确认，2026-05-12 部分修复，2026-05-15 全修复）**：
+  - `gross_margin`：2026-05-15 起改用新浪利润表 `(营业收入-营业成本)/营业收入` 自动计算，金融行业（银行/保险/证券等）仍返回 NULL（毛利率对其无意义）。2026-05-14 及以前记录 gross_margin=NULL，不可跨期比较。
+  - `pb_percentile_10y`：2026-05-15 起改为**日度实时计算**（`current_pb = 当日收盘价 / bps`，ranked in `pb_hist_monthly`），每日随股价变化。weekly fetch 存储 `bps` 和 `pb_hist_monthly`（约731点），daily 纯内存计算无额外API调用。
+  - `pe_percentile_10y` 已于 2026-05-12 被 `pb_percentile_10y` 替代，weights_hash 同步变更。
+  - **跨期比较注意**：2026-05-14 前（gross_margin=NULL，pb_percentile 月度静态）vs 2026-05-15 后（两字段均已修复）存在系统性分数差，avg_score 约上升 4-5 分。Phase 4 optimizer 训练时需按 score_date 分层处理。
 
 ---
 

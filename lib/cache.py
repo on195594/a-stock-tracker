@@ -169,6 +169,12 @@ def get_db():
             scored_date TEXT NOT NULL,
             PRIMARY KEY (code, scored_date)
         )''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS phase_milestones (
+        phase        TEXT    NOT NULL,
+        milestone    INTEGER NOT NULL,
+        notified_at  TEXT    NOT NULL,
+        PRIMARY KEY (phase, milestone)
+    )''')
     conn.commit()
     return conn
 
@@ -195,10 +201,25 @@ def get_fundamentals(code: str) -> dict | None:
 
 
 def set_fundamentals(code: str, name: str, industry: str,
-                     data_dict: dict, ttl: int | None = None) -> str:
-    """写入基本面缓存，ttl=None 时按行业自动推断。返回状态消息。"""
+                     data_dict: dict, ttl: int | None = None,
+                     merge: bool = False) -> str:
+    """写入基本面缓存，ttl=None 时按行业自动推断。
+
+    merge=True：新值为 None 的字段，保留旧缓存中的有效值（防止接口临时失败覆盖有效旧值）。
+    返回状态消息。
+    """
     ttl_hours = ttl if ttl is not None else get_industry_ttl(industry)
     conn = get_db()
+    if merge:
+        existing_row = conn.execute(
+            'SELECT data FROM stock_fundamentals WHERE code=?', (code,)
+        ).fetchone()
+        if existing_row:
+            old_data = json.loads(existing_row[0])
+            data_dict = {
+                k: (old_data[k] if v is None and old_data.get(k) is not None else v)
+                for k, v in data_dict.items()
+            }
     conn.execute(
         '''INSERT OR REPLACE INTO stock_fundamentals
            (code, name, industry, data, updated_at, ttl_hours)

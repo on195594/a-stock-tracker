@@ -525,7 +525,7 @@ def test_accuracy_report_empty(tmp_db, capsys):
     pipeline.cmd_accuracy_report()
     out = capsys.readouterr().out
     assert "样本不足" in out
-    assert "0 条已结案记录" in out
+    assert "Framework A 0 条已结案记录" in out
     assert "暂无已结案记录" in out
     assert "选择性偏差" in out
 
@@ -581,9 +581,46 @@ def test_accuracy_report_stat_warning(tmp_db, capsys):
 
     pipeline.cmd_accuracy_report()
     out = capsys.readouterr().out
-    assert "样本不足（1 条已结案记录）" in out
+    assert "样本不足（Framework A 1 条已结案记录）" in out
     # 且确实展示了分层数据
     assert "moderate" in out
+
+
+def test_accuracy_report_warning_uses_framework_a_not_all_frameworks(tmp_db, capsys):
+    """总结案≥100 但当前 A 框<100 时，仍应提示 A 框样本不足。"""
+    score_date = (date.today() - timedelta(days=30)).isoformat()
+    db = cache_mod.get_db()
+    for i in range(75):
+        db.execute(
+            """INSERT INTO predictions
+               (code, name, framework, score_date, price_at_score,
+                quant_score, total_score, weights_hash, report_period,
+                outcome_30d, benchmark_30d, created_at)
+               VALUES (?, ?, 'A', ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (f"A{i:05d}", f"A{i}", score_date, 100.0, 30.0,
+             40.0, "hash-a", "2024-09-30", 5.0, 2.0,
+             score_date + "T15:00:00"),
+        )
+    for i in range(35):
+        db.execute(
+            """INSERT INTO predictions
+               (code, name, framework, score_date, price_at_score,
+                quant_score, total_score, weights_hash, report_period,
+                outcome_30d, benchmark_30d, created_at)
+               VALUES (?, ?, 'B', ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (f"B{i:05d}", f"B{i}", score_date, 100.0, 30.0,
+             40.0, "hash-b", "2024-09-30", 5.0, 2.0,
+             score_date + "T15:00:00"),
+        )
+    db.commit()
+    db.close()
+
+    pipeline.cmd_accuracy_report()
+    out = capsys.readouterr().out
+
+    assert "样本不足（Framework A 75 条已结案记录）" in out
+    assert "A" in out and "75        75" in out
+    assert "B" in out and "35        35" in out
 
 
 # ---------------------------------------------------------------------------

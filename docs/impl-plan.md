@@ -1,13 +1,14 @@
 # a-stock-tracker 实施计划
 
 Generated: 2026-04-15
-Last updated: 2026-04-27（Phase 3 完成，追加步骤）
+Last updated: 2026-05-12（Phase 3.6 完成）
 Design ref: `docs/design.md`
-Status: **Phase 3.5 完成（2026-04-28）**
+Status: **Phase 3.6 完成（2026-05-12）**
 
 Phase 1（Step 0-7）：✅ 完成
 Phase 3（Step 8-14）：✅ 完成
 Phase 3.5（Step 15-16）：✅ 完成
+Phase 3.6（Step 17-18）：✅ 完成
 
 ---
 
@@ -883,3 +884,76 @@ with urllib.request.urlopen(url) as r:
 "
 ```
 更新 `gemini_scorer.py` 中的 `GEMINI_MODEL` 常量即可。
+
+---
+
+## Phase 3.6 实施记录（2026-05-12）
+
+---
+
+## Step 17：PB 百分位因子替换 + qualitative_scores 表重构
+
+**已完成：2026-05-12**
+
+### Step 17-A：pe_percentile_10y → pb_percentile_10y
+
+`pe_percentile_10y` 对亏损股（PE 为负值）无法计算，导致 38 只股票全部 NULL（评分上限
+实际只有 3/5 字段可用）。改用 PB 百分位（来源：`ak.stock_zh_valuation_baidu`）解决此问题。
+
+改动：
+- `weights.json`：Framework A 中 `pe_percentile_10y` → `pb_percentile_10y`（max_score=15）；
+  Framework B 中同步替换（max_score=5）；`updated_at` 更新
+- `weights_hash` 同步变更（`32de6bb5` → `adb88515`）
+- **2026-05-12 前的历史记录（hash=32de6bb5）与之后记录不可跨期比较**
+- `lib/fetcher.py`：删除 `compute_pe_percentile`（依赖 pe_ttm，对亏损股无效）；
+  新增 `_fetch_pb_percentile`，调用 `ak.stock_zh_valuation_baidu` 月度 PB 序列，
+  计算10年历史分位（`PB_TIMEOUT=30s`）
+- `scorer.py`：`SUPPORTED_FRAMEWORKS` 保留 `{"A"}`，移除 `"B"`（Framework B 暂停，见 Step 18）
+
+### Step 17-B：qualitative_scores 表 PK 重构
+
+原表 PK 仅为 `(code)`，导致同一股票只能存一行（无法保留历史），`_check_cache` 无法
+"取最新行"语义。新 PK = `(code, scored_date)`。
+
+改动：
+- `lib/cache.py`：`qualitative_scores` 建表 DDL 修改 PRIMARY KEY 为 `(code, scored_date)`；
+  新增自动迁移逻辑：`get_db()` 检测旧表 schema，若 PK 仍为单列则 DROP 重建
+  （历史单行数据舍弃，影响极小：qualitative_scores 实测为 0 行）
+- `gemini_scorer.py`：`_write_cache` 改为 `INSERT OR IGNORE`（幂等，同日重复写入跳过）；
+  `_check_cache` 改为 `ORDER BY scored_date DESC LIMIT 1`（取最新行）
+- 新增测试用例 7、8（多行返回最新；同日 INSERT OR IGNORE 保留第一次）
+
+---
+
+## Step 18：accuracy-report 增强 + Framework B 暂停
+
+**已完成：2026-05-12**
+
+### Step 18-A：accuracy-report 增强
+
+两个新节段，帮助长期追踪模型健康状态：
+
+**Gemini 评分漂移检测节（CT2）：**
+- 统计过去 30 天内有 Gemini 分（非 fallback）的股票，与30天前的分比较
+- 漂移 > 10 分（`|moat_new - moat_old|` 或其他维度）时高亮显示
+- 若无足够历史数据则显示"数据不足，暂无漂移分析"
+
+**Framework B 重启进度节（CT3）：**
+- 显示当前 Framework A 30d 结案记录数 vs 目标（100条）
+- 显示任一信号层级是否达到 `hit_rate_vs_300 > 55%`
+- 未达标时提示预计还需多少周（基于当前日均结案速率估算）
+
+### Step 18-B：Framework B 暂停
+
+Framework B 已有 73 条历史记录（2026-04-29 至 2026-05-11），
+**暂停原因：** 等待 Framework A 达到 Phase 4 启动门槛后一并优化/重启。
+
+- `scorer.py`：`SUPPORTED_FRAMEWORKS = {"A"}`（移除 "B"）
+- `pipeline.py`：`cmd_daily` 仅对 Framework A 运行
+- 73 条历史记录保留，不删除
+- **重启方式：** 在 `scorer.py` 的 `SUPPORTED_FRAMEWORKS` 集合中加回 `"B"` 即可
+
+### 测试覆盖
+
+- 新增 11 个用例（test_gemini_scorer × 4，test_pipeline × 5，test_scorer × 2）
+- 全部 56 个用例通过（0 failed）
