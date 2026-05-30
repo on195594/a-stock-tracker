@@ -410,6 +410,47 @@ def test_daily_writes_l3_null_v1_when_history_is_insufficient(tmp_db, small_watc
     }
 
 
+def test_daily_writes_score_even_when_l3_compute_raises(tmp_db, small_watchlist, fake_fetcher, fake_weights, monkeypatch):
+    """L3 计算异常时仍写入基础评分，并把 L3 标记为 NULL/v1。"""
+    for item in small_watchlist:
+        _daily_ready_stock(item["code"], item["name"])
+
+    monkeypatch.setattr(
+        pipeline.ak,
+        "stock_zh_a_hist_tx",
+        _tencent_hist_side_effect({"600036": 35.20, "000858": 128.40}),
+    )
+
+    monkeypatch.setattr(
+        pipeline.ak,
+        "stock_zh_a_hist",
+        _entry_hist_side_effect({
+            "600036": _entry_hist_df([100.0] * 119 + [130.0], [100.0] * 115 + [300.0] * 5),
+            "000858": _entry_hist_df([100.0] * 119 + [130.0], [100.0] * 115 + [300.0] * 5),
+        }),
+    )
+
+    def fail_entry_signal(*args, **kw):
+        raise RuntimeError("entry signal compute failed")
+
+    monkeypatch.setattr(pipeline, "compute_entry_signal", fail_entry_signal)
+
+    pipeline.cmd_daily()
+
+    db = cache_mod.get_db()
+    rows = db.execute(
+        """SELECT code, total_score, entry_signal, entry_signal_version
+           FROM predictions WHERE framework='A' ORDER BY code"""
+    ).fetchall()
+    db.close()
+
+    assert [(code, entry_signal, entry_signal_version) for code, _, entry_signal, entry_signal_version in rows] == [
+        ("000858", None, "v1"),
+        ("600036", None, "v1"),
+    ]
+    assert all(isinstance(total_score, float) for _, total_score, _, _ in rows)
+
+
 def test_daily_does_not_update_legacy_l3_null_null_rows(tmp_db, small_watchlist, fake_fetcher, fake_weights, monkeypatch):
     """daily 只写今日新记录，不回写历史 NULL/NULL 记录。"""
     legacy_date = (date.today() - timedelta(days=1)).isoformat()
