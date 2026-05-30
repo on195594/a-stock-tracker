@@ -24,12 +24,12 @@
 | Phase | 状态 | 目标 |
 |---|---|---|
 | P0 | done | 文档化 L3 优先结论与授权边界 |
-| P1 | not_started | DB schema 与迁移测试 |
-| P2 | not_started | L3 v1 纯计算 seam |
-| P3 | not_started | daily 写入 L3 字段 |
-| P4 | not_started | Telegram 推送接入 L3 过滤 |
-| P5 | not_started | accuracy-report 增加 L3 section |
-| P6 | not_started | 文档、回归、独立审查与提交 |
+| P1 | done | DB schema 与迁移测试 |
+| P2 | done | L3 v1 纯计算 seam |
+| P3 | done | daily 写入 L3 字段 |
+| P4 | done | Telegram 推送接入 L3 过滤 |
+| P5 | done | accuracy-report 增加 L3 section |
+| P6 | done | 文档、回归、独立审查与提交 |
 
 ---
 

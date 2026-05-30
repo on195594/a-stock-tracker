@@ -7,8 +7,8 @@ A 股选股与方法论验证项目。当前定位是 **Framework A 定量评分
 ## 当前状态
 
 - 主线分支：`master`
-- 当前治理阶段：Phase A-F 已完成；Phase 5 L3 买点层已进入 spec/plan 阶段
-- 最近验证：`pytest tests/ -q` → `93 passed, 1 skipped`
+- 当前治理阶段：Phase A-F 已完成；Phase 5 L3 买点层已实现
+- 最近验证：`pytest tests/ -q` → `109 passed, 1 skipped`
 - 数据治理计划：`docs/plans/2026-05-30-data-governance-structure-boundary-execution-plan.md`
 - L3 买点层 Spec：`docs/specs/2026-05-30-phase5-l3-entry-signal-spec.md`
 - L3 买点层实施计划：`docs/plans/2026-05-30-phase5-l3-entry-signal-implementation-plan.md`
@@ -21,13 +21,14 @@ A 股选股与方法论验证项目。当前定位是 **Framework A 定量评分
 - 数据质量模型：`lib/data_quality.py` 表达 required/degradable/derived 字段，以及 ok/missing/fallback/stale 状态。
 - PB 分位 seam：`scorer.compute_daily_pb_percentile()` 负责 PB 分位纯计算，`pipeline.py` 只保留兼容 wrapper。
 - 只读 reviewer schema：`lib/agent_reviewer.py` 限制 reviewer 只能输出说明性 commentary，不能覆盖 score、threshold、trade_action 或 DB write 指令。
+- L3 买点层：`lib/entry_signal.py` 实现 v1 纯计算，`pipeline.py` 在 daily 写入 `entry_signal` / `entry_signal_version`，`telegram_push.py` 仅推送 `buy_strong AND entry_signal=1`，`accuracy-report` 增加 L3 section。
 
 下一阶段治理决策：
 
-- 优先做 **L3 买点层**，作为 Framework A 输出后的入场过滤层。
+- 已实现 **L3 买点层**，作为 Framework A 输出后的入场过滤层。
 - Framework B 复活后置到 Phase 6，待 L3 的字段、报告、推送语义稳定后再启动。
-- 已确认后续实施允许新增 `predictions.entry_signal` / `entry_signal_version` 字段、修改 Telegram 推送、增加日线历史窗口读取，并把 L3 report 纳入 `accuracy-report`。
-- L3 不得修改 `total_score`、`weights_hash` 或历史评分数据。
+- 已落地 `predictions.entry_signal` / `entry_signal_version` 字段、Telegram 推送 L3 过滤、日线历史窗口读取，并把 L3 report 纳入 `accuracy-report`。
+- L3 不修改 `total_score`、`weights_hash` 或历史评分数据。
 
 ## 安装
 
@@ -132,9 +133,10 @@ python3 pipeline.py remove 601857
 - `pipeline.py`：主编排器，支持 `init` / `daily` / `outcome-update` / `accuracy-report`。
 - `scorer.py`：Framework A 定量评分和 PB 分位纯计算。
 - `gemini_scorer.py`：Gemini 定性评分；失败或未配置时 fallback。
-- `telegram_push.py`：Telegram 每日信号推送。
+- `telegram_push.py`：Telegram 每日信号推送，条件为 `total_score >= buy_strong AND entry_signal=1`。
 - `lib/cache.py`：SQLite 缓存与 predictions 表管理。
 - `lib/fetcher.py`：AKShare 等数据源读取。
+- `lib/entry_signal.py`：L3 v1 买点层纯计算，输入为归一化 `date/close/volume` 日线数据。
 - `lib/data_quality.py`：数据质量状态模型，纯逻辑，无 DB/API/文件写入。
 - `lib/agent_reviewer.py`：schema-only/fake reviewer，限制 reviewer 只输出只读 commentary。
 - `weights.json`：评分权重与阈值。
@@ -188,7 +190,7 @@ pytest tests/test_spec_structure.py -q
 当前全量结果：
 
 ```text
-93 passed, 1 skipped
+109 passed, 1 skipped
 ```
 
 ## 代码质量

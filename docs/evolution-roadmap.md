@@ -14,7 +14,7 @@
 |------|------|---------|
 | L1 好公司 | 这家公司值不值得持有？ | ✅ 已成型（ROE/增速/负债率/毛利率/Gemini定性） |
 | L2 好价格 | 当前估值有没有安全边际？ | 🔶 部分成型（PB分位日度化，PE分位缺失） |
-| L3 合适买点 | 现在是不是好的入场时机？ | ❌ 基本缺失（无均线、无板块景气、无催化剂信号） |
+| L3 合适买点 | 现在是不是好的入场时机？ | ✅ v1 已实现（MA60/MA120/量能 AND，接入 daily/推送/report） |
 
 **系统不追踪价格动量**：框架是价值投资逻辑，股价下跌+基本面不变 = 估值改善 = 评分可能上升。这是设计决策，不是缺陷。
 
@@ -76,11 +76,11 @@
 
 ---
 
-### Phase 5：买点层（L3 补全）[spec/plan 已启动 2026-05-30]
+### Phase 5：买点层（L3 补全）[已完成 2026-05-30]
 
 **目标：** 在现有评分基础上增加"入场时机确认"信号，解决最大缺口。
 
-**2026-05-30 决策：** 多 AI 辩论后确认 Phase 5 优先级高于 Framework B 复活。Framework B 保留到 Phase 6；当前先把 L3 做成可版本化、可回测、可推送过滤的独立层。
+**2026-05-30 决策与实现：** 多 AI 辩论后确认 Phase 5 优先级高于 Framework B 复活。Framework B 保留到 Phase 6；当前已把 L3 做成可版本化、可回测、可推送过滤的独立层。
 
 **授权边界：** 已确认允许新增 `predictions` 字段、修改 Telegram 推送、增加日线历史窗口读取，并把 L3 report 纳入 `accuracy-report`。仍禁止自动交易、改写历史评分、真实外部 API 测试和隐式启用 cron。
 
@@ -102,11 +102,12 @@
 | 板块景气信号 | AKShare 行业指数 | 中 | 行业指数 30d 涨跌幅 |
 | 预期差标记 | Gemini 辅助分析 | 高 | 市场是否已定价公司优势 |
 
-**实施方案：**
-1. `pipeline.py` 新增 `_compute_entry_signal(code, data)` 函数（纯计算，不写 DB）
-2. `telegram_push.py` 新增 L3 过滤逻辑：推送条件从 `score >= buy_strong` 改为 `score >= buy_strong AND entry_signal=1`
-3. `predictions` 表新增 `entry_signal INT` 列（NULL/0/1）和 `entry_signal_version TEXT` 列
-4. `get_db()` 建表 DDL 同步更新，INSERT 语句包含新列
+**实施结果：**
+1. `lib/entry_signal.py` 新增 L3 v1 纯计算 seam，输入固定为归一化 `date/close/volume`
+2. `pipeline.py` 在 daily 中读取 120+ 日线窗口、计算并写入 `entry_signal` / `entry_signal_version`
+3. `telegram_push.py` 推送条件从 `score >= buy_strong` 改为 `score >= buy_strong AND entry_signal=1`
+4. `predictions` 表新增 `entry_signal INT` 列和 `entry_signal_version TEXT` 列；旧记录保持 `NULL/NULL`
+5. `accuracy-report` 增加 L3 买点层 section，区分 `NULL/NULL`、`NULL/v1`、`0/v1` 与 `1/v1`，样本不足时提示
 
 **预期观测范围：** L3 过滤后，strong 信号从当前约 6/35 = 17% 降至 3-5%。这是产品/策略观察目标，不是 CI 通过条件；工程验收以字段语义、推送过滤和 accuracy-report 统计正确为准。
 
@@ -216,3 +217,4 @@
 | v1.0 | 2026-05-15 | 初始版本，基于 REPAIR-PLAN v2.0 完成后的系统状态建立基线 |
 | v1.1 | 2026-05-15 | Codex 独立审查后修复 8 处问题：Phase 4 里程碑分层、L3 版本化约束、Phase 6 数据依赖表、Phase 7 前置条件补全、动态池退出规则、边界说明澄清 |
 | v1.2 | 2026-05-30 | 记录多 AI 辩论结论：Phase 5 L3 买点层优先，Framework B 后置；确认 L3 字段、Telegram、日线窗口、accuracy-report 授权边界 |
+| v1.3 | 2026-05-30 | Phase 5 L3 买点层实现完成：schema、纯计算 seam、daily 写入、Telegram 过滤、accuracy-report L3 section |
