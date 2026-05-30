@@ -80,12 +80,7 @@ python3 pipeline.py outcome-update
 python3 pipeline.py accuracy-report
 ```
 
-注意：当前测试/报告流程可能会更新 tracked 文件 `accuracy_report.txt`。如果只是验证代码，运行后确认是否需要恢复：
-
-```bash
-git status --short
-git restore accuracy_report.txt
-```
+报告默认写入 `config.ACCURACY_REPORT_PATH`，生产默认路径为项目根目录的 `accuracy_report.txt`。测试会把该路径隔离到临时目录，不应改写 tracked 报告文件。
 
 ### 配置 cron
 

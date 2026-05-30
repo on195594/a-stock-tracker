@@ -45,3 +45,4 @@ WATCHLIST: list[dict] = [
 DB_PATH = os.path.expanduser("~/a-stock-tracker/tracker.db")
 LOG_DIR = os.path.expanduser("~/a-stock-tracker/logs/")
 WEIGHTS_PATH = os.path.join(os.path.dirname(__file__), "weights.json")
+ACCURACY_REPORT_PATH = os.path.join(os.path.dirname(__file__), "accuracy_report.txt")

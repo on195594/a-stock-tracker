@@ -686,7 +686,7 @@ def cmd_accuracy_report() -> None:
     report = "\n".join(lines)
     print(report)
 
-    report_path = os.path.join(os.path.dirname(__file__), "accuracy_report.txt")
+    report_path = config.ACCURACY_REPORT_PATH
     with open(report_path, "w", encoding="utf-8") as f:
         f.write(report + "\n")
     logger.info(f"报告已保存到 {report_path}")

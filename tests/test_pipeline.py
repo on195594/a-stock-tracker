@@ -37,6 +37,7 @@ def tmp_db(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DB_PATH", db_path)
     monkeypatch.setattr(cache_mod, "DB_PATH", db_path)
     monkeypatch.setattr(config, "LOG_DIR", log_dir)
+    monkeypatch.setattr(config, "ACCURACY_REPORT_PATH", str(tmp_path / "accuracy_report.txt"))
 
     # 触发建表
     cache_mod.get_db().close()
@@ -543,6 +544,20 @@ def test_accuracy_report_empty(tmp_db, capsys):
     assert "Framework A 0 条已结案记录" in out
     assert "暂无已结案记录" in out
     assert "选择性偏差" in out
+
+
+def test_accuracy_report_does_not_modify_project_tracked_report(tmp_db, capsys):
+    """测试隔离数据库时，accuracy-report 不应改写项目根目录的 tracked 报告文件。"""
+    report_path = os.path.join(PROJECT_ROOT, "accuracy_report.txt")
+    before = open(report_path, "rb").read()
+    try:
+        pipeline.cmd_accuracy_report()
+        capsys.readouterr()
+        after = open(report_path, "rb").read()
+    finally:
+        with open(report_path, "wb") as f:
+            f.write(before)
+    assert after == before
 
 
 # ---------------------------------------------------------------------------
