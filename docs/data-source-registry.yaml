@@ -1,0 +1,234 @@
+# A 股选股数据源 Registry
+# Phase B: human-readable YAML style; tests parse with Python stdlib regex only.
+
+fields:
+  - field: roe_3y_avg
+    owner: scorer_input
+    requirement: required
+    source_primary: akshare.stock_financial_abstract_ths
+    source_fallback: none
+    cache: stock_fundamentals.data.roe_3y_avg
+    refresh: weekly
+    affects_scoring: true
+    affects_outcome: false
+    failure_behavior: mark_missing; data_quality_degrades
+
+  - field: net_profit_growth
+    owner: scorer_input
+    requirement: required
+    source_primary: akshare.stock_financial_abstract_ths
+    source_fallback: none
+    cache: stock_fundamentals.data.net_profit_growth
+    refresh: weekly
+    affects_scoring: true
+    affects_outcome: false
+    failure_behavior: mark_missing; data_quality_degrades
+
+  - field: debt_ratio
+    owner: scorer_input
+    requirement: required
+    source_primary: akshare.stock_financial_abstract_ths
+    source_fallback: none
+    cache: stock_fundamentals.data.debt_ratio
+    refresh: weekly
+    affects_scoring: true
+    affects_outcome: false
+    failure_behavior: mark_missing; data_quality_degrades
+
+  - field: gross_margin
+    owner: scorer_input
+    requirement: required
+    source_primary: sina_profit_statement_annual_average
+    source_fallback: none
+    cache: stock_fundamentals.data.gross_margin
+    refresh: weekly
+    affects_scoring: true
+    affects_outcome: false
+    failure_behavior: mark_missing; data_quality_degrades; financial_industry_can_be_missing
+
+  - field: pb_percentile_10y
+    owner: scorer_input
+    requirement: required
+    source_primary: derived_from_price_at_score_bps_pb_hist_monthly
+    source_fallback: cached_value_visibility_only
+    cache: stock_fundamentals.data.pb_percentile_10y
+    refresh: daily_in_memory
+    affects_scoring: true
+    affects_outcome: false
+    failure_behavior: mark_missing_or_stale; data_quality_degrades
+
+  - field: moat_fixed
+    owner: scorer_input
+    requirement: fixed
+    source_primary: gemini_qualitative_score_or_phase1_fixed
+    source_fallback: weights.frameworks.A.fundamental.moat_fixed.phase1_fixed
+    cache: qualitative_scores.moat_or_weights_json
+    refresh: 30d_cache_or_static
+    affects_scoring: true
+    affects_outcome: false
+    failure_behavior: fallback_to_phase1_fixed
+
+  - field: market_pos_fixed
+    owner: scorer_input
+    requirement: fixed
+    source_primary: gemini_qualitative_score_or_phase1_fixed
+    source_fallback: weights.frameworks.A.fundamental.market_pos_fixed.phase1_fixed
+    cache: qualitative_scores.market_pos_or_weights_json
+    refresh: 30d_cache_or_static
+    affects_scoring: true
+    affects_outcome: false
+    failure_behavior: fallback_to_phase1_fixed
+
+  - field: sentiment_fixed
+    owner: scorer_input
+    requirement: fixed
+    source_primary: gemini_qualitative_score_or_phase1_fixed
+    source_fallback: weights.frameworks.A.valuation.sentiment_fixed.phase1_fixed
+    cache: qualitative_scores.sentiment_or_weights_json
+    refresh: 30d_cache_or_static
+    affects_scoring: true
+    affects_outcome: false
+    failure_behavior: fallback_to_phase1_fixed
+
+  - field: bps
+    owner: derived_support
+    requirement: derived
+    source_primary: akshare.stock_financial_abstract_ths
+    source_fallback: none
+    cache: stock_fundamentals.data.bps
+    refresh: weekly
+    affects_scoring: true
+    affects_outcome: false
+    failure_behavior: mark_pb_percentile_missing_or_stale
+
+  - field: pb_hist_monthly
+    owner: derived_support
+    requirement: derived
+    source_primary: baidu_valuation_pb_history
+    source_fallback: none
+    cache: stock_fundamentals.data.pb_hist_monthly
+    refresh: weekly
+    affects_scoring: true
+    affects_outcome: false
+    failure_behavior: mark_pb_percentile_missing_or_stale
+
+  - field: report_period
+    owner: audit_contract
+    requirement: degradable
+    source_primary: stock_fundamentals.data.report_period
+    source_fallback: unknown_period_marker
+    cache: predictions.report_period
+    refresh: per_score
+    affects_scoring: false
+    affects_outcome: false
+    failure_behavior: fallback_visible_in_report; do_not_block_scoring
+
+  - field: price_at_score
+    owner: score_snapshot
+    requirement: required
+    source_primary: akshare.stock_zh_a_hist_tx_or_spot_snapshot_close
+    source_fallback: nearest_available_price_backfill
+    cache: predictions.price_at_score
+    refresh: daily
+    affects_scoring: true
+    affects_outcome: true
+    failure_behavior: mark_missing; skip_prediction_write
+
+  - field: benchmark_30d
+    owner: outcome_contract
+    requirement: degradable
+    source_primary: index_prices.000300
+    source_fallback: akshare.stock_zh_index_daily_tx
+    cache: predictions.benchmark_30d
+    refresh: outcome_update
+    affects_scoring: false
+    affects_outcome: true
+    failure_behavior: fallback_or_leave_null; outcome_not_blocked
+
+  - field: benchmark_60d
+    owner: outcome_contract
+    requirement: degradable
+    source_primary: index_prices.000300
+    source_fallback: akshare.stock_zh_index_daily_tx
+    cache: predictions.benchmark_60d
+    refresh: outcome_update
+    affects_scoring: false
+    affects_outcome: true
+    failure_behavior: fallback_or_leave_null; outcome_not_blocked
+
+  - field: benchmark_90d
+    owner: outcome_contract
+    requirement: degradable
+    source_primary: index_prices.000300
+    source_fallback: akshare.stock_zh_index_daily_tx
+    cache: predictions.benchmark_90d
+    refresh: outcome_update
+    affects_scoring: false
+    affects_outcome: true
+    failure_behavior: fallback_or_leave_null; outcome_not_blocked
+
+  - field: weights_hash
+    owner: audit_contract
+    requirement: required
+    source_primary: md5_json_weights_frameworks_subtree
+    source_fallback: none
+    cache: predictions.weights_hash
+    refresh: per_score
+    affects_scoring: false
+    affects_outcome: false
+    failure_behavior: block_prediction_write_if_missing_or_conflict
+
+  - field: framework
+    owner: audit_contract
+    requirement: required
+    source_primary: configured_framework_A
+    source_fallback: none
+    cache: predictions.framework
+    refresh: per_score
+    affects_scoring: true
+    affects_outcome: true
+    failure_behavior: unsupported_framework_blocks_scoring
+
+  - field: outcome_30d
+    owner: outcome_contract
+    requirement: degradable
+    source_primary: akshare.stock_zh_a_hist_tx_due_date_close
+    source_fallback: nearest_available_price_within_10_calendar_days
+    cache: predictions.outcome_30d
+    refresh: outcome_update
+    affects_scoring: false
+    affects_outcome: true
+    failure_behavior: fallback_estimate_or_leave_null
+
+  - field: outcome_60d
+    owner: outcome_contract
+    requirement: degradable
+    source_primary: akshare.stock_zh_a_hist_tx_due_date_close
+    source_fallback: nearest_available_price_within_10_calendar_days
+    cache: predictions.outcome_60d
+    refresh: outcome_update
+    affects_scoring: false
+    affects_outcome: true
+    failure_behavior: fallback_estimate_or_leave_null
+
+  - field: outcome_90d
+    owner: outcome_contract
+    requirement: degradable
+    source_primary: akshare.stock_zh_a_hist_tx_due_date_close
+    source_fallback: nearest_available_price_within_10_calendar_days
+    cache: predictions.outcome_90d
+    refresh: outcome_update
+    affects_scoring: false
+    affects_outcome: true
+    failure_behavior: fallback_estimate_or_leave_null
+
+  - field: gemini_qualitative_score
+    owner: qualitative_support
+    requirement: degradable
+    source_primary: gemini_scorer.get_qualitative_score
+    source_fallback: phase1_fixed_constants
+    cache: qualitative_scores
+    refresh: 30d_cache
+    affects_scoring: true
+    affects_outcome: false
+    failure_behavior: fallback_all_or_nothing_to_fixed_values; no_real_llm_required_for_tests
