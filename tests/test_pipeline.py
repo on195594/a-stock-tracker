@@ -243,16 +243,19 @@ def _prediction_l3_rows() -> dict[str, tuple[int | None, str | None]]:
 def _insert_prediction(
     code: str, score_date: str, price_at_score: float,
     weights_hash: str = "abc12345", total_score: float = 60.0,
+    entry_signal: int | None = None,
+    entry_signal_version: str | None = None,
 ) -> int:
     db = cache_mod.get_db()
     cur = db.execute(
         """INSERT INTO predictions
            (code, name, framework, score_date, price_at_score,
-            quant_score, total_score, weights_hash, report_period, created_at)
-           VALUES (?, ?, 'A', ?, ?, ?, ?, ?, ?, ?)""",
+            quant_score, total_score, weights_hash, report_period,
+            entry_signal, entry_signal_version, created_at)
+           VALUES (?, ?, 'A', ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (code, f"N{code}", score_date, price_at_score,
          total_score - 10, total_score, weights_hash, "2024-09-30",
-         score_date + "T15:00:00"),
+         entry_signal, entry_signal_version, score_date + "T15:00:00"),
     )
     db.commit()
     row_id = cur.lastrowid
@@ -746,6 +749,48 @@ def test_accuracy_report_empty(tmp_db, capsys):
     assert "Framework A 0 条已结案记录" in out
     assert "暂无已结案记录" in out
     assert "选择性偏差" in out
+    assert "L3 买点层" in out
+
+
+def test_accuracy_report_l3_counts_null_semantics_and_strong_candidates(
+    tmp_db, capsys, fake_weights, monkeypatch
+):
+    """L3 section 区分 NULL/NULL、NULL/v1、0/v1，并统计 strong 候选通过/拒绝。"""
+    monkeypatch.setattr(pipeline, "_load_weights", lambda: fake_weights)
+    score_date = (date.today() - timedelta(days=30)).isoformat()
+    pass_id = _insert_prediction("600001", score_date, 100.0, total_score=70.0, entry_signal=1, entry_signal_version="v1")
+    reject_id = _insert_prediction("600002", score_date, 100.0, total_score=68.0, entry_signal=0, entry_signal_version="v1")
+    null_v1_id = _insert_prediction("600003", score_date, 100.0, total_score=66.0, entry_signal=None, entry_signal_version="v1")
+    _insert_prediction("600004", score_date, 100.0, total_score=67.0, entry_signal=None, entry_signal_version=None)
+    db = cache_mod.get_db()
+    db.execute("UPDATE predictions SET outcome_30d=8.0, benchmark_30d=2.0 WHERE id=?", (pass_id,))
+    db.execute("UPDATE predictions SET outcome_30d=3.0, benchmark_30d=5.0 WHERE id=?", (reject_id,))
+    db.execute("UPDATE predictions SET outcome_30d=4.0, benchmark_30d=1.0 WHERE id=?", (null_v1_id,))
+    db.execute(
+        """INSERT INTO predictions
+           (code, name, framework, score_date, price_at_score, quant_score,
+            total_score, weights_hash, report_period, outcome_30d, benchmark_30d,
+            entry_signal, entry_signal_version, created_at)
+           VALUES ('B00001', 'B1', 'B', ?, 100, 50, 80, 'hashB', '2024-09-30', -5, -10, 1, 'v1', ?)""",
+        (score_date, score_date + "T15:00:00"),
+    )
+    db.commit()
+    db.close()
+
+    pipeline.cmd_accuracy_report()
+    out = capsys.readouterr().out
+
+    assert "L3 买点层" in out
+    assert "v1 记录数：4" in out
+    assert "entry_signal=1：2" in out
+    assert "entry_signal=0：1" in out
+    assert "NULL/NULL pre-L3：1" in out
+    assert "NULL/v1 不可计算：1" in out
+    assert "strong 候选 L3 通过：1" in out
+    assert "strong 候选 L3 拒绝：1" in out
+    assert "L3 30d 已结案：1" in out
+    assert "L3 30d 命中率：1.000" in out
+    assert "L3 30d 样本不足" in out
 
 
 def test_accuracy_report_does_not_modify_project_tracked_report(tmp_db, capsys):

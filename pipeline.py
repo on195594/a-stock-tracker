@@ -654,6 +654,53 @@ def cmd_accuracy_report() -> None:
     lines.append("解读：hit_vs300 > 55% 才开始有意义；avg_alpha > 2% 且样本≥20 可认为有初步信号")
     lines.append("      不同 weights_hash 的记录代表不同实验，请分开解读")
 
+    # ── L3 买点层 ──
+    lines.append("")
+    lines.append("── L3 买点层 ──")
+    l3_counts = db.execute(
+        """SELECT
+               COUNT(CASE WHEN entry_signal_version='v1' THEN 1 END) AS v1_count,
+               COUNT(CASE WHEN entry_signal=1 THEN 1 END) AS pass_count,
+               COUNT(CASE WHEN entry_signal=0 THEN 1 END) AS reject_count,
+               COUNT(CASE WHEN entry_signal IS NULL THEN 1 END) AS null_count,
+               COUNT(CASE WHEN entry_signal IS NULL AND entry_signal_version IS NULL THEN 1 END) AS pre_l3_count,
+               COUNT(CASE WHEN entry_signal IS NULL AND entry_signal_version='v1' THEN 1 END) AS null_v1_count
+           FROM predictions"""
+    ).fetchone()
+    v1_count, pass_count, reject_count, l3_null_count, pre_l3_count, null_v1_count = l3_counts
+    strong_l3 = db.execute(
+        """SELECT
+               COUNT(CASE WHEN entry_signal=1 THEN 1 END) AS strong_pass,
+               COUNT(CASE WHEN entry_signal=0 THEN 1 END) AS strong_reject
+           FROM predictions
+           WHERE framework='A' AND total_score >= ?""",
+        (_strong,),
+    ).fetchone()
+    strong_pass, strong_reject = strong_l3
+    l3_closed = db.execute(
+        """SELECT
+               COUNT(*) AS closed_count,
+               ROUND(COUNT(CASE WHEN alpha_30d > 0 THEN 1 END) * 1.0 / NULLIF(COUNT(alpha_30d), 0), 3) AS hit_rate
+           FROM predictions
+           WHERE framework='A'
+             AND entry_signal=1
+             AND entry_signal_version='v1'
+             AND outcome_30d IS NOT NULL"""
+    ).fetchone()
+    l3_closed_count, l3_hit_rate = l3_closed
+    lines.append(f"v1 记录数：{v1_count}")
+    lines.append(f"entry_signal=1：{pass_count}")
+    lines.append(f"entry_signal=0：{reject_count}")
+    lines.append(f"entry_signal=NULL：{l3_null_count}")
+    lines.append(f"NULL/NULL pre-L3：{pre_l3_count}")
+    lines.append(f"NULL/v1 不可计算：{null_v1_count}")
+    lines.append(f"strong 候选 L3 通过：{strong_pass}")
+    lines.append(f"strong 候选 L3 拒绝：{strong_reject}")
+    lines.append(f"L3 30d 已结案：{l3_closed_count}")
+    lines.append(f"L3 30d 命中率：{_fmt(l3_hit_rate)}")
+    if l3_closed_count < 30:
+        lines.append(f"L3 30d 样本不足（{l3_closed_count}/30），不得输出确定性结论")
+
     # ── Gemini 评分漂移检测 ──
     lines.append("")
     lines.append("── Gemini 评分稳定性 ──")
