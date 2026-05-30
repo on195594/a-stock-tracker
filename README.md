@@ -7,9 +7,11 @@ A 股选股与方法论验证项目。当前定位是 **Framework A 定量评分
 ## 当前状态
 
 - 主线分支：`master`
-- 当前治理阶段：Phase A-F 已完成
-- 最近验证：`pytest tests/ -q` → `92 passed, 1 skipped`
+- 当前治理阶段：Phase A-F 已完成；Phase 5 L3 买点层已进入 spec/plan 阶段
+- 最近验证：`pytest tests/ -q` → `93 passed, 1 skipped`
 - 数据治理计划：`docs/plans/2026-05-30-data-governance-structure-boundary-execution-plan.md`
+- L3 买点层 Spec：`docs/specs/2026-05-30-phase5-l3-entry-signal-spec.md`
+- L3 买点层实施计划：`docs/plans/2026-05-30-phase5-l3-entry-signal-implementation-plan.md`
 - 数据源 registry：`docs/data-source-registry.yaml`
 
 已落地的治理能力：
@@ -19,6 +21,13 @@ A 股选股与方法论验证项目。当前定位是 **Framework A 定量评分
 - 数据质量模型：`lib/data_quality.py` 表达 required/degradable/derived 字段，以及 ok/missing/fallback/stale 状态。
 - PB 分位 seam：`scorer.compute_daily_pb_percentile()` 负责 PB 分位纯计算，`pipeline.py` 只保留兼容 wrapper。
 - 只读 reviewer schema：`lib/agent_reviewer.py` 限制 reviewer 只能输出说明性 commentary，不能覆盖 score、threshold、trade_action 或 DB write 指令。
+
+下一阶段治理决策：
+
+- 优先做 **L3 买点层**，作为 Framework A 输出后的入场过滤层。
+- Framework B 复活后置到 Phase 6，待 L3 的字段、报告、推送语义稳定后再启动。
+- 已确认后续实施允许新增 `predictions.entry_signal` / `entry_signal_version` 字段、修改 Telegram 推送、增加日线历史窗口读取，并把 L3 report 纳入 `accuracy-report`。
+- L3 不得修改 `total_score`、`weights_hash` 或历史评分数据。
 
 ## 安装
 
@@ -146,6 +155,8 @@ python3 pipeline.py remove 601857
 
 - `predictions` 中的历史评分、`weights_hash` 和收益结果是审计数据，不应手动改写。
 - `accuracy-report` 解释 Framework A 时，样本 anchor 必须过滤 `framework = 'A'`。
+- L3 买点层是过滤层，只能影响推送和报告分层，不得反向修改 L1/L2 评分。
+- `entry_signal=NULL` 表示未实装/未计算，不能与 `entry_signal=0`（已判断但未通过）混用。
 - `pb_percentile_10y` 的日度可计算性依赖 `price_at_score`、`bps` 和至少 12 项 `pb_hist_monthly`。
 - reviewer 只能补充解释、异议、缺失数据说明和人工问题，不能覆盖 deterministic score/decision。
 
@@ -177,7 +188,7 @@ pytest tests/test_spec_structure.py -q
 当前全量结果：
 
 ```text
-92 passed, 1 skipped
+93 passed, 1 skipped
 ```
 
 ## 代码质量
@@ -196,12 +207,14 @@ git diff --check
 git status --short
 ```
 
-如果 `accuracy_report.txt` 只是由测试生成的非目标变更，提交前恢复它。
+测试中的 accuracy-report 输出已隔离到临时路径；如果手动运行 `python3 pipeline.py accuracy-report` 更新了 tracked `accuracy_report.txt`，提交前确认这是否属于目标变更。
 
 ## 设计与计划文档
 
 - `docs/specs/2026-05-29-agent-engineering-governance-spec.md`：数据治理与结构边界 Spec。
 - `docs/plans/2026-05-30-data-governance-structure-boundary-execution-plan.md`：Phase B-F 执行计划与 ledger。
+- `docs/specs/2026-05-30-phase5-l3-entry-signal-spec.md`：Phase 5 L3 买点层 Spec。
+- `docs/plans/2026-05-30-phase5-l3-entry-signal-implementation-plan.md`：Phase 5 L3 买点层实施计划。
 - `docs/data-source-registry.yaml`：字段级数据源 registry。
 - `docs/reviews/`：计划或实现审查记录。
 - `docs/design.md`：早期整体架构说明。
