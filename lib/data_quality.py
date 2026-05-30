@@ -93,6 +93,8 @@ def evaluate_data_quality(
             fields.append(DataQualityField(name, FieldRequirement.REQUIRED, FieldStatus.MISSING, name, "missing"))
             return
         missing_inputs = [dep for dep in _PB_DAILY_DEPENDENCIES if data.get(dep) is None]
+        if len(data.get("pb_hist_monthly") or []) < 12:
+            missing_inputs.append("pb_hist_monthly")
         if missing_inputs:
             fields.append(
                 DataQualityField(

@@ -55,5 +55,14 @@ def test_pb_percentile_marks_cached_value_stale_without_daily_inputs() -> None:
     assert "cached_without_daily_inputs:price_at_score" in pb_field.reason
 
 
+def test_pb_percentile_marks_cached_value_stale_when_history_is_too_short() -> None:
+    data = _complete_data()
+    data["pb_hist_monthly"] = [1.0] * 11
+    result = evaluate_data_quality("600036", data)
+    pb_field = next(field for field in result.fields if field.name == "pb_percentile_10y")
+    assert pb_field.status == "stale"
+    assert "cached_without_daily_inputs:pb_hist_monthly" in pb_field.reason
+
+
 def test_result_is_json_serializable() -> None:
     json.dumps(evaluate_data_quality("600036", _complete_data()).as_dict(), ensure_ascii=False)
