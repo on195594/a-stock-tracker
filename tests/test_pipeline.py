@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import sys
 import types
 from datetime import date, timedelta
@@ -243,6 +244,71 @@ def _insert_index_price(symbol: str, d: str, close: float) -> None:
     )
     db.commit()
     db.close()
+
+
+def _prediction_columns() -> set[str]:
+    db = cache_mod.get_db()
+    columns = {row[1] for row in db.execute("PRAGMA table_info(predictions)").fetchall()}
+    db.close()
+    return columns
+
+
+# ---------------------------------------------------------------------------
+# 0. predictions L3 schema
+# ---------------------------------------------------------------------------
+def test_predictions_schema_includes_l3_entry_signal_columns(tmp_db):
+    """新库 predictions 建表时包含 L3 entry_signal 字段。"""
+    assert {"entry_signal", "entry_signal_version"}.issubset(_prediction_columns())
+
+
+def test_get_db_adds_l3_entry_signal_columns_to_legacy_predictions(tmp_path, monkeypatch):
+    """旧库 predictions 缺少 L3 字段时，get_db() 只能 additive 补列。"""
+    db_path = str(tmp_path / "legacy.db")
+    monkeypatch.setattr(config, "DB_PATH", db_path)
+    monkeypatch.setattr(cache_mod, "DB_PATH", db_path)
+
+    legacy = sqlite3.connect(db_path)
+    legacy.execute(
+        """CREATE TABLE predictions (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            code            TEXT    NOT NULL,
+            name            TEXT,
+            framework       TEXT    NOT NULL,
+            score_date      TEXT    NOT NULL,
+            price_at_score  REAL,
+            quant_score     REAL,
+            total_score     REAL,
+            weights_hash    TEXT,
+            report_period   TEXT,
+            outcome_30d     REAL,
+            outcome_60d     REAL,
+            outcome_90d     REAL,
+            benchmark_30d   REAL,
+            benchmark_60d   REAL,
+            benchmark_90d   REAL,
+            estimate_flag   INTEGER DEFAULT 0,
+            threshold_adjusted INTEGER DEFAULT 0,
+            created_at      TEXT,
+            UNIQUE(code, framework, score_date)
+        )"""
+    )
+    legacy.execute(
+        """INSERT INTO predictions
+           (code, name, framework, score_date, total_score, created_at)
+           VALUES ('600036', '招商银行', 'A', '2026-05-29', 66.0, '2026-05-29T15:00:00')"""
+    )
+    legacy.commit()
+    legacy.close()
+
+    db = cache_mod.get_db()
+    columns = {row[1] for row in db.execute("PRAGMA table_info(predictions)").fetchall()}
+    row = db.execute(
+        "SELECT code, total_score, entry_signal, entry_signal_version FROM predictions"
+    ).fetchone()
+    db.close()
+
+    assert {"entry_signal", "entry_signal_version"}.issubset(columns)
+    assert row == ("600036", 66.0, None, None)
 
 
 # ---------------------------------------------------------------------------

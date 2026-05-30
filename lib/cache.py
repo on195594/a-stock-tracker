@@ -59,6 +59,14 @@ def get_industry_ttl(industry: str) -> int:
     return 168
 
 
+def _ensure_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
+    existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    for name, definition in columns.items():
+        if name in existing:
+            continue
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+
+
 def get_db():
     conn = sqlite3.connect(DB_PATH)
     conn.execute('''CREATE TABLE IF NOT EXISTS stock_fundamentals (
@@ -137,9 +145,15 @@ def get_db():
         alpha_90d       REAL GENERATED ALWAYS AS (outcome_90d - benchmark_90d) VIRTUAL,
         estimate_flag   INTEGER DEFAULT 0,
         threshold_adjusted INTEGER DEFAULT 0,
+        entry_signal    INTEGER,
+        entry_signal_version TEXT,
         created_at      TEXT,
         UNIQUE(code, framework, score_date)
     )''')
+    _ensure_columns(conn, "predictions", {
+        "entry_signal": "INTEGER",
+        "entry_signal_version": "TEXT",
+    })
     conn.execute('''CREATE TABLE IF NOT EXISTS index_prices (
         symbol  TEXT NOT NULL,
         date    TEXT NOT NULL,
