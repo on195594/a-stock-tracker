@@ -8,7 +8,7 @@ A 股选股与方法论验证项目。当前定位是 **Framework A 定量评分
 
 - 主线分支：`master`
 - 当前治理阶段：Phase A-F 已完成；Phase 5 L3 买点层已实现
-- 最近验证：`pytest tests/ -q` → `109 passed, 1 skipped`
+- 最近验证：`pytest tests/ -q` → `110 passed, 1 skipped`
 - 数据治理计划：`docs/plans/2026-05-30-data-governance-structure-boundary-execution-plan.md`
 - L3 买点层 Spec：`docs/specs/2026-05-30-phase5-l3-entry-signal-spec.md`
 - L3 买点层实施计划：`docs/plans/2026-05-30-phase5-l3-entry-signal-implementation-plan.md`
