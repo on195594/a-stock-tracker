@@ -219,6 +219,21 @@ def _insert_prediction(
     return row_id
 
 
+def _framework_a_closed_30d_count() -> int:
+    db = cache_mod.get_db()
+    count = db.execute(
+        """SELECT COUNT(*) FROM predictions
+           WHERE outcome_30d IS NOT NULL AND framework = 'A'"""
+    ).fetchone()[0]
+    db.close()
+    return int(count)
+
+
+def assert_report_matches_db(output: str) -> None:
+    expected = _framework_a_closed_30d_count()
+    assert f"Framework A {expected} 条已结案记录" in output
+
+
 def _insert_index_price(symbol: str, d: str, close: float) -> None:
     db = cache_mod.get_db()
     db.execute(
@@ -621,6 +636,43 @@ def test_accuracy_report_warning_uses_framework_a_not_all_frameworks(tmp_db, cap
     assert "样本不足（Framework A 75 条已结案记录）" in out
     assert "A" in out and "75        75" in out
     assert "B" in out and "35        35" in out
+
+
+def test_accuracy_report_contract_matches_framework_a_sql_anchor(
+    tmp_db, capsys, fake_weights, monkeypatch
+):
+    monkeypatch.setattr(pipeline, "_load_weights", lambda: fake_weights)
+    score_date = (date.today() - timedelta(days=30)).isoformat()
+    db = cache_mod.get_db()
+    # A 框 2 条已结案
+    for idx in range(2):
+        db.execute(
+            """INSERT INTO predictions
+               (code, name, framework, score_date, price_at_score,
+                quant_score, total_score, weights_hash, report_period,
+                outcome_30d, benchmark_30d, created_at)
+               VALUES (?, ?, 'A', ?, 10, 40, 50, 'hashA', '2024-09-30', 0.10, 0.02, ?)""",
+            (f"60003{idx}", f"A{idx}", score_date, score_date + "T15:00:00"),
+        )
+    # B 框 3 条已结案：不得污染 A 框样本数
+    for idx in range(3):
+        db.execute(
+            """INSERT INTO predictions
+               (code, name, framework, score_date, price_at_score,
+                quant_score, total_score, weights_hash, report_period,
+                outcome_30d, benchmark_30d, created_at)
+               VALUES (?, ?, 'B', ?, 10, 40, 50, 'hashB', '2024-09-30', 0.10, 0.02, ?)""",
+            (f"00000{idx}", f"B{idx}", score_date, score_date + "T15:00:00"),
+        )
+    db.commit()
+    db.close()
+
+    pipeline.cmd_accuracy_report()
+    out = capsys.readouterr().out
+
+    assert _framework_a_closed_30d_count() == 2
+    assert_report_matches_db(out)
+    assert "Framework A 2 条已结案记录" in out
 
 
 # ---------------------------------------------------------------------------
