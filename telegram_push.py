@@ -33,9 +33,9 @@ def push_daily_signals(score_date: str, threshold: float = 55.0) -> None:
 
     db = get_db()
     rows = db.execute(
-        """SELECT code, name, total_score, quant_score
+        """SELECT code, name, total_score, quant_score, entry_signal_version
            FROM predictions
-           WHERE score_date=? AND total_score >= ?
+           WHERE score_date=? AND total_score >= ? AND entry_signal = 1
            ORDER BY total_score DESC""",
         (score_date, threshold),
     ).fetchall()
@@ -45,10 +45,11 @@ def push_daily_signals(score_date: str, threshold: float = 55.0) -> None:
         logger.info(f"今日无 >= {threshold} 分的评分信号，跳过推送")
         return
 
-    lines = [f"A股每日信号 {score_date}（>={threshold:.0f}分）\n"]
-    for code, name, total, quant in rows:
+    lines = [f"A股每日信号 {score_date}（>={threshold:.0f}分，L3通过）\n"]
+    for code, name, total, quant, entry_version in rows:
         label = f"{name}({code})" if name else code
-        lines.append(f"  {label}  总分:{total:.1f}  量化:{quant:.1f}")
+        l3_label = f"L3:{entry_version or 'unknown'} 通过"
+        lines.append(f"  {label}  总分:{total:.1f}  量化:{quant:.1f}  {l3_label}")
     text = "\n".join(lines)
 
     try:
