@@ -1,34 +1,30 @@
 # a-stock-tracker
 
-A 股选股与方法论验证项目。当前定位是 **Framework A 定量评分 + 数据治理 + 只读审查辅助**：每日对 watchlist 股票评分，记录到 SQLite，跟踪 30/60/90 天收益率，并用 accuracy-report 评估相对沪深 300 的命中情况。
+A 股选股与方法论验证项目。当前定位是 **Framework A 定量评分 + Gemini 定性补充 + L3 买点过滤 + 数据治理审计**：每日对固定 watchlist 股票评分，写入 SQLite，追踪 30/60/90 天收益率，并用 `accuracy-report` 评估相对沪深 300 的表现。
 
-> 当前阶段目标是数据积累与框架验证，不是自动交易、持仓管理或投资建议系统。
+> 当前阶段目标是积累数据、验证 Framework A 和 L3 买点层的有效性。项目不做自动交易、下单、持仓账户管理或投资建议。
 
 ## 当前状态
 
-- 主线分支：`master`
-- 当前治理阶段：Phase A-F 已完成；Phase 5 L3 买点层已实现
-- 最近验证：`pytest tests/ -q` → `110 passed, 1 skipped`
-- 数据治理计划：`docs/plans/2026-05-30-data-governance-structure-boundary-execution-plan.md`
-- L3 买点层 Spec：`docs/specs/2026-05-30-phase5-l3-entry-signal-spec.md`
-- L3 买点层实施计划：`docs/plans/2026-05-30-phase5-l3-entry-signal-implementation-plan.md`
-- 数据源 registry：`docs/data-source-registry.yaml`
+- 主分支：`master`
+- 当前阶段：数据治理 Phase A-F 已完成；Phase 5 L3 买点层 v1 已实现
+- 生产框架：`SUPPORTED_FRAMEWORKS = {"A"}`；Framework B 历史数据保留，计划在 Phase 6 重启
+- watchlist：35 只，维护在 `config.py`
+- 评分阈值：`buy_strong=44`、`buy_moderate=35`、`buy_light=26`
+- L3 推送条件：`total_score >= buy_strong AND entry_signal = 1`
+- 数据库：`tracker.db`，核心表为 `stock_fundamentals`、`predictions`、`index_prices`、`qualitative_scores`
+- 最新顶层路线图：`docs/evolution-roadmap.md`
 
-已落地的治理能力：
+已落地能力：
 
-- 数据源 registry：记录 scorer 输入、报告字段、缓存位置、刷新频率与失败语义。
-- accuracy-report 合约测试：固定 Framework A 结案样本数必须与 DB anchor 一致，避免被全局样本污染。
-- 数据质量模型：`lib/data_quality.py` 表达 required/degradable/derived 字段，以及 ok/missing/fallback/stale 状态。
-- PB 分位 seam：`scorer.compute_daily_pb_percentile()` 负责 PB 分位纯计算，`pipeline.py` 只保留兼容 wrapper。
-- 只读 reviewer schema：`lib/agent_reviewer.py` 限制 reviewer 只能输出说明性 commentary，不能覆盖 score、threshold、trade_action 或 DB write 指令。
-- L3 买点层：`lib/entry_signal.py` 实现 v1 纯计算，`pipeline.py` 在 daily 写入 `entry_signal` / `entry_signal_version`，`telegram_push.py` 仅推送 `buy_strong AND entry_signal=1`，`accuracy-report` 增加 L3 section。
-
-下一阶段治理决策：
-
-- 已实现 **L3 买点层**，作为 Framework A 输出后的入场过滤层。
-- Framework B 复活后置到 Phase 6，待 L3 的字段、报告、推送语义稳定后再启动。
-- 已落地 `predictions.entry_signal` / `entry_signal_version` 字段、Telegram 推送 L3 过滤、日线历史窗口读取，并把 L3 report 纳入 `accuracy-report`。
-- L3 不修改 `total_score`、`weights_hash` 或历史评分数据。
+- Framework A：ROE、净利润增速、负债率、毛利率、PB 分位和定性项的 80 分制评分。
+- Gemini 定性评分：`moat`、`market_pos`、`sentiment`，30 天缓存，失败时 all-or-nothing fallback 到固定值。
+- Outcome 追踪：记录 30/60/90 天收益、沪深 300 benchmark 和 generated `alpha_*d`。
+- L3 买点层：`lib/entry_signal.py` 用 MA60、MA120、5/20 日量能计算 `entry_signal`，版本为 `v1`。
+- Telegram 推送：只推送强信号且 L3 通过的股票；失败不阻断 daily。
+- Google Sheets 同步：展示层能力，失败只记录 warning，不是数据真相来源。
+- 数据治理：`docs/data-source-registry.yaml` 记录字段来源、缓存、刷新、fallback 和失败语义。
+- 只读 reviewer schema：`lib/agent_reviewer.py` 限制 reviewer 只能输出 commentary，不能覆盖分数、阈值、交易动作或 DB 写入。
 
 ## 安装
 
@@ -41,13 +37,7 @@ pip install -r requirements.txt
 
 ## 配置
 
-复制或创建 `.env`，按需填写：
-
-```bash
-cp .env.example .env  # 如无 .env.example，则手动创建 .env
-```
-
-`.env` 示例：
+创建 `.env`，按需填写：
 
 ```text
 GEMINI_API_KEY=你的_Gemini_API_Key
@@ -58,41 +48,46 @@ TELEGRAM_CHAT_ID=你的_Chat_ID
 说明：
 
 - 三项均可选。
-- 未配置 Gemini 时，定性评分走固定 fallback。
-- 未配置 Telegram 时，推送静默跳过，不影响评分流程。
+- 未配置 Gemini 时，定性评分使用固定 fallback。
+- 未配置 Telegram 时，推送静默跳过，不影响评分和写库。
 - `.env` 必须保持在 git 外，不要提交真实密钥。
 
 ## 常用命令
 
-### 初始化基本面缓存
-
 ```bash
+# 首次初始化或新增股票后补齐基本面缓存
 python3 pipeline.py init
-```
 
-预计耗时约 15 分钟，取决于网络和 watchlist 规模。
+# 每周刷新基本面缓存
+python3 pipeline.py weekly
 
-### 手动运行每日评分
-
-```bash
+# 手动运行每日评分
 python3 pipeline.py daily
-```
 
-### 手动更新预测结果
-
-```bash
+# 更新到期预测的 30/60/90 天 outcome
 python3 pipeline.py outcome-update
-```
 
-### 查看准确率报告
-
-```bash
+# 生成准确率报告
 python3 pipeline.py accuracy-report
+
+# 删除某只股票的本地历史数据
+python3 pipeline.py remove 601857
 ```
 
-报告默认写入 `config.ACCURACY_REPORT_PATH`，生产默认路径为项目根目录的 `accuracy_report.txt`。测试会把该路径隔离到临时目录，不应改写 tracked 报告文件。
+`accuracy-report` 默认写入 `config.ACCURACY_REPORT_PATH`，生产路径为项目根目录的 `accuracy_report.txt`。测试会把该路径隔离到临时目录；手动运行报告可能改写 tracked 文件，提交前需要确认是否属于目标变更。
 
-### 配置 cron
+当前报告包含：
+
+- Framework A 总体分层表现和五分位单调性检验。
+- 2026-05-15 后 post-fix 样本专区，避免新旧数据口径混合解释。
+- L3 买点层统计。
+- Gemini 评分稳定性。
+- Framework B 重启门槛进度。
+- watchlist 数据质量审计，区分 `cache_report_period` 和 `prediction_report_period` 缺失；金融行业 `gross_margin` 计为不适用。
+- Framework B dry-run 对比；该部分只读、report-only，不写入 `predictions`。
+- Phase 6 readiness 结论；只有 post-fix outcome、数据质量和 B dry-run 覆盖同时满足时，才考虑进入 Phase 6 report-only 深化。
+
+## Cron
 
 ```bash
 bash cron-setup.sh
@@ -103,64 +98,50 @@ bash cron-setup.sh
 - 工作日 16:30：运行 `daily`
 - 工作日 17:00：运行 `outcome-update`
 
-## Watchlist 维护
+cron、Telegram、Gemini、Google Sheets 都不应在测试中真实触发。
 
-### 添加股票
+## Watchlist
+
+添加股票：
 
 1. 编辑 `config.py` 中的 `WATCHLIST`。
-2. 运行初始化命令补齐新股票缓存：
+2. 运行：
 
 ```bash
 python3 pipeline.py init
 ```
 
-### 删除股票
+删除股票：
 
-如果只是停止后续跟踪，只从 `config.py` 删除即可，历史记录会保留。
-
-如果要删除该股票的本地历史数据：
-
-```bash
-python3 pipeline.py remove <股票代码>
-# 示例
-python3 pipeline.py remove 601857
-```
-
-该命令会删除 `stock_fundamentals` 和 `predictions` 中对应股票记录。删除后不可恢复，执行前确认目标代码。
+- 如果只是停止后续跟踪，从 `WATCHLIST` 删除即可，历史记录保留。
+- 如果要删除本地历史数据，运行 `python3 pipeline.py remove <股票代码>`。该命令会删除 `stock_fundamentals` 和 `predictions` 中对应记录，执行前需要确认目标代码。
 
 ## 核心模块
 
-- `pipeline.py`：主编排器，支持 `init` / `daily` / `outcome-update` / `accuracy-report`。
-- `scorer.py`：Framework A 定量评分和 PB 分位纯计算。
-- `gemini_scorer.py`：Gemini 定性评分；失败或未配置时 fallback。
-- `telegram_push.py`：Telegram 每日信号推送，条件为 `total_score >= buy_strong AND entry_signal=1`。
-- `lib/cache.py`：SQLite 缓存与 predictions 表管理。
-- `lib/fetcher.py`：AKShare 等数据源读取。
-- `lib/entry_signal.py`：L3 v1 买点层纯计算，输入为归一化 `date/close/volume` 日线数据。
-- `lib/data_quality.py`：数据质量状态模型，纯逻辑，无 DB/API/文件写入。
-- `lib/agent_reviewer.py`：schema-only/fake reviewer，限制 reviewer 只输出只读 commentary。
+- `pipeline.py`：主编排器，支持 `init` / `weekly` / `daily` / `outcome-update` / `accuracy-report` / `remove`。
+- `scorer.py`：Framework A 确定性评分，breakpoints 线性插值，PB 分位纯计算。
+- `gemini_scorer.py`：Gemini 定性评分、缓存、校验和 fallback。
+- `telegram_push.py`：Telegram 信号推送，筛选 `buy_strong` 且 L3 通过的记录。
+- `sheets_sync.py`：Google Sheets 展示层同步。
+- `lib/cache.py`：SQLite schema、迁移和缓存管理。
+- `lib/fetcher.py`：AKShare、腾讯 fallback、百度估值等数据读取。
+- `lib/data_quality.py`：required/degradable/derived 字段质量模型。
+- `lib/entry_signal.py`：L3 v1 买点层纯计算 seam。
+- `lib/agent_reviewer.py`：只读 reviewer schema/fake reviewer。
 - `weights.json`：评分权重与阈值。
-- `config.py`：watchlist、数据库路径、日志目录。
-- `docs/data-source-registry.yaml`：数据源、缓存、刷新与失败语义登记。
+- `docs/data-source-registry.yaml`：字段级数据源 registry。
 
-## 数据治理边界
+## 数据语义
 
-当前项目明确不做：
-
-- 自动交易、下单、持仓账户管理。
-- 修改真实 DB 历史记录来“修好”报告。
-- cron、Telegram、Gemini、Google Sheets 的隐式启用。
-- 把 reviewer/LLM 输出作为 score、threshold、trade_action 或 DB 写入指令。
-- 在测试中发起真实 AKShare、Gemini、Telegram 或 Google Sheets 调用。
-
-关键规则：
-
-- `predictions` 中的历史评分、`weights_hash` 和收益结果是审计数据，不应手动改写。
-- `accuracy-report` 解释 Framework A 时，样本 anchor 必须过滤 `framework = 'A'`。
-- L3 买点层是过滤层，只能影响推送和报告分层，不得反向修改 L1/L2 评分。
-- `entry_signal=NULL` 表示未实装/未计算，不能与 `entry_signal=0`（已判断但未通过）混用。
-- `pb_percentile_10y` 的日度可计算性依赖 `price_at_score`、`bps` 和至少 12 项 `pb_hist_monthly`。
-- reviewer 只能补充解释、异议、缺失数据说明和人工问题，不能覆盖 deterministic score/decision。
+- `predictions` 是审计数据；历史 `total_score`、`weights_hash`、`outcome_*d`、`benchmark_*d` 不应手动改写。
+- `alpha_*d` 是 SQLite generated column，禁止在 INSERT/UPDATE 中直接写入。
+- `weights_hash` 只对 `weights.json["frameworks"]` 子树计算，`updated_at` 和 `version` 不影响 hash。
+- `outcome_*d` 和 `benchmark_*d` 单位是百分比，例如 `5.2` 表示上涨 5.2%。
+- `entry_signal=NULL AND entry_signal_version IS NULL` 表示 pre-L3 历史记录。
+- `entry_signal=NULL AND entry_signal_version='v1'` 表示 L3 v1 已运行但不可计算。
+- `entry_signal=0/1 AND entry_signal_version='v1'` 表示 L3 v1 已判断并拒绝/通过。
+- `pb_percentile_10y` 日度可计算性依赖 `price_at_score`、`bps` 和足够的 `pb_hist_monthly`。
+- 2026-05-14 前后存在毛利率和 PB 分位口径修复，跨期评分比较必须按 `score_date` 分层。
 
 ## 测试
 
@@ -168,104 +149,75 @@ python3 pipeline.py remove 601857
 # 全部测试
 pytest tests/ -q
 
-# 数据源 registry
-pytest tests/test_data_source_registry.py -q
-
-# 数据质量模型
-pytest tests/test_data_quality.py -q
-
-# scorer 与 PB 分位计算
+# 常用定向测试
 pytest tests/test_scorer.py -q
-
-# pipeline / accuracy-report 合约
 pytest tests/test_pipeline.py -q
-
-# reviewer schema
+pytest tests/test_l3_entry_signal.py -q
+pytest tests/test_telegram_push.py -q
+pytest tests/test_data_source_registry.py -q
+pytest tests/test_data_quality.py -q
 pytest tests/test_agent_reviewer.py -q
-
-# spec / plan 结构检查
-pytest tests/test_spec_structure.py -q
+pytest tests/test_sheets_sync.py -q
 ```
 
-当前全量结果：
-
-```text
-109 passed, 1 skipped
-```
-
-## 代码质量
+代码质量检查：
 
 ```bash
-source .venv/bin/activate
-ruff check . --exclude .venv
-mypy pipeline.py scorer.py --ignore-missing-imports
-```
-
-提交前建议至少运行：
-
-```bash
-pytest tests/ -q
+ruff check .
+mypy
 git diff --check
 git status --short
 ```
 
-测试中的 accuracy-report 输出已隔离到临时路径；如果手动运行 `python3 pipeline.py accuracy-report` 更新了 tracked `accuracy_report.txt`，提交前确认这是否属于目标变更。
-
-## 设计与计划文档
-
-- `docs/specs/2026-05-29-agent-engineering-governance-spec.md`：数据治理与结构边界 Spec。
-- `docs/plans/2026-05-30-data-governance-structure-boundary-execution-plan.md`：Phase B-F 执行计划与 ledger。
-- `docs/specs/2026-05-30-phase5-l3-entry-signal-spec.md`：Phase 5 L3 买点层 Spec。
-- `docs/plans/2026-05-30-phase5-l3-entry-signal-implementation-plan.md`：Phase 5 L3 买点层实施计划。
-- `docs/data-source-registry.yaml`：字段级数据源 registry。
-- `docs/reviews/`：计划或实现审查记录。
-- `docs/design.md`：早期整体架构说明。
-- `docs/test-plan.md`：测试计划。
-- `docs/impl-plan.md`：早期实施计划。
-
-## 问题排查
-
-### daily 执行超时
-
-原因通常是 watchlist 过大或网络慢。先减少 watchlist，或改为手动分批运行。
-
-### outcome-update 查询失败
-
-通常是 16:30-17:00 间网络波动。可手动重跑：
+提交前标准检查请优先使用项目虚拟环境，避免误用全局 Python：
 
 ```bash
-python3 pipeline.py outcome-update
+source .venv/bin/activate
+pytest tests/ -q
+ruff check .
+mypy
+git diff --check
 ```
 
-### predictions 表出现重复记录
+`ruff` 和 `mypy` 已列在 `requirements.txt`，配置集中在 `pyproject.toml`。如果命令不可用，先确认已激活虚拟环境并执行过 `pip install -r requirements.txt`。
 
-正常情况下不会发生，`code/framework/score_date` 有唯一约束和 `INSERT OR IGNORE` 保护。检查命令：
+测试约束：
 
-```bash
-sqlite3 tracker.db "SELECT COUNT(*), code, framework, score_date FROM predictions GROUP BY code, framework, score_date HAVING COUNT(*) > 1;"
-```
+- 所有 AKShare、Gemini、Telegram、Google Sheets 调用必须 mock。
+- 测试数据库必须用 `tmp_path` 或 monkeypatch 隔离，不能写真实 `tracker.db`。
+- 报告测试不应改写项目根目录的 tracked `accuracy_report.txt`。
 
-### accuracy-report 样本不足
+## 设计文档
 
-样本数小于 100 时只能作为观察，不应解释为统计显著结论。重点看相对沪深 300 的表现，而不是绝对收益命中率。
+- `docs/evolution-roadmap.md`：当前顶层路线图，后续 Phase 以此为基线。
+- `docs/specs/2026-05-29-agent-engineering-governance-spec.md`：Agent 工程治理和边界 Spec。
+- `docs/plans/2026-05-30-data-governance-structure-boundary-execution-plan.md`：数据治理与结构边界执行计划。
+- `docs/specs/2026-05-30-phase5-l3-entry-signal-spec.md`：L3 买点层 Spec。
+- `docs/plans/2026-05-30-phase5-l3-entry-signal-implementation-plan.md`：L3 买点层实施计划。
+- `docs/data-source-registry.yaml`：字段、数据源、缓存和 fallback registry。
+- `docs/lessons-learned.md`：历史修复、陷阱和跨期解释注意事项。
+- `docs/reviews/`：计划和实现审查记录。
+- `docs/design.md`、`docs/impl-plan.md`、`docs/test-plan.md`：早期架构、实施和测试计划。
 
-### Gemini 全部使用 fallback
+## 排查
 
-可能原因：
+daily 超时：
 
-- 未配置 `GEMINI_API_KEY`
-- 模型不可用或 API 返回 404
-- quota 超限
-- 网络不可达
+- 常见原因是 watchlist 较大或网络慢。可先减少 watchlist 或分批手动运行。
 
-先确认 `.env` 存在且 key 有值，再用只读方式检查当前配置；不要把真实 key 打印到日志或提交到 git。
+outcome-update 查询失败：
 
-### Telegram 未收到推送
+- 通常是网络或数据源波动，可手动重跑 `python3 pipeline.py outcome-update`。
 
-排查顺序：
+accuracy-report 样本不足：
 
-1. 确认 `.env` 中 `TELEGRAM_BOT_TOKEN` 和 `TELEGRAM_CHAT_ID` 已填写。
-2. 确认当日是否有达到推送阈值的信号。
-3. 查看 `logs/` 下的运行日志。
+- 样本数小于报告阈值时只能观察趋势，不应解释为统计显著结论。重点看相对沪深 300 的 `alpha_30d` 和分层样本数。
 
-低于阈值时不推送是正常行为。
+Gemini 全部 fallback：
+
+- 检查 `GEMINI_API_KEY`、模型可用性、quota 和网络。
+
+Telegram 无推送：
+
+- 检查 `.env` 中的 token/chat id。
+- 确认当天是否存在 `total_score >= buy_strong AND entry_signal=1` 的记录。
