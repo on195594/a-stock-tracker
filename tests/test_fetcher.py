@@ -15,9 +15,9 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-import lib.fetcher as fetcher_mod
-import lib.cache as cache_mod
-import pipeline
+import lib.fetcher as fetcher_mod  # noqa: E402
+import lib.cache as cache_mod  # noqa: E402
+import pipeline  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +98,154 @@ def test_gross_margin_api_error_returns_none(monkeypatch):
     assert result is None
 
 
+def test_report_period_is_cached_field() -> None:
+    """cmd_fetch 计算出的 report_period 必须进入 cache_data，不应被 FIELDS 过滤掉。"""
+    assert "report_period" in fetcher_mod.FIELDS
+
+
+def test_cmd_fetch_skips_cache_write_when_no_valid_fields(monkeypatch) -> None:
+    """所有外部源失败时不应写入 0 字段缓存。"""
+    set_cache = patch("lib.fetcher.set_fundamentals").start()
+    monkeypatch.setattr(fetcher_mod, "timed_call", lambda *a, **k: ("ERROR", "dns failed"))
+    monkeypatch.setattr(fetcher_mod, "timed_call_with_retry", lambda *a, **k: ("ERROR", "dns failed"))
+    monkeypatch.setattr(fetcher_mod, "get_spot_em_snapshot", lambda *a, **k: None)
+    monkeypatch.setattr(fetcher_mod, "_fetch_spot_em_safe", lambda *a, **k: ("ERROR", "dns failed"))
+    monkeypatch.setattr(fetcher_mod, "_compute_gross_margin", lambda *a, **k: None)
+    monkeypatch.setattr(fetcher_mod, "_fetch_pb_hist_and_percentile", lambda *a, **k: (None, []))
+
+    try:
+        with pytest.raises(RuntimeError, match="未获取到任何有效字段"):
+            fetcher_mod.cmd_fetch(["603606"])
+    finally:
+        patch.stopall()
+    set_cache.assert_not_called()
+
+
+def test_fetch_spot_em_safe_returns_error_after_same_day_failure(monkeypatch) -> None:
+    """同日失败记忆命中时返回明确错误，不返回 None 触发 to_dict 解析异常。"""
+    monkeypatch.setattr(fetcher_mod, "_spot_em_failed_today", "2026-06-04")
+    result = fetcher_mod._fetch_spot_em_safe("2026-06-04")
+    assert result == ("ERROR", "spot_em 今日已失败，跳过重复拉取")
+
+
+def test_cmd_fetch_uses_recent_spot_snapshot_when_today_fetch_fails(monkeypatch) -> None:
+    """spot_em 今日拉取失败时，可使用最近缓存快照恢复 PE/PB/股息率价格。"""
+    captured: dict = {}
+    fin_df = pd.DataFrame({
+        "报告期": ["2023", "2024", "2025"],
+        "净资产收益率": [10.0, 11.0, 12.0],
+        "净利润同比增长率": [5.0, 6.0, 7.0],
+        "资产负债率": [40.0, 41.0, 42.0],
+        "基本每股收益": [1.0, 1.1, 1.2],
+        "每股净资产": [8.0, 8.5, 9.0],
+    })
+    div_df = pd.DataFrame({
+        "进度": ["实施"],
+        "除权除息日": ["2026-01-15"],
+        "派息": [2.0],
+    })
+    recent_snapshot = [{
+        "代码": "603606",
+        "市盈率-动态": "18.5",
+        "市净率": "2.1",
+        "最新价": "21.0",
+        "总市值": "100",
+        "流通市值": "80",
+    }]
+
+    def fake_timed_call(fn, *args, **kwargs):
+        if fn is fetcher_mod._fetch_info:
+            return {"股票简称": "东方电缆", "行业": "电力设备", "最新": "20.0"}
+        if fn is fetcher_mod._fetch_dividends:
+            return div_df
+        if fn is fetcher_mod._fetch_price_history:
+            raise AssertionError("recent snapshot has price, should not fetch latest close")
+        return ("ERROR", "unexpected")
+
+    def fake_set_fundamentals(code, name, industry, data, ttl=None, merge=False):
+        captured.update({"code": code, "name": name, "industry": industry, "data": data, "merge": merge})
+        return "ok"
+
+    monkeypatch.setattr(fetcher_mod, "timed_call", fake_timed_call)
+    monkeypatch.setattr(fetcher_mod, "timed_call_with_retry", lambda *a, **k: fin_df)
+    monkeypatch.setattr(fetcher_mod, "get_spot_em_snapshot", lambda *a, **k: None)
+    monkeypatch.setattr(fetcher_mod, "_fetch_spot_em_safe", lambda *a, **k: ("ERROR", "remote closed"))
+    monkeypatch.setattr(fetcher_mod, "get_recent_spot_em_snapshot", lambda *a, **k: ("2026-06-03", recent_snapshot))
+    monkeypatch.setattr(fetcher_mod, "_compute_gross_margin", lambda *a, **k: 25.0)
+    monkeypatch.setattr(fetcher_mod, "_fetch_pb_hist_and_percentile", lambda *a, **k: (42.0, [1.0] * 24))
+    monkeypatch.setattr(fetcher_mod, "set_fundamentals", fake_set_fundamentals)
+
+    fetcher_mod.cmd_fetch(["603606"])
+
+    data = captured["data"]
+    assert captured["merge"] is True
+    assert data["pe_ttm"] == 18.5
+    assert data["pb"] == 2.1
+    assert data["float_to_total_ratio"] == 80.0
+    assert data["dividend_yield"] == 0.95
+
+
+def test_cmd_fetch_falls_back_to_latest_close_for_pb_and_dividend(monkeypatch) -> None:
+    """无 spot_em 快照时，用个股日线最新收盘价计算 PB，并支撑股息率。"""
+    captured: dict = {}
+    fin_df = pd.DataFrame({
+        "报告期": ["2023", "2024", "2025"],
+        "净资产收益率": [10.0, 11.0, 12.0],
+        "净利润同比增长率": [5.0, 6.0, 7.0],
+        "资产负债率": [40.0, 41.0, 42.0],
+        "基本每股收益": [1.0, 1.1, 1.2],
+        "每股净资产": [8.0, 8.0, 8.0],
+    })
+    div_df = pd.DataFrame({
+        "进度": ["实施"],
+        "除权除息日": ["2026-01-15"],
+        "派息": [1.6],
+    })
+
+    def fake_timed_call(fn, *args, **kwargs):
+        if fn is fetcher_mod._fetch_info:
+            return ("ERROR", "info failed")
+        if fn is fetcher_mod._fetch_price_history:
+            return pd.DataFrame({"收盘": [11.5, 12.0]})
+        if fn is fetcher_mod._fetch_dividends:
+            return div_df
+        return ("ERROR", "unexpected")
+
+    def fake_set_fundamentals(code, name, industry, data, ttl=None, merge=False):
+        captured.update({"code": code, "name": name, "industry": industry, "data": data, "merge": merge})
+        return "ok"
+
+    monkeypatch.setattr(fetcher_mod, "timed_call", fake_timed_call)
+    monkeypatch.setattr(fetcher_mod, "timed_call_with_retry", lambda *a, **k: fin_df)
+    monkeypatch.setattr(fetcher_mod, "get_spot_em_snapshot", lambda *a, **k: None)
+    monkeypatch.setattr(fetcher_mod, "_fetch_spot_em_safe", lambda *a, **k: ("ERROR", "remote closed"))
+    monkeypatch.setattr(fetcher_mod, "get_recent_spot_em_snapshot", lambda *a, **k: None)
+    monkeypatch.setattr(fetcher_mod, "_compute_gross_margin", lambda *a, **k: 25.0)
+    monkeypatch.setattr(fetcher_mod, "_fetch_pb_hist_and_percentile", lambda *a, **k: (42.0, [1.0] * 24))
+    monkeypatch.setattr(fetcher_mod, "set_fundamentals", fake_set_fundamentals)
+
+    fetcher_mod.cmd_fetch(["603606"])
+
+    data = captured["data"]
+    assert data["pb"] == 1.5
+    assert data["dividend_yield"] == 1.33
+    assert "pe_ttm" in data
+    assert data["pe_ttm"] is None
+
+
+def test_fetch_latest_close_returns_reason_when_close_series_has_no_valid_values(monkeypatch) -> None:
+    """日线 fallback 有行但收盘列全无效时，应返回失败原因而不是抛 IndexError。"""
+    def fake_timed_call(fn, *args, **kwargs):
+        return pd.DataFrame({"收盘": [None, "", "bad"]})
+
+    monkeypatch.setattr(fetcher_mod, "timed_call", fake_timed_call)
+
+    close, reason = fetcher_mod._fetch_latest_close("603606", "2026-06-05")
+
+    assert close is None
+    assert reason == "日线收盘价无有效数据"
+
+
 # ---------------------------------------------------------------------------
 # _compute_daily_pb_percentile 测试（pipeline.py 中的函数）
 # ---------------------------------------------------------------------------
@@ -167,7 +315,11 @@ def tmp_cache_db(tmp_path, monkeypatch):
 def test_set_fundamentals_merge_preserves_old_valid_value(tmp_cache_db):
     """merge=True：新值为 None 时保留旧缓存中的有效值。"""
     cache_mod.set_fundamentals("603606", "东方电缆", "制造业",
-                               {"gross_margin": 32.5, "pb_hist_monthly": [1.0, 2.0, 3.0] * 50})
+                               {
+                                   "gross_margin": 32.5,
+                                   "pb_hist_monthly": [1.0, 2.0, 3.0] * 50,
+                                   "report_period": "2025-12-31",
+                               })
     # 模拟本次接口失败：gross_margin=None, pb_hist_monthly=None
     cache_mod.set_fundamentals("603606", "东方电缆", "制造业",
                                {"gross_margin": None, "pb_hist_monthly": None}, merge=True)
@@ -175,6 +327,30 @@ def test_set_fundamentals_merge_preserves_old_valid_value(tmp_cache_db):
     assert result is not None
     assert result["gross_margin"] == 32.5, "旧有效值应被保留"
     assert result["pb_hist_monthly"] is not None, "旧序列应被保留"
+    assert result["report_period"] == "2025-12-31", "本次未返回的旧字段应被保留"
+
+
+def test_set_fundamentals_merge_preserves_existing_metadata(tmp_cache_db):
+    """merge=True：基本信息接口失败时不应用代码/未知覆盖旧名称和行业。"""
+    cache_mod.set_fundamentals("603606", "东方电缆", "电力设备", {"pb": 2.1})
+    cache_mod.set_fundamentals("603606", "603606", "未知", {"pb": 2.2}, merge=True)
+    result = cache_mod.get_fundamentals("603606")
+    assert result is not None
+    assert result["_cache_meta"]["name"] == "东方电缆"
+    assert result["_cache_meta"]["industry"] == "电力设备"
+    assert result["pb"] == 2.2
+
+
+def test_set_fundamentals_merge_recomputes_ttl_after_restoring_industry(tmp_cache_db):
+    """merge=True 恢复旧行业后，TTL 应按恢复后的行业重新计算。"""
+    cache_mod.set_fundamentals("000858", "五粮液", "白酒", {"pb": 2.1})
+    cache_mod.set_fundamentals("000858", "000858", "未知", {"pb": 2.2}, merge=True)
+
+    result = cache_mod.get_fundamentals("000858")
+
+    assert result is not None
+    assert result["_cache_meta"]["industry"] == "白酒"
+    assert result["_cache_meta"]["ttl_hours"] == 48
 
 
 def test_set_fundamentals_merge_new_value_overrides(tmp_cache_db):

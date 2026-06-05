@@ -11,11 +11,11 @@ import sys
 import os
 import logging
 from typing import Any, Callable
-from datetime import datetime, date, timedelta
+from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from cache import (get_spot_em_snapshot, set_spot_em_snapshot,
+from cache import (get_recent_spot_em_snapshot, get_spot_em_snapshot, set_spot_em_snapshot,
                    get_fundamentals, set_fundamentals, list_codes)
 
 logger = logging.getLogger(__name__)
@@ -40,6 +40,7 @@ FIELDS = {
     'pb_hist_monthly':    ('PB月度历史序列(内部)',         'computed'),
     'float_to_total_ratio': ('流通/总市值比(%)',           'akshare'),
     'gross_margin':       ('毛利率(%)',                   'computed'),
+    'report_period':      ('财报期',                       'akshare'),
     'nim':                ('净息差（银行）',               'web'),
     'npl_ratio':          ('不良贷款率（银行）',           'web'),
     'provision_coverage': ('拨备覆盖率（银行）',           'web'),
@@ -137,8 +138,11 @@ def _fetch_spot_em_safe(today: str) -> Any:
     """spot_em 带今日失败记忆：进程内只尝试一次，避免 N 只股票 N 次无效调用。"""
     global _spot_em_failed_today
     if _spot_em_failed_today == today:
-        return None
+        return ('ERROR', 'spot_em 今日已失败，跳过重复拉取')
     result = timed_call(_fetch_spot_em, timeout=SPOT_EM_TIMEOUT)
+    if result is None:
+        _spot_em_failed_today = today
+        return ('ERROR', 'spot_em 返回空')
     if isinstance(result, (str, tuple)):  # 'TIMEOUT' or ('ERROR', msg)
         _spot_em_failed_today = today
     return result
@@ -212,6 +216,30 @@ def _fetch_pb_hist_and_percentile(code: str) -> tuple[float | None, list[float] 
     current_pb = series[-1]
     pct = round(float((values < current_pb).sum() / len(values) * 100), 1)
     return pct, series
+
+
+def _fetch_latest_close(code: str, today: str) -> tuple[float | None, str | None]:
+    """spot_em 不可用时，退化为最近日线收盘价，供 PB 和股息率计算使用。"""
+    end_date = today.replace("-", "")
+    start_date = (datetime.fromisoformat(today) - timedelta(days=14)).strftime("%Y%m%d")
+    result = timed_call(_fetch_price_history, code, start_date, end_date, timeout=API_TIMEOUT)
+    if isinstance(result, str):
+        return None, "日线价格API超时"
+    if isinstance(result, tuple):
+        return None, f"日线价格API失败: {result[1]}"
+    if result is None or getattr(result, "empty", False):
+        return None, "日线价格为空"
+
+    close_col = "收盘" if "收盘" in result.columns else "close" if "close" in result.columns else None
+    if close_col is None:
+        return None, f"日线价格缺少收盘列: {result.columns.tolist()}"
+    valid_closes = result[close_col].map(parse_float).dropna()
+    if valid_closes.empty:
+        return None, "日线收盘价无有效数据"
+    close = valid_closes.iloc[-1]
+    if close is None or close <= 0:
+        return None, f"日线收盘价无效: {close}"
+    return close, None
 
 
 _FINANCIAL_INDUSTRY_SKIP = frozenset({'银行', '保险', '证券', '信托', '期货',
@@ -326,6 +354,7 @@ def cmd_fetch(args: list[str]) -> None:
     print("  [3/7] PE_TTM / PB / 最新价（spot_em 快照）...", flush=True)
     today    = datetime.now().strftime("%Y-%m-%d")
     snapshot = get_spot_em_snapshot(today)
+    snapshot_source = today
     if snapshot is None:
         spot_result = _fetch_spot_em_safe(today)
         if isinstance(spot_result, str) or isinstance(spot_result, tuple):
@@ -337,12 +366,19 @@ def cmd_fetch(args: list[str]) -> None:
         else:
             try:
                 snapshot = spot_result.to_dict('records')
+                if not snapshot:
+                    raise ValueError("spot_em 返回空快照")
                 set_spot_em_snapshot(today, snapshot)
                 logger.info("  [spot_em] 全量拉取完成，共 %d 只股票，已缓存至今日", len(snapshot))
             except Exception as e:
                 logger.warning("  ⚠️ spot_em 数据解析失败: %s", e)
                 for k in ('pe_ttm', 'pb'):
                     null_reasons[k] = f'spot_em 解析失败: {e}'
+        if snapshot is None:
+            recent_snapshot = get_recent_spot_em_snapshot(today, max_age_days=3)
+            if recent_snapshot is not None:
+                snapshot_source, snapshot = recent_snapshot
+                logger.warning("  ⚠️ spot_em 使用最近缓存快照: %s", snapshot_source)
     else:
         logger.info("  [spot_em] 命中今日快照，跳过全量拉取")
 
@@ -354,12 +390,14 @@ def cmd_fetch(args: list[str]) -> None:
             spot_price = parse_float(row.get('最新价'))
             if spot_pe and spot_pe > 0:
                 results['pe_ttm'] = round(spot_pe, 2)
+                null_reasons.pop('pe_ttm', None)
                 print(f"  ✅ PE_TTM={results['pe_ttm']}")
             else:
                 null_reasons['pe_ttm'] = f'spot_em PE无效(值={spot_pe})'
                 logger.warning("  ⚠️ PE_TTM 无效: %s", null_reasons['pe_ttm'])
             if spot_pb and spot_pb > 0:
                 results['pb'] = round(spot_pb, 2)
+                null_reasons.pop('pb', None)
                 print(f"  ✅ PB={results['pb']}")
             else:
                 null_reasons['pb'] = f'spot_em PB无效(值={spot_pb})'
@@ -378,7 +416,19 @@ def cmd_fetch(args: list[str]) -> None:
         else:
             logger.warning("  ⚠️ 未在快照中找到 %s", code)
             for k in ('pe_ttm', 'pb', 'float_to_total_ratio'):
-                null_reasons[k] = f'快照中未找到 {code}'
+                null_reasons[k] = f'{snapshot_source} 快照中未找到 {code}'
+
+    if current_price is None:
+        latest_close, close_reason = _fetch_latest_close(code, today)
+        if latest_close is not None:
+            current_price = latest_close
+            print(f"  ✅ 最新收盘价fallback={current_price}")
+        else:
+            logger.warning("  ⚠️ 最新收盘价fallback失败: %s", close_reason)
+    if 'pb' not in results and current_price and bps and bps > 0:
+        results['pb'] = round(current_price / bps, 2)
+        null_reasons.pop('pb', None)
+        print(f"  ✅ PB fallback={results['pb']}")
 
     # ── Step 4：股息率（分红历史 ÷ 当前价）──
     print("  [4/7] 计算股息率...", flush=True)
@@ -421,13 +471,16 @@ def cmd_fetch(args: list[str]) -> None:
         logger.warning("  ⚠️ PB历史分位获取失败")
 
     # ── Step 6：写入 cache ──
+    fetched_count = sum(1 for k, v in results.items() if v is not None)
+    if fetched_count == 0:
+        raise RuntimeError(f"{code} 未获取到任何有效字段，跳过缓存写入")
+
     print("  [6/7] 写入缓存...", flush=True)
     cache_data = {k: results.get(k) for k in FIELDS if k in results or k in null_reasons}
     msg = set_fundamentals(code, name, industry, cache_data, merge=True)
     print(f"  ✅ {msg}")
 
     # ── 汇总 ──
-    fetched_count = sum(1 for k, v in results.items() if v is not None)
     print(f"\n=== {name}({code}) 完成 | "
           f"获取: {fetched_count}字段 | null: {len(null_reasons)}字段 | "
           f"{datetime.now().strftime('%H:%M:%S')} ===")

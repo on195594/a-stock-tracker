@@ -17,6 +17,26 @@ import sqlite3
 import sys
 import time
 from datetime import date, datetime, timedelta
+import akshare as ak
+
+import config
+from lib.cache import get_db, get_fundamentals
+from lib.data_quality import FieldStatus, evaluate_data_quality
+from lib.entry_signal import ENTRY_SIGNAL_VERSION, EntrySignalResult, compute_entry_signal
+from lib.framework_b_report import (
+    POST_FIX_DATE,
+    append_framework_b_dry_run,
+    append_framework_b_quality_expansion,
+    append_phase6_readiness,
+)
+from gemini_scorer import get_qualitative_score
+from scorer import (
+    SUPPORTED_FRAMEWORKS,
+    InsufficientDataError,
+    UnsupportedFrameworkError,
+    compute_daily_pb_percentile,
+    score_stock,
+)
 
 
 def _load_dotenv() -> None:
@@ -35,20 +55,6 @@ def _load_dotenv() -> None:
 
 _load_dotenv()
 
-import akshare as ak
-
-import config
-from lib.cache import get_db, get_fundamentals
-from lib.entry_signal import ENTRY_SIGNAL_VERSION, EntrySignalResult, compute_entry_signal
-from gemini_scorer import get_qualitative_score
-from scorer import (
-    SUPPORTED_FRAMEWORKS,
-    InsufficientDataError,
-    UnsupportedFrameworkError,
-    compute_daily_pb_percentile,
-    score_stock,
-)
-
 assert sqlite3.sqlite_version_info >= (3, 31, 0), (
     f"需要 SQLite ≥ 3.31.0（当前 {sqlite3.sqlite_version}），请升级系统 SQLite"
 )
@@ -64,7 +70,6 @@ logging.basicConfig(
     ],
 )
 logger = logging.getLogger(__name__)
-
 
 # ──────────────────────────────────────────────
 # 工具函数
@@ -355,7 +360,7 @@ def cmd_daily() -> None:
         f.write(log_line + "\n")
     db.close()
 
-    # Telegram 推送（≥55分触发，失败不阻断）
+    # Telegram 推送（阈值来自 weights.json，失败不阻断）
     try:
         import telegram_push
         buy_threshold = weights.get("thresholds", {}).get("buy_strong", 55)
@@ -616,16 +621,9 @@ def cmd_accuracy_report() -> None:
     if not rows:
         lines.append("暂无已结案记录（outcome_30d 全部为 NULL）。")
     else:
-        header = f"{'信号层级':<10} {'条数':>5}  {'绝对30d':>8}  {'超额30d':>8}  {'超额60d':>8}  {'超额90d':>8}  {'α30d':>7}  {'α60d':>7}  {'α90d':>7}"
-        lines.append(header)
-        lines.append("-" * len(header))
-        for row in rows:
-            tier, cnt, h30, hb30, hb60, hb90, a30, a60, a90 = row
-            lines.append(
-                f"{tier:<10} {cnt:>5}  "
-                f"{_fmt(h30):>8}  {_fmt(hb30):>8}  {_fmt(hb60):>8}  {_fmt(hb90):>8}  "
-                f"{_fmt(a30):>7}  {_fmt(a60):>7}  {_fmt(a90):>7}"
-            )
+        _append_tier_rows(lines, rows)
+
+    _append_post_fix_section(lines, db, _strong, _moderate, _light)
 
     # 五分位排名分析（单调性检验：分数越高超额收益是否越高）
     q_rows = db.execute(
@@ -739,10 +737,12 @@ def cmd_accuracy_report() -> None:
                 f"{code:<8} {fd:<12} {ld:<12} {moat_delta:>+8} {sent_delta:>+8}{flag}"
             )
 
-    # ── Framework B 重启门槛进度 ──
+    data_quality_summary = _append_data_quality_audit(lines, db)
+    weights = _load_weights()
+    # ── Framework B 旧重启门槛进度 ──
     lines.append("")
-    lines.append("── Framework B 重启门槛进度 ──")
-    current_hash = _compute_weights_hash(_load_weights())
+    lines.append("── Framework B 旧重启门槛进度（A框生产化前置，不等同 report-only）──")
+    current_hash = _compute_weights_hash(weights)
     closed_a = db.execute(
         "SELECT COUNT(*) FROM predictions WHERE framework='A' AND outcome_30d IS NOT NULL AND weights_hash=?",
         (current_hash,),
@@ -760,9 +760,22 @@ def cmd_accuracy_report() -> None:
     lines.append(f"门槛 2：任一层级 hit_rate_vs_300 > 55%（≥20条）：{'✅ 已满足' if threshold2_met else '❌ 尚未满足'}")
 
     if threshold1_met and threshold2_met:
-        lines.append("→ 两个门槛同时满足，可重启 Framework B（需人工决策）")
+        lines.append("→ 两个门槛同时满足，才可讨论 Framework B 生产写入；report-only 不受此门槛阻断。")
     else:
-        lines.append("→ 继续积累数据，不自动重启")
+        lines.append("→ 生产写入继续等待；report-only 研究可按后续小节推进。")
+
+    framework_b_summary = append_framework_b_dry_run(lines, db, weights)
+    framework_b_quality_summary = append_framework_b_quality_expansion(lines, db, weights)
+    framework_b_summary_for_readiness = dict(framework_b_summary)
+    for key in (
+        "b_label_sample_count",
+        "b_label_closed_count",
+        "b_label_earliest_due",
+        "b_label_overdue_count",
+    ):
+        if key in framework_b_quality_summary:
+            framework_b_summary_for_readiness[key] = framework_b_quality_summary[key]
+    append_phase6_readiness(lines, db, data_quality_summary, framework_b_summary_for_readiness)
 
     report = "\n".join(lines)
     print(report)
@@ -780,6 +793,221 @@ def _fmt(v) -> str:
     return f"{v:.3f}" if isinstance(v, float) else str(v)
 
 
+def _tier_rows_for_period(
+    db: sqlite3.Connection,
+    start_date: str | None,
+    strong: float,
+    moderate: float,
+    light: float,
+) -> list[tuple]:
+    date_filter = "AND score_date >= ?" if start_date else ""
+    query = f"""
+        SELECT COUNT(*),
+               ROUND(COUNT(CASE WHEN outcome_30d > 0 THEN 1 END) * 1.0 / NULLIF(COUNT(outcome_30d), 0), 3),
+               ROUND(COUNT(CASE WHEN alpha_30d  > 0 THEN 1 END) * 1.0 / NULLIF(COUNT(alpha_30d),  0), 3),
+               ROUND(COUNT(CASE WHEN alpha_60d  > 0 THEN 1 END) * 1.0 / NULLIF(COUNT(alpha_60d),  0), 3),
+               ROUND(COUNT(CASE WHEN alpha_90d  > 0 THEN 1 END) * 1.0 / NULLIF(COUNT(alpha_90d),  0), 3),
+               ROUND(AVG(alpha_30d), 2),
+               ROUND(AVG(alpha_60d), 2),
+               ROUND(AVG(alpha_90d), 2)
+        FROM predictions
+        WHERE outcome_30d IS NOT NULL
+          AND framework = 'A'
+          {date_filter}
+          AND total_score >= ? AND total_score < ?
+    """
+    rows = []
+    params_prefix: tuple = (start_date,) if start_date else ()
+    for tier, lo, hi in [
+        ("strong", strong, 9999),
+        ("moderate", moderate, strong),
+        ("light", light, moderate),
+        ("no-action", 0, light),
+    ]:
+        r = db.execute(query, params_prefix + (lo, hi)).fetchone()
+        if r and r[0] > 0:
+            rows.append((tier,) + r)
+    return rows
+
+
+def _append_tier_rows(lines: list[str], rows: list[tuple]) -> None:
+    header = f"{'信号层级':<10} {'条数':>5}  {'绝对30d':>8}  {'超额30d':>8}  {'超额60d':>8}  {'超额90d':>8}  {'α30d':>7}  {'α60d':>7}  {'α90d':>7}"
+    lines.append(header)
+    lines.append("-" * len(header))
+    for row in rows:
+        tier, cnt, h30, hb30, hb60, hb90, a30, a60, a90 = row
+        lines.append(
+            f"{tier:<10} {cnt:>5}  "
+            f"{_fmt(h30):>8}  {_fmt(hb30):>8}  {_fmt(hb60):>8}  {_fmt(hb90):>8}  "
+            f"{_fmt(a30):>7}  {_fmt(a60):>7}  {_fmt(a90):>7}"
+        )
+
+
+def _append_post_fix_section(
+    lines: list[str],
+    db: sqlite3.Connection,
+    strong: float,
+    moderate: float,
+    light: float,
+) -> None:
+    post_fix_closed = db.execute(
+        """SELECT COUNT(*) FROM predictions
+           WHERE framework='A' AND score_date >= ? AND outcome_30d IS NOT NULL""",
+        (POST_FIX_DATE,),
+    ).fetchone()[0]
+    pre_fix_closed = db.execute(
+        """SELECT COUNT(*) FROM predictions
+           WHERE framework='A' AND score_date < ? AND outcome_30d IS NOT NULL""",
+        (POST_FIX_DATE,),
+    ).fetchone()[0]
+
+    lines.append("")
+    lines.append(f"── Post-fix 样本专区（Framework A，score_date >= {POST_FIX_DATE}）──")
+    lines.append(f"pre-fix 30d 结案：{pre_fix_closed}")
+    lines.append(f"post-fix 30d 结案：{post_fix_closed}")
+    if post_fix_closed < 100:
+        lines.append(f"post-fix 样本不足（{post_fix_closed}/100），不得与 pre-fix 混合下结论")
+
+    rows = _tier_rows_for_period(db, POST_FIX_DATE, strong, moderate, light)
+    if rows:
+        _append_tier_rows(lines, rows)
+    else:
+        lines.append("post-fix 暂无已结案分层样本。")
+
+
+def _latest_prediction_audit_row(db: sqlite3.Connection, code: str) -> tuple | None:
+    return db.execute(
+        """SELECT price_at_score, report_period
+           FROM predictions
+           WHERE code=? AND framework='A'
+           ORDER BY score_date DESC, id DESC
+           LIMIT 1""",
+        (code,),
+    ).fetchone()
+
+
+def _latest_qualitative_row(db: sqlite3.Connection, code: str) -> tuple | None:
+    return db.execute(
+        """SELECT scored_date FROM qualitative_scores
+           WHERE code=? ORDER BY scored_date DESC LIMIT 1""",
+        (code,),
+    ).fetchone()
+
+
+def _append_data_quality_audit(lines: list[str], db: sqlite3.Connection) -> dict[str, int]:
+    audited = missing_cache = acceptable = pb_ready = gemini_cached = 0
+    financial_gross_margin_na = 0
+    cache_report_period_missing = 0
+    prediction_report_period_missing = 0
+    prediction_report_period_history_locked = 0
+    prediction_report_period_new_record_pending = 0
+    prediction_report_period_no_a_record = 0
+    problem_rows: list[str] = []
+
+    for item in config.WATCHLIST:
+        code = item["code"]
+        fundamentals = get_fundamentals(code)
+        if not fundamentals:
+            missing_cache += 1
+            problem_rows.append(f"{code} {item['name']}: cache_missing_or_expired")
+            continue
+
+        audited += 1
+        data = dict(fundamentals.get("data", fundamentals))
+        meta = fundamentals.get("_cache_meta", {})
+        industry = str(meta.get("industry") or data.get("industry") or "")
+        industry_context = f"{industry} {item['name']}"
+        cache_report_period = data.get("report_period")
+        latest = _latest_prediction_audit_row(db, code)
+        prediction_report_period = latest[1] if latest else None
+        if latest:
+            data["price_at_score"] = latest[0]
+            data["report_period"] = cache_report_period or prediction_report_period
+        result = evaluate_data_quality(code, data, industry=industry_context)
+        if result.is_acceptable:
+            acceptable += 1
+        if _latest_qualitative_row(db, code):
+            gemini_cached += 1
+
+        status_by_name = {field.name: field.status for field in result.fields}
+        if status_by_name.get("pb_percentile_10y") == FieldStatus.OK:
+            pb_ready += 1
+        if status_by_name.get("gross_margin") == FieldStatus.NOT_APPLICABLE:
+            financial_gross_margin_na += 1
+
+        issues = list(result.missing_required)
+        stale_fields = [field.name for field in result.fields if field.status == FieldStatus.STALE]
+        issues.extend(f"stale:{name}" for name in stale_fields)
+        if not cache_report_period:
+            cache_report_period_missing += 1
+            issues.append("missing:cache_report_period")
+        if not prediction_report_period:
+            prediction_report_period_missing += 1
+            if latest and cache_report_period:
+                prediction_report_period_history_locked += 1
+                issues.append("missing:prediction_report_period(history_locked_cache_ready)")
+            elif latest:
+                prediction_report_period_new_record_pending += 1
+                issues.append("missing:prediction_report_period(new_record_pending_cache_missing)")
+            else:
+                prediction_report_period_no_a_record += 1
+                issues.append("missing:prediction_report_period(no_a_record)")
+        if data.get("price_at_score") is None:
+            issues.append("missing:price_at_score")
+        if not _latest_qualitative_row(db, code):
+            issues.append("gemini:no_cache")
+        if issues:
+            problem_rows.append(f"{code} {item['name']}: {', '.join(issues)}")
+
+    total = len(config.WATCHLIST)
+    lines.append("")
+    lines.append("── 数据质量审计（当前 watchlist）──")
+    lines.append(f"watchlist 股票数：{total}")
+    lines.append(f"基本面缓存可用：{audited}/{total}")
+    lines.append(f"基本面缓存缺失或过期：{missing_cache}")
+    lines.append(f"required 字段可接受：{acceptable}/{audited if audited else 0}")
+    lines.append(f"金融行业 gross_margin 不适用：{financial_gross_margin_na}")
+    lines.append(f"PB 日度可计算：{pb_ready}/{audited if audited else 0}")
+    lines.append(f"cache report_period 缺失：{cache_report_period_missing}/{audited if audited else 0}")
+    lines.append(f"prediction report_period 缺失：{prediction_report_period_missing}/{audited if audited else 0}")
+    if prediction_report_period_missing:
+        lines.append(
+            "prediction report_period 缺失拆分："
+            f"历史记录不可回填={prediction_report_period_history_locked}, "
+            f"新记录待补齐={prediction_report_period_new_record_pending}, "
+            f"无A记录={prediction_report_period_no_a_record}"
+        )
+        if prediction_report_period_history_locked:
+            lines.append("  - 历史记录不可回填：缓存已有 report_period，但最新 prediction 已写入为空；本报告不改写历史 predictions。")
+        if prediction_report_period_new_record_pending:
+            lines.append("  - 新记录待补齐：缓存仍缺 report_period，需先运行 weekly/fetch 成功后未来 daily 才能写入。")
+        if prediction_report_period_no_a_record:
+            lines.append("  - 无A记录：尚无可审计的 Framework A prediction。")
+    lines.append(f"Gemini 缓存存在：{gemini_cached}/{total}")
+    if problem_rows:
+        lines.append("需处理样本（最多 12 条）：")
+        lines.extend(f"  - {row}" for row in problem_rows[:12])
+        if len(problem_rows) > 12:
+            lines.append(f"  - ... 另 {len(problem_rows) - 12} 条")
+    else:
+        lines.append("未发现数据质量问题。")
+    return {
+        "watchlist_total": total,
+        "audited": audited,
+        "missing_cache": missing_cache,
+        "acceptable": acceptable,
+        "pb_ready": pb_ready,
+        "financial_gross_margin_na": financial_gross_margin_na,
+        "cache_report_period_missing": cache_report_period_missing,
+        "prediction_report_period_missing": prediction_report_period_missing,
+        "prediction_report_period_history_locked": prediction_report_period_history_locked,
+        "prediction_report_period_new_record_pending": prediction_report_period_new_record_pending,
+        "prediction_report_period_no_a_record": prediction_report_period_no_a_record,
+        "gemini_cached": gemini_cached,
+    }
+
+
+
 # ──────────────────────────────────────────────
 # Phase 4 里程碑检测
 # ──────────────────────────────────────────────
@@ -793,9 +1021,6 @@ def _check_phase4_milestone() -> None:
 
     状态持久化在 phase_milestones 表，重复运行不重复推送。
     """
-    import os
-    import urllib.request, urllib.error
-
     db = get_db()
 
     count = db.execute(
@@ -828,8 +1053,8 @@ def _check_phase4_milestone() -> None:
 
 def _send_phase4_notification(db, count: int, milestone: int) -> None:
     """构造并发送 Phase 4 里程碑 Telegram 消息。"""
-    import os
-    import urllib.request, urllib.error, json as _json
+    import json as _json
+    import urllib.request
 
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
@@ -876,7 +1101,7 @@ def _send_phase4_notification(db, count: int, milestone: int) -> None:
             "",
             "建议操作：",
             "  运行 python pipeline.py accuracy-report 查看完整报告",
-            "  若 strong 层级 hit_rate_vs_300 > 55%，可启动 Phase 5（买点层）",
+            "  若 strong 层级 hit_rate_vs_300 > 55%，可进入后续 Framework B / 权重评估讨论",
         ]
 
     text = "\n".join(lines)
