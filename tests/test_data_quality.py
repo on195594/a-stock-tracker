@@ -1,6 +1,6 @@
 import json
 
-from lib.data_quality import evaluate_data_quality
+from lib.data_quality import FieldStatus, evaluate_data_quality
 
 
 def _complete_data() -> dict:
@@ -38,6 +38,25 @@ def test_missing_pb_percentile_blocks_acceptability() -> None:
     result = evaluate_data_quality("600036", data)
     assert result.is_acceptable is False
     assert result.missing_required == ("pb_percentile_10y",)
+
+
+def test_financial_industry_gross_margin_is_not_applicable() -> None:
+    data = _complete_data()
+    data["gross_margin"] = None
+    result = evaluate_data_quality("600036", data, industry="银行")
+    gross_margin = next(field for field in result.fields if field.name == "gross_margin")
+    assert gross_margin.status == FieldStatus.NOT_APPLICABLE
+    assert gross_margin.reason == "financial_industry"
+    assert result.is_acceptable is True
+    assert "gross_margin" not in result.missing_required
+
+
+def test_non_financial_missing_gross_margin_is_required() -> None:
+    data = _complete_data()
+    data["gross_margin"] = None
+    result = evaluate_data_quality("603606", data, industry="制造业")
+    assert result.is_acceptable is False
+    assert "gross_margin" in result.missing_required
 
 
 def test_fallback_source_is_visible() -> None:

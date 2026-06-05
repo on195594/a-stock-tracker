@@ -60,11 +60,28 @@ def evaluate_data_quality(
     code: str,
     data: dict[str, Any],
     fallback_sources: dict[str, str] | None = None,
+    industry: str = "",
 ) -> DataQualityResult:
     fallback_sources = fallback_sources or {}
     fields: list[DataQualityField] = []
 
+    financial_industry = any(
+        keyword in industry
+        for keyword in ("银行", "保险", "证券", "券商", "金融", "信托", "期货")
+    )
+
     def add(name: str, requirement: FieldRequirement) -> None:
+        if name == "gross_margin" and financial_industry and data.get(name) is None:
+            fields.append(
+                DataQualityField(
+                    name,
+                    requirement,
+                    FieldStatus.NOT_APPLICABLE,
+                    name,
+                    "financial_industry",
+                )
+            )
+            return
         if name in fallback_sources:
             status = FieldStatus.FALLBACK
             reason = fallback_sources[name]
@@ -118,7 +135,8 @@ def evaluate_data_quality(
 
     missing_required = tuple(
         item.name for item in fields
-        if item.requirement == FieldRequirement.REQUIRED and item.status == FieldStatus.MISSING
+        if item.requirement == FieldRequirement.REQUIRED
+        and item.status == FieldStatus.MISSING
     )
     fallback_fields = tuple(item.name for item in fields if item.status == FieldStatus.FALLBACK)
     return DataQualityResult(code=code, fields=tuple(fields), missing_required=missing_required, fallback_fields=fallback_fields)

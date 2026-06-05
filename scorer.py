@@ -18,7 +18,7 @@ class InsufficientDataError(Exception):
 # 待 Framework A 有足够结案数据后，再重启 B 做对比实验。重启：加回 "B"。
 SUPPORTED_FRAMEWORKS = {"A"}
 
-# Phase 1 非固定字段（计入 data_quality 分母）
+# Framework A 非固定字段（计入 data_quality 分母）
 NON_FIXED_FIELDS = {"roe_3y_avg", "net_profit_growth", "debt_ratio", "gross_margin", "pb_percentile_10y"}
 
 
@@ -63,13 +63,22 @@ def _score_field(field_name: str, value: float | None, field_cfg: dict) -> float
     return 0.0
 
 
-def score_stock(code: str, framework: str, data: dict[str, Any], weights: dict | None = None) -> dict:
+def score_stock(
+    code: str,
+    framework: str,
+    data: dict[str, Any],
+    weights: dict | None = None,
+    *,
+    enforce_supported: bool = True,
+) -> dict:
     """
     Args:
         code:      股票代码
-        framework: "A"（Phase 1 只支持 A）
+        framework: "A"（当前生产只支持 A）
         data:      从 cache.db 读取的字段字典，值可以为 None
         weights:   可选，直接传入 weights dict（测试用）；None 时从 weights.json 读取
+        enforce_supported: 是否强制 framework 在 SUPPORTED_FRAMEWORKS 内。生产写入保持 True；
+                           report-only dry-run 可传 False。
 
     Returns: {
         "quant_score":      float,
@@ -83,7 +92,7 @@ def score_stock(code: str, framework: str, data: dict[str, Any], weights: dict |
         UnsupportedFrameworkError: framework 不在已实现集合
         InsufficientDataError:     data_quality < 0.5
     """
-    if framework not in SUPPORTED_FRAMEWORKS:
+    if enforce_supported and framework not in SUPPORTED_FRAMEWORKS:
         raise UnsupportedFrameworkError(f"Framework '{framework}' 暂不支持，已实现：{SUPPORTED_FRAMEWORKS}")
 
     if weights is None:
