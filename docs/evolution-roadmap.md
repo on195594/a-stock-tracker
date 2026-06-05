@@ -1,7 +1,7 @@
 # a-stock-tracker 进化路线图
 
-**版本：** v1.2
-**基线日期：** 2026-05-30
+**版本：** v1.4
+**基线日期：** 2026-06-05
 **文档定位：** 系统演化的顶层规划文档。所有后续 Phase 的修改、补丁、设计决策均以本文档为基线。若实施中发现偏差，先更新本文档，再改代码。
 
 ---
@@ -121,6 +121,21 @@
 
 **目标：** 为不同行业激活对应框架，解决"白酒用 A 框架不合适"的问题。
 
+**当前状态（2026-06-05）：** Phase 6 仍为 report-only 准备期。`accuracy-report` 已能输出 Phase 6 readiness、生产化阻塞项和下一步行动，但这只是报告增强，不代表 Framework B 生产写入已启用。
+
+**本轮推进复盘：**
+- 已把 Phase 6 readiness 从单一结论扩展为可执行检查清单，明确展示 post-fix A 框 30d 结案、数据质量、Framework B 金融候选 dry-run 覆盖、B label 已结案样本和 overdue outcome 风险。
+- 已增加下一步行动提示，用于区分“继续 daily/outcome-update 等自然结案”“补齐 watchlist 基本面字段”“修复 dry-run 跳过候选”“等待或处理 B label outcome”等不同阻塞来源。
+- 保持生产边界不变：未启用 `SUPPORTED_FRAMEWORKS` 的 B 写入，未新增 B predictions，未修改 `weights.json`，未改写历史 prediction/outcome 数据。
+- 验证结果：`tests/test_pipeline.py` 50 passed，完整测试 133 passed，ruff、mypy 和 `git diff --check` 均通过。
+
+**Phase 6 生产化前置条件：**
+- post-fix Framework A 30d 结案样本 ≥ 100。
+- watchlist 数据质量门槛通过：无缺失缓存、required 字段全部可接受、无 `cache_report_period` 缺失。
+- Framework B 金融候选 dry-run 全覆盖：`scored_count == candidate_count` 且候选数 > 0。
+- B label 非金融质量候选自然结案样本 ≥ 20，且不存在到期但 outcome 为空的 overdue 风险。
+- 上述条件满足后，仍先进入人工 report-only 审阅；生产写入需要单独计划、测试和明确授权。
+
 **优先级：**
 
 | 框架 | 行业 | 主估值轴 | 优先级 |
@@ -144,11 +159,11 @@
 > E/F 框架的主估值轴（PE/PS历史分位）尚无对应 AKShare 接口，需要先验证数据可获取性，再启动框架实现。这是 E/F 被列为低/中优先级的主要原因。
 
 **实施方案：**
-1. 在 `weights.json["frameworks"]` 下补充各框架 breakpoints（含新估值字段）
-2. `scorer.py` 的 `SUPPORTED_FRAMEWORKS` 逐步添加新框架（B 先，D/C 次之，E/F 最后）
-3. `config.py` 的 watchlist 条目增加 `framework` 字段（默认 "A"），覆盖自动推断
-4. Framework B 最先重启（结构已有，历史数据已有 73 条，验证新旧评分连续性后加回 SUPPORTED_FRAMEWORKS）
-5. 每个新框架上线前须通过完整测试用例（mock AKShare + 边界值覆盖）
+1. 继续运行 `daily` / `outcome-update`，让 post-fix A 框和 B label 样本自然结案。
+2. 每周查看 `accuracy-report` 的 Phase 6 readiness、阻塞项和下一步，不根据样本不足报告做生产化判断。
+3. 若数据质量或 B dry-run 覆盖未满足，先修复字段来源、缓存或跳过原因。
+4. 条件满足后，再为 Framework B 生产化单独写 implementation plan；计划必须覆盖 `weights.json`、`SUPPORTED_FRAMEWORKS`、watchlist/framework 映射、历史断层解释、测试和回滚策略。
+5. 每个新框架上线前须通过完整测试用例（mock AKShare + 边界值覆盖）。
 
 **注意：** 多框架激活后，不同框架的 total_score 不可跨框架直接比较（D框架高股息股天然比F框架科技股分数高），accuracy-report 须按 framework 分层。
 
@@ -218,3 +233,4 @@
 | v1.1 | 2026-05-15 | Codex 独立审查后修复 8 处问题：Phase 4 里程碑分层、L3 版本化约束、Phase 6 数据依赖表、Phase 7 前置条件补全、动态池退出规则、边界说明澄清 |
 | v1.2 | 2026-05-30 | 记录多 AI 辩论结论：Phase 5 L3 买点层优先，Framework B 后置；确认 L3 字段、Telegram、日线窗口、accuracy-report 授权边界 |
 | v1.3 | 2026-05-30 | Phase 5 L3 买点层实现完成：schema、纯计算 seam、daily 写入、Telegram 过滤、accuracy-report L3 section |
+| v1.4 | 2026-06-05 | Phase 6 readiness 报告增强：明确生产化阻塞项与下一步，保持 Framework B report-only，不启用生产写入 |

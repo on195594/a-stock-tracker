@@ -1237,6 +1237,12 @@ def test_accuracy_report_phase6_readiness_waits_for_data_quality(tmp_db, capsys,
     assert "数据质量门槛：WAIT" in out
     assert "B label outcome 自然结案（非金融质量候选）：WAIT" in out
     assert "B label 阈值/命中率解释：禁止" in out
+    assert "Phase 6 生产化阻塞项：" in out
+    assert "post-fix A框 30d 结案不足（0/100）" in out
+    assert "数据质量门槛未满足" in out
+    assert "B label 已结案样本不足（0/20）" in out
+    assert "Phase 6 下一步：" in out
+    assert "继续 daily/outcome-update，等待 post-fix A 框自然结案" in out
     assert "结论：暂不进入 Phase 6 生产化" in out
 
 

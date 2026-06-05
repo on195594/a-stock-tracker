@@ -7,8 +7,8 @@ A 股选股与方法论验证项目。当前定位是 **Framework A 定量评分
 ## 当前状态
 
 - 主分支：`master`
-- 当前阶段：数据治理 Phase A-F 已完成；Phase 5 L3 买点层 v1 已实现
-- 生产框架：`SUPPORTED_FRAMEWORKS = {"A"}`；Framework B 历史数据保留，计划在 Phase 6 重启
+- 当前阶段：数据治理 Phase A-F 已完成；Phase 5 L3 买点层 v1 已实现；Phase 6 仍处于 report-only 准备期
+- 生产框架：`SUPPORTED_FRAMEWORKS = {"A"}`；Framework B 历史数据保留，Phase 6 前不得启用生产写入
 - watchlist：35 只，维护在 `config.py`
 - 评分阈值：`buy_strong=44`、`buy_moderate=35`、`buy_light=26`
 - L3 推送条件：`total_score >= buy_strong AND entry_signal = 1`
@@ -85,7 +85,7 @@ python3 pipeline.py remove 601857
 - Framework B 重启门槛进度。
 - watchlist 数据质量审计，区分 `cache_report_period` 和 `prediction_report_period` 缺失；金融行业 `gross_margin` 计为不适用。
 - Framework B dry-run 对比；该部分只读、report-only，不写入 `predictions`。
-- Phase 6 readiness 结论；只有 post-fix outcome、数据质量和 B dry-run 覆盖同时满足时，才考虑进入 Phase 6 report-only 深化。
+- Phase 6 readiness 结论、生产化阻塞项和下一步；只有 post-fix outcome、数据质量、B dry-run 覆盖和 B label 自然结案同时满足时，才可讨论 Phase 6 生产化，且仍需保持不写 B predictions 的审阅流程。
 
 ## Cron
 

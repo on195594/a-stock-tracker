@@ -24,7 +24,7 @@ AKShare / fallback data
   -> accuracy-report / Telegram / Sheets presentation
 ```
 
-当前只支持 Framework A。Framework B/C/D/E/F 不要擅自启用；Framework B 放在 Phase 6。
+当前只支持 Framework A。Framework B/C/D/E/F 不要擅自启用；Framework B 放在 Phase 6。Phase 6 当前仍是 report-only 准备期，允许增强报告和 dry-run 解释，但不得写 B predictions、不得修改 `weights.json`、不得把 B 加回生产框架。
 
 ## 工作前检查
 
@@ -58,6 +58,7 @@ git diff --check
 - 不在测试中发起真实 AKShare、Gemini、Telegram 或 Google Sheets 调用。
 - 不直接写 `alpha_30d`、`alpha_60d`、`alpha_90d`，它们是 SQLite generated columns。
 - 不手动改写历史 `predictions.total_score`、`weights_hash`、`outcome_*d`、`benchmark_*d`。
+- 不把 Framework B report-only readiness 当作生产化授权；B 生产写入必须另有明确计划和用户授权。
 - 不把 `entry_signal=NULL` 当作 `0`。
 - 不修改 `lib/cache.py` 的 DB 路径指向旧 skill 目录。
 - 不把 Google Sheets 当作数据真相来源；SQLite 是 source of truth。

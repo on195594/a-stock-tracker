@@ -761,6 +761,39 @@ def append_phase6_readiness(
         "Framework B report-only 深化："
         f"{'OK（可继续报告研究，不写 predictions）' if report_only_ready else 'WAIT（先补齐数据质量或 dry-run 覆盖）'}"
     )
+
+    blockers: list[str] = []
+    if not outcome_ready:
+        blockers.append(f"post-fix A框 30d 结案不足（{post_fix_closed}/100）")
+    if not data_ready:
+        blockers.append("数据质量门槛未满足")
+    if not b_ready:
+        blockers.append(
+            f"Framework B 金融候选 dry-run 未全覆盖（{framework_b_summary['scored_count']}/"
+            f"{framework_b_summary['candidate_count']}）"
+        )
+    if not b_label_ready:
+        if b_label_closed_count < 20:
+            blockers.append(f"B label 已结案样本不足（{b_label_closed_count}/20）")
+        if b_label_overdue_count:
+            blockers.append(f"B label 存在到期缺失 outcome 风险（{b_label_overdue_count}）")
+    lines.append("Phase 6 生产化阻塞项：" + ("无" if not blockers else "；".join(blockers)))
+
+    next_actions: list[str] = []
+    if not outcome_ready:
+        next_actions.append("继续 daily/outcome-update，等待 post-fix A 框自然结案")
+    if not data_ready:
+        next_actions.append("先补齐 watchlist 基本面缓存与 required 字段")
+    if not b_ready:
+        next_actions.append("修复 B 金融候选 dry-run 跳过原因")
+    if b_label_closed_count < 20:
+        next_actions.append(f"等待 B label 自然结案至 20 条（最早可评估={earliest_due_text}）")
+    if b_label_overdue_count:
+        next_actions.append("优先处理到期但 outcome 为空的 B label 样本")
+    if not next_actions:
+        next_actions.append("保持 report-only 审阅，不启用生产写入")
+    lines.append("Phase 6 下一步：" + "；".join(next_actions))
+
     if outcome_ready and data_ready and b_ready:
         lines.append("结论：可以进入 Phase 6 report-only 深化；仍不要启用生产写入。")
     elif report_only_ready:
