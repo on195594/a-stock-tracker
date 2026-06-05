@@ -17,18 +17,25 @@ import sqlite3
 import sys
 import time
 from datetime import date, datetime, timedelta
-import akshare as ak
+import pandas as pd
 
 import config
-from lib.cache import get_db, get_fundamentals
+from lib.cache import get_db, get_fundamentals, latest_daily_close, load_daily_bars, insert_market_data_audit
 from lib.data_quality import FieldStatus, evaluate_data_quality
-from lib.entry_signal import ENTRY_SIGNAL_VERSION, EntrySignalResult, compute_entry_signal
+from lib.entry_signal import (
+    ENTRY_SIGNAL_VERSION,
+    EntrySignalResult,
+    REASON_MISSING_VOLUME,
+    REASON_MIXED_SOURCE_VOLUME_UNSAFE,
+    compute_entry_signal,
+)
 from lib.framework_b_report import (
     POST_FIX_DATE,
     append_framework_b_dry_run,
     append_framework_b_quality_expansion,
     append_phase6_readiness,
 )
+from lib.market_data import AkshareMarketDataProvider, MarketDataCacheService, MarketDataProvider, SOURCE_STALE
 from gemini_scorer import get_qualitative_score
 from scorer import (
     SUPPORTED_FRAMEWORKS,
@@ -86,18 +93,21 @@ def _compute_weights_hash(weights: dict) -> str:
     ).hexdigest()[:8]
 
 
-def _retry(fn, *args, retries: int = 3, **kwargs):
+def _retry(fn, *args, retries: int = 3, context: dict | None = None, **kwargs):
     """指数退避重试，失败返回 None。"""
+    context_text = ""
+    if context:
+        context_text = " " + " ".join(f"{k}={v}" for k, v in context.items())
     for attempt in range(retries):
         try:
             return fn(*args, **kwargs)
         except Exception as e:
             if attempt < retries - 1:
                 wait = 2 ** attempt
-                logger.warning(f"重试 {attempt + 1}/{retries}，{wait}s 后重试：{e}")
+                logger.warning(f"重试 {attempt + 1}/{retries}{context_text}，{wait}s 后重试：{e}")
                 time.sleep(wait)
             else:
-                logger.error(f"重试耗尽：{e}")
+                logger.error(f"重试耗尽{context_text}：{e}")
     return None
 
 
@@ -125,23 +135,102 @@ def _normalize_entry_signal_bars(hist) -> object:
     return normalized[["date", "close", "volume"]]
 
 
-def _compute_stock_entry_signal(code: str, today: str) -> EntrySignalResult:
-    """读取 120+ 交易日窗口并计算 L3；失败返回 NULL/v1，不阻断基础评分。"""
-    start_date = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=220)).strftime("%Y%m%d")
-    end_date = today.replace("-", "")
-    try:
-        hist = _retry(
-            ak.stock_zh_a_hist,
-            symbol=code,
-            period="daily",
-            start_date=start_date,
-            end_date=end_date,
-            adjust="",
+def _compute_stock_entry_signal(db: sqlite3.Connection, code: str, today: str) -> EntrySignalResult:
+    """从本地 daily_bars 读取 120 日窗口并计算 L3；信号阶段不发网络请求。"""
+    rows = load_daily_bars(db, code, today, 120)
+    if len(rows) < 120:
+        return EntrySignalResult(None, ENTRY_SIGNAL_VERSION, "INSUFFICIENT_WINDOW", "insufficient")
+    latest_trade_date = str(rows[-1]["date"])[:10]
+    freshness_days = (date.fromisoformat(today) - date.fromisoformat(latest_trade_date)).days
+    if freshness_days > 5:
+        return EntrySignalResult(
+            None,
+            ENTRY_SIGNAL_VERSION,
+            SOURCE_STALE,
+            "unavailable",
+            source=rows[-1].get("source"),
+            fetched_at=rows[-1].get("fetched_at"),
         )
-        return compute_entry_signal(_normalize_entry_signal_bars(hist))
+    sources = {row["source"] for row in rows}
+    if len(sources) > 1:
+        return EntrySignalResult(
+            None,
+            ENTRY_SIGNAL_VERSION,
+            REASON_MIXED_SOURCE_VOLUME_UNSAFE,
+            "insufficient",
+            source="mixed",
+            fetched_at=rows[-1].get("fetched_at"),
+        )
+    if any(row["volume"] is None for row in rows):
+        return EntrySignalResult(None, ENTRY_SIGNAL_VERSION, REASON_MISSING_VOLUME, "insufficient")
+    bars = pd.DataFrame(rows)[["date", "close", "volume"]]
+    try:
+        result = compute_entry_signal(bars)
+        return EntrySignalResult(
+            result.signal,
+            result.version,
+            result.reason,
+            result.status,
+            source=rows[-1].get("source"),
+            fetched_at=rows[-1].get("fetched_at"),
+        )
     except Exception as e:
         logger.warning(f"  {code} L3 买点层计算失败：{e}")
-        return EntrySignalResult(None, ENTRY_SIGNAL_VERSION, "L3_ERROR")
+        return EntrySignalResult(None, ENTRY_SIGNAL_VERSION, "L3_ERROR", "unavailable")
+
+
+def _get_score_price(
+    db: sqlite3.Connection,
+    provider: MarketDataProvider,
+    code: str,
+    today: str,
+) -> float | None:
+    cached = latest_daily_close(db, code, today, max_freshness_days=5)
+    if cached:
+        return cached[0]
+    result = provider.fetch_score_price(code, today)
+    insert_market_data_audit(db, result, "score_price", code, today)
+    db.commit()
+    if result.status == "failed" or result.value is None:
+        logger.warning(f"  {code} price_at_score 获取失败：{result.error_code or 'UNKNOWN'}")
+        return None
+    return result.value
+
+
+def _log_l3_coverage(db: sqlite3.Connection, today: str, strong_threshold: float) -> None:
+    row = db.execute(
+        """SELECT
+               COUNT(CASE WHEN entry_signal_version='v1' THEN 1 END),
+               COUNT(CASE WHEN entry_signal IN (0, 1) AND entry_signal_version='v1' THEN 1 END),
+               COUNT(CASE WHEN entry_signal IS NULL AND entry_signal_version='v1' THEN 1 END),
+               COUNT(CASE WHEN framework='A' AND total_score >= ?
+                           AND entry_signal IS NULL AND entry_signal_version='v1' THEN 1 END)
+           FROM predictions
+           WHERE score_date=?""",
+        (strong_threshold, today),
+    ).fetchone()
+    total, computable, unavailable, strong_unavailable = row
+    coverage = (computable / total * 100) if total else 0
+    reason_rows = db.execute(
+        """SELECT COALESCE(entry_signal_reason, 'UNKNOWN'), COUNT(*)
+           FROM predictions
+           WHERE score_date=?
+             AND entry_signal IS NULL
+             AND entry_signal_version='v1'
+           GROUP BY COALESCE(entry_signal_reason, 'UNKNOWN')
+           ORDER BY COUNT(*) DESC, 1""",
+        (today,),
+    ).fetchall()
+    reasons = ", ".join(f"{reason}={count}" for reason, count in reason_rows) or "none"
+    logger.info(
+        "L3 覆盖率：%s/%s = %.1f%%；不可计算：%s；strong 候选中 L3 不可计算：%s；原因：%s",
+        computable,
+        total,
+        coverage,
+        unavailable,
+        strong_unavailable,
+        reasons,
+    )
 
 
 def _refresh_fundamentals(label: str) -> tuple[int, int]:
@@ -188,7 +277,7 @@ def cmd_weekly() -> None:
 # daily 命令
 # ──────────────────────────────────────────────
 
-def _backfill_null_prices(db: sqlite3.Connection, today: str) -> int:
+def _backfill_null_prices(db: sqlite3.Connection, today: str, provider: MarketDataProvider | None = None) -> int:
     """回填近 15 天内 price_at_score=NULL 的记录（不含今日）。
 
     只在今日价格抓取成功后调用，用腾讯历史日线补齐存量缺失。
@@ -205,33 +294,20 @@ def _backfill_null_prices(db: sqlite3.Connection, today: str) -> int:
         return 0
 
     updated = 0
+    provider = provider or AkshareMarketDataProvider()
     for code, score_date in rows:
-        prefix = "sh" if code.startswith("6") else "sz"
-        d_start = score_date.replace("-", "")
-        d_end = (datetime.strptime(score_date, "%Y-%m-%d") + timedelta(days=3)).strftime("%Y%m%d")
-        try:
-            hist = _retry(ak.stock_zh_a_hist_tx, symbol=f"{prefix}{code}",
-                          start_date=d_start, end_date=d_end)
-            if hist is None or hist.empty:
-                logger.debug(f"  回填 {code} {score_date}：无历史数据")
-                continue
-            price = None
-            for _, row in hist.iterrows():
-                if str(row["date"])[:10] == score_date:
-                    price = float(row["close"])
-                    break
-            if price is None:
-                logger.debug(f"  回填 {code} {score_date}：未找到当日收盘价")
-                continue
-            db.execute(
-                "UPDATE predictions SET price_at_score=? WHERE code=? AND score_date=? AND price_at_score IS NULL",
-                (price, code, score_date),
-            )
-            db.commit()
-            updated += 1
-            logger.info(f"  回填 ✓ {code} {score_date} price={price}")
-        except Exception as e:
-            logger.warning(f"  回填 {code} {score_date} 失败：{e}")
+        result = provider.fetch_score_price(code, score_date)
+        insert_market_data_audit(db, result, "score_price", code, today)
+        if result.value is None:
+            logger.debug(f"  回填 {code} {score_date}：无可用价格")
+            continue
+        db.execute(
+            "UPDATE predictions SET price_at_score=? WHERE code=? AND score_date=? AND price_at_score IS NULL",
+            (result.value, code, score_date),
+        )
+        db.commit()
+        updated += 1
+        logger.info(f"  回填 ✓ {code} {score_date} price={result.value}")
     if updated:
         logger.info(f"价格回填完成：更新 {updated} 条记录")
     return updated
@@ -242,6 +318,8 @@ def cmd_daily() -> None:
     weights_hash = _compute_weights_hash(weights)
     today = _today()
     db = get_db()
+    provider = AkshareMarketDataProvider()
+    market_data_cache = MarketDataCacheService(db, provider)
 
     # 启动检查：今日已有记录且 hash 不同 → 拒绝运行
     existing = db.execute(
@@ -258,25 +336,28 @@ def cmd_daily() -> None:
             )
             sys.exit(1)
 
-    # 获取今日 price_at_score（腾讯日线逐股，取最近5日内最新收盘价）
+    codes = [item["code"] for item in config.WATCHLIST]
+    coverage = market_data_cache.refresh_daily_bars(codes, today, 120)
+    logger.info(
+        "L3 行情刷新：ok=%s degraded=%s failed=%s total=%s",
+        coverage.ok,
+        coverage.degraded,
+        coverage.failed,
+        coverage.total,
+    )
+
+    # 获取今日 price_at_score（优先 daily_bars 最近交易日 close，5 天 freshness SLA）
     snapshot_data: dict = {}
-    hist_start = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=5)).strftime("%Y%m%d")
-    hist_end = today.replace("-", "")
     for item in config.WATCHLIST:
         code = item["code"]
-        prefix = "sh" if code.startswith("6") else "sz"
-        try:
-            hist = _retry(ak.stock_zh_a_hist_tx, symbol=f"{prefix}{code}",
-                          start_date=hist_start, end_date=hist_end)
-            if hist is not None and not hist.empty:
-                snapshot_data[code] = float(hist.iloc[-1]["close"])
-        except Exception as e:
-            logger.debug(f"{code} 腾讯日线获取失败：{e}")
+        price = _get_score_price(db, provider, code, today)
+        if price is not None:
+            snapshot_data[code] = price
     if snapshot_data:
-        logger.info(f"腾讯日线：获取到 {len(snapshot_data)} 只股票收盘价")
-        _backfill_null_prices(db, today)
+        logger.info(f"price_at_score：获取到 {len(snapshot_data)} 只股票收盘价")
+        _backfill_null_prices(db, today, provider)
     else:
-        logger.error("腾讯日线全部失败，今日评分中止（今日记录不写入，明日将写入明日数据）")
+        logger.error("price_at_score 全部失败，今日评分中止（今日记录不写入，明日将写入明日数据）")
         db.close()
         return
 
@@ -312,7 +393,7 @@ def cmd_daily() -> None:
         data["sentiment_fixed"] = qual["sentiment"]
 
         threshold_adjusted = 0
-        entry_signal_result = _compute_stock_entry_signal(code, today)
+        entry_signal_result = _compute_stock_entry_signal(db, code, today)
 
         for framework in sorted(SUPPORTED_FRAMEWORKS):
             try:
@@ -331,16 +412,42 @@ def cmd_daily() -> None:
                     """INSERT OR IGNORE INTO predictions
                        (code, name, framework, score_date, price_at_score,
                         quant_score, total_score, weights_hash, report_period,
-                        threshold_adjusted, entry_signal, entry_signal_version, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        threshold_adjusted, entry_signal, entry_signal_version,
+                        entry_signal_status, entry_signal_reason, entry_signal_source,
+                        entry_signal_fetched_at, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         code, name, framework, today, price_at_score,
                         result["quant_score"], result["total_score"],
                         weights_hash, report_period,
                         threshold_adjusted, entry_signal_result.signal,
-                        entry_signal_result.version, datetime.now().isoformat(),
+                        entry_signal_result.version, entry_signal_result.status,
+                        entry_signal_result.reason, entry_signal_result.source,
+                        entry_signal_result.fetched_at, datetime.now().isoformat(),
                     ),
                 )
+                if cursor.rowcount == 0:
+                    db.execute(
+                        """UPDATE predictions
+                           SET entry_signal=?,
+                               entry_signal_version=?,
+                               entry_signal_status=?,
+                               entry_signal_reason=?,
+                               entry_signal_source=?,
+                               entry_signal_fetched_at=?
+                           WHERE code=? AND framework=? AND score_date=?""",
+                        (
+                            entry_signal_result.signal,
+                            entry_signal_result.version,
+                            entry_signal_result.status,
+                            entry_signal_result.reason,
+                            entry_signal_result.source,
+                            entry_signal_result.fetched_at,
+                            code,
+                            framework,
+                            today,
+                        ),
+                    )
                 db.commit()
                 if cursor.rowcount > 0:
                     written += 1
@@ -356,6 +463,7 @@ def cmd_daily() -> None:
         + (f"（{skipped}）" if skipped else "")
     )
     logger.info(log_line)
+    _log_l3_coverage(db, today, weights.get("thresholds", {}).get("buy_strong", 55))
     with open(os.path.join(config.LOG_DIR, "daily_log.txt"), "a", encoding="utf-8") as f:
         f.write(log_line + "\n")
     db.close()
@@ -392,7 +500,12 @@ def _get_index_price(db: sqlite3.Connection, symbol: str, target_date: str) -> f
     return None
 
 
-def _ensure_index_prices(db: sqlite3.Connection, earliest_score_date: str, today: str) -> None:
+def _ensure_index_prices(
+    db: sqlite3.Connection,
+    earliest_score_date: str,
+    today: str,
+    provider: MarketDataProvider | None = None,
+) -> None:
     """确保 index_prices 有从 earliest_score_date 到 today 的完整数据。"""
     latest_cached = db.execute(
         "SELECT MAX(date) FROM index_prices WHERE symbol='000300'"
@@ -406,15 +519,14 @@ def _ensure_index_prices(db: sqlite3.Connection, earliest_score_date: str, today
     if start_date > today:
         return
 
-    logger.info(f"拉取沪深300日线（腾讯）：{start_date} → {today}")
-    df = _retry(ak.stock_zh_index_daily_tx, symbol="sh000300")
-    if df is None:
-        logger.warning("沪深300历史数据拉取失败（腾讯接口失败），benchmark 将为 NULL")
+    logger.info(f"拉取沪深300日线：{start_date} → {today}")
+    provider = provider or AkshareMarketDataProvider()
+    result = provider.fetch_index_bars("sh000300")
+    insert_market_data_audit(db, result, "benchmark_price", "000300", today)
+    if result.value is None:
+        logger.warning("沪深300历史数据拉取失败，benchmark 将为 NULL")
         return
-    # 腾讯接口列名（已验证：date, open, close, high, low, amount）
-    assert "date" in df.columns and "close" in df.columns, (
-        f"ak.stock_zh_index_daily_tx 列名变更，当前列：{list(df.columns)}"
-    )
+    df = result.value
     date_col, close_col = "date", "close"
     # 腾讯接口返回全量历史，过滤到所需范围（date 列为 datetime.date 对象）
     df = df[df["date"].astype(str) >= start_date]
@@ -435,13 +547,14 @@ def _ensure_index_prices(db: sqlite3.Connection, earliest_score_date: str, today
 def cmd_outcome_update() -> None:
     today = _today()
     db = get_db()
+    provider = AkshareMarketDataProvider()
 
     # 确保有足够的 index_prices 历史
     earliest = db.execute("SELECT MIN(score_date) FROM predictions").fetchone()[0]
     if earliest:
-        _ensure_index_prices(db, earliest, today)
+        _ensure_index_prices(db, earliest, today, provider)
 
-    # target_date==today 的记录走 per-stock ak.stock_zh_a_hist 逐日查询（见下方循环）
+    # target_date==today 的记录走 provider outcome price 路径（见下方循环）
     snapshot_data: dict = {}
 
     updated = 0
@@ -469,26 +582,12 @@ def cmd_outcome_update() -> None:
             if exact_price:
                 outcome_price = exact_price
             else:
-                # 尝试历史价格
-                for delta in range(11):
-                    d = _add_days(target_date, -delta)
-                    if d > today:
-                        continue
-                    try:
-                        hist = _retry(ak.stock_zh_a_hist,
-                            symbol=code, period="daily",
-                            start_date=d.replace("-", ""),
-                            end_date=d.replace("-", ""),
-                            adjust="",
-                        )
-                        if hist is not None and not hist.empty:
-                            close_col = "收盘" if "收盘" in hist.columns else hist.columns[4]
-                            outcome_price = float(hist[close_col].iloc[-1])
-                            if delta > 0:
-                                estimate_flag = 1
-                            break
-                    except Exception:
-                        continue
+                result = provider.fetch_outcome_price(code, target_date)
+                insert_market_data_audit(db, result, "outcome_price", code, today)
+                if result.value is not None:
+                    outcome_price = result.value
+                    if result.freshness_days and result.freshness_days > 0:
+                        estimate_flag = 1
 
             if outcome_price is None:
                 logger.info(f"  {code} {window} 到期日 {target_date} 无可用价格（10日内），置 NULL")
@@ -669,12 +768,22 @@ def cmd_accuracy_report() -> None:
     strong_l3 = db.execute(
         """SELECT
                COUNT(CASE WHEN entry_signal=1 THEN 1 END) AS strong_pass,
-               COUNT(CASE WHEN entry_signal=0 THEN 1 END) AS strong_reject
+               COUNT(CASE WHEN entry_signal=0 THEN 1 END) AS strong_reject,
+               COUNT(CASE WHEN entry_signal IS NULL AND entry_signal_version='v1' THEN 1 END) AS strong_unavailable
            FROM predictions
            WHERE framework='A' AND total_score >= ?""",
         (_strong,),
     ).fetchone()
-    strong_pass, strong_reject = strong_l3
+    strong_pass, strong_reject, strong_unavailable = strong_l3
+    reason_rows = db.execute(
+        """SELECT COALESCE(entry_signal_reason, 'UNKNOWN'), COUNT(*)
+           FROM predictions
+           WHERE entry_signal IS NULL AND entry_signal_version='v1'
+           GROUP BY COALESCE(entry_signal_reason, 'UNKNOWN')
+           ORDER BY COUNT(*) DESC, 1"""
+    ).fetchall()
+    computable_v1 = pass_count + reject_count
+    l3_coverage = (computable_v1 / v1_count * 100) if v1_count else 0.0
     l3_closed = db.execute(
         """SELECT
                COUNT(*) AS closed_count,
@@ -692,8 +801,14 @@ def cmd_accuracy_report() -> None:
     lines.append(f"entry_signal=NULL：{l3_null_count}")
     lines.append(f"NULL/NULL pre-L3：{pre_l3_count}")
     lines.append(f"NULL/v1 不可计算：{null_v1_count}")
+    lines.append(f"L3 覆盖率：{computable_v1}/{v1_count} = {l3_coverage:.1f}%")
+    if reason_rows:
+        reason_summary = ", ".join(f"{reason}={count}" for reason, count in reason_rows)
+        lines.append(f"不可计算原因：{reason_summary}")
     lines.append(f"strong 候选 L3 通过：{strong_pass}")
     lines.append(f"strong 候选 L3 拒绝：{strong_reject}")
+    lines.append(f"strong 候选中 L3 不可计算：{strong_unavailable}")
+    lines.append(f"高分但未推送：{strong_unavailable}（L3 unavailable）")
     lines.append(f"L3 30d 已结案：{l3_closed_count}")
     lines.append(f"L3 30d 命中率：{_fmt(l3_hit_rate)}")
     if l3_closed_count < 30:

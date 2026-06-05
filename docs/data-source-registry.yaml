@@ -232,3 +232,57 @@ fields:
     affects_scoring: true
     affects_outcome: false
     failure_behavior: fallback_all_or_nothing_to_fixed_values; no_real_llm_required_for_tests
+
+  - field: daily_bars
+    owner: market_data_cache
+    requirement: required_for_signal
+    source_primary: akshare.stock_zh_a_hist_tx
+    source_fallback: akshare.stock_zh_a_hist
+    cache: daily_bars
+    refresh: daily_incremental
+    freshness_sla: latest_trade_day_or_previous_trade_day
+    affects_scoring: true
+    affects_signal: true
+    affects_outcome: true
+    failure_behavior: degraded_or_failed_with_structured_reason
+    user_visible_impact: l3_coverage_drop_or_score_price_missing
+
+  - field: entry_signal
+    owner: signal_input
+    requirement: degradable
+    source_primary: daily_bars
+    source_fallback: none_during_signal_compute
+    cache: predictions.entry_signal
+    refresh: per_score
+    freshness_sla: same_as_score_date_daily_bars
+    affects_scoring: false
+    affects_signal: true
+    affects_outcome: false
+    failure_behavior: write_null_v1_with_reason
+    user_visible_impact: high_score_candidate_may_not_push
+
+  - field: entry_signal_status
+    owner: signal_audit
+    requirement: required_for_l3_v1
+    source_primary: compute_entry_signal_status
+    source_fallback: none
+    cache: predictions.entry_signal_status
+    refresh: per_score
+    affects_scoring: false
+    affects_signal: true
+    affects_outcome: false
+    failure_behavior: write_pass_reject_unavailable_or_insufficient
+    user_visible_impact: l3_coverage_and_skip_reason_visible
+
+  - field: entry_signal_reason
+    owner: signal_audit
+    requirement: required_for_l3_v1
+    source_primary: compute_entry_signal_reason
+    source_fallback: market_data_audit_error_code
+    cache: predictions.entry_signal_reason
+    refresh: per_score
+    affects_scoring: false
+    affects_signal: true
+    affects_outcome: false
+    failure_behavior: aggregate_reason_in_accuracy_report
+    user_visible_impact: unavailable_candidates_have_reason

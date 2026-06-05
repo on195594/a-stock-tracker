@@ -71,7 +71,7 @@ def test_compute_entry_signal_returns_null_when_window_is_insufficient() -> None
 
     assert result.signal is None
     assert result.version == ENTRY_SIGNAL_VERSION
-    assert result.reason == "INSUFFICIENT_DATA"
+    assert result.reason == "INSUFFICIENT_WINDOW"
 
 
 def test_compute_entry_signal_returns_null_when_required_columns_are_missing() -> None:
@@ -79,4 +79,4 @@ def test_compute_entry_signal_returns_null_when_required_columns_are_missing() -
 
     assert result.signal is None
     assert result.version == ENTRY_SIGNAL_VERSION
-    assert result.reason == "MISSING_COLUMNS"
+    assert result.reason == "MISSING_VOLUME"

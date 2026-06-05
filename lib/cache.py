@@ -84,13 +84,53 @@ def get_db() -> sqlite3.Connection:
         threshold_adjusted INTEGER DEFAULT 0,
         entry_signal    INTEGER,
         entry_signal_version TEXT,
+        entry_signal_status TEXT,
+        entry_signal_reason TEXT,
+        entry_signal_source TEXT,
+        entry_signal_fetched_at TEXT,
         created_at      TEXT,
         UNIQUE(code, framework, score_date)
     )""")
     _ensure_columns(conn, "predictions", {
         "entry_signal": "INTEGER",
         "entry_signal_version": "TEXT",
+        "entry_signal_status": "TEXT",
+        "entry_signal_reason": "TEXT",
+        "entry_signal_source": "TEXT",
+        "entry_signal_fetched_at": "TEXT",
     })
+    conn.execute("""CREATE TABLE IF NOT EXISTS daily_bars (
+        code TEXT NOT NULL,
+        trade_date TEXT NOT NULL,
+        open REAL,
+        high REAL,
+        low REAL,
+        close REAL NOT NULL,
+        volume REAL,
+        source TEXT NOT NULL,
+        adjusted TEXT NOT NULL DEFAULT '',
+        fetched_at TEXT NOT NULL,
+        quality_status TEXT NOT NULL,
+        error_code TEXT,
+        PRIMARY KEY (code, trade_date, adjusted)
+    )""")
+    conn.execute("""CREATE INDEX IF NOT EXISTS idx_daily_bars_code_date
+        ON daily_bars(code, trade_date DESC)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS market_data_audit (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_date TEXT NOT NULL,
+        code TEXT NOT NULL,
+        purpose TEXT NOT NULL,
+        source TEXT NOT NULL,
+        status TEXT NOT NULL,
+        fallback_source TEXT,
+        fallback_reason TEXT,
+        error_code TEXT,
+        error_message TEXT,
+        fetched_at TEXT NOT NULL
+    )""")
+    conn.execute("""CREATE INDEX IF NOT EXISTS idx_market_data_audit_run_purpose
+        ON market_data_audit(run_date, purpose, status)""")
     conn.execute("""CREATE TABLE IF NOT EXISTS index_prices (
         symbol  TEXT NOT NULL,
         date    TEXT NOT NULL,
@@ -129,6 +169,145 @@ def get_db() -> sqlite3.Connection:
     )""")
     conn.commit()
     return conn
+
+
+def upsert_daily_bars(
+    conn: sqlite3.Connection,
+    code: str,
+    bars: Any,
+    source: str,
+    adjusted: str = "",
+    quality_status: str = "ok",
+    fetched_at: str | None = None,
+    error_code: str | None = None,
+) -> int:
+    """Upsert standardized date/open/high/low/close/volume bars."""
+    if bars is None or getattr(bars, "empty", False):
+        return 0
+    fetched_at = fetched_at or datetime.now().isoformat()
+    inserted = 0
+    for _, row in bars.iterrows():
+        trade_date = str(row["date"])[:10]
+        cur = conn.execute(
+            """INSERT INTO daily_bars
+               (code, trade_date, open, high, low, close, volume, source,
+                adjusted, fetched_at, quality_status, error_code)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(code, trade_date, adjusted) DO UPDATE SET
+                 open=excluded.open,
+                 high=excluded.high,
+                 low=excluded.low,
+                 close=excluded.close,
+                 volume=excluded.volume,
+                 source=excluded.source,
+                 fetched_at=excluded.fetched_at,
+                 quality_status=excluded.quality_status,
+                 error_code=excluded.error_code""",
+            (
+                code,
+                trade_date,
+                _optional_float(row, "open"),
+                _optional_float(row, "high"),
+                _optional_float(row, "low"),
+                float(row["close"]),
+                _optional_float(row, "volume"),
+                source,
+                adjusted,
+                fetched_at,
+                quality_status,
+                error_code,
+            ),
+        )
+        inserted += cur.rowcount
+    return inserted
+
+
+def _optional_float(row: Any, key: str) -> float | None:
+    try:
+        value = row[key]
+    except Exception:
+        return None
+    if value is None:
+        return None
+    return float(value)
+
+
+def load_daily_bars(
+    conn: sqlite3.Connection,
+    code: str,
+    end_date: str,
+    limit: int,
+    adjusted: str = "",
+) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """SELECT trade_date, close, volume, source, fetched_at, quality_status
+           FROM daily_bars
+           WHERE code=? AND adjusted=? AND trade_date <= ?
+           ORDER BY trade_date DESC
+           LIMIT ?""",
+        (code, adjusted, end_date, limit),
+    ).fetchall()
+    return [
+        {
+            "date": trade_date,
+            "close": close,
+            "volume": volume,
+            "source": source,
+            "fetched_at": fetched_at,
+            "quality_status": quality_status,
+        }
+        for trade_date, close, volume, source, fetched_at, quality_status in reversed(rows)
+    ]
+
+
+def latest_daily_close(
+    conn: sqlite3.Connection,
+    code: str,
+    score_date: str,
+    max_freshness_days: int = 5,
+    adjusted: str = "",
+) -> tuple[float, int] | None:
+    row = conn.execute(
+        """SELECT trade_date, close FROM daily_bars
+           WHERE code=? AND adjusted=? AND trade_date <= ?
+           ORDER BY trade_date DESC
+           LIMIT 1""",
+        (code, adjusted, score_date),
+    ).fetchone()
+    if not row:
+        return None
+    trade_date, close = row
+    freshness = (datetime.fromisoformat(score_date) - datetime.fromisoformat(trade_date)).days
+    if freshness > max_freshness_days:
+        return None
+    return float(close), freshness
+
+
+def insert_market_data_audit(
+    conn: sqlite3.Connection,
+    result: Any,
+    purpose: str,
+    code: str,
+    run_date: str,
+) -> None:
+    conn.execute(
+        """INSERT INTO market_data_audit
+           (run_date, code, purpose, source, status, fallback_source,
+            fallback_reason, error_code, error_message, fetched_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            run_date,
+            code,
+            purpose,
+            getattr(result, "source", "unknown"),
+            getattr(result, "status", "failed"),
+            getattr(result, "fallback_source", None),
+            getattr(result, "fallback_reason", None),
+            getattr(result, "error_code", None),
+            getattr(result, "error_message", None),
+            getattr(result, "fetched_at", datetime.now().isoformat()),
+        ),
+    )
 
 
 def is_expired(updated_at_str: str, ttl_hours: int) -> bool:

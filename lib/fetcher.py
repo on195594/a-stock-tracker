@@ -14,7 +14,10 @@ from typing import Any, Callable
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 
+import pandas as pd
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import akshare_provider
 from cache import (get_recent_spot_em_snapshot, get_spot_em_snapshot, set_spot_em_snapshot,
                    get_fundamentals, set_fundamentals, list_codes)
 
@@ -101,34 +104,26 @@ def avg_of(series: Any, n: int) -> float | None:
 # ─── AKShare 数据获取函数（供 timed_call 包装）──────────────────────────────
 
 def _fetch_info(code: str) -> dict | None:
-    import akshare as ak
-    df = ak.stock_individual_info_em(symbol=code, timeout=API_TIMEOUT)
+    df = akshare_provider.stock_individual_info_em(code, API_TIMEOUT)
     if df is None or df.empty:
         return None
     return dict(zip(df['item'], df['value']))
 
 
 def _fetch_financials(code: str) -> Any:
-    import akshare as ak
-    return ak.stock_financial_abstract_ths(symbol=code, indicator='按年度')
+    return akshare_provider.stock_financial_abstract_ths(code)
 
 
 def _fetch_dividends(code: str) -> Any:
-    import akshare as ak
-    return ak.stock_history_dividend_detail(symbol=code, indicator='分红')
+    return akshare_provider.stock_history_dividend_detail(code)
 
 
 def _fetch_price_history(code: str, start_date: str, end_date: str) -> Any:
-    import akshare as ak
-    return ak.stock_zh_a_hist(
-        symbol=code, period='daily',
-        start_date=start_date, end_date=end_date, adjust=''
-    )
+    return akshare_provider.stock_zh_a_hist(code, start_date, end_date)
 
 
 def _fetch_spot_em() -> Any:
-    import akshare as ak
-    return ak.stock_zh_a_spot_em()
+    return akshare_provider.stock_zh_a_spot_em()
 
 
 _spot_em_failed_today: str | None = None
@@ -197,11 +192,9 @@ def _fetch_pb_hist_and_percentile(code: str) -> tuple[float | None, list[float] 
     分位基于最新月度 PB（非实时价），序列供 cmd_daily 计算实时分位用。
     序列约 731 个 float，序列化后约 6-8KB/股。
     """
-    import akshare as ak
     result = timed_call(
-        ak.stock_zh_valuation_baidu,
+        akshare_provider.stock_zh_valuation_baidu,
         code, timeout=PB_TIMEOUT,
-        indicator='市净率', period='近十年',
     )
     if isinstance(result, (str, tuple)) or result is None:
         return None, None
@@ -254,12 +247,9 @@ def _compute_gross_margin(code: str, industry: str) -> float | None:
     """
     if any(kw in industry for kw in _FINANCIAL_INDUSTRY_SKIP):
         return None
-    import pandas as pd
-    import akshare as ak
-    prefix = 'sh' if code.startswith('6') else 'sz'
     result = timed_call(
-        ak.stock_financial_report_sina,
-        stock=f'{prefix}{code}', symbol='利润表',
+        akshare_provider.stock_financial_report_sina,
+        code,
         timeout=API_TIMEOUT,
     )
     if isinstance(result, (str, tuple)) or result is None:

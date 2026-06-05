@@ -1,6 +1,6 @@
 # a-stock-tracker 知识库：踩坑记录
 
-**最后更新：** 2026-05-15
+**最后更新：** 2026-06-05
 **范围：** 项目立项（2026-04）至今的技术坑、设计失误、调试经验。
 **用法：** 新功能开发前先检索本文档；每次踩到新坑立即补录。
 
@@ -236,6 +236,32 @@ with patch("akshare.stock_financial_report_sina", return_value=df):
 
 ---
 
+### F-5｜L3 从缓存计算时只检查行数，遗漏 freshness
+
+**现象：** Market Data Boundary 重构后，L3 买点层改为从本地 `daily_bars` 读取 120 条标准化日线再计算 `entry_signal`。代码最初只检查 `len(rows) >= 120`，如果当天 L3 refresh 失败但历史缓存里仍有 120 条旧数据，系统可能用几周前的 bars 计算出 `entry_signal=1/v1`，进而触发用户可见的买点信号。
+
+**根因：** 把“有足够窗口”和“窗口足够新”混为一谈。`price_at_score` 有 5 个自然日 freshness SLA，但 L3 缓存窗口没有同步校验最新 `trade_date` 距 `score_date/today` 的新鲜度。缓存边界迁移后，网络失败不再直接表现为缺数据，旧缓存会让行数检查误判为可计算。
+
+**修复：** `_compute_stock_entry_signal()` 在调用 `compute_entry_signal()` 前读取窗口最后一条 `date`，若最新交易日距 `today` 超过 5 个自然日，则返回：
+
+```text
+entry_signal=NULL
+entry_signal_version='v1'
+entry_signal_status='unavailable'
+entry_signal_reason='SOURCE_STALE'
+```
+
+并保留 `source/fetched_at` 便于报告和审计追踪。新增回归测试 `test_compute_stock_entry_signal_rejects_stale_cached_bars`，构造 120 条足够但最新日期过期的 `daily_bars`，断言不得输出 pass/reject。
+
+**防复发：**
+
+- 任何从缓存读取行情并产出用户可见信号的路径，都必须同时检查“窗口长度”和“最新数据 freshness”。
+- `compute_entry_signal()` 保持纯函数，不感知日期 SLA；freshness 属于 pipeline/cache 边界责任。
+- provider refresh 失败不等于 signal 可以继续用旧缓存。旧缓存只能作为可审计降级输入，过期时必须写 `NULL/v1` + structured reason。
+- 测试夹具如果要表达“今日可用行情”，最新 bar 日期必须等于 today 或在 SLA 内；不要让夹具无意中用 stale bars 通过。
+
+---
+
 ## 附录：快速检索
 
 | 关键词 | 对应条目 |
@@ -259,5 +285,6 @@ with patch("akshare.stock_financial_report_sina", return_value=df):
 | 测试发真实网络请求 | E-2 |
 | Sheets 阻断 cron | F-1 |
 | entry_signal 版本化 | F-2 |
+| daily_bars stale / SOURCE_STALE / L3 旧缓存 | F-5 |
 | 阶段依赖缺失 | F-3 |
 | 边界定义冲突 | F-4 |

@@ -30,15 +30,20 @@ def _blocks() -> dict[str, str]:
     return blocks
 
 
+def _block_keys(field: str) -> set[str]:
+    block = _blocks()[field]
+    keys = {m.group(1) for m in re.finditer(r"^\s*([a-zA-Z0-9_]+):", block, re.M)}
+    keys.add("field")
+    return keys
+
+
 def test_registry_file_exists() -> None:
     assert REGISTRY_PATH.exists()
 
 
 def test_registry_blocks_have_required_keys() -> None:
-    for field, block in _blocks().items():
-        keys = {m.group(1) for m in re.finditer(r"^\s*([a-zA-Z0-9_]+):", block, re.M)}
-        keys.add("field")  # _blocks() uses field as split delimiter; add it back for REQUIRED_KEYS.
-        assert REQUIRED_KEYS <= keys, field
+    for field in _blocks():
+        assert REQUIRED_KEYS <= _block_keys(field), field
 
 
 def test_registry_covers_framework_a_scored_fields() -> None:
@@ -62,3 +67,22 @@ def test_registry_includes_fallback_and_failure_language() -> None:
     text = _registry_text()
     for needle in ["source_fallback:", "failure_behavior:", "fallback", "missing"]:
         assert needle in text
+
+
+def test_registry_covers_market_data_boundary_fields() -> None:
+    assert {"daily_bars", "entry_signal", "entry_signal_status", "entry_signal_reason"} <= _fields()
+
+
+def test_market_data_fields_include_user_visible_failure_contract() -> None:
+    required_keys = {
+        "owner",
+        "source_primary",
+        "source_fallback",
+        "cache",
+        "refresh",
+        "failure_behavior",
+        "user_visible_impact",
+    }
+
+    for field in ["daily_bars", "entry_signal", "entry_signal_status", "entry_signal_reason"]:
+        assert required_keys <= _block_keys(field), field

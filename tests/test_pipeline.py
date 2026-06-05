@@ -1,7 +1,7 @@
 """tests/test_pipeline.py — pipeline.py 的 15 个单元测试。
 
 所有测试用 tmp_path fixture 隔离 SQLite 数据库，禁止真实 AKShare 网络请求。
-通过 monkeypatch 替换 pipeline.ak、sys.modules["fetcher"] 以及 config.DB_PATH。
+通过 monkeypatch 替换 lib.market_data.ak、sys.modules["fetcher"] 以及 config.DB_PATH。
 """
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ if PROJECT_ROOT not in sys.path:
 
 import config  # noqa: E402
 from lib import cache as cache_mod  # noqa: E402
+from lib import market_data  # noqa: E402
 import pipeline  # noqa: E402
 
 
@@ -64,7 +65,7 @@ def fake_fetcher(monkeypatch):
     fake.cmd_fetch = MagicMock()
     monkeypatch.setitem(sys.modules, "fetcher", fake)
     monkeypatch.setattr(
-        pipeline.ak,
+        market_data.ak,
         "stock_zh_a_hist",
         lambda **kw: pd.DataFrame(columns=["日期", "收盘", "成交量"]),
     )
@@ -197,7 +198,7 @@ def _tencent_hist_side_effect(code_price: dict[str, float]):
         p = code_price.get(code)
         if p is None:
             return pd.DataFrame(columns=["close", "date"])
-        return pd.DataFrame([{"close": p, "date": "2026-04-28"}])
+        return pd.DataFrame([{"close": p, "date": date.today().isoformat()}])
     return _side
 
 
@@ -210,7 +211,7 @@ def _entry_hist_df(closes: list[float], volumes: list[float] | None = None) -> p
     """构造 AKShare stock_zh_a_hist 的中文列名日线返回。"""
     if volumes is None:
         volumes = [100.0] * len(closes)
-    start = date.today() - timedelta(days=len(closes) + 10)
+    start = date.today() - timedelta(days=len(closes) - 1)
     return pd.DataFrame(
         {
             "日期": [(start + timedelta(days=i)).isoformat() for i in range(len(closes))],
@@ -328,9 +329,19 @@ def _prediction_columns() -> set[str]:
 # ---------------------------------------------------------------------------
 # 0. predictions L3 schema
 # ---------------------------------------------------------------------------
+L3_AUDIT_COLUMNS = {
+    "entry_signal",
+    "entry_signal_version",
+    "entry_signal_status",
+    "entry_signal_reason",
+    "entry_signal_source",
+    "entry_signal_fetched_at",
+}
+
+
 def test_predictions_schema_includes_l3_entry_signal_columns(tmp_db):
     """新库 predictions 建表时包含 L3 entry_signal 字段。"""
-    assert {"entry_signal", "entry_signal_version"}.issubset(_prediction_columns())
+    assert L3_AUDIT_COLUMNS.issubset(_prediction_columns())
 
 
 def test_get_db_adds_l3_entry_signal_columns_to_legacy_predictions(tmp_path, monkeypatch):
@@ -375,12 +386,15 @@ def test_get_db_adds_l3_entry_signal_columns_to_legacy_predictions(tmp_path, mon
     db = cache_mod.get_db()
     columns = {row[1] for row in db.execute("PRAGMA table_info(predictions)").fetchall()}
     row = db.execute(
-        "SELECT code, total_score, entry_signal, entry_signal_version FROM predictions"
+        """SELECT code, total_score, entry_signal, entry_signal_version,
+                  entry_signal_status, entry_signal_reason, entry_signal_source,
+                  entry_signal_fetched_at
+           FROM predictions"""
     ).fetchone()
     db.close()
 
-    assert {"entry_signal", "entry_signal_version"}.issubset(columns)
-    assert row == ("600036", 66.0, None, None)
+    assert L3_AUDIT_COLUMNS.issubset(columns)
+    assert row == ("600036", 66.0, None, None, None, None, None, None)
 
 
 # ---------------------------------------------------------------------------
@@ -392,12 +406,12 @@ def test_daily_writes_l3_entry_signal_when_history_passes(tmp_db, small_watchlis
         _daily_ready_stock(item["code"], item["name"])
 
     monkeypatch.setattr(
-        pipeline.ak,
+        market_data.ak,
         "stock_zh_a_hist_tx",
         _tencent_hist_side_effect({"600036": 35.20, "000858": 128.40}),
     )
     monkeypatch.setattr(
-        pipeline.ak,
+        market_data.ak,
         "stock_zh_a_hist",
         _entry_hist_side_effect({
             "600036": _entry_hist_df([100.0] * 119 + [130.0], [100.0] * 115 + [300.0] * 5),
@@ -411,6 +425,20 @@ def test_daily_writes_l3_entry_signal_when_history_passes(tmp_db, small_watchlis
         "600036": (1, "v1"),
         "000858": (1, "v1"),
     }
+    db = cache_mod.get_db()
+    rows = db.execute(
+        """SELECT entry_signal_status, entry_signal_reason, entry_signal_source,
+                  entry_signal_fetched_at
+           FROM predictions
+           WHERE framework='A'
+           ORDER BY code"""
+    ).fetchall()
+    db.close()
+    assert [(status, reason, source) for status, reason, source, _ in rows] == [
+        ("pass", "PASS", "akshare.stock_zh_a_hist"),
+        ("pass", "PASS", "akshare.stock_zh_a_hist"),
+    ]
+    assert all(fetched_at for *_, fetched_at in rows)
 
 
 def test_daily_writes_l3_null_v1_when_history_is_insufficient(tmp_db, small_watchlist, fake_fetcher, fake_weights, monkeypatch):
@@ -419,12 +447,12 @@ def test_daily_writes_l3_null_v1_when_history_is_insufficient(tmp_db, small_watc
         _daily_ready_stock(item["code"], item["name"])
 
     monkeypatch.setattr(
-        pipeline.ak,
+        market_data.ak,
         "stock_zh_a_hist_tx",
         _tencent_hist_side_effect({"600036": 35.20, "000858": 128.40}),
     )
     monkeypatch.setattr(
-        pipeline.ak,
+        market_data.ak,
         "stock_zh_a_hist",
         _entry_hist_side_effect({
             "600036": _entry_hist_df([100.0] * 119, [100.0] * 119),
@@ -440,19 +468,47 @@ def test_daily_writes_l3_null_v1_when_history_is_insufficient(tmp_db, small_watc
     }
 
 
+def test_compute_stock_entry_signal_rejects_stale_cached_bars(tmp_db):
+    """本地 daily_bars 足够但最新交易日超过 freshness SLA 时，不得产出 pass/reject。"""
+    db = cache_mod.get_db()
+    start = date.today() - timedelta(days=129)
+    stale_bars = pd.DataFrame(
+        {
+            "date": [(start + timedelta(days=i)).isoformat() for i in range(120)],
+            "close": [100.0] * 119 + [130.0],
+            "volume": [100.0] * 115 + [300.0] * 5,
+        }
+    )
+    cache_mod.upsert_daily_bars(
+        db,
+        "600036",
+        stale_bars,
+        "akshare.stock_zh_a_hist",
+        fetched_at=(date.today() - timedelta(days=10)).isoformat(),
+    )
+
+    result = pipeline._compute_stock_entry_signal(db, "600036", date.today().isoformat())
+    db.close()
+
+    assert result.signal is None
+    assert result.version == "v1"
+    assert result.status == "unavailable"
+    assert result.reason == "SOURCE_STALE"
+
+
 def test_daily_writes_score_even_when_l3_compute_raises(tmp_db, small_watchlist, fake_fetcher, fake_weights, monkeypatch):
     """L3 计算异常时仍写入基础评分，并把 L3 标记为 NULL/v1。"""
     for item in small_watchlist:
         _daily_ready_stock(item["code"], item["name"])
 
     monkeypatch.setattr(
-        pipeline.ak,
+        market_data.ak,
         "stock_zh_a_hist_tx",
         _tencent_hist_side_effect({"600036": 35.20, "000858": 128.40}),
     )
 
     monkeypatch.setattr(
-        pipeline.ak,
+        market_data.ak,
         "stock_zh_a_hist",
         _entry_hist_side_effect({
             "600036": _entry_hist_df([100.0] * 119 + [130.0], [100.0] * 115 + [300.0] * 5),
@@ -489,12 +545,12 @@ def test_daily_does_not_update_legacy_l3_null_null_rows(tmp_db, small_watchlist,
         _daily_ready_stock(item["code"], item["name"])
 
     monkeypatch.setattr(
-        pipeline.ak,
+        market_data.ak,
         "stock_zh_a_hist_tx",
         _tencent_hist_side_effect({"600036": 35.20, "000858": 128.40}),
     )
     monkeypatch.setattr(
-        pipeline.ak,
+        market_data.ak,
         "stock_zh_a_hist",
         _entry_hist_side_effect({
             "600036": _entry_hist_df([100.0] * 119 + [130.0], [100.0] * 115 + [300.0] * 5),
@@ -530,7 +586,7 @@ def test_daily_happy_path(tmp_db, small_watchlist, fake_fetcher, fake_weights,
     for item in small_watchlist:
         _insert_fundamentals(item["code"], item["name"], "银行", _full_data())
 
-    monkeypatch.setattr(pipeline.ak, "stock_zh_a_hist_tx",
+    monkeypatch.setattr(market_data.ak, "stock_zh_a_hist_tx",
                         _tencent_hist_side_effect({"600036": 35.20, "000858": 128.40}))
 
     pipeline.cmd_daily()
@@ -557,7 +613,7 @@ def test_daily_persists_report_period_from_cache(
         _insert_fundamentals(item["code"], item["name"], "银行", _full_data("2025-12-31"))
 
     monkeypatch.setattr(
-        pipeline.ak,
+        market_data.ak,
         "stock_zh_a_hist_tx",
         _tencent_hist_side_effect({"600036": 35.20, "000858": 128.40}),
     )
@@ -581,7 +637,7 @@ def test_daily_idempotent(tmp_db, small_watchlist, fake_fetcher, fake_weights,
     for item in small_watchlist:
         _insert_fundamentals(item["code"], item["name"], "银行", _full_data())
 
-    monkeypatch.setattr(pipeline.ak, "stock_zh_a_hist_tx",
+    monkeypatch.setattr(market_data.ak, "stock_zh_a_hist_tx",
                         _tencent_hist_side_effect({"600036": 35.20, "000858": 128.40}))
 
     pipeline.cmd_daily()
@@ -602,7 +658,7 @@ def test_daily_one_stock_fails(tmp_db, small_watchlist, fake_fetcher, fake_weigh
     _insert_fundamentals("600036", "招商银行", "银行", _full_data())
     # 000858 缺失缓存
 
-    monkeypatch.setattr(pipeline.ak, "stock_zh_a_hist_tx",
+    monkeypatch.setattr(market_data.ak, "stock_zh_a_hist_tx",
                         _tencent_hist_side_effect({"600036": 35.20, "000858": 128.40}))
 
     pipeline.cmd_daily()
@@ -638,7 +694,7 @@ def test_daily_price_from_tencent_hist(tmp_db, small_watchlist, fake_fetcher,
         _insert_fundamentals(item["code"], item["name"], "银行", _full_data())
 
     # 只返回 600036 的价格，000858 腾讯接口返回空
-    monkeypatch.setattr(pipeline.ak, "stock_zh_a_hist_tx",
+    monkeypatch.setattr(market_data.ak, "stock_zh_a_hist_tx",
                         _tencent_hist_side_effect({"600036": 40.55}))
 
     pipeline.cmd_daily()
@@ -665,16 +721,16 @@ def test_outcome_update_30d_normal(tmp_db, monkeypatch):
     _insert_index_price("000300", score_date, 4000.0)
     _insert_index_price("000300", today.isoformat(), 4200.0)
 
-    # target_date == today → 走 per-stock ak.stock_zh_a_hist 路径
+    # target_date == today → 走 provider outcome price 路径
     def fake_hist_today(**kw):
         if kw.get("symbol") == "600036" and kw.get("start_date") == date.today().strftime("%Y%m%d"):
             return pd.DataFrame([{"收盘": 110.0, "日期": date.today().isoformat()}])
         return pd.DataFrame(columns=["收盘", "日期"])
-    monkeypatch.setattr(pipeline.ak, "stock_zh_a_hist", fake_hist_today)
+    monkeypatch.setattr(market_data.ak, "stock_zh_a_hist", fake_hist_today)
 
     # _ensure_index_prices 用腾讯接口 — 返回空 df 让它无操作（已有 index_prices）
     monkeypatch.setattr(
-        pipeline.ak, "stock_zh_index_daily_tx",
+        market_data.ak, "stock_zh_index_daily_tx",
         lambda **kw: pd.DataFrame(columns=["date", "close"]),
     )
 
@@ -716,9 +772,9 @@ def test_outcome_update_estimate_flag(tmp_db, monkeypatch):
             return pd.DataFrame([{"日期": replacement_date, "收盘": 105.0}])
         return pd.DataFrame(columns=["日期", "收盘"])
 
-    monkeypatch.setattr(pipeline.ak, "stock_zh_a_hist", fake_hist)
+    monkeypatch.setattr(market_data.ak, "stock_zh_a_hist", fake_hist)
     monkeypatch.setattr(
-        pipeline.ak, "stock_zh_index_daily_tx",
+        market_data.ak, "stock_zh_index_daily_tx",
         lambda **kw: pd.DataFrame(columns=["date", "close"]),
     )
 
@@ -744,11 +800,11 @@ def test_outcome_update_null_beyond_10_days(tmp_db, monkeypatch):
 
     # hist 永远返回空；spot_em 也不匹配
     monkeypatch.setattr(
-        pipeline.ak, "stock_zh_a_hist",
+        market_data.ak, "stock_zh_a_hist",
         lambda **kw: pd.DataFrame(columns=["日期", "收盘"]),
     )
     monkeypatch.setattr(
-        pipeline.ak, "stock_zh_index_daily_tx",
+        market_data.ak, "stock_zh_index_daily_tx",
         lambda **kw: pd.DataFrame(columns=["date", "close"]),
     )
 
@@ -773,14 +829,14 @@ def test_outcome_update_benchmark_failure(tmp_db, monkeypatch):
     _insert_prediction("600036", score_date, 100.0)
     # 故意不插入 index_prices
 
-    # target_date == today → 走 per-stock ak.stock_zh_a_hist 路径
+    # target_date == today → 走 provider outcome price 路径
     def fake_hist_today(**kw):
         if kw.get("symbol") == "600036":
             return pd.DataFrame([{"收盘": 120.0, "日期": date.today().isoformat()}])
         return pd.DataFrame(columns=["收盘", "日期"])
-    monkeypatch.setattr(pipeline.ak, "stock_zh_a_hist", fake_hist_today)
+    monkeypatch.setattr(market_data.ak, "stock_zh_a_hist", fake_hist_today)
     monkeypatch.setattr(
-        pipeline.ak, "stock_zh_index_daily_tx",
+        market_data.ak, "stock_zh_index_daily_tx",
         lambda **kw: pd.DataFrame(columns=["date", "close"]),
     )
 
@@ -808,14 +864,14 @@ def test_outcome_update_60d_not_yet_due(tmp_db, monkeypatch):
     _insert_index_price("000300", score_date, 4000.0)
     _insert_index_price("000300", today.isoformat(), 4100.0)
 
-    # target_date == today → 走 per-stock ak.stock_zh_a_hist 路径
+    # target_date == today → 走 provider outcome price 路径
     def fake_hist_today(**kw):
         if kw.get("symbol") == "600036":
             return pd.DataFrame([{"收盘": 110.0, "日期": date.today().isoformat()}])
         return pd.DataFrame(columns=["收盘", "日期"])
-    monkeypatch.setattr(pipeline.ak, "stock_zh_a_hist", fake_hist_today)
+    monkeypatch.setattr(market_data.ak, "stock_zh_a_hist", fake_hist_today)
     monkeypatch.setattr(
-        pipeline.ak, "stock_zh_index_daily_tx",
+        market_data.ak, "stock_zh_index_daily_tx",
         lambda **kw: pd.DataFrame(columns=["date", "close"]),
     )
 
@@ -857,6 +913,10 @@ def test_accuracy_report_l3_counts_null_semantics_and_strong_candidates(
     null_v1_id = _insert_prediction("600003", score_date, 100.0, total_score=66.0, entry_signal=None, entry_signal_version="v1")
     _insert_prediction("600004", score_date, 100.0, total_score=67.0, entry_signal=None, entry_signal_version=None)
     db = cache_mod.get_db()
+    db.execute(
+        "UPDATE predictions SET entry_signal_status='unavailable', entry_signal_reason='FETCH_FAILED' WHERE id=?",
+        (null_v1_id,),
+    )
     db.execute("UPDATE predictions SET outcome_30d=8.0, benchmark_30d=2.0 WHERE id=?", (pass_id,))
     db.execute("UPDATE predictions SET outcome_30d=3.0, benchmark_30d=5.0 WHERE id=?", (reject_id,))
     db.execute("UPDATE predictions SET outcome_30d=4.0, benchmark_30d=1.0 WHERE id=?", (null_v1_id,))
@@ -880,8 +940,12 @@ def test_accuracy_report_l3_counts_null_semantics_and_strong_candidates(
     assert "entry_signal=0：1" in out
     assert "NULL/NULL pre-L3：1" in out
     assert "NULL/v1 不可计算：1" in out
+    assert "L3 覆盖率：3/4 = 75.0%" in out
+    assert "不可计算原因：FETCH_FAILED=1" in out
     assert "strong 候选 L3 通过：1" in out
     assert "strong 候选 L3 拒绝：1" in out
+    assert "strong 候选中 L3 不可计算：1" in out
+    assert "高分但未推送：1（L3 unavailable）" in out
     assert "L3 30d 已结案：1" in out
     assert "L3 30d 命中率：1.000" in out
     assert "L3 30d 样本不足" in out
@@ -1270,7 +1334,7 @@ def test_index_prices_init(tmp_db, monkeypatch):
             (today, 4200.0),
         ])
 
-    monkeypatch.setattr(pipeline.ak, "stock_zh_index_daily_tx", fake_index_tx)
+    monkeypatch.setattr(market_data.ak, "stock_zh_index_daily_tx", fake_index_tx)
 
     db = cache_mod.get_db()
     pipeline._ensure_index_prices(db, earliest, today)
@@ -1303,7 +1367,7 @@ def test_index_prices_skip_existing(tmp_db, monkeypatch):
         called["n"] += 1
         return pd.DataFrame(columns=["date", "close"])
 
-    monkeypatch.setattr(pipeline.ak, "stock_zh_index_daily_tx", fake_index_tx)
+    monkeypatch.setattr(market_data.ak, "stock_zh_index_daily_tx", fake_index_tx)
 
     db = cache_mod.get_db()
     pipeline._ensure_index_prices(db, earliest, today)
@@ -1334,7 +1398,7 @@ def test_outcome_update_idempotent(tmp_db, monkeypatch):
     db.close()
 
     monkeypatch.setattr(
-        pipeline.ak, "stock_zh_index_daily_tx",
+        market_data.ak, "stock_zh_index_daily_tx",
         lambda **kw: pd.DataFrame(columns=["date", "close"]),
     )
 
@@ -1369,9 +1433,9 @@ def test_outcome_update_estimate_flag_delta5(tmp_db, monkeypatch):
             return pd.DataFrame([{"日期": replacement_date, "收盘": 112.0}])
         return pd.DataFrame(columns=["日期", "收盘"])  # delta 0-4 全部空
 
-    monkeypatch.setattr(pipeline.ak, "stock_zh_a_hist", fake_hist)
+    monkeypatch.setattr(market_data.ak, "stock_zh_a_hist", fake_hist)
     monkeypatch.setattr(
-        pipeline.ak, "stock_zh_index_daily_tx",
+        market_data.ak, "stock_zh_index_daily_tx",
         lambda **kw: pd.DataFrame(columns=["date", "close"]),
     )
 
@@ -1398,14 +1462,14 @@ def test_outcome_update_benchmark_one_side_missing(tmp_db, monkeypatch):
     # 只有 score_date 端有指数价，target_date (today) 无数据
     _insert_index_price("000300", score_date, 4000.0)
 
-    # target_date == today → 走 per-stock ak.stock_zh_a_hist 路径
+    # target_date == today → 走 provider outcome price 路径
     def fake_hist_today(**kw):
         if kw.get("symbol") == "600036":
             return pd.DataFrame([{"收盘": 115.0, "日期": date.today().isoformat()}])
         return pd.DataFrame(columns=["收盘", "日期"])
-    monkeypatch.setattr(pipeline.ak, "stock_zh_a_hist", fake_hist_today)
+    monkeypatch.setattr(market_data.ak, "stock_zh_a_hist", fake_hist_today)
     monkeypatch.setattr(
-        pipeline.ak, "stock_zh_index_daily_tx",
+        market_data.ak, "stock_zh_index_daily_tx",
         lambda **kw: pd.DataFrame(columns=["date", "close"]),
     )
 
@@ -1425,7 +1489,7 @@ def test_outcome_update_benchmark_one_side_missing(tmp_db, monkeypatch):
 # 19. outcome-update：spot_em 失败时不提前退出（P0-B 回归）
 # ---------------------------------------------------------------------------
 def test_outcome_update_non_today_expiry_via_hist(tmp_db, monkeypatch):
-    """target_date < today（非今日到期）→ 走 per-stock ak.stock_zh_a_hist 历史查询路径。"""
+    """target_date < today（非今日到期）→ 走 provider outcome price 历史查询路径。"""
     today = date.today()
     score_date = (today - timedelta(days=31)).isoformat()
     target_date = (today - timedelta(days=1)).isoformat()
@@ -1439,9 +1503,9 @@ def test_outcome_update_non_today_expiry_via_hist(tmp_db, monkeypatch):
             return pd.DataFrame([{"日期": target_date, "收盘": 110.0}])
         return pd.DataFrame(columns=["日期", "收盘"])
 
-    monkeypatch.setattr(pipeline.ak, "stock_zh_a_hist", fake_hist)
+    monkeypatch.setattr(market_data.ak, "stock_zh_a_hist", fake_hist)
     monkeypatch.setattr(
-        pipeline.ak, "stock_zh_index_daily_tx",
+        market_data.ak, "stock_zh_index_daily_tx",
         lambda **kw: pd.DataFrame(columns=["date", "close"]),
     )
 
@@ -1466,7 +1530,7 @@ def test_daily_writes_predictions_when_tencent_fails(
         _insert_fundamentals(item["code"], item["name"], "银行", _full_data())
 
     monkeypatch.setattr(
-        pipeline.ak, "stock_zh_a_hist_tx",
+        market_data.ak, "stock_zh_a_hist_tx",
         lambda **_: (_ for _ in ()).throw(ConnectionError("RemoteDisconnected")),
     )
 
@@ -1481,10 +1545,10 @@ def test_daily_writes_predictions_when_tencent_fails(
 
 
 # ---------------------------------------------------------------------------
-# 21. outcome-update：target_date==today → 走 per-stock ak.stock_zh_a_hist（D3）
+# 21. outcome-update：target_date==today → 走 provider outcome price（D3）
 # ---------------------------------------------------------------------------
 def test_outcome_update_today_expiry_via_hist(tmp_db, monkeypatch):
-    """到期日恰好是今天，snapshot_data 恒为空 → 走 per-stock ak.stock_zh_a_hist delta=0 路径。"""
+    """到期日恰好是今天，snapshot_data 恒为空 → 走 provider outcome price delta=0 路径。"""
     today = date.today()
     score_date = (today - timedelta(days=30)).isoformat()
     _insert_prediction("600036", score_date, 100.0)
@@ -1497,9 +1561,9 @@ def test_outcome_update_today_expiry_via_hist(tmp_db, monkeypatch):
             return pd.DataFrame([{"收盘": 108.0, "日期": today.isoformat()}])
         return pd.DataFrame(columns=["收盘", "日期"])
 
-    monkeypatch.setattr(pipeline.ak, "stock_zh_a_hist", fake_hist)
+    monkeypatch.setattr(market_data.ak, "stock_zh_a_hist", fake_hist)
     monkeypatch.setattr(
-        pipeline.ak, "stock_zh_index_daily_tx",
+        market_data.ak, "stock_zh_index_daily_tx",
         lambda **kw: pd.DataFrame(columns=["date", "close"]),
     )
 
@@ -1524,7 +1588,7 @@ def test_daily_aborts_when_no_prices(tmp_db, small_watchlist, fake_fetcher,
     for item in small_watchlist:
         _insert_fundamentals(item["code"], item["name"], "银行", _full_data())
 
-    monkeypatch.setattr(pipeline.ak, "stock_zh_a_hist_tx",
+    monkeypatch.setattr(market_data.ak, "stock_zh_a_hist_tx",
                         lambda **kw: pd.DataFrame(columns=["close", "date"]))
 
     pipeline.cmd_daily()
@@ -1567,7 +1631,7 @@ def test_daily_backfills_null_prices(tmp_db, small_watchlist, fake_fetcher,
         d = _dt.strptime(start_date, "%Y%m%d").strftime("%Y-%m-%d")
         return pd.DataFrame([{"close": price, "date": d}])
 
-    monkeypatch.setattr(pipeline.ak, "stock_zh_a_hist_tx", hist_effect)
+    monkeypatch.setattr(market_data.ak, "stock_zh_a_hist_tx", hist_effect)
 
     pipeline.cmd_daily()
 
