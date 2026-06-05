@@ -1,10 +1,9 @@
 """
 sheets_sync.py — Google Sheets 同步模块
 
-写入三个 tab：
+写入两个 tab：
   predictions_detail  每条预测记录 + outcome + alpha（每日全量覆盖）
   accuracy_report     按分段命中率汇总（schema hash 未变则跳过，变则重写）
-  holdings            持仓跟踪模板（首次初始化写入 watchlist，之后不覆盖）
 
 规则：Sheets sync 失败只记 WARNING，不影响 pipeline daily 主流程。
 """
@@ -15,9 +14,9 @@ import logging
 import os
 
 import gspread
+from gspread.utils import ValueInputOption
 from google.oauth2.service_account import Credentials
 
-import config
 from lib.cache import get_db
 
 logger = logging.getLogger(__name__)
@@ -33,7 +32,6 @@ SCOPES = [
 # Tab 名称
 TAB_PREDICTIONS = "predictions_detail"
 TAB_ACCURACY    = "accuracy_report"
-TAB_HOLDINGS    = "holdings"
 
 
 # ─── 连接 ────────────────────────────────────────────────────────────────────
@@ -61,14 +59,6 @@ _PRED_HEADERS = [
     "outcome_90d", "benchmark_90d", "alpha_90d",                               # N-P
     "estimate_flag", "report_period", "weights_hash",                          # Q-S
 ]
-
-
-def _fmt(v) -> str:
-    if v is None:
-        return ""
-    if isinstance(v, float):
-        return f"{v:.2f}"
-    return str(v)
 
 
 def _cell(v):
@@ -180,60 +170,14 @@ def _init_accuracy_formula_tab(sh: gspread.Spreadsheet) -> None:
         logger.info("accuracy_report schema 变更（%s → %s），重写", stored_hash, _acc_schema_hash())
     current_hash = _acc_schema_hash()
     data = [_ACC_HEADERS + [current_hash]] + [_acc_row(label, lo, hi) for label, lo, hi in _ACC_SEGMENTS]
-    ws.update(range_name="A1", values=data, value_input_option="USER_ENTERED")
+    ws.update(range_name="A1", values=data, value_input_option=ValueInputOption.user_entered)
     logger.info("accuracy_report 公式写入完成（%d 分段，schema=%s）", len(_ACC_SEGMENTS), current_hash)
-
-
-# ─── Tab 3：holdings ─────────────────────────────────────────────────────────
-
-_HOLDINGS_HEADERS = [
-    "code", "name", "cost_price", "shares", "cost_total",
-    "latest_score", "latest_score_date", "latest_total_score",
-    "memo",
-]
-
-
-def push_holdings_template(sh: gspread.Spreadsheet) -> None:
-    """首次初始化 holdings tab，填入 watchlist 作为模板，已有内容不覆盖。"""
-    ws = _get_or_create_tab(sh, TAB_HOLDINGS)
-    existing = ws.get_all_values()
-    if existing and existing[0] == _HOLDINGS_HEADERS:
-        logger.info("holdings tab 已存在，跳过模板写入")
-        return
-
-    db = get_db()
-    latest_scores = {}
-    for row in db.execute(
-        """SELECT code, MAX(score_date), total_score
-           FROM predictions GROUP BY code"""
-    ).fetchall():
-        latest_scores[row[0]] = (row[1], row[2])
-    db.close()
-
-    data = [_HOLDINGS_HEADERS]
-    for i, item in enumerate(config.WATCHLIST):
-        row_num = i + 2  # row 1 = headers，数据从 row 2 起
-        code = item["code"]
-        score_info = latest_scores.get(code, ("", ""))
-        data.append([
-            code, item["name"],
-            "",                          # cost_price — 用户填写
-            "",                          # shares — 用户填写
-            f"=C{row_num}*D{row_num}",   # cost_total
-            "",                          # latest_score
-            score_info[0],               # latest_score_date
-            _fmt(score_info[1]),         # latest_total_score
-            "",                          # memo
-        ])
-
-    ws.update(range_name="A1", values=data, value_input_option="USER_ENTERED")
-    logger.info("holdings 模板写入 %d 只股票", len(config.WATCHLIST))
 
 
 # ─── 主入口 ──────────────────────────────────────────────────────────────────
 
 def sync_all() -> None:
-    """全量同步：写入 predictions_detail；首次初始化 accuracy_report 公式和 holdings 模板。"""
+    """全量同步：写入 predictions_detail，并初始化 accuracy_report 公式。"""
     if not SHEET_URL:
         logger.warning("SHEETS_URL 未设置，跳过 Sheets sync（请在 .env 中配置）")
         return
@@ -254,11 +198,6 @@ def sync_all() -> None:
         _init_accuracy_formula_tab(sh)
     except Exception as e:
         logger.warning("accuracy_report 初始化失败：%s", e)
-
-    try:
-        push_holdings_template(sh)
-    except Exception as e:
-        logger.warning("holdings 写入失败：%s", e)
 
 
 if __name__ == "__main__":
