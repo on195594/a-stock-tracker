@@ -2,7 +2,6 @@
 
 所有测试 mock _call_gemini 或 _check_cache/_write_cache，不发起真实网络请求。
 """
-import io
 import json
 from unittest.mock import patch
 
@@ -163,7 +162,6 @@ def test_check_cache_multiple_rows_returns_latest(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 def test_write_cache_insert_ignore_same_date(tmp_path, monkeypatch):
     """同 code + scored_date 写入两次，INSERT OR IGNORE 应保留第一次的值。"""
-    import gemini_scorer
     from lib import cache as cache_mod
 
     db_path = str(tmp_path / "tracker.db")
