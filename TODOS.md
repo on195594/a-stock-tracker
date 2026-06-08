@@ -1,6 +1,42 @@
 # TODOS
 
-## Phase 4 启动门槛（明确）
+## 当前有效计划来源（2026-06-08）
+
+当前阶段、门槛和边界以 `docs/evolution-roadmap.md` 为准。`docs/impl-plan.md` 已归档为
+Phase 1-3.6 历史实施记录，不再作为后续计划来源。
+
+当前工作重心：
+
+1. 继续 daily/outcome-update，等待 post-fix Framework A 30d outcome 自然结案。
+2. 先修 L3/market data boundary 的覆盖率和审计可解释性，再讨论 Framework B 生产写入。
+3. Framework B 只保持 report-only；生产化必须另写实施计划并获得明确授权。
+
+## Phase 6 生产化门槛（当前有效）
+
+满足以下条件后，才允许讨论 Framework B 生产写入：
+
+1. post-fix Framework A 30d 结案样本 ≥ 100。
+2. watchlist 数据质量门槛通过：cache 无缺失、required 字段可接受、cache_report_period 无缺失。
+3. Framework B 金融候选 dry-run 全覆盖：`scored_count == candidate_count` 且候选数 > 0。
+4. B label 非金融质量候选自然结案样本 ≥ 20，且无 overdue outcome 风险。
+5. 上述条件满足后，仍先进入人工 report-only 审阅；生产写入需单独计划、测试和回滚方案。
+
+## L3 / market data boundary 后续工作
+
+**What:** 继续执行 `docs/plans/2026-06-05-market-data-boundary-refactor-plan.md` 的小步改造。
+
+**Current status:** 已有 `MarketDataProvider`、`daily_bars`、`market_data_audit`、L3 状态/原因字段。
+2026-06-08 已补强：
+- L3 refresh 的临时 AKShare 断连会在 provider 层重试。
+- L3 窗口不足时会优先读取当天 `market_data_audit`，保留真实失败原因，例如 `REMOTE_DISCONNECTED`。
+- 2026-06-08 当日 20 条 L3 metadata 已从笼统 `INSUFFICIENT_WINDOW` 修正为审计中的真实失败原因。
+
+**Next:** 若 L3 覆盖率持续低于 80%，继续补 daily_bars 历史预热/独立刷新命令和按代码的失败重跑能力。
+
+## Phase 4 启动门槛（历史记录）
+
+> 历史说明：本节是 2026-05-12 的早期 Phase 4/optimizer 门槛，保留用于追溯。
+> 当前 Phase 6 readiness 和 Framework B 生产化判断不再以本节为准。
 
 **触发条件（2026-05-12 确认）：** 当以下两个条件同时满足时，开始建设 `optimizer.py`：
 1. `predictions` 表 30d 结案记录 ≥ 100 条（Framework A）
@@ -34,7 +70,11 @@
 
 ---
 
-## lib/fetcher: gross_margin & pe_percentile_10y 系统性 NULL
+## lib/fetcher: gross_margin & pe_percentile_10y 系统性 NULL（已过期）
+
+> 2026-06-08 状态：该问题已不再按原描述成立。当前报告显示 watchlist
+> `PB 日度可计算：35/35`，金融行业 `gross_margin` 已按不适用处理，required 字段
+> `35/35` 可接受。保留本节作为历史问题记录。
 
 **What:** `gross_margin`（source=web）和 `pe_percentile_10y`（source=computed，依赖 pe_ttm）对所有 38 只股票均为 NULL，造成 data_quality 恒为 3/5=0.6，评分上限实际为 55/80（31.2% 分值永久缺失）。
 

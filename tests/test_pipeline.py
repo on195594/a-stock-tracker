@@ -496,6 +496,34 @@ def test_compute_stock_entry_signal_rejects_stale_cached_bars(tmp_db):
     assert result.reason == "SOURCE_STALE"
 
 
+def test_compute_stock_entry_signal_uses_l3_audit_failure_reason_when_no_cached_bars(tmp_db):
+    """L3 refresh 失败且没有本地窗口时，prediction 原因应保留真实行情失败原因。"""
+    db = cache_mod.get_db()
+    cache_mod.insert_market_data_audit(
+        db,
+        market_data.MarketDataResult(
+            None,
+            "failed",
+            "akshare.stock_zh_a_hist",
+            date.today().isoformat(),
+            error_code=market_data.REMOTE_DISCONNECTED,
+        ),
+        "l3_bars",
+        "600036",
+        date.today().isoformat(),
+    )
+    db.commit()
+
+    result = pipeline._compute_stock_entry_signal(db, "600036", date.today().isoformat())
+    db.close()
+
+    assert result.signal is None
+    assert result.version == "v1"
+    assert result.status == "unavailable"
+    assert result.reason == "REMOTE_DISCONNECTED"
+    assert result.source == "akshare.stock_zh_a_hist"
+
+
 def test_daily_writes_score_even_when_l3_compute_raises(tmp_db, small_watchlist, fake_fetcher, fake_weights, monkeypatch):
     """L3 计算异常时仍写入基础评分，并把 L3 标记为 NULL/v1。"""
     for item in small_watchlist:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+import time
 from typing import Any, Generic, Literal, Protocol, TypeVar
 
 import akshare as ak
@@ -141,18 +142,33 @@ class AkshareMarketDataProvider:
             return _exception_result(source, exc)
 
     def _fetch_tx_bars(self, symbol: str, start: str, end: str, purpose: str) -> MarketDataResult[pd.DataFrame]:
-        try:
-            df = ak.stock_zh_a_hist_tx(symbol=symbol, start_date=start, end_date=end)
-            return _normalize_bars_result(df, "akshare.stock_zh_a_hist_tx", purpose)
-        except Exception as exc:
-            return _exception_result("akshare.stock_zh_a_hist_tx", exc)
+        return _fetch_with_retries(
+            lambda: ak.stock_zh_a_hist_tx(symbol=symbol, start_date=start, end_date=end),
+            "akshare.stock_zh_a_hist_tx",
+            purpose,
+        )
 
     def _fetch_em_bars(self, code: str, start: str, end: str, purpose: str) -> MarketDataResult[pd.DataFrame]:
+        return _fetch_with_retries(
+            lambda: ak.stock_zh_a_hist(symbol=code, period="daily", start_date=start, end_date=end, adjust=""),
+            "akshare.stock_zh_a_hist",
+            purpose,
+        )
+
+
+def _fetch_with_retries(fetch_fn: Any, source: str, purpose: str, retries: int = 3) -> MarketDataResult[pd.DataFrame]:
+    last_error: MarketDataResult[pd.DataFrame] | None = None
+    for attempt in range(retries):
         try:
-            df = ak.stock_zh_a_hist(symbol=code, period="daily", start_date=start, end_date=end, adjust="")
-            return _normalize_bars_result(df, "akshare.stock_zh_a_hist", purpose)
+            df = fetch_fn()
+            return _normalize_bars_result(df, source, purpose)
         except Exception as exc:
-            return _exception_result("akshare.stock_zh_a_hist", exc)
+            last_error = _exception_result(source, exc)
+            if attempt < retries - 1 and last_error.error_code in {REMOTE_DISCONNECTED, TIMEOUT, RATE_LIMITED, UNKNOWN_ERROR}:
+                time.sleep(2 ** attempt)
+                continue
+            return last_error
+    return last_error or MarketDataResult(None, "failed", source, _now(), error_code=UNKNOWN_ERROR)
 
 
 def _normalize_bars_result(df: Any, source: str, purpose: str) -> MarketDataResult[pd.DataFrame]:

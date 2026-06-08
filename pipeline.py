@@ -20,7 +20,14 @@ from datetime import date, datetime, timedelta
 import pandas as pd
 
 import config
-from lib.cache import get_db, get_fundamentals, latest_daily_close, load_daily_bars, insert_market_data_audit
+from lib.cache import (
+    get_db,
+    get_fundamentals,
+    insert_market_data_audit,
+    latest_daily_close,
+    latest_market_data_audit,
+    load_daily_bars,
+)
 from lib.data_quality import FieldStatus, evaluate_data_quality
 from lib.entry_signal import (
     ENTRY_SIGNAL_VERSION,
@@ -139,6 +146,25 @@ def _compute_stock_entry_signal(db: sqlite3.Connection, code: str, today: str) -
     """从本地 daily_bars 读取 120 日窗口并计算 L3；信号阶段不发网络请求。"""
     rows = load_daily_bars(db, code, today, 120)
     if len(rows) < 120:
+        audit = latest_market_data_audit(db, "l3_bars", code, today)
+        if audit and audit["status"] == "failed":
+            return EntrySignalResult(
+                None,
+                ENTRY_SIGNAL_VERSION,
+                audit["error_code"] or "FETCH_FAILED",
+                "unavailable",
+                source=audit["source"],
+                fetched_at=audit["fetched_at"],
+            )
+        if audit and audit["fallback_reason"]:
+            return EntrySignalResult(
+                None,
+                ENTRY_SIGNAL_VERSION,
+                audit["fallback_reason"],
+                "insufficient",
+                source=audit["source"],
+                fetched_at=audit["fetched_at"],
+            )
         return EntrySignalResult(None, ENTRY_SIGNAL_VERSION, "INSUFFICIENT_WINDOW", "insufficient")
     latest_trade_date = str(rows[-1]["date"])[:10]
     freshness_days = (date.fromisoformat(today) - date.fromisoformat(latest_trade_date)).days

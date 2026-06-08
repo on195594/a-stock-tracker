@@ -3,7 +3,12 @@
 Generated: 2026-04-15
 Last updated: 2026-05-12（Phase 3.6 完成）
 Design ref: `docs/design.md`
-Status: **Phase 3.6 完成（2026-05-12）**
+Status: **历史实施计划，已归档（当前执行基线见 `docs/evolution-roadmap.md`）**
+
+> 归档说明（2026-06-08）：本文档记录 Phase 1 至 Phase 3.6 的早期建设步骤，
+> 不再作为当前项目计划来源。当前项目已进入 Framework A + L3 + Phase 6
+> report-only 准备期；后续阶段、门槛和边界以 `docs/evolution-roadmap.md`
+> 以及 `docs/plans/` 下的最新计划为准。
 
 Phase 1（Step 0-7）：✅ 完成
 Phase 3（Step 8-14）：✅ 完成

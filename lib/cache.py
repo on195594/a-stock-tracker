@@ -310,6 +310,35 @@ def insert_market_data_audit(
     )
 
 
+def latest_market_data_audit(
+    conn: sqlite3.Connection,
+    purpose: str,
+    code: str,
+    run_date: str,
+) -> dict[str, Any] | None:
+    row = conn.execute(
+        """SELECT source, status, fallback_source, fallback_reason, error_code,
+                  error_message, fetched_at
+           FROM market_data_audit
+           WHERE purpose=? AND code=? AND run_date=?
+           ORDER BY id DESC
+           LIMIT 1""",
+        (purpose, code, run_date),
+    ).fetchone()
+    if not row:
+        return None
+    source, status, fallback_source, fallback_reason, error_code, error_message, fetched_at = row
+    return {
+        "source": source,
+        "status": status,
+        "fallback_source": fallback_source,
+        "fallback_reason": fallback_reason,
+        "error_code": error_code,
+        "error_message": error_message,
+        "fetched_at": fetched_at,
+    }
+
+
 def is_expired(updated_at_str: str, ttl_hours: int) -> bool:
     updated = datetime.fromisoformat(updated_at_str)
     return datetime.now() - updated > timedelta(hours=ttl_hours)

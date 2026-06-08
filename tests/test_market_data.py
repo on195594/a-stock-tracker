@@ -14,6 +14,8 @@ if PROJECT_ROOT not in sys.path:
 from lib import cache as cache_mod  # noqa: E402
 from lib.market_data import (  # noqa: E402
     EMPTY_RESPONSE,
+    REMOTE_DISCONNECTED,
+    AkshareMarketDataProvider,
     MISSING_COLUMNS,
     MarketDataCacheService,
     MarketDataResult,
@@ -120,3 +122,35 @@ def test_refresh_daily_bars_failed_provider_only_writes_audit(tmp_db) -> None:
     assert tmp_db.execute("SELECT COUNT(*) FROM daily_bars").fetchone()[0] == 0
     row = tmp_db.execute("SELECT status, error_code FROM market_data_audit").fetchone()
     assert row == ("failed", EMPTY_RESPONSE)
+
+
+def test_akshare_provider_retries_transient_l3_disconnect(monkeypatch) -> None:
+    attempts = {"count": 0}
+
+    def flaky_hist(**kw):
+        attempts["count"] += 1
+        if attempts["count"] < 3:
+            raise ConnectionError("RemoteDisconnected")
+        return pd.DataFrame([{"日期": date.today().isoformat(), "收盘": 10.0, "成交量": 100.0}] * 120)
+
+    monkeypatch.setattr("lib.market_data.time.sleep", lambda *_: None)
+    monkeypatch.setattr("lib.market_data.ak.stock_zh_a_hist_tx", lambda **kw: pd.DataFrame(columns=["date", "close"]))
+    monkeypatch.setattr("lib.market_data.ak.stock_zh_a_hist", flaky_hist)
+
+    result = AkshareMarketDataProvider().fetch_l3_bars("600036", date.today().isoformat(), 120)
+
+    assert attempts["count"] == 3
+    assert result.status == "degraded"
+    assert result.value is not None
+    assert len(result.value) == 120
+
+
+def test_akshare_provider_returns_structured_failure_after_retries(monkeypatch) -> None:
+    monkeypatch.setattr("lib.market_data.time.sleep", lambda *_: None)
+    monkeypatch.setattr("lib.market_data.ak.stock_zh_a_hist_tx", lambda **kw: pd.DataFrame(columns=["date", "close"]))
+    monkeypatch.setattr("lib.market_data.ak.stock_zh_a_hist", lambda **kw: (_ for _ in ()).throw(ConnectionError("RemoteDisconnected")))
+
+    result = AkshareMarketDataProvider().fetch_l3_bars("600036", date.today().isoformat(), 120)
+
+    assert result.status == "failed"
+    assert result.error_code == REMOTE_DISCONNECTED
