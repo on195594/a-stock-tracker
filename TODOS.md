@@ -31,7 +31,9 @@ Phase 1-3.6 历史实施记录，不再作为后续计划来源。
 - L3 窗口不足时会优先读取当天 `market_data_audit`，保留真实失败原因，例如 `REMOTE_DISCONNECTED`。
 - 2026-06-08 当日 20 条 L3 metadata 已从笼统 `INSUFFICIENT_WINDOW` 修正为审计中的真实失败原因。
 
-**Next:** 若 L3 覆盖率持续低于 80%，继续补 daily_bars 历史预热/独立刷新命令和按代码的失败重跑能力。
+**Next:** 停止继续修补 AKShare/东方财富行情入口，按
+`docs/plans/2026-06-09-market-data-provider-replacement-plan.md` 迁移到新的 provider。
+推荐顺序：Tushare Pro 主源 → BaoStock fallback/历史预热 → 基本面 AKShare 迁移另开计划。
 
 ## Phase 4 启动门槛（历史记录）
 

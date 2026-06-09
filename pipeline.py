@@ -42,7 +42,7 @@ from lib.framework_b_report import (
     append_framework_b_quality_expansion,
     append_phase6_readiness,
 )
-from lib.market_data import AkshareMarketDataProvider, MarketDataCacheService, MarketDataProvider, SOURCE_STALE
+from lib.market_data import MarketDataCacheService, MarketDataProvider, SOURCE_STALE, get_default_market_data_provider
 from gemini_scorer import get_qualitative_score
 from scorer import (
     SUPPORTED_FRAMEWORKS,
@@ -320,7 +320,7 @@ def _backfill_null_prices(db: sqlite3.Connection, today: str, provider: MarketDa
         return 0
 
     updated = 0
-    provider = provider or AkshareMarketDataProvider()
+    provider = provider or get_default_market_data_provider()
     for code, score_date in rows:
         result = provider.fetch_score_price(code, score_date)
         insert_market_data_audit(db, result, "score_price", code, today)
@@ -344,7 +344,7 @@ def cmd_daily() -> None:
     weights_hash = _compute_weights_hash(weights)
     today = _today()
     db = get_db()
-    provider = AkshareMarketDataProvider()
+    provider = get_default_market_data_provider()
     market_data_cache = MarketDataCacheService(db, provider)
 
     # 启动检查：今日已有记录且 hash 不同 → 拒绝运行
@@ -546,7 +546,7 @@ def _ensure_index_prices(
         return
 
     logger.info(f"拉取沪深300日线：{start_date} → {today}")
-    provider = provider or AkshareMarketDataProvider()
+    provider = provider or get_default_market_data_provider()
     result = provider.fetch_index_bars("sh000300")
     insert_market_data_audit(db, result, "benchmark_price", "000300", today)
     if result.value is None:
@@ -573,7 +573,7 @@ def _ensure_index_prices(
 def cmd_outcome_update() -> None:
     today = _today()
     db = get_db()
-    provider = AkshareMarketDataProvider()
+    provider = get_default_market_data_provider()
 
     # 确保有足够的 index_prices 历史
     earliest = db.execute("SELECT MIN(score_date) FROM predictions").fetchone()[0]

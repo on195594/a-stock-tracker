@@ -46,6 +46,92 @@ def tmp_db(tmp_path, monkeypatch):
     return db_path
 
 
+class _AkLikeTestProvider:
+    def fetch_score_price(self, code: str, score_date: str):
+        prefix = "sh" if code.startswith("6") else "sz"
+        start = (date.fromisoformat(score_date) - timedelta(days=5)).strftime("%Y%m%d")
+        end = score_date.replace("-", "")
+        try:
+            df = market_data.ak.stock_zh_a_hist_tx(symbol=f"{prefix}{code}", start_date=start, end_date=end)
+        except Exception as exc:
+            return market_data._exception_result("test.stock_zh_a_hist_tx", exc)
+        result = market_data._normalize_bars_result(df, "test.stock_zh_a_hist_tx", "score_price")
+        if result.value is None:
+            return market_data.MarketDataResult(
+                None,
+                "failed",
+                result.source,
+                result.fetched_at,
+                error_code=result.error_code,
+                error_message=result.error_message,
+            )
+        row = result.value.iloc[-1]
+        return market_data.MarketDataResult(float(row["close"]), "ok", result.source, result.fetched_at)
+
+    def fetch_l3_bars(self, code: str, end_date: str, window: int):
+        start = (date.fromisoformat(end_date) - timedelta(days=max(220, window * 2))).strftime("%Y%m%d")
+        end = end_date.replace("-", "")
+        prefix = "sh" if code.startswith("6") else "sz"
+        try:
+            tx_df = market_data.ak.stock_zh_a_hist_tx(symbol=f"{prefix}{code}", start_date=start, end_date=end)
+            primary = market_data._normalize_bars_result(tx_df, "test.stock_zh_a_hist_tx", "l3_bars")
+        except Exception as exc:
+            primary = market_data._exception_result("test.stock_zh_a_hist_tx", exc)
+        if primary.status != "failed" and primary.value is not None and len(primary.value) >= window:
+            return primary
+        try:
+            em_df = market_data.ak.stock_zh_a_hist(symbol=code, period="daily", start_date=start, end_date=end, adjust="")
+            fallback = market_data._normalize_bars_result(em_df, "test.stock_zh_a_hist", "l3_bars")
+        except Exception as exc:
+            return market_data._exception_result("test.stock_zh_a_hist", exc)
+        if fallback.status != "failed":
+            return market_data.MarketDataResult(
+                fallback.value,
+                "degraded",
+                fallback.source,
+                fallback.fetched_at,
+                fallback_source=primary.source,
+                fallback_reason=primary.error_code or market_data.INSUFFICIENT_WINDOW,
+            )
+        return fallback
+
+    def fetch_outcome_price(self, code: str, target_date: str):
+        for delta in range(11):
+            d = date.fromisoformat(target_date) - timedelta(days=delta)
+            compact = d.strftime("%Y%m%d")
+            try:
+                df = market_data.ak.stock_zh_a_hist(symbol=code, period="daily", start_date=compact, end_date=compact, adjust="")
+            except Exception as exc:
+                result = market_data._exception_result("test.stock_zh_a_hist", exc)
+                continue
+            result = market_data._normalize_bars_result(df, "test.stock_zh_a_hist", "outcome_price")
+            if result.value is not None and not result.value.empty:
+                return market_data.MarketDataResult(
+                    float(result.value.iloc[-1]["close"]),
+                    "ok" if delta == 0 else "degraded",
+                    result.source,
+                    result.fetched_at,
+                    fallback_reason=None if delta == 0 else "NEAREST_AVAILABLE_PRICE",
+                    freshness_days=delta,
+                )
+        return market_data.MarketDataResult(None, "failed", "test.stock_zh_a_hist", date.today().isoformat())
+
+    def fetch_index_bars(self, symbol: str):
+        try:
+            df = market_data.ak.stock_zh_index_daily_tx(symbol=symbol)
+        except Exception as exc:
+            return market_data._exception_result("test.stock_zh_index_daily_tx", exc)
+        result = market_data._normalize_bars_result(df, "test.stock_zh_index_daily_tx", "benchmark_price")
+        if result.value is None:
+            return result
+        return market_data.MarketDataResult(result.value[["date", "close"]], "ok", result.source, result.fetched_at)
+
+
+@pytest.fixture(autouse=True)
+def test_market_data_provider(monkeypatch):
+    monkeypatch.setattr(pipeline, "get_default_market_data_provider", _AkLikeTestProvider)
+
+
 @pytest.fixture
 def small_watchlist(monkeypatch):
     """缩小 watchlist，避免遍历所有默认股票。"""
@@ -435,8 +521,8 @@ def test_daily_writes_l3_entry_signal_when_history_passes(tmp_db, small_watchlis
     ).fetchall()
     db.close()
     assert [(status, reason, source) for status, reason, source, _ in rows] == [
-        ("pass", "PASS", "akshare.stock_zh_a_hist"),
-        ("pass", "PASS", "akshare.stock_zh_a_hist"),
+        ("pass", "PASS", "test.stock_zh_a_hist"),
+        ("pass", "PASS", "test.stock_zh_a_hist"),
     ]
     assert all(fetched_at for *_, fetched_at in rows)
 
