@@ -108,12 +108,16 @@ def get_db() -> sqlite3.Connection:
         close REAL NOT NULL,
         volume REAL,
         source TEXT NOT NULL,
-        adjusted TEXT NOT NULL DEFAULT '',
+        adjusted TEXT NOT NULL DEFAULT 'none',
+        volume_unit TEXT NOT NULL DEFAULT 'unknown',
         fetched_at TEXT NOT NULL,
         quality_status TEXT NOT NULL,
         error_code TEXT,
         PRIMARY KEY (code, trade_date, adjusted)
     )""")
+    _ensure_columns(conn, "daily_bars", {
+        "volume_unit": "TEXT NOT NULL DEFAULT 'unknown'",
+    })
     conn.execute("""CREATE INDEX IF NOT EXISTS idx_daily_bars_code_date
         ON daily_bars(code, trade_date DESC)""")
     conn.execute("""CREATE TABLE IF NOT EXISTS market_data_audit (
@@ -176,7 +180,8 @@ def upsert_daily_bars(
     code: str,
     bars: Any,
     source: str,
-    adjusted: str = "",
+    adjusted: str = "none",
+    volume_unit: str = "unknown",
     quality_status: str = "ok",
     fetched_at: str | None = None,
     error_code: str | None = None,
@@ -191,8 +196,8 @@ def upsert_daily_bars(
         cur = conn.execute(
             """INSERT INTO daily_bars
                (code, trade_date, open, high, low, close, volume, source,
-                adjusted, fetched_at, quality_status, error_code)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                adjusted, volume_unit, fetched_at, quality_status, error_code)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(code, trade_date, adjusted) DO UPDATE SET
                  open=excluded.open,
                  high=excluded.high,
@@ -200,6 +205,7 @@ def upsert_daily_bars(
                  close=excluded.close,
                  volume=excluded.volume,
                  source=excluded.source,
+                 volume_unit=excluded.volume_unit,
                  fetched_at=excluded.fetched_at,
                  quality_status=excluded.quality_status,
                  error_code=excluded.error_code""",
@@ -213,6 +219,7 @@ def upsert_daily_bars(
                 _optional_float(row, "volume"),
                 source,
                 adjusted,
+                volume_unit,
                 fetched_at,
                 quality_status,
                 error_code,
@@ -237,10 +244,10 @@ def load_daily_bars(
     code: str,
     end_date: str,
     limit: int,
-    adjusted: str = "",
+    adjusted: str = "none",
 ) -> list[dict[str, Any]]:
     rows = conn.execute(
-        """SELECT trade_date, close, volume, source, fetched_at, quality_status
+        """SELECT trade_date, close, volume, source, adjusted, volume_unit, fetched_at, quality_status
            FROM daily_bars
            WHERE code=? AND adjusted=? AND trade_date <= ?
            ORDER BY trade_date DESC
@@ -253,10 +260,12 @@ def load_daily_bars(
             "close": close,
             "volume": volume,
             "source": source,
+            "adjusted": adjusted,
+            "volume_unit": volume_unit,
             "fetched_at": fetched_at,
             "quality_status": quality_status,
         }
-        for trade_date, close, volume, source, fetched_at, quality_status in reversed(rows)
+        for trade_date, close, volume, source, adjusted, volume_unit, fetched_at, quality_status in reversed(rows)
     ]
 
 
@@ -265,7 +274,7 @@ def latest_daily_close(
     code: str,
     score_date: str,
     max_freshness_days: int = 5,
-    adjusted: str = "",
+    adjusted: str = "none",
 ) -> tuple[float, int] | None:
     row = conn.execute(
         """SELECT trade_date, close FROM daily_bars

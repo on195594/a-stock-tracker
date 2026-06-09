@@ -1,7 +1,7 @@
 # Market Data Provider 替代方案研究与迁移计划
 
 创建时间：2026-06-09
-状态：implementation checklist + phase-0 guardrail
+状态：implementation in progress + phase-1/2 provider scaffolds + phase-3 backfill scaffold
 范围：行情数据入口（`price_at_score`、`daily_bars`、`outcome_price`、`index_prices`）
 
 ## 0. 改写后的请求
@@ -24,6 +24,19 @@
 - 默认 `MarketDataProvider` 改为 disabled provider，返回 `SOURCE_DISABLED`。
 - `MarketDataCacheService`、`cmd_daily`、`cmd_outcome_update` 不再默认构造 AKShare/东方财富行情 provider。
 - `market_data.ak` 仅保留为 test compatibility shim，生产路径不得调用。
+
+已开始执行的 Phase 0.5 / Phase 1：
+
+- 新增 `scripts/probe_tushare_market_data.py`，用于验证 `daily`、`index_daily`、`trade_cal` 权限和字段。
+- 新增 `lib/tushare_provider.py`，在 `TUSHARE_TOKEN` 存在时作为默认行情 provider。
+- `pipeline.py` 调用指数行情时传内部 canonical symbol `000300`，provider 层负责转换。
+- `requirements.txt` 已新增 `tushare`。
+- `docs/data-source-registry.yaml` 已把行情入口切到 Tushare/default disabled 口径，基本面 AKShare 仍留待 Phase 4。
+- `daily_bars` 已新增 `volume_unit`，新行情写入统一使用 `adjusted=none`，L3 窗口会拒绝 mixed source / mixed adjusted / mixed 或 unknown volume unit。
+- 新增 `pipeline.py market-data-backfill --start ... --end ...`，用于预热日线并只重算已有 prediction 的 L3 metadata。
+- 新增 `lib/baostock_provider.py`，作为 Tushare failed 后的 degraded fallback，或在 `MARKET_DATA_ALLOW_BAOSTOCK_ONLY=1` 时作为显式 backfill 源。
+- 无 `TUSHARE_TOKEN` 时，即使设置 `MARKET_DATA_ALLOW_BAOSTOCK_ONLY=1`，`daily` 仍使用 disabled provider，不写新 `predictions`。
+- 新增 `scripts/check_market_data_readiness.py` 和 `docs/runbooks/market-data-provider-recovery.md`，`cron-setup.sh` 在 readiness 未通过时只配置 weekly，不新增 daily/outcome-update。
 
 未执行：
 
@@ -321,6 +334,7 @@ python3 pipeline.py market-data-backfill --start 2025-01-01 --end 2026-06-09
 SELECT code, COUNT(*) AS bars, MIN(trade_date), MAX(trade_date), COUNT(DISTINCT source) AS sources
 FROM daily_bars
 WHERE trade_date >= date('now', '-260 days')
+  AND adjusted='none'
 GROUP BY code
 ORDER BY bars;
 ```
@@ -360,7 +374,7 @@ ORDER BY bars;
 2. PR-2：Tushare provider + tests + disabled/auth behavior。
 3. PR-3：market-data-backfill 命令 + daily_bars 同源覆盖。
 4. PR-4：BaoStock fallback，只允许 backfill/report-only。
-5. PR-5：cron 恢复和生产运行手册。
+5. PR-5：cron 恢复和生产运行手册。（已新增 readiness gate + runbook，实际恢复仍等待 Tushare probe PASS）
 
 每个 PR 都必须通过：
 

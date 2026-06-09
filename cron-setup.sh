@@ -24,6 +24,14 @@ WEEKLY_RULE="00 10 * * 6 cd $PROJECT_DIR && .venv/bin/python pipeline.py weekly 
 DAILY_RULE="30 16 * * 1-5 cd $PROJECT_DIR && .venv/bin/python pipeline.py daily >> $PROJECT_DIR/logs/daily.log 2>&1"
 OUTCOME_RULE="00 17 * * 1-5 cd $PROJECT_DIR && .venv/bin/python pipeline.py outcome-update >> $PROJECT_DIR/logs/outcome.log 2>&1"
 
+MARKET_DATA_READY=0
+if "$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/scripts/check_market_data_readiness.py" >/tmp/a-stock-market-data-readiness.log 2>&1; then
+    MARKET_DATA_READY=1
+else
+    echo "⚠️  行情 provider 尚未通过恢复门禁；将只配置 weekly，不新增 daily/outcome-update"
+    cat /tmp/a-stock-market-data-readiness.log
+fi
+
 # 检查并追加规则
 if echo "$CURRENT_CRONTAB" | grep -q "pipeline.py weekly"; then
     echo "ℹ️  weekly 任务已存在，跳过"
@@ -32,18 +40,22 @@ else
     echo "✅ 已添加 weekly 任务"
 fi
 
-if echo "$CURRENT_CRONTAB" | grep -q "pipeline.py daily"; then
-    echo "ℹ️  daily 任务已存在，跳过"
-else
-    CURRENT_CRONTAB=$(echo "$CURRENT_CRONTAB"; echo ""; echo "# a-stock-tracker daily (工作日 16:30)"; echo "$DAILY_RULE")
-    echo "✅ 已添加 daily 任务"
-fi
+if [ "$MARKET_DATA_READY" -eq 1 ]; then
+    if echo "$CURRENT_CRONTAB" | grep -q "pipeline.py daily"; then
+        echo "ℹ️  daily 任务已存在，跳过"
+    else
+        CURRENT_CRONTAB=$(echo "$CURRENT_CRONTAB"; echo ""; echo "# a-stock-tracker daily (工作日 16:30)"; echo "$DAILY_RULE")
+        echo "✅ 已添加 daily 任务"
+    fi
 
-if echo "$CURRENT_CRONTAB" | grep -q "pipeline.py outcome-update"; then
-    echo "ℹ️  outcome-update 任务已存在，跳过"
+    if echo "$CURRENT_CRONTAB" | grep -q "pipeline.py outcome-update"; then
+        echo "ℹ️  outcome-update 任务已存在，跳过"
+    else
+        CURRENT_CRONTAB=$(echo "$CURRENT_CRONTAB"; echo ""; echo "# a-stock-tracker outcome-update (工作日 17:00)"; echo "$OUTCOME_RULE")
+        echo "✅ 已添加 outcome-update 任务"
+    fi
 else
-    CURRENT_CRONTAB=$(echo "$CURRENT_CRONTAB"; echo ""; echo "# a-stock-tracker outcome-update (工作日 17:00)"; echo "$OUTCOME_RULE")
-    echo "✅ 已添加 outcome-update 任务"
+    echo "⏸️  跳过 daily / outcome-update cron；配置 TUSHARE_TOKEN 并通过 probe 后再运行本脚本"
 fi
 
 # 写入 crontab

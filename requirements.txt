@@ -1,4 +1,6 @@
 akshare
+tushare
+baostock
 pytest
 ruff
 mypy

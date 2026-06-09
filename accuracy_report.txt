@@ -1,6 +1,6 @@
 ============================================================
 a-stock-tracker 准确率报告
-生成时间：2026-06-09 08:45
+生成时间：2026-06-09 10:42
 ============================================================
 
 ⚠️  样本不足（Framework A 78 条已结案记录）
@@ -43,17 +43,16 @@ post-fix 暂无已结案分层样本。
 
 ── L3 买点层 ──
 v1 记录数：210
-entry_signal=1：35
-entry_signal=0：138
-entry_signal=NULL：713
+entry_signal=1：51
+entry_signal=0：159
+entry_signal=NULL：676
 NULL/NULL pre-L3：676
-NULL/v1 不可计算：37
-L3 覆盖率：173/210 = 82.4%
-不可计算原因：REMOTE_DISCONNECTED=20, INSUFFICIENT_WINDOW=17
-strong 候选 L3 通过：20
-strong 候选 L3 拒绝：63
-strong 候选中 L3 不可计算：18
-高分但未推送：18（L3 unavailable）
+NULL/v1 不可计算：0
+L3 覆盖率：210/210 = 100.0%
+strong 候选 L3 通过：27
+strong 候选 L3 拒绝：74
+strong 候选中 L3 不可计算：0
+高分但未推送：0（L3 unavailable）
 L3 30d 已结案：0
 L3 30d 命中率：N/A
 L3 30d 样本不足（0/30），不得输出确定性结论

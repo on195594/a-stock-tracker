@@ -126,8 +126,8 @@ fields:
   - field: price_at_score
     owner: score_snapshot
     requirement: required
-    source_primary: akshare.stock_zh_a_hist_tx_or_spot_snapshot_close
-    source_fallback: nearest_available_price_backfill
+    source_primary: tushare.daily_when_TUSHARE_TOKEN_configured
+    source_fallback: baostock.query_history_k_data_plus_as_degraded_or_disabled
     cache: predictions.price_at_score
     refresh: daily
     affects_scoring: true
@@ -138,7 +138,7 @@ fields:
     owner: outcome_contract
     requirement: degradable
     source_primary: index_prices.000300
-    source_fallback: akshare.stock_zh_index_daily_tx
+    source_fallback: tushare.index_daily_when_TUSHARE_TOKEN_configured
     cache: predictions.benchmark_30d
     refresh: outcome_update
     affects_scoring: false
@@ -149,7 +149,7 @@ fields:
     owner: outcome_contract
     requirement: degradable
     source_primary: index_prices.000300
-    source_fallback: akshare.stock_zh_index_daily_tx
+    source_fallback: tushare.index_daily_when_TUSHARE_TOKEN_configured
     cache: predictions.benchmark_60d
     refresh: outcome_update
     affects_scoring: false
@@ -160,7 +160,7 @@ fields:
     owner: outcome_contract
     requirement: degradable
     source_primary: index_prices.000300
-    source_fallback: akshare.stock_zh_index_daily_tx
+    source_fallback: tushare.index_daily_when_TUSHARE_TOKEN_configured
     cache: predictions.benchmark_90d
     refresh: outcome_update
     affects_scoring: false
@@ -192,8 +192,8 @@ fields:
   - field: outcome_30d
     owner: outcome_contract
     requirement: degradable
-    source_primary: akshare.stock_zh_a_hist_tx_due_date_close
-    source_fallback: nearest_available_price_within_10_calendar_days
+    source_primary: tushare.daily_due_date_close
+    source_fallback: baostock.query_history_k_data_plus_nearest_available_price_within_10_calendar_days
     cache: predictions.outcome_30d
     refresh: outcome_update
     affects_scoring: false
@@ -203,8 +203,8 @@ fields:
   - field: outcome_60d
     owner: outcome_contract
     requirement: degradable
-    source_primary: akshare.stock_zh_a_hist_tx_due_date_close
-    source_fallback: nearest_available_price_within_10_calendar_days
+    source_primary: tushare.daily_due_date_close
+    source_fallback: baostock.query_history_k_data_plus_nearest_available_price_within_10_calendar_days
     cache: predictions.outcome_60d
     refresh: outcome_update
     affects_scoring: false
@@ -214,8 +214,8 @@ fields:
   - field: outcome_90d
     owner: outcome_contract
     requirement: degradable
-    source_primary: akshare.stock_zh_a_hist_tx_due_date_close
-    source_fallback: nearest_available_price_within_10_calendar_days
+    source_primary: tushare.daily_due_date_close
+    source_fallback: baostock.query_history_k_data_plus_nearest_available_price_within_10_calendar_days
     cache: predictions.outcome_90d
     refresh: outcome_update
     affects_scoring: false
@@ -236,8 +236,8 @@ fields:
   - field: daily_bars
     owner: market_data_cache
     requirement: required_for_signal
-    source_primary: akshare.stock_zh_a_hist_tx
-    source_fallback: akshare.stock_zh_a_hist
+    source_primary: tushare.daily_when_TUSHARE_TOKEN_configured
+    source_fallback: baostock.query_history_k_data_plus_for_degraded_fallback_or_explicit_backfill_only
     cache: daily_bars
     refresh: daily_incremental
     freshness_sla: latest_trade_day_or_previous_trade_day
@@ -246,6 +246,19 @@ fields:
     affects_outcome: true
     failure_behavior: degraded_or_failed_with_structured_reason
     user_visible_impact: l3_coverage_drop_or_score_price_missing
+
+  - field: daily_bars_volume_unit
+    owner: market_data_cache
+    requirement: required_for_signal
+    source_primary: tushare.daily.vol
+    source_fallback: none
+    cache: provider_registry_assumption
+    refresh: per_provider_release
+    affects_scoring: false
+    affects_signal: true
+    affects_outcome: false
+    failure_behavior: block_l3_if_unknown_or_mixed
+    user_visible_impact: l3_window_rejected_if_volume_unit_unknown
 
   - field: entry_signal
     owner: signal_input

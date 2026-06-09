@@ -92,6 +92,8 @@ class _AkLikeTestProvider:
                 fallback.fetched_at,
                 fallback_source=primary.source,
                 fallback_reason=primary.error_code or market_data.INSUFFICIENT_WINDOW,
+                adjusted=fallback.adjusted,
+                volume_unit=fallback.volume_unit,
             )
         return fallback
 
@@ -608,6 +610,35 @@ def test_compute_stock_entry_signal_uses_l3_audit_failure_reason_when_no_cached_
     assert result.status == "unavailable"
     assert result.reason == "REMOTE_DISCONNECTED"
     assert result.source == "akshare.stock_zh_a_hist"
+
+
+def test_compute_stock_entry_signal_rejects_unknown_or_mixed_volume_unit(tmp_db):
+    db = cache_mod.get_db()
+    start = date.today() - timedelta(days=119)
+    first_half = pd.DataFrame(
+        {
+            "date": [(start + timedelta(days=i)).isoformat() for i in range(60)],
+            "close": [100.0] * 60,
+            "volume": [100.0] * 60,
+        }
+    )
+    second_half = pd.DataFrame(
+        {
+            "date": [(start + timedelta(days=60 + i)).isoformat() for i in range(60)],
+            "close": [100.0] * 59 + [130.0],
+            "volume": [300.0] * 60,
+        }
+    )
+    cache_mod.upsert_daily_bars(db, "600036", first_half, "tushare.daily", volume_unit="share")
+    cache_mod.upsert_daily_bars(db, "600036", second_half, "tushare.daily", volume_unit="hand")
+
+    result = pipeline._compute_stock_entry_signal(db, "600036", date.today().isoformat())
+    db.close()
+
+    assert result.signal is None
+    assert result.version == "v1"
+    assert result.status == "insufficient"
+    assert result.reason == "MIXED_SOURCE_VOLUME_UNSAFE"
 
 
 def test_daily_writes_score_even_when_l3_compute_raises(tmp_db, small_watchlist, fake_fetcher, fake_weights, monkeypatch):
@@ -1433,32 +1464,41 @@ def test_pipeline_pb_percentile_wrapper_uses_scorer() -> None:
 # 14. _ensure_index_prices 首次拉取
 # ---------------------------------------------------------------------------
 def test_index_prices_init(tmp_db, monkeypatch):
-    """index_prices 初始为空 → 调用腾讯 stock_zh_index_daily_tx 填充，过滤到 earliest 起。"""
+    """index_prices 初始为空 → 用内部 canonical symbol 调 provider，过滤到 earliest 起。"""
     today = date.today().isoformat()
     earliest = (date.today() - timedelta(days=90)).isoformat()
     older = (date.today() - timedelta(days=120)).isoformat()  # 应被过滤掉
 
-    called = {"n": 0}
-    def fake_index_tx(**kw):
-        called["n"] += 1
-        # 腾讯接口返回全量历史（含 oldest），过滤逻辑在 _ensure_index_prices 内
-        return _index_tx_df([
-            (older, 3800.0),
-            (earliest, 4000.0),
-            (today, 4200.0),
-        ])
+    class _IndexProvider:
+        called = 0
+        symbol = None
 
-    monkeypatch.setattr(market_data.ak, "stock_zh_index_daily_tx", fake_index_tx)
+        def fetch_index_bars(self, symbol: str):
+            self.called += 1
+            self.symbol = symbol
+            return market_data.MarketDataResult(
+                _index_tx_df([
+                    (older, 3800.0),
+                    (earliest, 4000.0),
+                    (today, 4200.0),
+                ]),
+                "ok",
+                "test.index",
+                today,
+            )
+
+    provider = _IndexProvider()
 
     db = cache_mod.get_db()
-    pipeline._ensure_index_prices(db, earliest, today)
+    pipeline._ensure_index_prices(db, earliest, today, provider)
 
     rows = db.execute(
         "SELECT symbol, date, close FROM index_prices ORDER BY date"
     ).fetchall()
     db.close()
 
-    assert called["n"] == 1
+    assert provider.called == 1
+    assert provider.symbol == "000300"
     assert len(rows) == 2  # older 被 start_date 过滤掉
     assert rows[0] == ("000300", earliest, 4000.0)
     assert rows[1] == ("000300", today, 4200.0)
@@ -1711,6 +1751,244 @@ def test_daily_aborts_when_no_prices(tmp_db, small_watchlist, fake_fetcher,
     cnt = db.execute("SELECT COUNT(*) FROM predictions").fetchone()[0]
     db.close()
     assert cnt == 0
+
+
+def test_daily_with_disabled_default_provider_writes_audit_but_no_predictions(
+    tmp_db,
+    small_watchlist,
+    fake_weights,
+    monkeypatch,
+):
+    monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
+    monkeypatch.setattr(pipeline, "get_default_market_data_provider", market_data.get_default_market_data_provider)
+
+    pipeline.cmd_daily()
+
+    db = cache_mod.get_db()
+    prediction_count = db.execute("SELECT COUNT(*) FROM predictions").fetchone()[0]
+    audit_rows = db.execute(
+        """SELECT purpose, error_code, COUNT(*)
+           FROM market_data_audit
+           GROUP BY purpose, error_code
+           ORDER BY purpose"""
+    ).fetchall()
+    db.close()
+
+    assert prediction_count == 0
+    assert audit_rows == [
+        ("l3_bars", market_data.SOURCE_DISABLED, len(small_watchlist)),
+        ("score_price", market_data.SOURCE_DISABLED, len(small_watchlist)),
+    ]
+
+
+def test_daily_with_baostock_only_env_still_does_not_write_predictions(
+    tmp_db,
+    small_watchlist,
+    fake_weights,
+    monkeypatch,
+):
+    monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
+    monkeypatch.setenv("MARKET_DATA_ALLOW_BAOSTOCK_ONLY", "1")
+    monkeypatch.setattr(pipeline, "get_default_market_data_provider", market_data.get_default_market_data_provider)
+
+    pipeline.cmd_daily()
+
+    db = cache_mod.get_db()
+    prediction_count = db.execute("SELECT COUNT(*) FROM predictions").fetchone()[0]
+    audit_error_codes = {
+        row[0]
+        for row in db.execute("SELECT DISTINCT error_code FROM market_data_audit").fetchall()
+    }
+    db.close()
+
+    assert prediction_count == 0
+    assert audit_error_codes == {market_data.SOURCE_DISABLED}
+
+
+class _BackfillProvider:
+    def __init__(self):
+        self.range_calls = []
+
+    def fetch_l3_bars(self, code: str, end_date: str, window: int):
+        raise AssertionError("backfill should fetch a date range, not only end/window")
+
+    def fetch_daily_bars_range(self, code: str, start_date: str, end_date: str):
+        self.range_calls.append((code, start_date, end_date))
+        bars = market_data._normalize_bars_result(
+            _entry_hist_df([100.0] * 119 + [130.0], [100.0] * 115 + [300.0] * 5),
+            "test.backfill",
+            "l3_bars",
+        )
+        return market_data.MarketDataResult(
+            bars.value,
+            "ok",
+            "test.backfill",
+            date.today().isoformat(),
+            adjusted="none",
+            volume_unit="share",
+        )
+
+    def fetch_score_price(self, code: str, score_date: str):
+        raise AssertionError("not used")
+
+    def fetch_outcome_price(self, code: str, target_date: str):
+        raise AssertionError("not used")
+
+    def fetch_index_bars(self, symbol: str):
+        raise AssertionError("not used")
+
+
+def test_market_data_backfill_recomputes_existing_l3_metadata_without_rescoring(
+    tmp_db,
+    small_watchlist,
+    fake_weights,
+):
+    today = date.today().isoformat()
+    row_id = _insert_prediction(
+        "600036",
+        today,
+        30.0,
+        total_score=66.0,
+        entry_signal=None,
+        entry_signal_version="v1",
+    )
+
+    provider = _BackfillProvider()
+    pipeline.cmd_market_data_backfill(today, today, provider)
+
+    db = cache_mod.get_db()
+    row = db.execute(
+        """SELECT total_score, entry_signal, entry_signal_status, entry_signal_reason,
+                  entry_signal_source
+           FROM predictions
+           WHERE id=?""",
+        (row_id,),
+    ).fetchone()
+    bars_count = db.execute("SELECT COUNT(*) FROM daily_bars WHERE code='600036'").fetchone()[0]
+    db.close()
+
+    assert row == (66.0, 1, "pass", "PASS", "test.backfill")
+    assert bars_count == 120
+    assert provider.range_calls == [("600036", (date.today() - timedelta(days=240)).isoformat(), today), ("000858", (date.today() - timedelta(days=240)).isoformat(), today)]
+
+
+class _RangeAwareBackfillProvider:
+    def __init__(self, score_date: str):
+        self.score_date = date.fromisoformat(score_date)
+        self.calls = []
+
+    def fetch_l3_bars(self, code: str, end_date: str, window: int):
+        raise AssertionError("backfill should fetch the complete date range")
+
+    def fetch_daily_bars_range(self, code: str, start_date: str, end_date: str):
+        self.calls.append((code, start_date, end_date))
+        start_dt = date.fromisoformat(start_date)
+        end_dt = date.fromisoformat(end_date)
+        days = (end_dt - start_dt).days + 1
+        rows = []
+        for i in range(days):
+            d = start_dt + timedelta(days=i)
+            close = 130.0 if d == self.score_date else 100.0
+            volume = 300.0 if self.score_date - timedelta(days=4) <= d <= self.score_date else 100.0
+            rows.append({"date": d.isoformat(), "close": close, "volume": volume})
+        return market_data.MarketDataResult(
+            pd.DataFrame(rows),
+            "ok",
+            "test.range_backfill",
+            date.today().isoformat(),
+            adjusted="none",
+            volume_unit="share",
+        )
+
+    def fetch_score_price(self, code: str, score_date: str):
+        raise AssertionError("not used")
+
+    def fetch_outcome_price(self, code: str, target_date: str):
+        raise AssertionError("not used")
+
+    def fetch_index_bars(self, symbol: str):
+        raise AssertionError("not used")
+
+
+def test_market_data_backfill_fetches_full_range_before_recomputing_old_l3(
+    tmp_db,
+    small_watchlist,
+    fake_weights,
+):
+    end_dt = date.today()
+    score_dt = end_dt - timedelta(days=300)
+    score_date = score_dt.isoformat()
+    end = end_dt.isoformat()
+    row_id = _insert_prediction(
+        "600036",
+        score_date,
+        30.0,
+        total_score=66.0,
+        entry_signal=1,
+        entry_signal_version="v1",
+    )
+    provider = _RangeAwareBackfillProvider(score_date)
+
+    pipeline.cmd_market_data_backfill(score_date, end, provider)
+
+    db = cache_mod.get_db()
+    row = db.execute(
+        "SELECT entry_signal, entry_signal_status, entry_signal_reason, entry_signal_source FROM predictions WHERE id=?",
+        (row_id,),
+    ).fetchone()
+    db.close()
+
+    assert row == (1, "pass", "PASS", "test.range_backfill")
+    assert ("600036", (score_dt - timedelta(days=240)).isoformat(), end) in provider.calls
+
+
+def test_market_data_backfill_disabled_provider_does_not_rewrite_l3_metadata(
+    tmp_db,
+    small_watchlist,
+    fake_weights,
+    monkeypatch,
+):
+    monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
+    monkeypatch.setattr(pipeline, "get_default_market_data_provider", market_data.get_default_market_data_provider)
+    today = date.today().isoformat()
+    row_id = _insert_prediction(
+        "600036",
+        today,
+        30.0,
+        total_score=66.0,
+        entry_signal=1,
+        entry_signal_version="v1",
+    )
+
+    pipeline.cmd_market_data_backfill(today, today)
+
+    db = cache_mod.get_db()
+    row = db.execute(
+        "SELECT entry_signal, entry_signal_version, entry_signal_reason FROM predictions WHERE id=?",
+        (row_id,),
+    ).fetchone()
+    audit_count = db.execute(
+        "SELECT COUNT(*) FROM market_data_audit WHERE error_code=?",
+        (market_data.SOURCE_DISABLED,),
+    ).fetchone()[0]
+    db.close()
+
+    assert row == (1, "v1", None)
+    assert audit_count == len(small_watchlist)
+
+
+def test_validate_l3_bar_windows_ignores_legacy_adjusted_empty_rows(tmp_db) -> None:
+    db = cache_mod.get_db()
+    bars = _entry_hist_df([100.0, 101.0], [100.0, 110.0]).rename(
+        columns={"日期": "date", "收盘": "close", "成交量": "volume"}
+    )
+    cache_mod.upsert_daily_bars(db, "600036", bars, "legacy", adjusted="", volume_unit="share")
+    cache_mod.upsert_daily_bars(db, "600036", bars, "tushare.daily", adjusted="none", volume_unit="hand")
+
+    rows = pipeline._validate_l3_bar_windows(db, (date.today() - timedelta(days=10)).isoformat())
+    db.close()
+
+    assert rows == [("600036", 2, bars["date"].min(), bars["date"].max(), 1, 1, 1)]
 
 
 # ---------------------------------------------------------------------------

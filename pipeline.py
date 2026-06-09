@@ -42,7 +42,14 @@ from lib.framework_b_report import (
     append_framework_b_quality_expansion,
     append_phase6_readiness,
 )
-from lib.market_data import MarketDataCacheService, MarketDataProvider, SOURCE_STALE, get_default_market_data_provider
+from lib.market_data import (
+    MarketDataCacheService,
+    MarketDataCoverage,
+    MarketDataProvider,
+    SOURCE_STALE,
+    get_default_market_data_provider,
+    get_market_data_backfill_provider,
+)
 from gemini_scorer import get_qualitative_score
 from scorer import (
     SUPPORTED_FRAMEWORKS,
@@ -185,6 +192,17 @@ def _compute_stock_entry_signal(db: sqlite3.Connection, code: str, today: str) -
             REASON_MIXED_SOURCE_VOLUME_UNSAFE,
             "insufficient",
             source="mixed",
+            fetched_at=rows[-1].get("fetched_at"),
+        )
+    adjusted_values = {row.get("adjusted") for row in rows}
+    volume_units = {row.get("volume_unit") for row in rows}
+    if len(adjusted_values) > 1 or len(volume_units) > 1 or not volume_units or None in volume_units or "unknown" in volume_units:
+        return EntrySignalResult(
+            None,
+            ENTRY_SIGNAL_VERSION,
+            REASON_MIXED_SOURCE_VOLUME_UNSAFE,
+            "insufficient",
+            source=rows[-1].get("source"),
             fetched_at=rows[-1].get("fetched_at"),
         )
     if any(row["volume"] is None for row in rows):
@@ -547,7 +565,7 @@ def _ensure_index_prices(
 
     logger.info(f"拉取沪深300日线：{start_date} → {today}")
     provider = provider or get_default_market_data_provider()
-    result = provider.fetch_index_bars("sh000300")
+    result = provider.fetch_index_bars("000300")
     insert_market_data_audit(db, result, "benchmark_price", "000300", today)
     if result.value is None:
         logger.warning("沪深300历史数据拉取失败，benchmark 将为 NULL")
@@ -657,6 +675,144 @@ def cmd_outcome_update() -> None:
         sheets_sync.sync_all()
     except Exception as e:
         logger.warning(f"Sheets sync 失败（不影响 SQLite 数据）：{e}")
+
+
+# ──────────────────────────────────────────────
+# market-data-backfill 命令
+# ──────────────────────────────────────────────
+
+def _validate_l3_bar_windows(db: sqlite3.Connection, start: str) -> list[tuple]:
+    return db.execute(
+        """SELECT code,
+                  COUNT(*) AS bars,
+                  MIN(trade_date),
+                  MAX(trade_date),
+                  COUNT(DISTINCT source) AS sources,
+                  COUNT(DISTINCT adjusted) AS adjustments,
+                  COUNT(DISTINCT volume_unit) AS volume_units
+           FROM daily_bars
+           WHERE trade_date >= ?
+             AND adjusted='none'
+           GROUP BY code
+           ORDER BY bars, code""",
+        (start,),
+    ).fetchall()
+
+
+def _recompute_existing_l3_metadata(
+    db: sqlite3.Connection,
+    start: str,
+    end: str,
+    refreshed_codes: set[str] | None = None,
+) -> int:
+    rows = db.execute(
+        """SELECT DISTINCT code, score_date
+           FROM predictions
+           WHERE score_date BETWEEN ? AND ?
+             AND entry_signal_version='v1'
+           ORDER BY score_date, code""",
+        (start, end),
+    ).fetchall()
+    updated = 0
+    for code, score_date in rows:
+        if refreshed_codes is not None and code not in refreshed_codes:
+            continue
+        result = _compute_stock_entry_signal(db, code, score_date)
+        cur = db.execute(
+            """UPDATE predictions
+               SET entry_signal=?,
+                   entry_signal_version=?,
+                   entry_signal_status=?,
+                   entry_signal_reason=?,
+                   entry_signal_source=?,
+                   entry_signal_fetched_at=?
+               WHERE code=? AND score_date=? AND entry_signal_version='v1'""",
+            (
+                result.signal,
+                result.version,
+                result.status,
+                result.reason,
+                result.source,
+                result.fetched_at,
+                code,
+                score_date,
+            ),
+        )
+        updated += cur.rowcount
+    db.commit()
+    return updated
+
+
+def _backfill_fetch_start(start: str) -> str:
+    return (date.fromisoformat(start) - timedelta(days=240)).isoformat()
+
+
+def _refresh_daily_bars_range(
+    db: sqlite3.Connection,
+    provider: MarketDataProvider,
+    codes: list[str],
+    start: str,
+    end: str,
+) -> MarketDataCoverage:
+    results = {}
+    fetch_start = _backfill_fetch_start(start)
+    for code in codes:
+        result = provider.fetch_daily_bars_range(code, fetch_start, end)
+        results[code] = result
+        insert_market_data_audit(db, result, "l3_bars", code, end)
+        if result.status != "failed" and result.value is not None:
+            from lib.cache import upsert_daily_bars
+
+            upsert_daily_bars(
+                db,
+                code,
+                result.value,
+                result.source,
+                adjusted=result.adjusted,
+                volume_unit=result.volume_unit,
+                quality_status=result.status,
+                fetched_at=result.fetched_at,
+                error_code=result.error_code,
+            )
+    db.commit()
+    ok = sum(1 for r in results.values() if r.status == "ok")
+    degraded = sum(1 for r in results.values() if r.status == "degraded")
+    failed = sum(1 for r in results.values() if r.status == "failed")
+    return MarketDataCoverage(len(results), ok, degraded, failed, results)
+
+
+def cmd_market_data_backfill(start: str, end: str, provider: MarketDataProvider | None = None) -> None:
+    db = get_db()
+    provider = provider or get_market_data_backfill_provider()
+    codes = [item["code"] for item in config.WATCHLIST]
+    coverage = _refresh_daily_bars_range(db, provider, codes, start, end)
+    logger.info(
+        "market-data-backfill 行情刷新：ok=%s degraded=%s failed=%s total=%s",
+        coverage.ok,
+        coverage.degraded,
+        coverage.failed,
+        coverage.total,
+    )
+    refreshed_codes = {
+        code
+        for code, result in coverage.by_code.items()
+        if result.status != "failed" and result.value is not None
+    }
+    updated_l3 = _recompute_existing_l3_metadata(db, start, end, refreshed_codes)
+    logger.info("market-data-backfill L3 metadata 重算：更新 %s 条 prediction", updated_l3)
+    for row in _validate_l3_bar_windows(db, start):
+        code, bars, min_date, max_date, sources, adjustments, volume_units = row
+        logger.info(
+            "daily_bars window %s bars=%s range=%s..%s sources=%s adjusted=%s volume_units=%s",
+            code,
+            bars,
+            min_date,
+            max_date,
+            sources,
+            adjustments,
+            volume_units,
+        )
+    db.close()
 
 
 # ──────────────────────────────────────────────
@@ -1297,6 +1453,9 @@ def main() -> None:
     sub.add_parser("weekly", help="每周刷新基本面缓存（cron: 每周六 10:00）")
     sub.add_parser("daily", help="每日评分，写入 predictions 表（依赖 weekly 缓存）")
     sub.add_parser("outcome-update", help="更新到期预测的实际收益")
+    p_backfill = sub.add_parser("market-data-backfill", help="预热行情日线并重算已有 L3 metadata")
+    p_backfill.add_argument("--start", required=True, help="开始日期 YYYY-MM-DD")
+    p_backfill.add_argument("--end", required=True, help="结束日期 YYYY-MM-DD")
     sub.add_parser("accuracy-report", help="输出命中率报告")
     sub.add_parser("phase-check", help="手动触发 Phase 4 里程碑检测（自动在 outcome-update 后运行）")
     p_remove = sub.add_parser("remove", help="从 DB 删除一只股票的所有数据（先从 config.py 移除）")
@@ -1312,6 +1471,8 @@ def main() -> None:
         cmd_daily()
     elif args.cmd == "outcome-update":
         cmd_outcome_update()
+    elif args.cmd == "market-data-backfill":
+        cmd_market_data_backfill(args.start, args.end)
     elif args.cmd == "accuracy-report":
         cmd_accuracy_report()
     elif args.cmd == "phase-check":

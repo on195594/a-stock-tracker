@@ -43,13 +43,17 @@ pip install -r requirements.txt
 GEMINI_API_KEY=你的_Gemini_API_Key
 TELEGRAM_BOT_TOKEN=你的_Bot_Token
 TELEGRAM_CHAT_ID=你的_Chat_ID
+TUSHARE_TOKEN=你的_Tushare_Pro_Token
+MARKET_DATA_ALLOW_BAOSTOCK_ONLY=0
 ```
 
 说明：
 
-- 三项均可选。
+- 以上配置均可选，但未配置 `TUSHARE_TOKEN` 时行情 provider 保持 disabled，`daily` 不会写入新的评分记录。
 - 未配置 Gemini 时，定性评分使用固定 fallback。
 - 未配置 Telegram 时，推送静默跳过，不影响评分和写库。
+- 启用 Tushare 前先运行 `python3 scripts/probe_tushare_market_data.py`，确认 `daily`、`index_daily`、`trade_cal` 权限和字段可用。
+- `MARKET_DATA_ALLOW_BAOSTOCK_ONLY=1` 只允许 `market-data-backfill` 使用 BaoStock；不会让 `daily` 写入新评分。
 - `.env` 必须保持在 git 外，不要提交真实密钥。
 
 ## 常用命令
@@ -66,6 +70,9 @@ python3 pipeline.py daily
 
 # 更新到期预测的 30/60/90 天 outcome
 python3 pipeline.py outcome-update
+
+# 预热行情日线并重算已有 L3 metadata，不重算历史总分
+python3 pipeline.py market-data-backfill --start 2025-01-01 --end 2026-06-09
 
 # 生成准确率报告
 python3 pipeline.py accuracy-report
@@ -98,6 +105,8 @@ bash cron-setup.sh
 - 工作日 16:30：运行 `daily`
 - 工作日 17:00：运行 `outcome-update`
 
+`cron-setup.sh` 会先运行 `scripts/check_market_data_readiness.py`。若 Tushare probe 尚未通过，只配置 weekly，不新增 `daily` / `outcome-update`。
+
 cron、Telegram、Gemini、Google Sheets 都不应在测试中真实触发。
 
 ## Watchlist
@@ -124,6 +133,9 @@ python3 pipeline.py init
 - `telegram_push.py`：Telegram 信号推送，筛选 `buy_strong` 且 L3 通过的记录。
 - `sheets_sync.py`：Google Sheets 展示层同步。
 - `lib/cache.py`：SQLite schema、迁移和缓存管理。
+- `lib/market_data.py`：行情 provider 边界；无 `TUSHARE_TOKEN` 时默认 disabled。
+- `lib/tushare_provider.py`：Tushare Pro 行情 provider，覆盖评分价、L3 日线、outcome 和沪深 300 指数日线。
+- `lib/baostock_provider.py`：BaoStock 行情 provider，仅作为 Tushare fallback 或显式 backfill 源。
 - `lib/fetcher.py`：AKShare、腾讯 fallback、百度估值等数据读取。
 - `lib/data_quality.py`：required/degradable/derived 字段质量模型。
 - `lib/entry_signal.py`：L3 v1 买点层纯计算 seam。
@@ -140,6 +152,7 @@ python3 pipeline.py init
 - `entry_signal=NULL AND entry_signal_version IS NULL` 表示 pre-L3 历史记录。
 - `entry_signal=NULL AND entry_signal_version='v1'` 表示 L3 v1 已运行但不可计算。
 - `entry_signal=0/1 AND entry_signal_version='v1'` 表示 L3 v1 已判断并拒绝/通过。
+- `daily_bars.adjusted` 第一版统一写 `none`；`daily_bars.volume_unit` 必须有明确单位，unknown 或混合单位窗口会拒绝 L3 计算。
 - `pb_percentile_10y` 日度可计算性依赖 `price_at_score`、`bps` 和足够的 `pb_hist_monthly`。
 - 2026-05-14 前后存在毛利率和 PB 分位口径修复，跨期评分比较必须按 `score_date` 分层。
 
@@ -195,6 +208,7 @@ git diff --check
 - `docs/specs/2026-05-30-phase5-l3-entry-signal-spec.md`：L3 买点层 Spec。
 - `docs/plans/2026-05-30-phase5-l3-entry-signal-implementation-plan.md`：L3 买点层实施计划。
 - `docs/data-source-registry.yaml`：字段、数据源、缓存和 fallback registry。
+- `docs/runbooks/market-data-provider-recovery.md`：行情 provider 恢复 daily/outcome cron 的运行手册。
 - `docs/lessons-learned.md`：历史修复、陷阱和跨期解释注意事项。
 - `docs/reviews/`：计划和实现审查记录。
 - `docs/design.md`、`docs/impl-plan.md`、`docs/test-plan.md`：早期架构、实施和测试计划。

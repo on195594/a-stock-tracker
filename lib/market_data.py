@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from datetime import datetime
 from typing import Any, Generic, Literal, Protocol, TypeVar
 
@@ -23,6 +24,8 @@ SOURCE_STALE = "SOURCE_STALE"
 MIXED_SOURCE_VOLUME_UNSAFE = "MIXED_SOURCE_VOLUME_UNSAFE"
 UNKNOWN_ERROR = "UNKNOWN_ERROR"
 SOURCE_DISABLED = "SOURCE_DISABLED"
+AUTH_MISSING = "AUTH_MISSING"
+PERMISSION_DENIED = "PERMISSION_DENIED"
 
 
 @dataclass(frozen=True)
@@ -36,6 +39,8 @@ class MarketDataResult(Generic[T]):
     error_code: str | None = None
     error_message: str | None = None
     freshness_days: int | None = None
+    adjusted: str = "none"
+    volume_unit: str = "unknown"
 
 
 class MarketDataProvider(Protocol):
@@ -43,6 +48,9 @@ class MarketDataProvider(Protocol):
         ...
 
     def fetch_l3_bars(self, code: str, end_date: str, window: int) -> MarketDataResult[pd.DataFrame]:
+        ...
+
+    def fetch_daily_bars_range(self, code: str, start_date: str, end_date: str) -> MarketDataResult[pd.DataFrame]:
         ...
 
     def fetch_outcome_price(self, code: str, target_date: str) -> MarketDataResult[float]:
@@ -89,6 +97,9 @@ class RemovedMarketDataProvider:
     def fetch_l3_bars(self, code: str, end_date: str, window: int) -> MarketDataResult[pd.DataFrame]:
         return self._disabled("l3_bars")
 
+    def fetch_daily_bars_range(self, code: str, start_date: str, end_date: str) -> MarketDataResult[pd.DataFrame]:
+        return self._disabled("daily_bars_range")
+
     def fetch_outcome_price(self, code: str, target_date: str) -> MarketDataResult[float]:
         return self._disabled("outcome_price")
 
@@ -96,7 +107,70 @@ class RemovedMarketDataProvider:
         return self._disabled("benchmark_price")
 
 
+class CompositeMarketDataProvider:
+    """Primary/fallback provider. Fallback results are marked degraded."""
+
+    def __init__(self, primary: MarketDataProvider, fallback: MarketDataProvider | None = None):
+        self.primary = primary
+        self.fallback = fallback
+
+    def fetch_score_price(self, code: str, score_date: str) -> MarketDataResult[float]:
+        return self._fetch("fetch_score_price", code, score_date)
+
+    def fetch_l3_bars(self, code: str, end_date: str, window: int) -> MarketDataResult[pd.DataFrame]:
+        return self._fetch("fetch_l3_bars", code, end_date, window)
+
+    def fetch_daily_bars_range(self, code: str, start_date: str, end_date: str) -> MarketDataResult[pd.DataFrame]:
+        return self._fetch("fetch_daily_bars_range", code, start_date, end_date)
+
+    def fetch_outcome_price(self, code: str, target_date: str) -> MarketDataResult[float]:
+        return self._fetch("fetch_outcome_price", code, target_date)
+
+    def fetch_index_bars(self, symbol: str) -> MarketDataResult[pd.DataFrame]:
+        return self._fetch("fetch_index_bars", symbol)
+
+    def _fetch(self, method: str, *args: Any) -> MarketDataResult[Any]:
+        primary_result = getattr(self.primary, method)(*args)
+        if primary_result.status != "failed" or self.fallback is None:
+            return primary_result
+        fallback_result = getattr(self.fallback, method)(*args)
+        if fallback_result.status == "failed":
+            return fallback_result
+        return MarketDataResult(
+            fallback_result.value,
+            "degraded",
+            fallback_result.source,
+            fallback_result.fetched_at,
+            fallback_source=primary_result.source,
+            fallback_reason=primary_result.error_code or primary_result.fallback_reason or "PRIMARY_FAILED",
+            freshness_days=fallback_result.freshness_days,
+            adjusted=fallback_result.adjusted,
+            volume_unit=fallback_result.volume_unit,
+        )
+
+
 def get_default_market_data_provider() -> MarketDataProvider:
+    if os.environ.get("TUSHARE_TOKEN"):
+        from lib.tushare_provider import TushareMarketDataProvider
+
+        fallback = None
+        try:
+            from lib.baostock_provider import BaoStockMarketDataProvider
+
+            fallback = BaoStockMarketDataProvider()
+        except Exception:
+            fallback = None
+        return CompositeMarketDataProvider(TushareMarketDataProvider(), fallback)
+    return RemovedMarketDataProvider()
+
+
+def get_market_data_backfill_provider() -> MarketDataProvider:
+    if os.environ.get("TUSHARE_TOKEN"):
+        return get_default_market_data_provider()
+    if os.environ.get("MARKET_DATA_ALLOW_BAOSTOCK_ONLY") == "1":
+        from lib.baostock_provider import BaoStockMarketDataProvider
+
+        return BaoStockMarketDataProvider()
     return RemovedMarketDataProvider()
 
 
@@ -126,7 +200,7 @@ def _normalize_bars_result(df: Any, source: str, purpose: str) -> MarketDataResu
             error_message=f"missing columns: {sorted(required - set(normalized.columns))}",
         )
     keep = [col for col in ["date", "open", "high", "low", "close", "volume"] if col in normalized.columns]
-    return MarketDataResult(normalized[keep], "ok", source, fetched_at)
+    return MarketDataResult(normalized[keep], "ok", source, fetched_at, adjusted="none", volume_unit="share")
 
 
 def _exception_result(source: str, exc: Exception) -> MarketDataResult[pd.DataFrame]:
@@ -173,7 +247,8 @@ class MarketDataCacheService:
                     code,
                     result.value,
                     result.source,
-                    adjusted="",
+                    adjusted=result.adjusted,
+                    volume_unit=result.volume_unit,
                     quality_status=result.status,
                     fetched_at=result.fetched_at,
                     error_code=result.error_code,
