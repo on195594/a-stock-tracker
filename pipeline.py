@@ -9,6 +9,7 @@ a-stock-tracker 主编排器
 """
 
 import argparse
+from contextlib import contextmanager
 import hashlib
 import json
 import logging
@@ -18,6 +19,14 @@ import sys
 import time
 from datetime import date, datetime, timedelta
 import pandas as pd
+
+@contextmanager
+def provider_session(provider):
+    if provider is not None and hasattr(provider, "__enter__"):
+        with provider as p:
+            yield p
+    else:
+        yield provider
 
 import config
 from lib.cache import (
@@ -324,7 +333,7 @@ def cmd_weekly() -> None:
 def _backfill_null_prices(db: sqlite3.Connection, today: str, provider: MarketDataProvider | None = None) -> int:
     """回填近 15 天内 price_at_score=NULL 的记录（不含今日）。
 
-    只在今日价格抓取成功后调用，用腾讯历史日线补齐存量缺失。
+    只在今日价格抓取成功后调用，用历史日线数据（如 Tushare/BaoStock）补齐存量缺失。
     不修改 total_score / weights_hash，仅补 price_at_score。
     """
     cutoff = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=15)).strftime("%Y-%m-%d")
@@ -340,6 +349,18 @@ def _backfill_null_prices(db: sqlite3.Connection, today: str, provider: MarketDa
     updated = 0
     provider = provider or get_default_market_data_provider()
     for code, score_date in rows:
+        # Check database cache first to avoid redundant API calls
+        cached = latest_daily_close(db, code, score_date, max_freshness_days=0)
+        if cached:
+            db.execute(
+                "UPDATE predictions SET price_at_score=? WHERE code=? AND score_date=? AND price_at_score IS NULL",
+                (cached[0], code, score_date),
+            )
+            db.commit()
+            updated += 1
+            logger.info(f"  回填 ✓ {code} {score_date} price={cached[0]} (来自缓存)")
+            continue
+
         result = provider.fetch_score_price(code, score_date)
         insert_market_data_audit(db, result, "score_price", code, today)
         if result.value is None:
@@ -362,155 +383,157 @@ def cmd_daily() -> None:
     weights_hash = _compute_weights_hash(weights)
     today = _today()
     db = get_db()
-    provider = get_default_market_data_provider()
-    market_data_cache = MarketDataCacheService(db, provider)
+    try:
+        provider = get_default_market_data_provider()
+        with provider_session(provider):
+            market_data_cache = MarketDataCacheService(db, provider)
 
-    # 启动检查：今日已有记录且 hash 不同 → 拒绝运行
-    existing = db.execute(
-        "SELECT DISTINCT weights_hash FROM predictions WHERE score_date = ?", (today,)
-    ).fetchall()
-    if existing:
-        existing_hashes = {r[0] for r in existing}
-        if weights_hash not in existing_hashes:
-            logger.error(
-                f"冲突：今日 {today} 已有 weights_hash={existing_hashes}，"
-                f"当前 hash={weights_hash}。\n"
-                f"请手动删除今日记录后重跑：\n"
-                f"  DELETE FROM predictions WHERE score_date='{today}';"
-            )
-            sys.exit(1)
-
-    codes = [item["code"] for item in config.WATCHLIST]
-    coverage = market_data_cache.refresh_daily_bars(codes, today, 120)
-    logger.info(
-        "L3 行情刷新：ok=%s degraded=%s failed=%s total=%s",
-        coverage.ok,
-        coverage.degraded,
-        coverage.failed,
-        coverage.total,
-    )
-
-    # 获取今日 price_at_score（优先 daily_bars 最近交易日 close，5 天 freshness SLA）
-    snapshot_data: dict = {}
-    for item in config.WATCHLIST:
-        code = item["code"]
-        price = _get_score_price(db, provider, code, today)
-        if price is not None:
-            snapshot_data[code] = price
-    if snapshot_data:
-        logger.info(f"price_at_score：获取到 {len(snapshot_data)} 只股票收盘价")
-        _backfill_null_prices(db, today, provider)
-    else:
-        logger.error("price_at_score 全部失败，今日评分中止（今日记录不写入，明日将写入明日数据）")
-        db.close()
-        return
-
-    skipped: list[str] = []
-    written = 0
-
-    for item in config.WATCHLIST:
-        code = item["code"]
-        name = item["name"]
-        fundamentals = get_fundamentals(code)
-        if not fundamentals:
-            logger.warning(f"  跳过 {code}：无基本面缓存（请先运行 init）")
-            skipped.append(code)
-            continue
-
-        data = dict(fundamentals.get("data", fundamentals))
-        report_period = data.get("report_period")
-        price_at_score = snapshot_data.get(code)
-
-        # 注入日度实时 PB 分位（股价变化→分位变化→评分每日变化）
-        if price_at_score:
-            daily_pct = _compute_daily_pb_percentile(price_at_score, data)
-            if daily_pct is not None:
-                data["pb_percentile_10y"] = daily_pct
-                logger.debug(f"  {code} 实时PB分位={daily_pct}%（价={price_at_score}, bps={data.get('bps')}）")
-            else:
-                logger.debug(f"  {code} 无法计算实时PB分位（bps/hist缺失），使用缓存值")
-
-        # 注入 Gemini 定性评分（覆盖 phase1_fixed，失败自动 fallback）
-        qual = get_qualitative_score(code, name)
-        data["moat_fixed"] = qual["moat"]
-        data["market_pos_fixed"] = qual["market_pos"]
-        data["sentiment_fixed"] = qual["sentiment"]
-
-        threshold_adjusted = 0
-        entry_signal_result = _compute_stock_entry_signal(db, code, today)
-
-        for framework in sorted(SUPPORTED_FRAMEWORKS):
-            try:
-                result = score_stock(code, framework, data, weights=weights)
-            except InsufficientDataError as e:
-                logger.warning(f"  跳过 {code}/{framework}：{e}")
-                skipped.append(f"{code}/{framework}")
-                continue
-            except UnsupportedFrameworkError as e:
-                logger.error(f"  错误 {code}/{framework}：{e}")
-                skipped.append(f"{code}/{framework}")
-                continue
-
-            try:
-                cursor = db.execute(
-                    """INSERT OR IGNORE INTO predictions
-                       (code, name, framework, score_date, price_at_score,
-                        quant_score, total_score, weights_hash, report_period,
-                        threshold_adjusted, entry_signal, entry_signal_version,
-                        entry_signal_status, entry_signal_reason, entry_signal_source,
-                        entry_signal_fetched_at, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        code, name, framework, today, price_at_score,
-                        result["quant_score"], result["total_score"],
-                        weights_hash, report_period,
-                        threshold_adjusted, entry_signal_result.signal,
-                        entry_signal_result.version, entry_signal_result.status,
-                        entry_signal_result.reason, entry_signal_result.source,
-                        entry_signal_result.fetched_at, datetime.now().isoformat(),
-                    ),
-                )
-                if cursor.rowcount == 0:
-                    db.execute(
-                        """UPDATE predictions
-                           SET entry_signal=?,
-                               entry_signal_version=?,
-                               entry_signal_status=?,
-                               entry_signal_reason=?,
-                               entry_signal_source=?,
-                               entry_signal_fetched_at=?
-                           WHERE code=? AND framework=? AND score_date=?""",
-                        (
-                            entry_signal_result.signal,
-                            entry_signal_result.version,
-                            entry_signal_result.status,
-                            entry_signal_result.reason,
-                            entry_signal_result.source,
-                            entry_signal_result.fetched_at,
-                            code,
-                            framework,
-                            today,
-                        ),
+            # 启动检查：今日已有记录且 hash 不同 → 拒绝运行
+            existing = db.execute(
+                "SELECT DISTINCT weights_hash FROM predictions WHERE score_date = ?", (today,)
+            ).fetchall()
+            if existing:
+                existing_hashes = {r[0] for r in existing}
+                if weights_hash not in existing_hashes:
+                    logger.error(
+                        f"冲突：今日 {today} 已有 weights_hash={existing_hashes}，"
+                        f"当前 hash={weights_hash}。\n"
+                        f"请手动删除今日记录后重跑：\n"
+                        f"  DELETE FROM predictions WHERE score_date='{today}';"
                     )
-                db.commit()
-                if cursor.rowcount > 0:
-                    written += 1
-                logger.info(
-                    f"  ✓ {code} {name} [{framework}]  总分={result['total_score']}  "
-                    f"data_quality={result['data_quality']}"
-                )
-            except Exception as e:
-                logger.error(f"  写入 {code}/{framework} 失败：{e}")
+                    sys.exit(1)
 
-    log_line = (
-        f"{today} daily 完成：写入 {written} 条，跳过 {len(skipped)} 条"
-        + (f"（{skipped}）" if skipped else "")
-    )
-    logger.info(log_line)
-    _log_l3_coverage(db, today, weights.get("thresholds", {}).get("buy_strong", 55))
-    with open(os.path.join(config.LOG_DIR, "daily_log.txt"), "a", encoding="utf-8") as f:
-        f.write(log_line + "\n")
-    db.close()
+            codes = [item["code"] for item in config.WATCHLIST]
+            coverage = market_data_cache.refresh_daily_bars(codes, today, 120)
+            logger.info(
+                "L3 行情刷新：ok=%s degraded=%s failed=%s total=%s",
+                coverage.ok,
+                coverage.degraded,
+                coverage.failed,
+                coverage.total,
+            )
+
+            # 获取今日 price_at_score（优先 daily_bars 最近交易日 close，5 天 freshness SLA）
+            snapshot_data: dict = {}
+            for item in config.WATCHLIST:
+                code = item["code"]
+                price = _get_score_price(db, provider, code, today)
+                if price is not None:
+                    snapshot_data[code] = price
+            if snapshot_data:
+                logger.info(f"price_at_score：获取到 {len(snapshot_data)} 只股票收盘价")
+                _backfill_null_prices(db, today, provider)
+            else:
+                logger.error("price_at_score 全部失败，今日评分中止（今日记录不写入，明日将写入明日数据）")
+                return
+
+            skipped: list[str] = []
+            written = 0
+
+            for item in config.WATCHLIST:
+                code = item["code"]
+                name = item["name"]
+                fundamentals = get_fundamentals(code)
+                if not fundamentals:
+                    logger.warning(f"  跳过 {code}：无基本面缓存（请先运行 init）")
+                    skipped.append(code)
+                    continue
+
+                data = dict(fundamentals.get("data", fundamentals))
+                report_period = data.get("report_period")
+                price_at_score = snapshot_data.get(code)
+
+                # 注入日度实时 PB 分位（股价变化→分位变化→评分每日变化）
+                if price_at_score:
+                    daily_pct = _compute_daily_pb_percentile(price_at_score, data)
+                    if daily_pct is not None:
+                        data["pb_percentile_10y"] = daily_pct
+                        logger.debug(f"  {code} 实时PB分位={daily_pct}%（价={price_at_score}, bps={data.get('bps')}）")
+                    else:
+                        logger.debug(f"  {code} 无法计算实时PB分位（bps/hist缺失），使用缓存值")
+
+                # 注入 Gemini 定性评分（覆盖 phase1_fixed，失败自动 fallback）
+                qual = get_qualitative_score(code, name)
+                data["moat_fixed"] = qual["moat"]
+                data["market_pos_fixed"] = qual["market_pos"]
+                data["sentiment_fixed"] = qual["sentiment"]
+
+                threshold_adjusted = 0
+                entry_signal_result = _compute_stock_entry_signal(db, code, today)
+
+                for framework in sorted(SUPPORTED_FRAMEWORKS):
+                    try:
+                        result = score_stock(code, framework, data, weights=weights)
+                    except InsufficientDataError as e:
+                        logger.warning(f"  跳过 {code}/{framework}：{e}")
+                        skipped.append(f"{code}/{framework}")
+                        continue
+                    except UnsupportedFrameworkError as e:
+                        logger.error(f"  错误 {code}/{framework}：{e}")
+                        skipped.append(f"{code}/{framework}")
+                        continue
+
+                    try:
+                        cursor = db.execute(
+                            """INSERT OR IGNORE INTO predictions
+                               (code, name, framework, score_date, price_at_score,
+                                quant_score, total_score, weights_hash, report_period,
+                                threshold_adjusted, entry_signal, entry_signal_version,
+                                entry_signal_status, entry_signal_reason, entry_signal_source,
+                                entry_signal_fetched_at, created_at)
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                            (
+                                code, name, framework, today, price_at_score,
+                                result["quant_score"], result["total_score"],
+                                weights_hash, report_period,
+                                threshold_adjusted, entry_signal_result.signal,
+                                entry_signal_result.version, entry_signal_result.status,
+                                entry_signal_result.reason, entry_signal_result.source,
+                                entry_signal_result.fetched_at, datetime.now().isoformat(),
+                            ),
+                        )
+                        if cursor.rowcount == 0:
+                            db.execute(
+                                """UPDATE predictions
+                                   SET entry_signal=?,
+                                       entry_signal_version=?,
+                                       entry_signal_status=?,
+                                       entry_signal_reason=?,
+                                       entry_signal_source=?,
+                                       entry_signal_fetched_at=?
+                                   WHERE code=? AND framework=? AND score_date=?""",
+                                (
+                                    entry_signal_result.signal,
+                                    entry_signal_result.version,
+                                    entry_signal_result.status,
+                                    entry_signal_result.reason,
+                                    entry_signal_result.source,
+                                    entry_signal_result.fetched_at,
+                                    code,
+                                    framework,
+                                    today,
+                                ),
+                            )
+                        db.commit()
+                        if cursor.rowcount > 0:
+                            written += 1
+                        logger.info(
+                            f"  ✓ {code} {name} [{framework}]  总分={result['total_score']}  "
+                            f"data_quality={result['data_quality']}"
+                        )
+                    except Exception as e:
+                        logger.error(f"  写入 {code}/{framework} 失败：{e}")
+
+            log_line = (
+                f"{today} daily 完成：写入 {written} 条，跳过 {len(skipped)} 条"
+                + (f"（{skipped}）" if skipped else "")
+            )
+            logger.info(log_line)
+            _log_l3_coverage(db, today, weights.get("thresholds", {}).get("buy_strong", 55))
+            with open(os.path.join(config.LOG_DIR, "daily_log.txt"), "a", encoding="utf-8") as f:
+                f.write(log_line + "\n")
+    finally:
+        db.close()
 
     # Telegram 推送（阈值来自 weights.json，失败不阻断）
     try:
@@ -591,77 +614,79 @@ def _ensure_index_prices(
 def cmd_outcome_update() -> None:
     today = _today()
     db = get_db()
-    provider = get_default_market_data_provider()
+    try:
+        provider = get_default_market_data_provider()
+        with provider_session(provider):
+            # 确保有足够的 index_prices 历史
+            earliest = db.execute("SELECT MIN(score_date) FROM predictions").fetchone()[0]
+            if earliest:
+                _ensure_index_prices(db, earliest, today, provider)
 
-    # 确保有足够的 index_prices 历史
-    earliest = db.execute("SELECT MIN(score_date) FROM predictions").fetchone()[0]
-    if earliest:
-        _ensure_index_prices(db, earliest, today, provider)
+            # target_date==today 的记录走 provider outcome price 路径（见下方循环）
+            snapshot_data: dict = {}
 
-    # target_date==today 的记录走 provider outcome price 路径（见下方循环）
-    snapshot_data: dict = {}
+            updated = 0
+            for window, days in [("30d", 30), ("60d", 60), ("90d", 90)]:
+                outcome_col = f"outcome_{window}"
+                benchmark_col = f"benchmark_{window}"
 
-    updated = 0
-    for window, days in [("30d", 30), ("60d", 60), ("90d", 90)]:
-        outcome_col = f"outcome_{window}"
-        benchmark_col = f"benchmark_{window}"
+                rows = db.execute(
+                    f"""SELECT id, code, score_date, price_at_score
+                        FROM predictions
+                        WHERE {outcome_col} IS NULL
+                          AND price_at_score IS NOT NULL
+                          AND date(score_date, '+{days} days') <= ?""",
+                    (today,),
+                ).fetchall()
 
-        rows = db.execute(
-            f"""SELECT id, code, score_date, price_at_score
-                FROM predictions
-                WHERE {outcome_col} IS NULL
-                  AND price_at_score IS NOT NULL
-                  AND date(score_date, '+{days} days') <= ?""",
-            (today,),
-        ).fetchall()
+                for row_id, code, score_date, price_at_score in rows:
+                    target_date = _add_days(score_date, days)
 
-        for row_id, code, score_date, price_at_score in rows:
-            target_date = _add_days(score_date, days)
+                    # 获取股票到期价格（向前找 10 个自然日，覆盖黄金周 7 天停牌）
+                    outcome_price = None
+                    estimate_flag = 0
+                    exact_price = snapshot_data.get(code) if target_date == today else None
 
-            # 获取股票到期价格（向前找 10 个自然日，覆盖黄金周 7 天停牌）
-            outcome_price = None
-            estimate_flag = 0
-            exact_price = snapshot_data.get(code) if target_date == today else None
+                    if exact_price:
+                        outcome_price = exact_price
+                    else:
+                        result = provider.fetch_outcome_price(code, target_date)
+                        insert_market_data_audit(db, result, "outcome_price", code, today)
+                        if result.value is not None:
+                            outcome_price = result.value
+                            if result.freshness_days and result.freshness_days > 0:
+                                estimate_flag = 1
 
-            if exact_price:
-                outcome_price = exact_price
-            else:
-                result = provider.fetch_outcome_price(code, target_date)
-                insert_market_data_audit(db, result, "outcome_price", code, today)
-                if result.value is not None:
-                    outcome_price = result.value
-                    if result.freshness_days and result.freshness_days > 0:
-                        estimate_flag = 1
+                    if outcome_price is None:
+                        logger.info(f"  {code} {window} 到期日 {target_date} 无可用价格（10日内），置 NULL")
+                        continue
 
-            if outcome_price is None:
-                logger.info(f"  {code} {window} 到期日 {target_date} 无可用价格（10日内），置 NULL")
-                continue
+                    outcome_val = (outcome_price / price_at_score - 1) * 100
 
-            outcome_val = (outcome_price / price_at_score - 1) * 100
+                    # 获取 benchmark
+                    benchmark_val = None
+                    score_index_price = _get_index_price(db, "000300", score_date)
+                    target_index_price = _get_index_price(db, "000300", target_date)
+                    if score_index_price and target_index_price:
+                        benchmark_val = (target_index_price / score_index_price - 1) * 100
 
-            # 获取 benchmark
-            benchmark_val = None
-            score_index_price = _get_index_price(db, "000300", score_date)
-            target_index_price = _get_index_price(db, "000300", target_date)
-            if score_index_price and target_index_price:
-                benchmark_val = (target_index_price / score_index_price - 1) * 100
+                    try:
+                        db.execute(
+                            f"""UPDATE predictions
+                                SET {outcome_col} = ?,
+                                    {benchmark_col} = ?,
+                                    estimate_flag = CASE WHEN ? = 1 THEN 1 ELSE estimate_flag END
+                                WHERE id = ?""",
+                            (outcome_val, benchmark_val, estimate_flag, row_id),
+                        )
+                        updated += 1
+                    except Exception as e:
+                        logger.error(f"  写入 {code} {window} outcome 失败：{e}")
 
-            try:
-                db.execute(
-                    f"""UPDATE predictions
-                        SET {outcome_col} = ?,
-                            {benchmark_col} = ?,
-                            estimate_flag = CASE WHEN ? = 1 THEN 1 ELSE estimate_flag END
-                        WHERE id = ?""",
-                    (outcome_val, benchmark_val, estimate_flag, row_id),
-                )
-                updated += 1
-            except Exception as e:
-                logger.error(f"  写入 {code} {window} outcome 失败：{e}")
-
-    db.commit()
-    logger.info(f"outcome-update 完成：更新 {updated} 条")
-    db.close()
+            db.commit()
+            logger.info(f"outcome-update 完成：更新 {updated} 条")
+    finally:
+        db.close()
 
     # Phase 4 里程碑检测（失败不阻断）
     try:
@@ -783,36 +808,39 @@ def _refresh_daily_bars_range(
 
 def cmd_market_data_backfill(start: str, end: str, provider: MarketDataProvider | None = None) -> None:
     db = get_db()
-    provider = provider or get_market_data_backfill_provider()
-    codes = [item["code"] for item in config.WATCHLIST]
-    coverage = _refresh_daily_bars_range(db, provider, codes, start, end)
-    logger.info(
-        "market-data-backfill 行情刷新：ok=%s degraded=%s failed=%s total=%s",
-        coverage.ok,
-        coverage.degraded,
-        coverage.failed,
-        coverage.total,
-    )
-    refreshed_codes = {
-        code
-        for code, result in coverage.by_code.items()
-        if result.status != "failed" and result.value is not None
-    }
-    updated_l3 = _recompute_existing_l3_metadata(db, start, end, refreshed_codes)
-    logger.info("market-data-backfill L3 metadata 重算：更新 %s 条 prediction", updated_l3)
-    for row in _validate_l3_bar_windows(db, start):
-        code, bars, min_date, max_date, sources, adjustments, volume_units = row
-        logger.info(
-            "daily_bars window %s bars=%s range=%s..%s sources=%s adjusted=%s volume_units=%s",
-            code,
-            bars,
-            min_date,
-            max_date,
-            sources,
-            adjustments,
-            volume_units,
-        )
-    db.close()
+    try:
+        provider = provider or get_market_data_backfill_provider()
+        with provider_session(provider):
+            codes = [item["code"] for item in config.WATCHLIST]
+            coverage = _refresh_daily_bars_range(db, provider, codes, start, end)
+            logger.info(
+                "market-data-backfill 行情刷新：ok=%s degraded=%s failed=%s total=%s",
+                coverage.ok,
+                coverage.degraded,
+                coverage.failed,
+                coverage.total,
+            )
+            refreshed_codes = {
+                code
+                for code, result in coverage.by_code.items()
+                if result.status != "failed" and result.value is not None
+            }
+            updated_l3 = _recompute_existing_l3_metadata(db, start, end, refreshed_codes)
+            logger.info("market-data-backfill L3 metadata 重算：更新 %s 条 prediction", updated_l3)
+            for row in _validate_l3_bar_windows(db, start):
+                code, bars, min_date, max_date, sources, adjustments, volume_units = row
+                logger.info(
+                    "daily_bars window %s bars=%s range=%s..%s sources=%s adjusted=%s volume_units=%s",
+                    code,
+                    bars,
+                    min_date,
+                    max_date,
+                    sources,
+                    adjustments,
+                    volume_units,
+                )
+    finally:
+        db.close()
 
 
 # ──────────────────────────────────────────────
@@ -821,267 +849,268 @@ def cmd_market_data_backfill(start: str, end: str, provider: MarketDataProvider 
 
 def cmd_accuracy_report() -> None:
     db = get_db()
+    try:
+        # 排除数量
+        null_count = db.execute(
+            "SELECT COUNT(*) FROM predictions WHERE outcome_30d IS NULL"
+        ).fetchone()[0]
+        framework_a_closed = db.execute(
+            "SELECT COUNT(*) FROM predictions WHERE outcome_30d IS NOT NULL AND framework = 'A'"
+        ).fetchone()[0]
 
-    # 排除数量
-    null_count = db.execute(
-        "SELECT COUNT(*) FROM predictions WHERE outcome_30d IS NULL"
-    ).fetchone()[0]
-    framework_a_closed = db.execute(
-        "SELECT COUNT(*) FROM predictions WHERE outcome_30d IS NOT NULL AND framework = 'A'"
-    ).fetchone()[0]
+        lines: list[str] = []
+        lines.append("=" * 60)
+        lines.append("a-stock-tracker 准确率报告")
+        lines.append(f"生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        lines.append("=" * 60)
 
-    lines: list[str] = []
-    lines.append("=" * 60)
-    lines.append("a-stock-tracker 准确率报告")
-    lines.append(f"生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}")
-    lines.append("=" * 60)
+        if framework_a_closed < 100:
+            lines.append(
+                f"\n⚠️  样本不足（Framework A {framework_a_closed} 条已结案记录）\n"
+                "    结论仅供参考，请勿据此做交易决策。\n"
+                "    建议 Framework A 积累至 100 条以上再解读命中率。"
+            )
 
-    if framework_a_closed < 100:
         lines.append(
-            f"\n⚠️  样本不足（Framework A {framework_a_closed} 条已结案记录）\n"
-            "    结论仅供参考，请勿据此做交易决策。\n"
-            "    建议 Framework A 积累至 100 条以上再解读命中率。"
+            f"\n已排除 {null_count} 条 NULL outcome 记录（停牌/退市/数据缺失），详见 daily_log.txt"
         )
-
-    lines.append(
-        f"\n已排除 {null_count} 条 NULL outcome 记录（停牌/退市/数据缺失），详见 daily_log.txt"
-    )
-    lines.append(
-        "\n⚠️  选择性偏差声明：watchlist 为手动维护的已知标的，"
-        "命中率不代表框架泛化能力。"
-    )
-    lines.append("")
-
-    # per-framework 记录摘要
-    fw_rows = db.execute(
-        """SELECT framework, COUNT(*), COUNT(outcome_30d),
-                  ROUND(COUNT(CASE WHEN alpha_30d > 0 THEN 1 END) * 1.0
-                        / NULLIF(COUNT(alpha_30d), 0), 3)
-           FROM predictions
-           GROUP BY framework ORDER BY framework"""
-    ).fetchall()
-    if fw_rows:
-        lines.append("── 分 Framework 统计 ──")
-        lines.append(f"{'Framework':<12} {'总记录':>6}  {'30d结案':>8}  {'超额命中30d':>12}")
-        for fw, total, closed30, hr30 in fw_rows:
-            lines.append(
-                f"{fw:<12} {total:>6}  {closed30:>8}  {_fmt(hr30):>12}"
-            )
+        lines.append(
+            "\n⚠️  选择性偏差声明：watchlist 为手动维护 of 已知标的，"
+            "命中率不代表框架泛化能力。"
+        )
         lines.append("")
 
-    _w = _load_weights().get("thresholds", {})
-    _strong = _w.get("buy_strong", 55)
-    _moderate = _w.get("buy_moderate", 45)
-    _light = _w.get("buy_light", 35)
-
-    _tier_query = """
-        SELECT COUNT(*),
-               ROUND(COUNT(CASE WHEN outcome_30d > 0 THEN 1 END) * 1.0 / NULLIF(COUNT(outcome_30d), 0), 3),
-               ROUND(COUNT(CASE WHEN alpha_30d  > 0 THEN 1 END) * 1.0 / NULLIF(COUNT(alpha_30d),  0), 3),
-               ROUND(COUNT(CASE WHEN alpha_60d  > 0 THEN 1 END) * 1.0 / NULLIF(COUNT(alpha_60d),  0), 3),
-               ROUND(COUNT(CASE WHEN alpha_90d  > 0 THEN 1 END) * 1.0 / NULLIF(COUNT(alpha_90d),  0), 3),
-               ROUND(AVG(alpha_30d), 2),
-               ROUND(AVG(alpha_60d), 2),
-               ROUND(AVG(alpha_90d), 2)
-        FROM predictions
-        WHERE outcome_30d IS NOT NULL
-          AND framework = 'A'
-          AND total_score >= ? AND total_score < ?
-    """
-    rows = []
-    for tier, lo, hi in [
-        ("strong",    _strong,   9999),
-        ("moderate",  _moderate, _strong),
-        ("light",     _light,    _moderate),
-        ("no-action", 0,         _light),
-    ]:
-        r = db.execute(_tier_query, (lo, hi)).fetchone()
-        if r and r[0] > 0:
-            rows.append((tier,) + r)
-
-    if not rows:
-        lines.append("暂无已结案记录（outcome_30d 全部为 NULL）。")
-    else:
-        _append_tier_rows(lines, rows)
-
-    _append_post_fix_section(lines, db, _strong, _moderate, _light)
-
-    # 五分位排名分析（单调性检验：分数越高超额收益是否越高）
-    q_rows = db.execute(
-        """SELECT quintile,
-                  COUNT(*) as cnt,
-                  ROUND(MIN(total_score), 1) as lo,
-                  ROUND(MAX(total_score), 1) as hi,
-                  ROUND(AVG(alpha_30d), 2) as avg_a30
-           FROM (
-               SELECT total_score, alpha_30d,
-                      NTILE(5) OVER (ORDER BY total_score) as quintile
+        # per-framework 记录摘要
+        fw_rows = db.execute(
+            """SELECT framework, COUNT(*), COUNT(outcome_30d),
+                      ROUND(COUNT(CASE WHEN alpha_30d > 0 THEN 1 END) * 1.0
+                            / NULLIF(COUNT(alpha_30d), 0), 3)
                FROM predictions
-               WHERE outcome_30d IS NOT NULL AND framework = 'A'
-           ) GROUP BY quintile ORDER BY quintile DESC"""
-    ).fetchall()
-    if q_rows and len(q_rows) >= 3:
-        lines.append("")
-        lines.append("── 五分位单调性检验（Framework A，分数最高→最低）──")
-        lines.append(f"{'分位':>4}  {'样本':>5}  {'分数范围':>12}  {'α30d均值':>10}")
-        for qnum, cnt, lo, hi, a30 in q_rows:
-            label = {5: "Q5(高)", 4: "Q4", 3: "Q3", 2: "Q2", 1: "Q1(低)"}.get(qnum, f"Q{qnum}")
-            lines.append(f"{label:>6}  {cnt:>5}  [{lo:>5} ~{hi:>5}]  {_fmt(a30):>10}")
-        lines.append("  理想：Q5 alpha > Q4 > Q3 > ... > Q1（单调递减 = 框架有序预测力）")
+               GROUP BY framework ORDER BY framework"""
+        ).fetchall()
+        if fw_rows:
+            lines.append("── 分 Framework 统计 ──")
+            lines.append(f"{'Framework':<12} {'总记录':>6}  {'30d结案':>8}  {'超额命中30d':>12}")
+            for fw, total, closed30, hr30 in fw_rows:
+                lines.append(
+                    f"{fw:<12} {total:>6}  {closed30:>8}  {_fmt(hr30):>12}"
+                )
+            lines.append("")
 
-    lines.append("")
-    lines.append("解读：hit_vs300 > 55% 才开始有意义；avg_alpha > 2% 且样本≥20 可认为有初步信号")
-    lines.append("      不同 weights_hash 的记录代表不同实验，请分开解读")
+        _w = _load_weights().get("thresholds", {})
+        _strong = _w.get("buy_strong", 55)
+        _moderate = _w.get("buy_moderate", 45)
+        _light = _w.get("buy_light", 35)
 
-    # ── L3 买点层 ──
-    lines.append("")
-    lines.append("── L3 买点层 ──")
-    l3_counts = db.execute(
-        """SELECT
-               COUNT(CASE WHEN entry_signal_version='v1' THEN 1 END) AS v1_count,
-               COUNT(CASE WHEN entry_signal=1 THEN 1 END) AS pass_count,
-               COUNT(CASE WHEN entry_signal=0 THEN 1 END) AS reject_count,
-               COUNT(CASE WHEN entry_signal IS NULL THEN 1 END) AS null_count,
-               COUNT(CASE WHEN entry_signal IS NULL AND entry_signal_version IS NULL THEN 1 END) AS pre_l3_count,
-               COUNT(CASE WHEN entry_signal IS NULL AND entry_signal_version='v1' THEN 1 END) AS null_v1_count
-           FROM predictions"""
-    ).fetchone()
-    v1_count, pass_count, reject_count, l3_null_count, pre_l3_count, null_v1_count = l3_counts
-    strong_l3 = db.execute(
-        """SELECT
-               COUNT(CASE WHEN entry_signal=1 THEN 1 END) AS strong_pass,
-               COUNT(CASE WHEN entry_signal=0 THEN 1 END) AS strong_reject,
-               COUNT(CASE WHEN entry_signal IS NULL AND entry_signal_version='v1' THEN 1 END) AS strong_unavailable
-           FROM predictions
-           WHERE framework='A' AND total_score >= ?""",
-        (_strong,),
-    ).fetchone()
-    strong_pass, strong_reject, strong_unavailable = strong_l3
-    reason_rows = db.execute(
-        """SELECT COALESCE(entry_signal_reason, 'UNKNOWN'), COUNT(*)
-           FROM predictions
-           WHERE entry_signal IS NULL AND entry_signal_version='v1'
-           GROUP BY COALESCE(entry_signal_reason, 'UNKNOWN')
-           ORDER BY COUNT(*) DESC, 1"""
-    ).fetchall()
-    computable_v1 = pass_count + reject_count
-    l3_coverage = (computable_v1 / v1_count * 100) if v1_count else 0.0
-    l3_closed = db.execute(
-        """SELECT
-               COUNT(*) AS closed_count,
-               ROUND(COUNT(CASE WHEN alpha_30d > 0 THEN 1 END) * 1.0 / NULLIF(COUNT(alpha_30d), 0), 3) AS hit_rate
-           FROM predictions
-           WHERE framework='A'
-             AND entry_signal=1
-             AND entry_signal_version='v1'
-             AND outcome_30d IS NOT NULL"""
-    ).fetchone()
-    l3_closed_count, l3_hit_rate = l3_closed
-    lines.append(f"v1 记录数：{v1_count}")
-    lines.append(f"entry_signal=1：{pass_count}")
-    lines.append(f"entry_signal=0：{reject_count}")
-    lines.append(f"entry_signal=NULL：{l3_null_count}")
-    lines.append(f"NULL/NULL pre-L3：{pre_l3_count}")
-    lines.append(f"NULL/v1 不可计算：{null_v1_count}")
-    lines.append(f"L3 覆盖率：{computable_v1}/{v1_count} = {l3_coverage:.1f}%")
-    if reason_rows:
-        reason_summary = ", ".join(f"{reason}={count}" for reason, count in reason_rows)
-        lines.append(f"不可计算原因：{reason_summary}")
-    lines.append(f"strong 候选 L3 通过：{strong_pass}")
-    lines.append(f"strong 候选 L3 拒绝：{strong_reject}")
-    lines.append(f"strong 候选中 L3 不可计算：{strong_unavailable}")
-    lines.append(f"高分但未推送：{strong_unavailable}（L3 unavailable）")
-    lines.append(f"L3 30d 已结案：{l3_closed_count}")
-    lines.append(f"L3 30d 命中率：{_fmt(l3_hit_rate)}")
-    if l3_closed_count < 30:
-        lines.append(f"L3 30d 样本不足（{l3_closed_count}/30），不得输出确定性结论")
+        _tier_query = """
+            SELECT COUNT(*),
+                   ROUND(COUNT(CASE WHEN outcome_30d > 0 THEN 1 END) * 1.0 / NULLIF(COUNT(outcome_30d), 0), 3),
+                   ROUND(COUNT(CASE WHEN alpha_30d  > 0 THEN 1 END) * 1.0 / NULLIF(COUNT(alpha_30d),  0), 3),
+                   ROUND(COUNT(CASE WHEN alpha_60d  > 0 THEN 1 END) * 1.0 / NULLIF(COUNT(alpha_60d),  0), 3),
+                   ROUND(COUNT(CASE WHEN alpha_90d  > 0 THEN 1 END) * 1.0 / NULLIF(COUNT(alpha_90d),  0), 3),
+                   ROUND(AVG(alpha_30d), 2),
+                   ROUND(AVG(alpha_60d), 2),
+                   ROUND(AVG(alpha_90d), 2)
+            FROM predictions
+            WHERE outcome_30d IS NOT NULL
+              AND framework = 'A'
+              AND total_score >= ? AND total_score < ?
+        """
+        rows = []
+        for tier, lo, hi in [
+            ("strong",    _strong,   9999),
+            ("moderate",  _moderate, _strong),
+            ("light",     _light,    _moderate),
+            ("no-action", 0,         _light),
+        ]:
+            r = db.execute(_tier_query, (lo, hi)).fetchone()
+            if r and r[0] > 0:
+                rows.append((tier,) + r)
 
-    # ── Gemini 评分漂移检测 ──
-    lines.append("")
-    lines.append("── Gemini 评分稳定性 ──")
-    drift_rows = db.execute(
-        """SELECT q1.code, q1.moat AS first_moat, q2.moat AS latest_moat,
-                  q1.sentiment AS first_sent, q2.sentiment AS latest_sent,
-                  q1.scored_date AS first_date, q2.scored_date AS latest_date
-           FROM qualitative_scores q1
-           JOIN qualitative_scores q2 ON q1.code = q2.code
-           WHERE q1.scored_date = (SELECT MIN(scored_date) FROM qualitative_scores WHERE code=q1.code)
-             AND q2.scored_date = (SELECT MAX(scored_date) FROM qualitative_scores WHERE code=q1.code)
-             AND q1.scored_date != q2.scored_date"""
-    ).fetchall()
-    stock_count = db.execute(
-        "SELECT COUNT(DISTINCT code) FROM qualitative_scores"
-    ).fetchone()[0]
-    first_date_row = db.execute(
-        "SELECT MIN(scored_date) FROM qualitative_scores"
-    ).fetchone()[0]
-
-    if not drift_rows:
-        if first_date_row:
-            next_reeval = (date.fromisoformat(first_date_row) + timedelta(days=30)).isoformat()
-            lines.append(f"{stock_count} 只股已评，尚无重评数据")
-            lines.append(f"预计首批重评：{next_reeval}（30天缓存到期）")
+        if not rows:
+            lines.append("暂无已结案记录（outcome_30d 全部为 NULL）。")
         else:
-            lines.append("尚无 Gemini 评分记录")
-    else:
-        lines.append(f"{'股票':<8} {'首次日期':<12} {'最新日期':<12} {'moat变化':>8} {'sent变化':>8} 状态")
-        lines.append("-" * 56)
-        for code, fm, lm, fs, ls, fd, ld in drift_rows:
-            moat_delta = lm - fm
-            sent_delta = ls - fs
-            flag = " ⚠️ low_confidence" if abs(moat_delta) > 2 or abs(sent_delta) > 2 else ""
-            lines.append(
-                f"{code:<8} {fd:<12} {ld:<12} {moat_delta:>+8} {sent_delta:>+8}{flag}"
-            )
+            _append_tier_rows(lines, rows)
 
-    data_quality_summary = _append_data_quality_audit(lines, db)
-    weights = _load_weights()
-    # ── Framework B 旧重启门槛进度 ──
-    lines.append("")
-    lines.append("── Framework B 旧重启门槛进度（A框生产化前置，不等同 report-only）──")
-    current_hash = _compute_weights_hash(weights)
-    closed_a = db.execute(
-        "SELECT COUNT(*) FROM predictions WHERE framework='A' AND outcome_30d IS NOT NULL AND weights_hash=?",
-        (current_hash,),
-    ).fetchone()[0]
-    threshold1_met = closed_a >= 100
-    lines.append(f"门槛 1：A框 30d 结案 ≥ 100（当前权重）：当前 {closed_a} / 100  {'✅' if threshold1_met else '❌'}")
+        _append_post_fix_section(lines, db, _strong, _moderate, _light)
 
-    threshold2_met = False
-    if rows:
-        for row in rows:
-            tier, cnt, h30, hb30, hb60, hb90, a30, a60, a90 = row
-            if hb30 is not None and hb30 > 0.55 and cnt >= 20:
-                threshold2_met = True
-                break
-    lines.append(f"门槛 2：任一层级 hit_rate_vs_300 > 55%（≥20条）：{'✅ 已满足' if threshold2_met else '❌ 尚未满足'}")
+        # 五分位排名分析（单调性检验：分数越高超额收益是否越高）
+        q_rows = db.execute(
+            """SELECT quintile,
+                      COUNT(*) as cnt,
+                      ROUND(MIN(total_score), 1) as lo,
+                      ROUND(MAX(total_score), 1) as hi,
+                      ROUND(AVG(alpha_30d), 2) as avg_a30
+               FROM (
+                   SELECT total_score, alpha_30d,
+                          NTILE(5) OVER (ORDER BY total_score) as quintile
+                   FROM predictions
+                   WHERE outcome_30d IS NOT NULL AND framework = 'A'
+               ) GROUP BY quintile ORDER BY quintile DESC"""
+        ).fetchall()
+        if q_rows and len(q_rows) >= 3:
+            lines.append("")
+            lines.append("── 五分位单调性检验（Framework A，分数最高→最低）──")
+            lines.append(f"{'分位':>4}  {'样本':>5}  {'分数范围':>12}  {'α30d均值':>10}")
+            for qnum, cnt, lo, hi, a30 in q_rows:
+                label = {5: "Q5(高)", 4: "Q4", 3: "Q3", 2: "Q2", 1: "Q1(低)"}.get(qnum, f"Q{qnum}")
+                lines.append(f"{label:>6}  {cnt:>5}  [{lo:>5} ~{hi:>5}]  {_fmt(a30):>10}")
+            lines.append("  理想：Q5 alpha > Q4 > Q3 > ... > Q1（单调递减 = 框架有序预测力）")
 
-    if threshold1_met and threshold2_met:
-        lines.append("→ 两个门槛同时满足，才可讨论 Framework B 生产写入；report-only 不受此门槛阻断。")
-    else:
-        lines.append("→ 生产写入继续等待；report-only 研究可按后续小节推进。")
+        lines.append("")
+        lines.append("解读：hit_vs300 > 55% 才开始有意义；avg_alpha > 2% 且样本≥20 可认为有初步信号")
+        lines.append("      不同 weights_hash 的记录代表不同实验，请分开解读")
 
-    framework_b_summary = append_framework_b_dry_run(lines, db, weights)
-    framework_b_quality_summary = append_framework_b_quality_expansion(lines, db, weights)
-    framework_b_summary_for_readiness = dict(framework_b_summary)
-    for key in (
-        "b_label_sample_count",
-        "b_label_closed_count",
-        "b_label_earliest_due",
-        "b_label_overdue_count",
-    ):
-        if key in framework_b_quality_summary:
-            framework_b_summary_for_readiness[key] = framework_b_quality_summary[key]
-    append_phase6_readiness(lines, db, data_quality_summary, framework_b_summary_for_readiness)
+        # ── L3 买点层 ──
+        lines.append("")
+        lines.append("── L3 买点层 ──")
+        l3_counts = db.execute(
+            """SELECT
+                   COUNT(CASE WHEN entry_signal_version='v1' THEN 1 END) AS v1_count,
+                   COUNT(CASE WHEN entry_signal=1 THEN 1 END) AS pass_count,
+                   COUNT(CASE WHEN entry_signal=0 THEN 1 END) AS reject_count,
+                   COUNT(CASE WHEN entry_signal IS NULL THEN 1 END) AS null_count,
+                   COUNT(CASE WHEN entry_signal IS NULL AND entry_signal_version IS NULL THEN 1 END) AS pre_l3_count,
+                   COUNT(CASE WHEN entry_signal IS NULL AND entry_signal_version='v1' THEN 1 END) AS null_v1_count
+               FROM predictions"""
+        ).fetchone()
+        v1_count, pass_count, reject_count, l3_null_count, pre_l3_count, null_v1_count = l3_counts
+        strong_l3 = db.execute(
+            """SELECT
+                   COUNT(CASE WHEN entry_signal=1 THEN 1 END) AS strong_pass,
+                   COUNT(CASE WHEN entry_signal=0 THEN 1 END) AS strong_reject,
+                   COUNT(CASE WHEN entry_signal IS NULL AND entry_signal_version='v1' THEN 1 END) AS strong_unavailable
+               FROM predictions
+               WHERE framework='A' AND total_score >= ?""",
+            (_strong,),
+        ).fetchone()
+        strong_pass, strong_reject, strong_unavailable = strong_l3
+        reason_rows = db.execute(
+            """SELECT COALESCE(entry_signal_reason, 'UNKNOWN'), COUNT(*)
+               FROM predictions
+               WHERE entry_signal IS NULL AND entry_signal_version='v1'
+               GROUP BY COALESCE(entry_signal_reason, 'UNKNOWN')
+               ORDER BY COUNT(*) DESC, 1"""
+        ).fetchall()
+        computable_v1 = pass_count + reject_count
+        l3_coverage = (computable_v1 / v1_count * 100) if v1_count else 0.0
+        l3_closed = db.execute(
+            """SELECT
+                   COUNT(*) AS closed_count,
+                   ROUND(COUNT(CASE WHEN alpha_30d > 0 THEN 1 END) * 1.0 / NULLIF(COUNT(alpha_30d), 0), 3) AS hit_rate
+               FROM predictions
+               WHERE framework='A'
+                 AND entry_signal=1
+                 AND entry_signal_version='v1'
+                 AND outcome_30d IS NOT NULL"""
+        ).fetchone()
+        l3_closed_count, l3_hit_rate = l3_closed
+        lines.append(f"v1 记录数：{v1_count}")
+        lines.append(f"entry_signal=1：{pass_count}")
+        lines.append(f"entry_signal=0：{reject_count}")
+        lines.append(f"entry_signal=NULL：{l3_null_count}")
+        lines.append(f"NULL/NULL pre-L3：{pre_l3_count}")
+        lines.append(f"NULL/v1 不可计算：{null_v1_count}")
+        lines.append(f"L3 覆盖率：{computable_v1}/{v1_count} = {l3_coverage:.1f}%")
+        if reason_rows:
+            reason_summary = ", ".join(f"{reason}={count}" for reason, count in reason_rows)
+            lines.append(f"不可计算原因：{reason_summary}")
+        lines.append(f"strong 候选 L3 通过：{strong_pass}")
+        lines.append(f"strong 候选 L3 拒绝：{strong_reject}")
+        lines.append(f"strong 候选中 L3 不可计算：{strong_unavailable}")
+        lines.append(f"高分但未推送：{strong_unavailable}（L3 unavailable）")
+        lines.append(f"L3 30d 已结案：{l3_closed_count}")
+        lines.append(f"L3 30d 命中率：{_fmt(l3_hit_rate)}")
+        if l3_closed_count < 30:
+            lines.append(f"L3 30d 样本不足（{l3_closed_count}/30），不得输出确定性结论")
 
-    report = "\n".join(lines)
-    print(report)
+        # ── Gemini 评分漂移检测 ──
+        lines.append("")
+        lines.append("── Gemini 评分稳定性 ──")
+        drift_rows = db.execute(
+            """SELECT q1.code, q1.moat AS first_moat, q2.moat AS latest_moat,
+                      q1.sentiment AS first_sent, q2.sentiment AS latest_sent,
+                      q1.scored_date AS first_date, q2.scored_date AS latest_date
+               FROM qualitative_scores q1
+               JOIN qualitative_scores q2 ON q1.code = q2.code
+               WHERE q1.scored_date = (SELECT MIN(scored_date) FROM qualitative_scores WHERE code=q1.code)
+                 AND q2.scored_date = (SELECT MAX(scored_date) FROM qualitative_scores WHERE code=q1.code)
+                 AND q1.scored_date != q2.scored_date"""
+        ).fetchall()
+        stock_count = db.execute(
+            "SELECT COUNT(DISTINCT code) FROM qualitative_scores"
+        ).fetchone()[0]
+        first_date_row = db.execute(
+            "SELECT MIN(scored_date) FROM qualitative_scores"
+        ).fetchone()[0]
 
-    report_path = config.ACCURACY_REPORT_PATH
-    with open(report_path, "w", encoding="utf-8") as f:
-        f.write(report + "\n")
-    logger.info(f"报告已保存到 {report_path}")
-    db.close()
+        if not drift_rows:
+            if first_date_row:
+                next_reeval = (date.fromisoformat(first_date_row) + timedelta(days=30)).isoformat()
+                lines.append(f"{stock_count} 只股已评，尚无重评数据")
+                lines.append(f"预计首批重评：{next_reeval}（30天缓存到期）")
+            else:
+                lines.append("尚无 Gemini 评分记录")
+        else:
+            lines.append(f"{'股票':<8} {'首次日期':<12} {'最新日期':<12} {'moat变化':>8} {'sent变化':>8} 状态")
+            lines.append("-" * 56)
+            for code, fm, lm, fs, ls, fd, ld in drift_rows:
+                moat_delta = lm - fm
+                sent_delta = ls - fs
+                flag = " ⚠️ low_confidence" if abs(moat_delta) > 2 or abs(sent_delta) > 2 else ""
+                lines.append(
+                    f"{code:<8} {fd:<12} {ld:<12} {moat_delta:>+8} {sent_delta:>+8}{flag}"
+                )
+
+        data_quality_summary = _append_data_quality_audit(lines, db)
+        weights = _load_weights()
+        # ── Framework B 旧重启门槛进度 ──
+        lines.append("")
+        lines.append("── Framework B 旧重启门槛进度（A框生产化前置，不等同 report-only）──")
+        current_hash = _compute_weights_hash(weights)
+        closed_a = db.execute(
+            "SELECT COUNT(*) FROM predictions WHERE framework='A' AND outcome_30d IS NOT NULL AND weights_hash=?",
+            (current_hash,),
+        ).fetchone()[0]
+        threshold1_met = closed_a >= 100
+        lines.append(f"门槛 1：A框 30d 结案 ≥ 100（当前权重）：当前 {closed_a} / 100  {'✅' if threshold1_met else '❌'}")
+
+        threshold2_met = False
+        if rows:
+            for row in rows:
+                tier, cnt, h30, hb30, hb60, hb90, a30, a60, a90 = row
+                if hb30 is not None and hb30 > 0.55 and cnt >= 20:
+                    threshold2_met = True
+                    break
+        lines.append(f"门槛 2：任一层级 hit_rate_vs_300 > 55%（≥20条）：{'✅ 已满足' if threshold2_met else '❌ 尚未满足'}")
+
+        if threshold1_met and threshold2_met:
+            lines.append("→ 两个门槛同时满足，才可讨论 Framework B 生产写入；report-only 不受此门槛阻断。")
+        else:
+            lines.append("→ 生产写入继续等待；report-only 研究可按后续小节推进。")
+
+        framework_b_summary = append_framework_b_dry_run(lines, db, weights)
+        framework_b_quality_summary = append_framework_b_quality_expansion(lines, db, weights)
+        framework_b_summary_for_readiness = dict(framework_b_summary)
+        for key in (
+            "b_label_sample_count",
+            "b_label_closed_count",
+            "b_label_earliest_due",
+            "b_label_overdue_count",
+        ):
+            if key in framework_b_quality_summary:
+                framework_b_summary_for_readiness[key] = framework_b_quality_summary[key]
+        append_phase6_readiness(lines, db, data_quality_summary, framework_b_summary_for_readiness)
+
+        report = "\n".join(lines)
+        print(report)
+
+        report_path = config.ACCURACY_REPORT_PATH
+        with open(report_path, "w", encoding="utf-8") as f:
+            f.write(report + "\n")
+        logger.info(f"报告已保存到 {report_path}")
+    finally:
+        db.close()
 
 
 def _fmt(v) -> str:
@@ -1319,33 +1348,33 @@ def _check_phase4_milestone() -> None:
     状态持久化在 phase_milestones 表，重复运行不重复推送。
     """
     db = get_db()
+    try:
+        count = db.execute(
+            """SELECT COUNT(*) FROM predictions
+               WHERE framework='A'
+                 AND score_date >= ?
+                 AND outcome_30d IS NOT NULL""",
+            (_PHASE4_POST_FIX_DATE,),
+        ).fetchone()[0]
 
-    count = db.execute(
-        """SELECT COUNT(*) FROM predictions
-           WHERE framework='A'
-             AND score_date >= ?
-             AND outcome_30d IS NOT NULL""",
-        (_PHASE4_POST_FIX_DATE,),
-    ).fetchone()[0]
+        notified = {
+            row[0]
+            for row in db.execute(
+                "SELECT milestone FROM phase_milestones WHERE phase='phase4_30d'"
+            ).fetchall()
+        }
 
-    notified = {
-        row[0]
-        for row in db.execute(
-            "SELECT milestone FROM phase_milestones WHERE phase='phase4_30d'"
-        ).fetchall()
-    }
-
-    for milestone in _PHASE4_MILESTONES:
-        if count >= milestone and milestone not in notified:
-            _send_phase4_notification(db, count, milestone)
-            db.execute(
-                "INSERT OR IGNORE INTO phase_milestones(phase, milestone, notified_at) VALUES(?,?,?)",
-                ("phase4_30d", milestone, datetime.now().isoformat()),
-            )
-            db.commit()
-            logger.info(f"Phase 4 里程碑 {milestone} 已通知")
-
-    db.close()
+        for milestone in _PHASE4_MILESTONES:
+            if count >= milestone and milestone not in notified:
+                _send_phase4_notification(db, count, milestone)
+                db.execute(
+                    "INSERT OR IGNORE INTO phase_milestones(phase, milestone, notified_at) VALUES(?,?,?)",
+                    ("phase4_30d", milestone, datetime.now().isoformat()),
+                )
+                db.commit()
+                logger.info(f"Phase 4 里程碑 {milestone} 已通知")
+    finally:
+        db.close()
 
 
 def _send_phase4_notification(db, count: int, milestone: int) -> None:
@@ -1424,22 +1453,24 @@ def cmd_remove(code: str) -> None:
     调用前请先手动从 config.py WATCHLIST 中删除该条目。
     """
     db = get_db()
-    pred_rows = db.execute(
-        "SELECT COUNT(*) FROM predictions WHERE code = ?", (code,)
-    ).fetchone()[0]
-    fund_rows = db.execute(
-        "SELECT COUNT(*) FROM stock_fundamentals WHERE code = ?", (code,)
-    ).fetchone()[0]
+    try:
+        pred_rows = db.execute(
+            "SELECT COUNT(*) FROM predictions WHERE code = ?", (code,)
+        ).fetchone()[0]
+        fund_rows = db.execute(
+            "SELECT COUNT(*) FROM stock_fundamentals WHERE code = ?", (code,)
+        ).fetchone()[0]
 
-    if pred_rows == 0 and fund_rows == 0:
-        logger.warning(f"数据库中未找到 {code}，无需清理")
-        return
+        if pred_rows == 0 and fund_rows == 0:
+            logger.warning(f"数据库中未找到 {code}，无需清理")
+            return
 
-    db.execute("DELETE FROM predictions WHERE code = ?", (code,))
-    db.execute("DELETE FROM stock_fundamentals WHERE code = ?", (code,))
-    db.commit()
-    db.close()
-    logger.info(f"已删除 {code}：predictions {pred_rows} 条，stock_fundamentals {fund_rows} 条")
+        db.execute("DELETE FROM predictions WHERE code = ?", (code,))
+        db.execute("DELETE FROM stock_fundamentals WHERE code = ?", (code,))
+        db.commit()
+        logger.info(f"已删除 {code}：predictions {pred_rows} 条，stock_fundamentals {fund_rows} 条")
+    finally:
+        db.close()
 
 
 # ──────────────────────────────────────────────

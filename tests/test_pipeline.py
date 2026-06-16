@@ -2202,3 +2202,47 @@ def test_accuracy_report_b_progress_section_present(tmp_db, capsys):
     assert "Framework B 旧重启门槛进度（A框生产化前置，不等同 report-only）" in out
     assert "门槛 1" in out
     assert "门槛 2" in out
+
+
+def test_backfill_null_prices_uses_db_cache(tmp_db) -> None:
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    db = cache_mod.get_db()
+
+    # Insert a daily bar for yesterday
+    bars = pd.DataFrame([{"date": yesterday, "close": 38.50, "volume": 1000.0}])
+    cache_mod.upsert_daily_bars(db, "600036", bars, "test_source", volume_unit="share")
+
+    # Insert a prediction record for yesterday with NULL price_at_score
+    db.execute(
+        """INSERT INTO predictions
+           (code, name, framework, score_date, price_at_score,
+            quant_score, total_score, weights_hash, report_period, created_at)
+           VALUES ('600036','招商银行','A',?,NULL,45.0,55.0,'abc12345','2024-09-30',?)""",
+        (yesterday, yesterday + "T16:30:00"),
+    )
+    db.commit()
+
+    class _StrictMockProvider:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def fetch_score_price(self, code, score_date):
+            self.calls += 1
+            raise AssertionError("Should not fetch price over network when cached locally")
+
+    provider = _StrictMockProvider()
+
+    # Call the backfill function
+    updated = pipeline._backfill_null_prices(db, date.today().isoformat(), provider)
+
+    # Verify that the price was successfully backfilled from daily_bars
+    row = db.execute(
+        "SELECT price_at_score FROM predictions WHERE code='600036' AND score_date=?",
+        (yesterday,),
+    ).fetchone()
+    db.close()
+
+    assert updated == 1
+    assert provider.calls == 0
+    assert row is not None
+    assert row[0] == pytest.approx(38.50)

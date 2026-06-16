@@ -24,6 +24,24 @@ class BaoStockMarketDataProvider:
 
     def __init__(self, client: Any | None = None) -> None:
         self._client = client
+        self._is_logged_in = False
+        self._in_context = False
+
+    def __enter__(self) -> BaoStockMarketDataProvider:
+        self._in_context = True
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self._in_context = False
+        self.close()
+
+    def close(self) -> None:
+        if self._is_logged_in and self._client is not None:
+            try:
+                self._client.logout()
+            except Exception:
+                pass
+            self._is_logged_in = False
 
     def fetch_score_price(self, code: str, score_date: str) -> MarketDataResult[float]:
         start_date = (_parse_date(score_date) - timedelta(days=10)).isoformat()
@@ -92,18 +110,21 @@ class BaoStockMarketDataProvider:
             except Exception as exc:
                 return _exception_result(exc)
 
-        login = client.login()
-        if getattr(login, "error_code", "0") != "0":
-            return MarketDataResult(
-                None,
-                "failed",
-                BAOSTOCK_SOURCE,
-                _now(),
-                error_code=REMOTE_DISCONNECTED,
-                error_message=getattr(login, "error_msg", "baostock login failed"),
-            )
+        if not self._is_logged_in:
+            login = client.login()
+            if getattr(login, "error_code", "0") != "0":
+                return MarketDataResult(
+                    None,
+                    "failed",
+                    BAOSTOCK_SOURCE,
+                    _now(),
+                    error_code=REMOTE_DISCONNECTED,
+                    error_message=getattr(login, "error_msg", "baostock login failed"),
+                )
+            self._is_logged_in = True
+            self._client = client
         try:
-            rs = client.query_history_k_data_plus(
+            rs = self._client.query_history_k_data_plus(
                 to_baostock_stock_code(code),
                 "date,code,open,high,low,close,volume,amount,adjustflag,tradestatus",
                 start_date=start_date,
@@ -128,10 +149,12 @@ class BaoStockMarketDataProvider:
         except Exception as exc:
             return _exception_result(exc)
         finally:
-            try:
-                client.logout()
-            except Exception:
-                pass
+            if not self._in_context:
+                try:
+                    self._client.logout()
+                except Exception:
+                    pass
+                self._is_logged_in = False
 
 
 def to_baostock_stock_code(code: str) -> str:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import random
+import time
 from datetime import date, datetime, timedelta
 from typing import Any, Callable
 
@@ -94,13 +96,29 @@ class TushareMarketDataProvider:
             volume_unit=result.volume_unit,
         )
 
+    def _retry_call(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        max_retries = 3
+        base_delay = 1.0
+        for attempt in range(max_retries):
+            try:
+                return func(*args, **kwargs)
+            except Exception as exc:
+                err_msg = str(exc).lower()
+                is_rate_limit = "rate" in err_msg or "limit" in err_msg or "频次" in err_msg or "限频" in err_msg
+                is_transient = is_rate_limit or "timeout" in err_msg or "timed out" in err_msg or "connection" in err_msg or "disconnect" in err_msg
+                if is_transient and attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt) + random.uniform(0, 0.5)
+                    time.sleep(delay)
+                    continue
+                raise exc
+
     def fetch_index_bars(self, symbol: str) -> MarketDataResult[pd.DataFrame]:
         client_result = self._client_or_failure(INDEX_DAILY_SOURCE)
         if isinstance(client_result, MarketDataResult):
             return client_result
         client = client_result
         try:
-            df = client.index_daily(ts_code=to_tushare_index_code(symbol))
+            df = self._retry_call(client.index_daily, ts_code=to_tushare_index_code(symbol))
         except Exception as exc:
             return _exception_result(INDEX_DAILY_SOURCE, exc)
         return _normalize_tushare_bars(df, INDEX_DAILY_SOURCE, "index_bars")
@@ -111,7 +129,8 @@ class TushareMarketDataProvider:
             return client_result
         client = client_result
         try:
-            df = client.trade_cal(
+            df = self._retry_call(
+                client.trade_cal,
                 exchange="SSE",
                 is_open="1",
                 start_date=_compact(start_date),
@@ -135,7 +154,8 @@ class TushareMarketDataProvider:
             return client_result
         client = client_result
         try:
-            df = client.daily(
+            df = self._retry_call(
+                client.daily,
                 ts_code=to_tushare_stock_code(code),
                 start_date=start_date,
                 end_date=end_date,

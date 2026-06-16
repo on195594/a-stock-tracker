@@ -404,3 +404,107 @@ def test_backfill_provider_allows_explicit_baostock_only(monkeypatch) -> None:
     provider = get_market_data_backfill_provider()
 
     assert isinstance(provider, BaoStockMarketDataProvider)
+
+
+class _TransientFailureTushareClient:
+    def __init__(self, failure_count: int) -> None:
+        self.failure_count = failure_count
+        self.calls = 0
+
+    def daily(self, **kwargs):
+        self.calls += 1
+        if self.calls <= self.failure_count:
+            raise Exception("Rate limit exceeded")
+        return pd.DataFrame(
+            [
+                {
+                    "ts_code": "600036.SH",
+                    "trade_date": "20260609",
+                    "open": "35.5",
+                    "high": "36.0",
+                    "low": "35.2",
+                    "close": "35.9",
+                    "vol": "223456.0",
+                }
+            ]
+        )
+
+
+def test_tushare_provider_retry_on_rate_limit(monkeypatch) -> None:
+    client = _TransientFailureTushareClient(failure_count=2)
+    provider = TushareMarketDataProvider(token="token", client=client)
+
+    sleep_calls = []
+    monkeypatch.setattr("time.sleep", lambda x: sleep_calls.append(x))
+
+    result = provider.fetch_score_price("600036", "2026-06-09")
+
+    assert result.status == "ok"
+    assert result.value == pytest.approx(35.9)
+    assert client.calls == 3
+    assert len(sleep_calls) == 2
+
+
+def test_tushare_provider_retry_exhausted(monkeypatch) -> None:
+    client = _TransientFailureTushareClient(failure_count=3)
+    provider = TushareMarketDataProvider(token="token", client=client)
+
+    sleep_calls = []
+    monkeypatch.setattr("time.sleep", lambda x: sleep_calls.append(x))
+
+    result = provider.fetch_score_price("600036", "2026-06-09")
+
+    assert result.status == "failed"
+    assert result.error_code == "RATE_LIMITED"
+    assert client.calls == 3
+    assert len(sleep_calls) == 2
+
+
+def test_baostock_provider_context_manager() -> None:
+    client = _FakeBaoStockClient()
+    provider = BaoStockMarketDataProvider(client)
+
+    with provider as p:
+        assert p._in_context is True
+        result1 = p.fetch_score_price("600036", "2026-06-09")
+        result2 = p.fetch_score_price("600036", "2026-06-09")
+
+        assert result1.status == "ok"
+        assert result2.status == "ok"
+        assert client.login_count == 1
+        assert client.logout_count == 0  # No logout during operations
+
+    assert client.logout_count == 1  # Logged out on __exit__
+    assert provider._in_context is False
+    assert provider._is_logged_in is False
+
+
+class _MockProviderWithContext:
+    def __init__(self) -> None:
+        self.entered = False
+        self.exited = False
+
+    def __enter__(self) -> _MockProviderWithContext:
+        self.entered = True
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.exited = True
+
+    def fetch_score_price(self, code, score_date):
+        return None
+
+
+def test_composite_provider_context_manager() -> None:
+    primary = _MockProviderWithContext()
+    fallback = _MockProviderWithContext()
+    composite = CompositeMarketDataProvider(primary, fallback)
+
+    with composite:
+        assert primary.entered is True
+        assert fallback.entered is True
+        assert primary.exited is False
+        assert fallback.exited is False
+
+    assert primary.exited is True
+    assert fallback.exited is True

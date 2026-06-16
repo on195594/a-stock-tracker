@@ -114,6 +114,19 @@ class CompositeMarketDataProvider:
         self.primary = primary
         self.fallback = fallback
 
+    def __enter__(self) -> CompositeMarketDataProvider:
+        if hasattr(self.primary, "__enter__"):
+            self.primary.__enter__()
+        if self.fallback and hasattr(self.fallback, "__enter__"):
+            self.fallback.__enter__()
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        if hasattr(self.primary, "__exit__"):
+            self.primary.__exit__(exc_type, exc_val, exc_tb)
+        if self.fallback and hasattr(self.fallback, "__exit__"):
+            self.fallback.__exit__(exc_type, exc_val, exc_tb)
+
     def fetch_score_price(self, code: str, score_date: str) -> MarketDataResult[float]:
         return self._fetch("fetch_score_price", code, score_date)
 
