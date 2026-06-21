@@ -34,6 +34,7 @@
 | Telegram 推送 | ✅ 正常 | ≥55分触发，今日 strong 信号 6 只 |
 | Outcome 追踪 | 🔶 积累中 | 326条记录，30d 结案 0 条（系统运行 < 1个月） |
 | 多框架支持 | ❌ 仅 A | B/C/D/E/F 框架逻辑未实现 |
+| 行情数据源 | ✅ 2026-06-21 迁移完成 | AKShare/东方财富行情入口已禁用，主源切到 Tushare + BaoStock degraded fallback，探测报告 PASS，详见 v1.5 |
 
 ### 关键数据规模
 
@@ -234,3 +235,4 @@
 | v1.2 | 2026-05-30 | 记录多 AI 辩论结论：Phase 5 L3 买点层优先，Framework B 后置；确认 L3 字段、Telegram、日线窗口、accuracy-report 授权边界 |
 | v1.3 | 2026-05-30 | Phase 5 L3 买点层实现完成：schema、纯计算 seam、daily 写入、Telegram 过滤、accuracy-report L3 section |
 | v1.4 | 2026-06-05 | Phase 6 readiness 报告增强：明确生产化阻塞项与下一步，保持 Framework B report-only，不启用生产写入 |
+| v1.5 | 2026-06-21 | 补记 2026-06-09~06-16 行情数据源迁移：AKShare/东方财富行情入口禁用，迁移到 Tushare 主源 + BaoStock degraded fallback（基本面/估值/财报抓取不受影响，仍用 AKShare）；2026-06-21 重新探测 `scripts/probe_tushare_market_data.py` 结果 PASS，`check_market_data_readiness.py` 转为 READY，此前 06-09 探测因 Tushare 限频(1次/小时)误报 FAIL 已更新为最新通过记录 |
