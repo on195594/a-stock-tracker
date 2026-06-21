@@ -349,6 +349,7 @@ def _insert_prediction(
     db.commit()
     row_id = cur.lastrowid
     db.close()
+    assert row_id is not None
     return row_id
 
 
@@ -1875,7 +1876,7 @@ def test_market_data_backfill_recomputes_existing_l3_metadata_without_rescoring(
 class _RangeAwareBackfillProvider:
     def __init__(self, score_date: str):
         self.score_date = date.fromisoformat(score_date)
-        self.calls = []
+        self.calls: list[tuple] = []
 
     def fetch_l3_bars(self, code: str, end_date: str, window: int):
         raise AssertionError("backfill should fetch the complete date range")
@@ -2229,6 +2230,18 @@ def test_backfill_null_prices_uses_db_cache(tmp_db) -> None:
         def fetch_score_price(self, code, score_date):
             self.calls += 1
             raise AssertionError("Should not fetch price over network when cached locally")
+
+        def fetch_l3_bars(self, code, end_date, window):
+            raise AssertionError("not used")
+
+        def fetch_outcome_price(self, code, target_date):
+            raise AssertionError("not used")
+
+        def fetch_daily_bars_range(self, code, start_date, end_date):
+            raise AssertionError("not used")
+
+        def fetch_index_bars(self, symbol):
+            raise AssertionError("not used")
 
     provider = _StrictMockProvider()
 

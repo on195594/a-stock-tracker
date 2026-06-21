@@ -114,6 +114,12 @@ class _FakeProvider:
     def fetch_outcome_price(self, code: str, target_date: str):
         raise AssertionError("not used")
 
+    def fetch_daily_bars_range(self, code: str, start_date: str, end_date: str):
+        raise AssertionError("not used")
+
+    def fetch_index_bars(self, symbol: str):
+        raise AssertionError("not used")
+
 
 def test_refresh_daily_bars_writes_bars_and_audit(tmp_db) -> None:
     service = MarketDataCacheService(
@@ -191,8 +197,8 @@ def test_tushare_provider_token_missing_returns_auth_missing() -> None:
 
 class _FakeTushareClient:
     def __init__(self) -> None:
-        self.daily_calls = []
-        self.index_calls = []
+        self.daily_calls: list[dict] = []
+        self.index_calls: list[dict] = []
 
     def daily(self, **kwargs):
         self.daily_calls.append(kwargs)
@@ -318,7 +324,7 @@ class _FakeBaoStockClient:
     def __init__(self) -> None:
         self.login_count = 0
         self.logout_count = 0
-        self.calls = []
+        self.calls: list[tuple] = []
 
     def login(self):
         self.login_count += 1
@@ -352,7 +358,7 @@ def test_baostock_provider_login_query_logout_and_normalize() -> None:
 class _BaoErrorResult:
     error_code = "100"
     error_msg = "query failed"
-    fields = []
+    fields: list = []
 
     def next(self):
         return False
@@ -382,6 +388,9 @@ class _AlwaysFailedProvider:
         return MarketDataResult(None, "failed", "primary", date.today().isoformat(), error_code=EMPTY_RESPONSE)
 
     def fetch_index_bars(self, symbol: str):
+        return MarketDataResult(None, "failed", "primary", date.today().isoformat(), error_code=EMPTY_RESPONSE)
+
+    def fetch_daily_bars_range(self, code: str, start_date: str, end_date: str):
         return MarketDataResult(None, "failed", "primary", date.today().isoformat(), error_code=EMPTY_RESPONSE)
 
 
@@ -493,6 +502,18 @@ class _MockProviderWithContext:
 
     def fetch_score_price(self, code, score_date):
         return None
+
+    def fetch_l3_bars(self, code, end_date, window):
+        raise AssertionError("not used")
+
+    def fetch_outcome_price(self, code, target_date):
+        raise AssertionError("not used")
+
+    def fetch_daily_bars_range(self, code, start_date, end_date):
+        raise AssertionError("not used")
+
+    def fetch_index_bars(self, symbol):
+        raise AssertionError("not used")
 
 
 def test_composite_provider_context_manager() -> None:

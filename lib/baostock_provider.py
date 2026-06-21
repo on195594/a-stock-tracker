@@ -103,12 +103,13 @@ class BaoStockMarketDataProvider:
         return self._fetch_bars(to_baostock_index_code(symbol), start_date, date.today().isoformat(), "index_bars")
 
     def _fetch_bars(self, code: str, start_date: str, end_date: str, purpose: str) -> MarketDataResult[pd.DataFrame]:
-        client = self._client
-        if client is None:
+        if self._client is None:
             try:
-                import baostock as client
+                import baostock as baostock_module
             except Exception as exc:
                 return _exception_result(exc)
+            self._client = baostock_module
+        client = self._client
 
         if not self._is_logged_in:
             login = client.login()
@@ -122,9 +123,8 @@ class BaoStockMarketDataProvider:
                     error_message=getattr(login, "error_msg", "baostock login failed"),
                 )
             self._is_logged_in = True
-            self._client = client
         try:
-            rs = self._client.query_history_k_data_plus(
+            rs = client.query_history_k_data_plus(
                 to_baostock_stock_code(code),
                 "date,code,open,high,low,close,volume,amount,adjustflag,tradestatus",
                 start_date=start_date,

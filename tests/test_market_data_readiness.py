@@ -7,8 +7,8 @@ from pathlib import Path
 
 SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "check_market_data_readiness.py"
 spec = importlib.util.spec_from_file_location("check_market_data_readiness", SCRIPT_PATH)
+assert spec is not None and spec.loader is not None
 readiness = importlib.util.module_from_spec(spec)
-assert spec.loader is not None
 spec.loader.exec_module(readiness)
 
 

@@ -97,7 +97,7 @@ def parse_float(val: Any, default: float | None = None) -> float | None:
 
 def avg_of(series: Any, n: int) -> float | None:
     """取 series 最后 n 行，计算非 None 值的均值，保留2位小数"""
-    vals = [parse_float(v) for v in series.tail(n) if parse_float(v) is not None]
+    vals = [fv for v in series.tail(n) if (fv := parse_float(v)) is not None]
     return round(sum(vals) / len(vals), 2) if vals else None
 
 
@@ -282,8 +282,8 @@ def cmd_fetch(args: list[str]) -> None:
     code = args[0]
 
     print(f"[fetch] 开始获取 {code} 基本面数据...", flush=True)
-    results    = {}
-    null_reasons = {}
+    results: dict[str, Any]    = {}
+    null_reasons: dict[str, str] = {}
 
     # ── Step 1：基本信息（名称 / 行业 / 当前价格）──
     # 东方财富接口可能不稳定；失败时用代码作为名称、行业置"未知"，继续抓财务数据
@@ -435,7 +435,7 @@ def cmd_fetch(args: list[str]) -> None:
             results['dividend_yield'] = dy
             print(f"  ✅ 股息率={dy}%")
         else:
-            null_reasons['dividend_yield'] = dy_reason
+            null_reasons['dividend_yield'] = dy_reason or '未知原因'
             logger.warning("  ⚠️ 股息率无法计算: %s", dy_reason)
 
     # ── Step 4.5：毛利率（新浪利润表，近3年年报均值）──
@@ -452,6 +452,7 @@ def cmd_fetch(args: list[str]) -> None:
     print("  [5/7] PB 历史分位 + 月度序列...", flush=True)
     pct, series = _fetch_pb_hist_and_percentile(code)
     if pct is not None:
+        assert series is not None
         results['pb_percentile_10y'] = pct
         results['pb_hist_monthly'] = series
         print(f"  ✅ PB历史10年分位={pct}%，序列 {len(series)} 个数据点")
