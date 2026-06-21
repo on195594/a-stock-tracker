@@ -875,7 +875,7 @@ def cmd_accuracy_report() -> None:
             f"\n已排除 {null_count} 条 NULL outcome 记录（停牌/退市/数据缺失），详见 daily_log.txt"
         )
         lines.append(
-            "\n⚠️  选择性偏差声明：watchlist 为手动维护 of 已知标的，"
+            "\n⚠️  选择性偏差声明：watchlist 为手动维护的已知标的，"
             "命中率不代表框架泛化能力。"
         )
         lines.append("")

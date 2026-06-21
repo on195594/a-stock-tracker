@@ -20,6 +20,10 @@ python_version = "3.13"
 files = [
     "pipeline.py",
     "scorer.py",
+    "gemini_scorer.py",
+    "telegram_push.py",
+    "config.py",
+    "sheets_sync.py",
     "lib",
     "tests",
 ]
