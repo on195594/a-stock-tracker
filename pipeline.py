@@ -1512,5 +1512,37 @@ def main() -> None:
         cmd_remove(args.code)
 
 
+def _alert_crash(cmd: str, exc: Exception) -> None:
+    """main()未捕获异常时的最后一道告警：cron环境下日志没人主动看，
+    不发Telegram就等同于2026-04那次"claude command not found"静默两个月的同类风险。
+    跟现有_send_phase4_notification同样的直连curl方式，不依赖额外模块。
+    """
+    import json as _json
+    import urllib.request
+
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if not token or not chat_id:
+        logger.warning("Telegram 未配置，崩溃告警跳过发送（仍会在日志里报错）")
+        return
+    text = f"🚨 a-stock-tracker pipeline.py {cmd} 崩溃\n{type(exc).__name__}: {exc}\n详见 logs/ 下对应日志"
+    payload = _json.dumps({"chat_id": chat_id, "text": text}).encode()
+    req = urllib.request.Request(
+        f"https://api.telegram.org/bot{token}/sendMessage",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            resp.read()
+    except Exception as send_exc:
+        logger.warning(f"崩溃告警本身也发送失败：{send_exc}")
+
+
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as exc:
+        logger.exception("pipeline.py 未捕获异常")
+        _alert_crash(" ".join(sys.argv[1:]) or "(无子命令)", exc)
+        raise

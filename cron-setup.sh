@@ -20,9 +20,9 @@ mkdir -p "$PROJECT_DIR/logs"
 CURRENT_CRONTAB=$(crontab -l 2>/dev/null || true)
 
 # cron 规则
-WEEKLY_RULE="00 10 * * 6 cd $PROJECT_DIR && .venv/bin/python pipeline.py weekly >> $PROJECT_DIR/logs/weekly.log 2>&1"
-DAILY_RULE="30 16 * * 1-5 cd $PROJECT_DIR && .venv/bin/python pipeline.py daily >> $PROJECT_DIR/logs/daily.log 2>&1"
-OUTCOME_RULE="00 17 * * 1-5 cd $PROJECT_DIR && .venv/bin/python pipeline.py outcome-update >> $PROJECT_DIR/logs/outcome.log 2>&1"
+WEEKLY_RULE="00 10 * * 6 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python pipeline.py weekly\" weekly >> $PROJECT_DIR/logs/weekly.log 2>&1"
+DAILY_RULE="30 16 * * 1-5 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python pipeline.py daily\" daily >> $PROJECT_DIR/logs/daily.log 2>&1"
+OUTCOME_RULE="00 17 * * 1-5 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python pipeline.py outcome-update\" outcome-update >> $PROJECT_DIR/logs/outcome.log 2>&1"
 
 MARKET_DATA_READY=0
 if "$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/scripts/check_market_data_readiness.py" >/tmp/a-stock-market-data-readiness.log 2>&1; then
