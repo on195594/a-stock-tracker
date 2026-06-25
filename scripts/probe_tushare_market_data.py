@@ -7,7 +7,7 @@ import sys
 import time
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -23,6 +23,12 @@ from lib.cache import DB_PATH  # noqa: E402
 
 SAMPLES = ["600036", "000001", "002594"]
 INDEX_SAMPLE = "000300"
+
+
+class ReferenceClose(NamedTuple):
+    close: float
+    source: str
+    trade_date: str
 
 
 def _load_dotenv() -> None:
@@ -72,7 +78,7 @@ def _row(item: dict[str, Any]) -> str:
     )
 
 
-def _load_reference_close(code: str, trade_date: str) -> tuple[float, str] | None:
+def _load_reference_close(code: str, trade_date: str) -> ReferenceClose | None:
     db_path = Path(DB_PATH).expanduser()
     if db_path.exists():
         conn = sqlite3.connect(db_path)
@@ -88,17 +94,26 @@ def _load_reference_close(code: str, trade_date: str) -> tuple[float, str] | Non
         finally:
             conn.close()
         if row is not None:
-            return float(row[0]), str(row[1])
+            return ReferenceClose(float(row[0]), str(row[1]), trade_date)
 
     try:
         from a_stock_lib.providers.baostock_quotes import BaoStockMarketDataProvider
 
-        result = BaoStockMarketDataProvider().fetch_score_price(code, trade_date)
+        provider = BaoStockMarketDataProvider()
+        result = provider.fetch_daily_bars_range(code, trade_date, trade_date)
+        if result.value is not None and not result.value.empty:
+            row = result.value.iloc[-1]
+            return ReferenceClose(float(row["close"]), result.source, str(row["date"])[:10])
+
+        result = provider.fetch_score_price(code, trade_date)
     except Exception:
         return None
     if result.value is None or result.status == "failed":
         return None
-    return float(result.value), result.source
+    reference_date = trade_date
+    if result.freshness_days is not None:
+        reference_date = (date.fromisoformat(trade_date) - timedelta(days=result.freshness_days)).isoformat()
+    return ReferenceClose(float(result.value), result.source, reference_date)
 
 
 def _close_cross_checks(checks: list[dict[str, Any]]) -> tuple[str, list[str]]:
@@ -106,6 +121,7 @@ def _close_cross_checks(checks: list[dict[str, Any]]) -> tuple[str, list[str]]:
     failures = 0
     checked = 0
     missing_reference = 0
+    date_mismatches = 0
     for item in checks:
         code = item["code"]
         trade_date = item["latest_trade_date"]
@@ -115,21 +131,28 @@ def _close_cross_checks(checks: list[dict[str, Any]]) -> tuple[str, list[str]]:
         reference = _load_reference_close(code, trade_date)
         if reference is None:
             missing_reference += 1
-            rows.append(f"| {code} | {trade_date} | {latest_close:.4f} |  |  |  | MISSING_REFERENCE |")
+            rows.append(f"| {code} | {trade_date} | {latest_close:.4f} |  |  |  |  | MISSING_REFERENCE |")
             continue
-        reference_close, reference_source = reference
+        if reference.trade_date != trade_date:
+            date_mismatches += 1
+            rows.append(
+                f"| {code} | {trade_date} | {latest_close:.4f} | {reference.trade_date} | "
+                f"{reference.close:.4f} | {reference.source} |  | DATE_MISMATCH |"
+            )
+            continue
+        reference_close, reference_source = reference.close, reference.source
         diff_pct = abs(latest_close / reference_close - 1) * 100 if reference_close else 999.0
         status = "PASS" if diff_pct <= 0.5 else "FAIL"
         checked += 1
         if status == "FAIL":
             failures += 1
         rows.append(
-            f"| {code} | {trade_date} | {latest_close:.4f} | {reference_close:.4f} | "
+            f"| {code} | {trade_date} | {latest_close:.4f} | {reference.trade_date} | {reference_close:.4f} | "
             f"{reference_source} | {diff_pct:.3f}% | {status} |"
         )
     if failures:
         return "FAIL", rows
-    if checked == 0 or missing_reference:
+    if checked == 0 or missing_reference or date_mismatches:
         return "MANUAL_REQUIRED", rows
     return "PASS", rows
 
@@ -184,9 +207,9 @@ def main() -> int:
         "",
         f"Close cross-check: {close_status}",
         "",
-        "| Code | Trade Date | Tushare Close | Reference Close | Reference Source | Diff | Status |",
-        "|---|---|---:|---:|---|---:|---|",
-        *(close_rows or ["|  |  |  |  |  |  | MISSING_REFERENCE |"]),
+        "| Code | Trade Date | Tushare Close | Reference Trade Date | Reference Close | Reference Source | Diff | Status |",
+        "|---|---|---:|---|---:|---|---:|---|",
+        *(close_rows or ["|  |  |  |  |  |  |  | MISSING_REFERENCE |"]),
         "",
         "## Result",
         "",
