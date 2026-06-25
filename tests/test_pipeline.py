@@ -26,6 +26,24 @@ from lib import market_data  # noqa: E402
 import pipeline  # noqa: E402
 
 
+def _with_ohlc(df: pd.DataFrame) -> pd.DataFrame:
+    """Fill minimal OHLC columns in AKShare test fixtures before shared normalization."""
+    if df.empty:
+        return df
+    normalized = df.copy()
+    if "close" in normalized.columns:
+        for col in ["open", "high", "low"]:
+            if col not in normalized.columns:
+                normalized[col] = normalized["close"]
+        return normalized
+    if "收盘" not in normalized.columns:
+        return normalized
+    for col in ["开盘", "最高", "最低"]:
+        if col not in normalized.columns:
+            normalized[col] = normalized["收盘"]
+    return normalized
+
+
 # ---------------------------------------------------------------------------
 # fixtures
 # ---------------------------------------------------------------------------
@@ -55,7 +73,7 @@ class _AkLikeTestProvider:
             df = market_data.ak.stock_zh_a_hist_tx(symbol=f"{prefix}{code}", start_date=start, end_date=end)
         except Exception as exc:
             return market_data._exception_result("test.stock_zh_a_hist_tx", exc)
-        result = market_data._normalize_bars_result(df, "test.stock_zh_a_hist_tx", "score_price")
+        result = market_data._normalize_bars_result(_with_ohlc(df), "test.stock_zh_a_hist_tx", "score_price")
         if result.value is None:
             return market_data.MarketDataResult(
                 None,
@@ -74,14 +92,14 @@ class _AkLikeTestProvider:
         prefix = "sh" if code.startswith("6") else "sz"
         try:
             tx_df = market_data.ak.stock_zh_a_hist_tx(symbol=f"{prefix}{code}", start_date=start, end_date=end)
-            primary = market_data._normalize_bars_result(tx_df, "test.stock_zh_a_hist_tx", "l3_bars")
+            primary = market_data._normalize_bars_result(_with_ohlc(tx_df), "test.stock_zh_a_hist_tx", "l3_bars")
         except Exception as exc:
             primary = market_data._exception_result("test.stock_zh_a_hist_tx", exc)
         if primary.status != "failed" and primary.value is not None and len(primary.value) >= window:
             return primary
         try:
             em_df = market_data.ak.stock_zh_a_hist(symbol=code, period="daily", start_date=start, end_date=end, adjust="")
-            fallback = market_data._normalize_bars_result(em_df, "test.stock_zh_a_hist", "l3_bars")
+            fallback = market_data._normalize_bars_result(_with_ohlc(em_df), "test.stock_zh_a_hist", "l3_bars")
         except Exception as exc:
             return market_data._exception_result("test.stock_zh_a_hist", exc)
         if fallback.status != "failed":
@@ -106,7 +124,7 @@ class _AkLikeTestProvider:
             except Exception as exc:
                 result = market_data._exception_result("test.stock_zh_a_hist", exc)
                 continue
-            result = market_data._normalize_bars_result(df, "test.stock_zh_a_hist", "outcome_price")
+            result = market_data._normalize_bars_result(_with_ohlc(df), "test.stock_zh_a_hist", "outcome_price")
             if result.value is not None and not result.value.empty:
                 return market_data.MarketDataResult(
                     float(result.value.iloc[-1]["close"]),
@@ -123,7 +141,7 @@ class _AkLikeTestProvider:
             df = market_data.ak.stock_zh_index_daily_tx(symbol=symbol)
         except Exception as exc:
             return market_data._exception_result("test.stock_zh_index_daily_tx", exc)
-        result = market_data._normalize_bars_result(df, "test.stock_zh_index_daily_tx", "benchmark_price")
+        result = market_data._normalize_bars_result(_with_ohlc(df), "test.stock_zh_index_daily_tx", "benchmark_price")
         if result.value is None:
             return result
         return market_data.MarketDataResult(result.value[["date", "close"]], "ok", result.source, result.fetched_at)
@@ -285,14 +303,14 @@ def _tencent_hist_side_effect(code_price: dict[str, float]):
         code = symbol[2:]  # strip sh/sz prefix
         p = code_price.get(code)
         if p is None:
-            return pd.DataFrame(columns=["close", "date"])
-        return pd.DataFrame([{"close": p, "date": date.today().isoformat()}])
+            return pd.DataFrame(columns=["open", "high", "low", "close", "date"])
+        return pd.DataFrame([{"open": p, "high": p, "low": p, "close": p, "date": date.today().isoformat()}])
     return _side
 
 
 def _index_tx_df(pairs: list[tuple[str, float]]) -> pd.DataFrame:
     """构造 stock_zh_index_daily_tx 的返回 DataFrame（腾讯列名）。"""
-    return pd.DataFrame([{"date": d, "close": c} for d, c in pairs])
+    return pd.DataFrame([{"date": d, "open": c, "high": c, "low": c, "close": c} for d, c in pairs])
 
 
 def _entry_hist_df(closes: list[float], volumes: list[float] | None = None) -> pd.DataFrame:
@@ -303,6 +321,9 @@ def _entry_hist_df(closes: list[float], volumes: list[float] | None = None) -> p
     return pd.DataFrame(
         {
             "日期": [(start + timedelta(days=i)).isoformat() for i in range(len(closes))],
+            "开盘": closes,
+            "最高": closes,
+            "最低": closes,
             "收盘": closes,
             "成交量": volumes,
         }
@@ -311,7 +332,7 @@ def _entry_hist_df(closes: list[float], volumes: list[float] | None = None) -> p
 
 def _entry_hist_side_effect(code_bars: dict[str, pd.DataFrame]):
     def _side(symbol: str, **kw):
-        return code_bars.get(symbol, pd.DataFrame(columns=["日期", "收盘", "成交量"]))
+        return code_bars.get(symbol, pd.DataFrame(columns=["日期", "开盘", "最高", "最低", "收盘", "成交量"]))
 
     return _side
 
@@ -1891,7 +1912,7 @@ class _RangeAwareBackfillProvider:
             d = start_dt + timedelta(days=i)
             close = 130.0 if d == self.score_date else 100.0
             volume = 300.0 if self.score_date - timedelta(days=4) <= d <= self.score_date else 100.0
-            rows.append({"date": d.isoformat(), "close": close, "volume": volume})
+            rows.append({"date": d.isoformat(), "open": close, "high": close, "low": close, "close": close, "volume": volume})
         return market_data.MarketDataResult(
             pd.DataFrame(rows),
             "ok",

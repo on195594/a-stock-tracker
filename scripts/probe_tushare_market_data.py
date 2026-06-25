@@ -13,7 +13,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from lib.tushare_provider import (  # noqa: E402
+from a_stock_lib.providers.tushare_quotes import (  # noqa: E402
     TUSHARE_VOLUME_UNIT,
     TushareMarketDataProvider,
     to_tushare_index_code,
@@ -91,7 +91,7 @@ def _load_reference_close(code: str, trade_date: str) -> tuple[float, str] | Non
             return float(row[0]), str(row[1])
 
     try:
-        from lib.baostock_provider import BaoStockMarketDataProvider
+        from a_stock_lib.providers.baostock_quotes import BaoStockMarketDataProvider
 
         result = BaoStockMarketDataProvider().fetch_score_price(code, trade_date)
     except Exception:

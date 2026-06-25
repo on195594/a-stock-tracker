@@ -25,13 +25,13 @@ from lib.market_data import (  # noqa: E402
     get_market_data_backfill_provider,
     _normalize_bars_result,
 )
-from lib.baostock_provider import (  # noqa: E402
+from a_stock_lib.providers.baostock_quotes import (  # noqa: E402
     BAOSTOCK_SOURCE,
     BaoStockMarketDataProvider,
     to_baostock_index_code,
     to_baostock_stock_code,
 )
-from lib.tushare_provider import (  # noqa: E402
+from a_stock_lib.providers.tushare_quotes import (  # noqa: E402
     INDEX_DAILY_SOURCE,
     TushareMarketDataProvider,
     to_tushare_index_code,
@@ -61,14 +61,16 @@ def _bars(days: int = 120) -> pd.DataFrame:
 
 def test_normalize_tencent_bars_returns_ok_result() -> None:
     result = _normalize_bars_result(
-        pd.DataFrame([{"date": date.today().isoformat(), "close": 10.0, "volume": 100.0}]),
+        pd.DataFrame(
+            [{"date": date.today().isoformat(), "open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0, "volume": 100.0}]
+        ),
         "akshare.stock_zh_a_hist_tx",
         "l3_bars",
     )
 
     assert result.status == "ok"
     assert result.value is not None
-    assert list(result.value.columns) == ["date", "close", "volume"]
+    assert list(result.value.columns) == ["date", "open", "high", "low", "close", "volume"]
 
 
 def test_normalize_empty_response_returns_structured_failure() -> None:
@@ -229,8 +231,22 @@ class _FakeTushareClient:
         self.index_calls.append(kwargs)
         return pd.DataFrame(
             [
-                {"ts_code": "000300.SH", "trade_date": "20260609", "close": "4000.5"},
-                {"ts_code": "000300.SH", "trade_date": "20260608", "close": "3980.0"},
+                {
+                    "ts_code": "000300.SH",
+                    "trade_date": "20260608",
+                    "open": "3970.0",
+                    "high": "3990.0",
+                    "low": "3960.0",
+                    "close": "3980.0",
+                },
+                {
+                    "ts_code": "000300.SH",
+                    "trade_date": "20260609",
+                    "open": "3980.0",
+                    "high": "4010.0",
+                    "low": "3975.0",
+                    "close": "4000.5",
+                },
             ]
         )
 
