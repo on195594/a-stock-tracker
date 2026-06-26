@@ -4,4 +4,5 @@ __pycache__/
 .venv/
 logs/
 tracker.db
+backups/
 credentials/

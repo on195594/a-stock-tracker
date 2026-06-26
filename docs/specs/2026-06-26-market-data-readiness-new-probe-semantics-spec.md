@@ -156,7 +156,7 @@ Staged daily 恢复命令必须在 runbook 中明确给出，格式应与 `cron-
 
 ```bash
 # 仅在 PM 明确授权 staged daily 恢复后使用；严禁在此状态下运行 cron-setup.sh
-(crontab -l 2>/dev/null; echo "30 16 * * 1-5 /home/lin/a-stock-tracker/cron-alert-wrap.sh \"cd /home/lin/a-stock-tracker && .venv/bin/python pipeline.py daily\" daily >> /home/lin/a-stock-tracker/logs/daily.log 2>&1") | crontab -
+(crontab -l 2>/dev/null | grep -v "pipeline.py daily" || true; echo "30 16 * * 1-5 /home/lin/a-stock-tracker/cron-alert-wrap.sh \"cd /home/lin/a-stock-tracker && .venv/bin/python pipeline.py daily\" daily >> /home/lin/a-stock-tracker/logs/daily.log 2>&1") | crontab -
 ```
 
 ## 测试计划

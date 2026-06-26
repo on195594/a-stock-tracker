@@ -109,6 +109,84 @@ def test_readiness_rejects_legacy_report_even_when_old_result_was_pass(tmp_path,
     assert "latest Tushare capability probe uses legacy readiness format; rerun probe" in status.reasons
 
 
+def test_readiness_rejects_partial_latest_report_instead_of_falling_back_to_older_pass(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    _write_report(tmp_path, "2026-06-25-tushare-capability-probe.md", _new_report())
+    _write_report(
+        tmp_path,
+        "2026-06-26-tushare-capability-probe.md",
+        """
+# Tushare Capability Probe
+
+## Decision
+
+Write Gate: PASS
+Capability Checks: PASS
+""",
+    )
+    monkeypatch.setattr(readiness, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(os.environ, "TUSHARE_TOKEN", "token")
+
+    status = readiness.readiness_status()
+
+    assert status.report_path == tmp_path / "docs" / "reviews" / "2026-06-26-tushare-capability-probe.md"
+    assert not status.daily_ready
+    assert not status.capability_ready
+    assert "latest Tushare capability probe uses legacy readiness format; rerun probe" in status.reasons
+
+
+def test_readiness_rejects_unknown_decision_values(tmp_path, monkeypatch) -> None:
+    _write_report(
+        tmp_path,
+        "2026-06-26-tushare-capability-probe.md",
+        _new_report(
+            write_gate="READY",
+            capability_checks="UNKNOWN",
+            production_decision="ALLOW",
+            dependent_jobs="READY",
+        ),
+    )
+    monkeypatch.setattr(readiness, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(os.environ, "TUSHARE_TOKEN", "token")
+
+    status = readiness.readiness_status()
+
+    assert not status.daily_ready
+    assert not status.capability_ready
+    assert "Write Gate is READY" in status.reasons
+    assert "Production Decision is ALLOW" in status.reasons
+    assert "Capability Checks is UNKNOWN" in status.reasons
+    assert "Index/Calendar Dependent Jobs is READY" in status.reasons
+
+
+def test_readiness_loads_token_from_dotenv(tmp_path, monkeypatch) -> None:
+    _write_report(tmp_path, "2026-06-26-tushare-capability-probe.md", _new_report())
+    (tmp_path / ".env").write_text("TUSHARE_TOKEN=token-from-env-file\n", encoding="utf-8")
+    monkeypatch.setattr(readiness, "PROJECT_ROOT", tmp_path)
+    monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
+
+    status = readiness.readiness_status()
+
+    assert status.daily_ready
+    assert status.capability_ready
+    assert os.environ["TUSHARE_TOKEN"] == "token-from-env-file"
+
+
+def test_readiness_dotenv_does_not_override_existing_token(tmp_path, monkeypatch) -> None:
+    _write_report(tmp_path, "2026-06-26-tushare-capability-probe.md", _new_report())
+    (tmp_path / ".env").write_text("TUSHARE_TOKEN=token-from-env-file\n", encoding="utf-8")
+    monkeypatch.setattr(readiness, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(os.environ, "TUSHARE_TOKEN", "token-from-shell")
+
+    status = readiness.readiness_status()
+
+    assert status.daily_ready
+    assert status.capability_ready
+    assert os.environ["TUSHARE_TOKEN"] == "token-from-shell"
+
+
 def test_readiness_blocks_daily_when_write_gate_fails(tmp_path, monkeypatch) -> None:
     _write_report(
         tmp_path,
