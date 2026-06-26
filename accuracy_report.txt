@@ -1,6 +1,6 @@
 ============================================================
 a-stock-tracker 准确率报告
-生成时间：2026-06-26 21:42
+生成时间：2026-06-26 21:51
 ============================================================
 
 已排除 770 条 NULL outcome 记录（停牌/退市/数据缺失），详见 daily_log.txt
@@ -43,14 +43,14 @@ no-action      9     0.000     0.000       N/A       N/A  -13.890      N/A      
 
 ── L3 买点层 ──
 v1 记录数：700
-entry_signal=1：126
-entry_signal=0：574
+entry_signal=1：124
+entry_signal=0：576
 entry_signal=NULL：676
 NULL/NULL pre-L3：676
 NULL/v1 不可计算：0
 L3 覆盖率：700/700 = 100.0%
-strong 候选 L3 通过：44
-strong 候选 L3 拒绝：323
+strong 候选 L3 通过：43
+strong 候选 L3 拒绝：324
 strong 候选中 L3 不可计算：0
 高分但未推送：0（L3 unavailable）
 L3 30d 已结案：0
