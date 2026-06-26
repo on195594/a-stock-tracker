@@ -97,9 +97,9 @@ def _load_reference_close(code: str, trade_date: str) -> ReferenceClose | None:
             return ReferenceClose(float(row[0]), str(row[1]), trade_date)
 
     try:
-        from a_stock_lib.providers.baostock_quotes import BaoStockMarketDataProvider
+        from a_stock_lib.providers.baostock_quotes import IsolatedBaoStockMarketDataProvider
 
-        provider = BaoStockMarketDataProvider()
+        provider = IsolatedBaoStockMarketDataProvider()
         result = provider.fetch_daily_bars_range(code, trade_date, trade_date)
         if result.value is not None and not result.value.empty:
             row = result.value.iloc[-1]

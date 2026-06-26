@@ -133,7 +133,7 @@ python3 pipeline.py init
 - `telegram_push.py`：Telegram 信号推送，筛选 `buy_strong` 且 L3 通过的记录。
 - `sheets_sync.py`：Google Sheets 展示层同步。
 - `lib/cache.py`：SQLite schema、迁移和缓存管理。
-- `lib/market_data.py`：行情 provider 兼容入口；协议原语和 Tushare/BaoStock 实现来自 `a-stock-lib==0.1.1`，本地只保留环境门禁和 cache service。
+- `lib/market_data.py`：行情 provider 兼容入口；协议原语和 Tushare/BaoStock 实现来自 `a-stock-lib==0.1.2`，本地只保留环境门禁和 cache service。
 - `a_stock_lib.providers.tushare_quotes`：Tushare Pro 行情 provider，覆盖评分价、L3 日线、outcome 和沪深 300 指数日线。
 - `a_stock_lib.providers.baostock_quotes`：BaoStock 行情 provider，仅作为 Tushare fallback 或显式 backfill 源。
 - `lib/fetcher.py`：AKShare、腾讯 fallback、百度估值等数据读取。
