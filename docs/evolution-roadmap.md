@@ -1,7 +1,7 @@
 # a-stock-tracker 进化路线图
 
-**版本：** v1.4
-**基线日期：** 2026-06-05
+**版本：** v1.6
+**基线日期：** 2026-06-26
 **文档定位：** 系统演化的顶层规划文档。所有后续 Phase 的修改、补丁、设计决策均以本文档为基线。若实施中发现偏差，先更新本文档，再改代码。
 
 ---
@@ -20,27 +20,30 @@
 
 ---
 
-## 二、当前系统基线（2026-05-15 快照）
+## 二、当前系统基线（2026-06-26 快照）
 
 ### 能力盘点
 
 | 模块 | 状态 | 说明 |
 |------|------|------|
-| Framework A 评分 | ✅ 正常 | 满分 80 分（量化 60 + Gemini 定性 20），今日均分 44.3 |
-| Framework B 评分 | ⏸ 暂停 | 73 条历史记录保留，SUPPORTED_FRAMEWORKS={"A"}，待重启 |
-| 每日 PB 分位 | ✅ 2026-05-15 修复 | current_pb = 收盘价/bps，ranked in pb_hist_monthly（~731点） |
-| 毛利率字段 | ✅ 2026-05-15 修复 | 新浪利润表自动计算，金融行业跳过 |
-| Gemini 定性评分 | ✅ 正常 | 30天缓存，all-or-nothing fallback |
-| Telegram 推送 | ✅ 正常 | ≥55分触发，今日 strong 信号 6 只 |
-| Outcome 追踪 | 🔶 积累中 | 326条记录，30d 结案 0 条（系统运行 < 1个月） |
-| 多框架支持 | ❌ 仅 A | B/C/D/E/F 框架逻辑未实现 |
-| 行情数据源 | ✅ 2026-06-21 迁移完成 | AKShare/东方财富行情入口已禁用，主源切到 Tushare + BaoStock degraded fallback，探测报告 PASS，详见 v1.5 |
+| Framework A 评分 | ✅ 正常 | 生产写入框架仍仅 A；2026-06-26 `daily` 真实运行完成，当日已有 A 框记录，幂等写入 0 条 |
+| Framework B 评分 | ⏸ report-only | 73 条历史记录保留，`SUPPORTED_FRAMEWORKS={"A"}`；B label 自然结案样本不足 `0/20`，最早 2026-07-26 后复核，不启用生产写入 |
+| 每日 PB 分位 | ✅ 正常 | current_pb = 收盘价/bps，ranked in pb_hist_monthly；当前 watchlist PB 日度可计算 35/35 |
+| 毛利率字段 | ✅ 正常 | 基本面缓存 35/35，金融行业 gross_margin 不适用按规则跳过 |
+| Gemini 定性评分 | ✅ 正常 | 30天缓存，all-or-nothing fallback；当前缓存存在 35/35 |
+| Telegram 推送 | ✅ 正常 | ≥ buy_strong 且 L3 entry_signal=1 触发；2026-06-26 daily 推送成功 1 只股票 |
+| Outcome 追踪 | ✅ 正常 | `outcome-update` 已恢复到 cron；accuracy-report 显示 Framework A 30d 结案 533 条，其中 post-fix 315 条 |
+| L3 买点层 | ✅ 正常 | L3 v1 已接入 daily/推送/report；当前 v1 记录 700，覆盖率 100.0%，30d 样本仍不足 |
+| 行情数据源 | ✅ READY_CRON | `a-stock-lib==0.1.2`：Tushare 主源 + 隔离 BaoStock degraded fallback；`check_market_data_readiness.py --scope cron` 返回 `READY_CRON` |
+| cron | ✅ 已恢复 | managed block 管理 weekly/daily/outcome-update；恢复前真实 probe/backfill/daily 已验证 |
 
 ### 关键数据规模
 
 - watchlist：35只（手动维护，固定池）
-- predictions 记录：326条（2026-04-21 至今）
-- 30d 结案目标：≥100条（预计 2026-06 中）
+- Framework A 记录：1303 条；30d 结案：533 条
+- Framework B 历史记录：73 条；生产写入暂停，仅 report-only 观察
+- L3 v1 记录：700 条；L3 30d 已结案：0 条
+- Phase 6 当前阻塞：B label 已结案样本不足 `0/20`，最早可评估日期 `2026-07-26`
 
 ### 已知系统性偏差
 
@@ -52,28 +55,26 @@
 
 ## 三、进化路线（四个阶段）
 
-### Phase 4：验证基础（当前 → 2026-06 中）
+### Phase 4：验证基础 [已完成 2026-06-26，进入持续观察]
 
 **目标：** 积累足够 outcome 数据，验证现有评分因子的预测效力。
 
-**里程碑（两类，独立管理）：**
+**完成状态：**
 
-*继续开发允许条件（满足即可启动 Phase 5 开发，不依赖评分有效性）：*
-- [ ] 30d 结案记录 ≥ 100 条（**仅统计 2026-05-15 修复后**的记录，预计 2026-06-15 前后）
-- [ ] accuracy-report 各信号层级 post-fix 样本 ≥ 20 条
+*继续开发允许条件：*
+- [x] 30d 结案记录 ≥ 100 条：Framework A 当前 533 条，post-fix 315 条。
+- [x] accuracy-report 各信号层级 post-fix 样本达到可观察规模：strong 165 / moderate 60 / light 81。
 
-*评分有效性结论条件（决定是否调整权重，可晚于 Phase 5 启动）：*
-- [ ] hit_rate_vs_300 > 55% at strong 层级，post-fix 样本 ≥ 20 条 → 初步验证有效
-- [ ] 或明确验证无效（strong 层级 hit_rate_vs_300 ≤ 45%，样本 ≥ 30 条）→ 触发权重调整流程
+*评分有效性结论：*
+- [ ] hit_rate_vs_300 > 55% at strong 层级尚未满足。
+- [ ] 若 strong 层级持续弱于基准且样本进一步扩大，再单独触发权重调整 spec；不得在 Phase 6 report-only 中顺手改权重。
 
-> **注意**：60d/90d 是后验确认指标（上线更晚），不作为 Phase 4 主触发条件，但应在 accuracy-report 中持续观察趋势一致性。
+> **注意**：Phase 4 的“允许继续开发”已满足，但“评分有效性优化”仍是持续观察项。60d/90d 是后验确认指标，不作为 Phase 6 启动阻塞。
 
-**工作内容：**
-- 无需代码改动，保持 daily cron 正常运行
-- 每周查看 `pipeline.py accuracy-report` 数据趋势
-- 分层记录：2026-05-14 前（pre-fix）和 2026-05-15 起（post-fix）分数分布，**不得混合两组样本计算 hit_rate**
-
-**触发下一阶段的条件：** 满足"继续开发允许条件"即可启动 Phase 5，无需等待评分有效性结论
+**后续工作：**
+- 保持 `daily` / `outcome-update` cron 正常运行。
+- 每周查看 `pipeline.py accuracy-report` 数据趋势。
+- 分层记录：2026-05-14 前（pre-fix）和 2026-05-15 起（post-fix）分数分布，**不得混合两组样本计算 hit_rate**。
 
 ---
 
@@ -118,17 +119,18 @@
 
 ---
 
-### Phase 6：多框架激活（L1 完备化）
+### Phase 6：多框架激活（L1 完备化）[report-only 深化中]
 
 **目标：** 为不同行业激活对应框架，解决"白酒用 A 框架不合适"的问题。
 
-**当前状态（2026-06-05）：** Phase 6 仍为 report-only 准备期。`accuracy-report` 已能输出 Phase 6 readiness、生产化阻塞项和下一步行动，但这只是报告增强，不代表 Framework B 生产写入已启用。
+**当前状态（2026-06-26）：** Phase 6 仍为 report-only 深化期。`accuracy-report` 已能输出 Phase 6 readiness、生产化阻塞项和下一步行动；`docs/plans/2026-06-26-phase6-report-only-next-steps.md` 是当前执行计划。Framework B 生产写入仍未启用。
 
 **本轮推进复盘：**
+- 行情链路已恢复：`a-stock-lib==0.1.2` 提供 Tushare 主源 + 隔离 BaoStock degraded fallback；真实 probe/backfill/daily 均已执行。
+- cron 已恢复为 managed block；`READY_CRON` 是 daily/outcome-update 恢复门禁，旧报告、重复字段和 `HOLD_CRON` 场景已 default-deny。
 - 已把 Phase 6 readiness 从单一结论扩展为可执行检查清单，明确展示 post-fix A 框 30d 结案、数据质量、Framework B 金融候选 dry-run 覆盖、B label 已结案样本和 overdue outcome 风险。
-- 已增加下一步行动提示，用于区分“继续 daily/outcome-update 等自然结案”“补齐 watchlist 基本面字段”“修复 dry-run 跳过候选”“等待或处理 B label outcome”等不同阻塞来源。
 - 保持生产边界不变：未启用 `SUPPORTED_FRAMEWORKS` 的 B 写入，未新增 B predictions，未修改 `weights.json`，未改写历史 prediction/outcome 数据。
-- 验证结果：`tests/test_pipeline.py` 50 passed，完整测试 133 passed，ruff、mypy 和 `git diff --check` 均通过。
+- 当前阻塞：B label 自然结案样本不足 `0/20`，最早可评估日期 `2026-07-26`；在此之前只做 report-only 观察和 cron 稳定性复核。
 
 **Phase 6 生产化前置条件：**
 - post-fix Framework A 30d 结案样本 ≥ 100。
@@ -160,11 +162,13 @@
 > E/F 框架的主估值轴（PE/PS历史分位）尚无对应 AKShare 接口，需要先验证数据可获取性，再启动框架实现。这是 E/F 被列为低/中优先级的主要原因。
 
 **实施方案：**
-1. 继续运行 `daily` / `outcome-update`，让 post-fix A 框和 B label 样本自然结案。
+1. 继续运行 `daily` / `outcome-update`，让 post-fix A 框、L3 和 B label 样本自然结案。
 2. 每周查看 `accuracy-report` 的 Phase 6 readiness、阻塞项和下一步，不根据样本不足报告做生产化判断。
-3. 若数据质量或 B dry-run 覆盖未满足，先修复字段来源、缓存或跳过原因。
-4. 条件满足后，再为 Framework B 生产化单独写 implementation plan；计划必须覆盖 `weights.json`、`SUPPORTED_FRAMEWORKS`、watchlist/framework 映射、历史断层解释、测试和回滚策略。
-5. 每个新框架上线前须通过完整测试用例（mock AKShare + 边界值覆盖）。
+3. 每周复核 cron 日志和 `READY_CRON`；若 readiness 返回 `HOLD_CRON`，先处理行情链路，暂停 Phase 6 深化。
+4. 若数据质量或 B dry-run 覆盖未满足，先修复字段来源、缓存或跳过原因。
+5. B label 已结案样本 ≥ 20 且 overdue 风险为 0 后，先写 `docs/reviews/YYYY-MM-DD-phase6-b-label-review.md`。
+6. 条件满足后，再为 Framework B 生产化单独写 spec/implementation plan；计划必须覆盖 `weights.json`、`SUPPORTED_FRAMEWORKS`、watchlist/framework 映射、历史断层解释、测试和回滚策略。
+7. 每个新框架上线前须通过完整测试用例（mock AKShare + 边界值覆盖）。
 
 **注意：** 多框架激活后，不同框架的 total_score 不可跨框架直接比较（D框架高股息股天然比F框架科技股分数高），accuracy-report 须按 framework 分层。
 
@@ -223,6 +227,7 @@
 4. **AKShare mock 原则**：所有测试用 monkeypatch，不发真实网络请求
 5. **Sheets sync 不阻断 daily**：Google Sheets 是展示层，失败只记 WARNING
 6. **文档先行**：Phase N 实施前，先在本文档中将对应 Phase 标记为 `[实施中]`，完成后标记为 `[已完成 YYYY-MM-DD]`
+7. **PM 控制面**：`docs/project-status.md` 是当前 spec 台账；压缩上下文或跨会话交接时优先读取该文件确认 active phase、阻塞项和下一检查点。
 
 ---
 
@@ -236,3 +241,4 @@
 | v1.3 | 2026-05-30 | Phase 5 L3 买点层实现完成：schema、纯计算 seam、daily 写入、Telegram 过滤、accuracy-report L3 section |
 | v1.4 | 2026-06-05 | Phase 6 readiness 报告增强：明确生产化阻塞项与下一步，保持 Framework B report-only，不启用生产写入 |
 | v1.5 | 2026-06-21 | 补记 2026-06-09~06-16 行情数据源迁移：AKShare/东方财富行情入口禁用，迁移到 Tushare 主源 + BaoStock degraded fallback（基本面/估值/财报抓取不受影响，仍用 AKShare）；2026-06-21 重新探测 `scripts/probe_tushare_market_data.py` 结果 PASS，`check_market_data_readiness.py` 转为 READY，此前 06-09 探测因 Tushare 限频(1次/小时)误报 FAIL 已更新为最新通过记录 |
+| v1.6 | 2026-06-26 | 同步真实恢复状态：`a-stock-lib==0.1.2`、隔离 BaoStock fallback、真实 probe/backfill/daily、`READY_CRON`、managed cron block；Phase 4 标记完成并转持续观察，Phase 6 明确为 report-only 深化，不启用 Framework B 生产写入；新增 `docs/project-status.md` 作为 PM/spec 台账 |
