@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+from datetime import date
 from pathlib import Path
 import sys
 
@@ -56,9 +57,39 @@ def test_latest_probe_report_filters_non_standard_names(tmp_path, monkeypatch) -
     latest = _write_report(tmp_path, "2026-06-26-tushare-capability-probe.md", _new_report())
     _write_report(tmp_path, "zz-2026-06-27-tushare-capability-probe.md", _new_report())
     _write_report(tmp_path, "2026-6-27-tushare-capability-probe.md", _new_report())
+    _write_report(tmp_path, "2026-06-31-tushare-capability-probe.md", _new_report())
 
     assert readiness.latest_probe_report() == latest
     assert readiness.latest_probe_report() != older
+
+
+def test_cron_readiness_rejects_stale_report(tmp_path, monkeypatch, capsys) -> None:
+    _write_report(tmp_path, "2026-06-25-tushare-capability-probe.md", _new_report())
+    monkeypatch.setattr(readiness, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(readiness, "_today", lambda: date(2026, 6, 26))
+    monkeypatch.setitem(os.environ, "TUSHARE_TOKEN", "token")
+
+    assert readiness.main(["--scope", "cron"]) == 1
+
+    out = capsys.readouterr().out
+    assert "HOLD_CRON" in out
+    assert "latest Tushare capability probe is stale" in out
+
+
+def test_readiness_rejects_duplicate_decision_fields(tmp_path, monkeypatch) -> None:
+    _write_report(
+        tmp_path,
+        "2026-06-26-tushare-capability-probe.md",
+        _new_report() + "\nWrite Gate: FAIL\n",
+    )
+    monkeypatch.setattr(readiness, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(os.environ, "TUSHARE_TOKEN", "token")
+
+    status = readiness.readiness_status()
+
+    assert not status.daily_ready
+    assert not status.capability_ready
+    assert "Write Gate appears multiple times in latest Tushare capability probe" in status.reasons
 
 
 def test_readiness_allows_cron_when_daily_and_capabilities_pass(tmp_path, monkeypatch) -> None:
@@ -258,6 +289,7 @@ def test_main_scope_exit_codes_for_degraded_capabilities(tmp_path, monkeypatch, 
         _new_report(capability_checks="DEGRADED", dependent_jobs="HOLD"),
     )
     monkeypatch.setattr(readiness, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(readiness, "_today", lambda: date(2026, 6, 26))
     monkeypatch.setitem(os.environ, "TUSHARE_TOKEN", "token")
 
     assert readiness.main(["--scope", "cron"]) == 1
@@ -279,6 +311,7 @@ def test_main_scope_exit_codes_when_daily_fails(tmp_path, monkeypatch, capsys) -
         _new_report(write_gate="FAIL", production_decision="DAILY_WRITES_BLOCKED"),
     )
     monkeypatch.setattr(readiness, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(readiness, "_today", lambda: date(2026, 6, 26))
     monkeypatch.setitem(os.environ, "TUSHARE_TOKEN", "token")
 
     assert readiness.main(["--scope", "cron"]) == 1

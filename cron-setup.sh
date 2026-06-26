@@ -5,6 +5,8 @@
 set -e
 
 PROJECT_DIR="$HOME/a-stock-tracker"
+MANAGED_START="# >>> a-stock-tracker cron >>>"
+MANAGED_END="# <<< a-stock-tracker cron <<<"
 
 # 检查 .venv 是否存在
 if [ ! -d "$PROJECT_DIR/.venv" ]; then
@@ -28,38 +30,55 @@ MARKET_DATA_READY=0
 if "$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/scripts/check_market_data_readiness.py" >/tmp/a-stock-market-data-readiness.log 2>&1; then
     MARKET_DATA_READY=1
 else
-    echo "⚠️  行情 provider 尚未通过恢复门禁；将只配置 weekly，不新增 daily/outcome-update"
+    echo "⚠️  行情 provider 尚未通过恢复门禁；将只配置 weekly，并移除 daily/outcome-update"
     cat /tmp/a-stock-market-data-readiness.log
 fi
 
-# 检查并追加规则
-if echo "$CURRENT_CRONTAB" | grep -q "pipeline.py weekly"; then
-    echo "ℹ️  weekly 任务已存在，跳过"
-else
-    CURRENT_CRONTAB=$(echo "$CURRENT_CRONTAB"; echo ""; echo "# a-stock-tracker weekly 基本面刷新 (每周六 10:00)"; echo "$WEEKLY_RULE")
-    echo "✅ 已添加 weekly 任务"
-fi
+# 删除旧版散落规则和新版 managed block，避免旧时间、注释行或路径变化造成误判。
+BASE_CRONTAB=$(printf '%s\n' "$CURRENT_CRONTAB" | awk \
+    -v start="$MANAGED_START" \
+    -v end="$MANAGED_END" '
+    $0 == start { in_block = 1; next }
+    $0 == end { in_block = 0; next }
+    in_block { next }
+    /# a-stock-tracker/ { next }
+    /a-stock-tracker\/cron-alert-wrap\.sh/ && /pipeline\.py (weekly|daily|outcome-update)/ { next }
+    { print }
+')
+
+MANAGED_CRONTAB=$(cat <<EOF
+$MANAGED_START
+# a-stock-tracker weekly 基本面刷新 (每周六 10:00)
+$WEEKLY_RULE
+EOF
+)
+echo "✅ 已配置 weekly 任务"
 
 if [ "$MARKET_DATA_READY" -eq 1 ]; then
-    if echo "$CURRENT_CRONTAB" | grep -q "pipeline.py daily"; then
-        echo "ℹ️  daily 任务已存在，跳过"
-    else
-        CURRENT_CRONTAB=$(echo "$CURRENT_CRONTAB"; echo ""; echo "# a-stock-tracker daily (工作日 16:30)"; echo "$DAILY_RULE")
-        echo "✅ 已添加 daily 任务"
-    fi
+    MANAGED_CRONTAB=$(cat <<EOF
+$MANAGED_CRONTAB
 
-    if echo "$CURRENT_CRONTAB" | grep -q "pipeline.py outcome-update"; then
-        echo "ℹ️  outcome-update 任务已存在，跳过"
-    else
-        CURRENT_CRONTAB=$(echo "$CURRENT_CRONTAB"; echo ""; echo "# a-stock-tracker outcome-update (工作日 17:00)"; echo "$OUTCOME_RULE")
-        echo "✅ 已添加 outcome-update 任务"
-    fi
+# a-stock-tracker daily (工作日 16:30)
+$DAILY_RULE
+
+# a-stock-tracker outcome-update (工作日 17:00)
+$OUTCOME_RULE
+EOF
+)
+    echo "✅ 已配置 daily 任务"
+    echo "✅ 已配置 outcome-update 任务"
 else
-    echo "⏸️  跳过 daily / outcome-update cron；配置 TUSHARE_TOKEN 并通过 probe 后再运行本脚本"
+    echo "⏸️  已移除 daily / outcome-update cron；配置 TUSHARE_TOKEN 并通过 probe 后再运行本脚本"
 fi
 
+MANAGED_CRONTAB=$(cat <<EOF
+$MANAGED_CRONTAB
+$MANAGED_END
+EOF
+)
+
 # 写入 crontab
-echo "$CURRENT_CRONTAB" | crontab -
+printf '%s\n\n%s\n' "$BASE_CRONTAB" "$MANAGED_CRONTAB" | sed '/^$/N;/^\n$/D' | crontab -
 
 echo ""
 echo "=========================================="
@@ -67,8 +86,13 @@ echo "✨ cron 定时任务配置完成"
 echo "=========================================="
 echo "任务详情："
 echo "  • weekly:         每周六 10:00 刷新基本面缓存"
-echo "  • daily:          每个工作日 16:30 评分 + Sheets 同步"
-echo "  • outcome-update: 每个工作日 17:00 更新到期结果"
+if [ "$MARKET_DATA_READY" -eq 1 ]; then
+    echo "  • daily:          每个工作日 16:30 评分 + Sheets 同步"
+    echo "  • outcome-update: 每个工作日 17:00 更新到期结果"
+else
+    echo "  • daily:          HOLD（行情恢复门禁未通过）"
+    echo "  • outcome-update: HOLD（行情恢复门禁未通过）"
+fi
 echo ""
 echo "查看定时任务："
 echo "  crontab -l"

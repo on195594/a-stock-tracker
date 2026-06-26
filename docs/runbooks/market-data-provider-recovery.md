@@ -14,14 +14,14 @@
 必须全部满足：
 
 1. `.env` 配置 `TUSHARE_TOKEN`。
-2. `python3 scripts/probe_tushare_market_data.py` 生成新的分层决策 report。
+2. `python3 scripts/probe_tushare_market_data.py` 生成当天的分层决策 report。
 3. 最近的 `docs/reviews/*-tushare-capability-probe.md` 包含：
    - `Write Gate: PASS`
    - `Production Decision: DAILY_WRITES_ALLOWED`
    - `Capability Checks: PASS`
    - `Index/Calendar Dependent Jobs: ALLOWED`
    - `Close cross-check: PASS`
-4. `python3 scripts/check_market_data_readiness.py --scope cron` 返回 `READY_CRON`。
+4. `python3 scripts/check_market_data_readiness.py --scope cron` 返回 `READY_CRON`；cron scope 会拒绝过期 report。
 
 注意：`index_daily` / `trade_cal` 的非阻塞 failed 行不再直接代表 daily 写入不可恢复；必须看 report 的 `Write Gate` 和 `Production Decision`。但 `cron-setup.sh` 会同时恢复 `daily` 与 `outcome-update`，而 `outcome-update` 依赖沪深300指数价，因此成组 cron 恢复仍必须要求 `Index/Calendar Dependent Jobs: ALLOWED`。
 
@@ -78,7 +78,7 @@ python3 scripts/check_market_data_readiness.py --scope daily
 
 任一条件出现时停止 daily/outcome 生产写入：
 
-- `scripts/check_market_data_readiness.py --scope cron` 返回 `HOLD_CRON`：停止或不恢复成组 `daily` / `outcome-update` cron。
+- `scripts/check_market_data_readiness.py --scope cron` 返回 `HOLD_CRON`：停止或不恢复成组 `daily` / `outcome-update` cron；`cron-setup.sh` 会保留 weekly，并移除 managed/旧版 tracker daily、outcome-update 规则。
 - `scripts/check_market_data_readiness.py --scope daily` 返回 `HOLD_DAILY`：停止 daily 写入。
 - `price_at_score` 覆盖率连续两个交易日低于 95%。
 - L3 覆盖率低于 90%。
