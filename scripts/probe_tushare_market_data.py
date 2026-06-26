@@ -81,18 +81,21 @@ def _row(item: dict[str, Any]) -> str:
 def _load_reference_close(code: str, trade_date: str) -> ReferenceClose | None:
     db_path = Path(DB_PATH).expanduser()
     if db_path.exists():
-        conn = sqlite3.connect(db_path)
         try:
-            row = conn.execute(
-                """SELECT close, source
-                   FROM daily_bars
-                   WHERE code=? AND trade_date=? AND source != 'tushare.daily'
-                   ORDER BY fetched_at DESC
-                   LIMIT 1""",
-                (code, trade_date),
-            ).fetchone()
-        finally:
-            conn.close()
+            conn = sqlite3.connect(db_path)
+            try:
+                row = conn.execute(
+                    """SELECT close, source
+                       FROM daily_bars
+                       WHERE code=? AND trade_date=? AND adjusted='none' AND source != 'tushare.daily'
+                       ORDER BY fetched_at DESC
+                       LIMIT 1""",
+                    (code, trade_date),
+                ).fetchone()
+            finally:
+                conn.close()
+        except Exception:
+            row = None
         if row is not None:
             return ReferenceClose(float(row[0]), str(row[1]), trade_date)
 
