@@ -28,6 +28,7 @@ from lib.market_data import (  # noqa: E402
 from a_stock_lib.providers.baostock_quotes import (  # noqa: E402
     BAOSTOCK_SOURCE,
     BaoStockMarketDataProvider,
+    IsolatedBaoStockMarketDataProvider,
     to_baostock_index_code,
     to_baostock_stock_code,
 )
@@ -302,6 +303,7 @@ def test_default_market_data_provider_uses_tushare_when_token_present(monkeypatc
 
     assert isinstance(provider, CompositeMarketDataProvider)
     assert isinstance(provider.primary, TushareMarketDataProvider)
+    assert isinstance(provider.fallback, IsolatedBaoStockMarketDataProvider)
 
 
 def test_baostock_code_conversion() -> None:
@@ -428,7 +430,7 @@ def test_backfill_provider_allows_explicit_baostock_only(monkeypatch) -> None:
 
     provider = get_market_data_backfill_provider()
 
-    assert isinstance(provider, BaoStockMarketDataProvider)
+    assert isinstance(provider, IsolatedBaoStockMarketDataProvider)
 
 
 class _TransientFailureTushareClient:

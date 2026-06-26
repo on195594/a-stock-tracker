@@ -118,10 +118,10 @@ class RemovedMarketDataProvider:
 def get_default_market_data_provider() -> MarketDataProvider:
     token = os.environ.get("TUSHARE_TOKEN", "")
     if token:
-        from a_stock_lib.providers.baostock_quotes import BaoStockMarketDataProvider
+        from a_stock_lib.providers.baostock_quotes import IsolatedBaoStockMarketDataProvider
         from a_stock_lib.providers.tushare_quotes import TushareMarketDataProvider
 
-        fallback = BaoStockMarketDataProvider()
+        fallback = IsolatedBaoStockMarketDataProvider()
         return CompositeMarketDataProvider(TushareMarketDataProvider(token=token), fallback)
     return RemovedMarketDataProvider()
 
@@ -130,9 +130,9 @@ def get_market_data_backfill_provider() -> MarketDataProvider:
     if os.environ.get("TUSHARE_TOKEN"):
         return get_default_market_data_provider()
     if os.environ.get("MARKET_DATA_ALLOW_BAOSTOCK_ONLY") == "1":
-        from a_stock_lib.providers.baostock_quotes import BaoStockMarketDataProvider
+        from a_stock_lib.providers.baostock_quotes import IsolatedBaoStockMarketDataProvider
 
-        return BaoStockMarketDataProvider()
+        return IsolatedBaoStockMarketDataProvider()
     return RemovedMarketDataProvider()
 
 
