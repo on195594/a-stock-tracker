@@ -9,26 +9,62 @@
 - `AUTH_MISSING`：缺少 `TUSHARE_TOKEN` 或 token 无法认证。
 - `degraded`：主源 Tushare 失败后，fallback 源返回了可用数据。
 
-## 恢复 daily / outcome cron 前置条件
+## 恢复 daily / outcome 成组 cron 前置条件
 
 必须全部满足：
 
 1. `.env` 配置 `TUSHARE_TOKEN`。
-2. `python3 scripts/probe_tushare_market_data.py` 输出 `PASS`。
-3. 最近的 `docs/reviews/*-tushare-capability-probe.md` 不含 failed 行。
-4. 最近的 probe report 包含 `Close cross-check: PASS`；若为 `MANUAL_REQUIRED`，需要先补齐本地参考行情或人工对账后再更新 probe 证据。
-5. `python3 scripts/check_market_data_readiness.py` 返回 `READY`。
+2. `python3 scripts/probe_tushare_market_data.py` 生成新的分层决策 report。
+3. 最近的 `docs/reviews/*-tushare-capability-probe.md` 包含：
+   - `Write Gate: PASS`
+   - `Production Decision: DAILY_WRITES_ALLOWED`
+   - `Capability Checks: PASS`
+   - `Index/Calendar Dependent Jobs: ALLOWED`
+   - `Close cross-check: PASS`
+4. `python3 scripts/check_market_data_readiness.py --scope cron` 返回 `READY_CRON`。
+
+注意：`index_daily` / `trade_cal` 的非阻塞 failed 行不再直接代表 daily 写入不可恢复；必须看 report 的 `Write Gate` 和 `Production Decision`。但 `cron-setup.sh` 会同时恢复 `daily` 与 `outcome-update`，而 `outcome-update` 依赖沪深300指数价，因此成组 cron 恢复仍必须要求 `Index/Calendar Dependent Jobs: ALLOWED`。
+
+若 `Close cross-check` 为 `MANUAL_REQUIRED`，需要先补齐本地参考行情或人工对账后再更新 probe 证据。
 
 ## 恢复步骤
 
 ```bash
 source .venv/bin/activate
 python3 scripts/probe_tushare_market_data.py
-python3 scripts/check_market_data_readiness.py
+python3 scripts/check_market_data_readiness.py --scope cron
 python3 pipeline.py market-data-backfill --start 2025-01-01 --end 2026-06-09
 python3 pipeline.py accuracy-report
 sqlite3 tracker.db "SELECT error_code, COUNT(*) FROM market_data_audit WHERE error_code='SOURCE_DISABLED' GROUP BY error_code;"
 bash cron-setup.sh
+```
+
+## Staged daily 恢复
+
+当最近 report 显示：
+
+- `Write Gate: PASS`
+- `Production Decision: DAILY_WRITES_ALLOWED`
+- `Close cross-check: PASS`
+- `Capability Checks: DEGRADED`
+- `Index/Calendar Dependent Jobs: HOLD`
+
+则可以把下面命令的结果作为 staged daily 恢复讨论证据：
+
+```bash
+python3 scripts/check_market_data_readiness.py --scope daily
+```
+
+若返回 `READY_DAILY`，仅说明股票日线写入门禁通过，不代表 `outcome-update` 或 index/calendar-dependent jobs 可以恢复。
+
+在此状态下：
+
+- 严禁执行 `bash cron-setup.sh` 恢复成组 cron。
+- 严禁添加 `outcome-update` cron。
+- 只有 PM 明确授权 staged daily 恢复后，才可手工添加单条 `daily` cron：
+
+```bash
+(crontab -l 2>/dev/null | grep -v "pipeline.py daily" || true; echo "30 16 * * 1-5 /home/lin/a-stock-tracker/cron-alert-wrap.sh \"cd /home/lin/a-stock-tracker && .venv/bin/python pipeline.py daily\" daily >> /home/lin/a-stock-tracker/logs/daily.log 2>&1") | crontab -
 ```
 
 ## BaoStock 边界
@@ -42,7 +78,8 @@ bash cron-setup.sh
 
 任一条件出现时停止 daily/outcome 生产写入：
 
-- `scripts/check_market_data_readiness.py` 返回 `NOT_READY`。
+- `scripts/check_market_data_readiness.py --scope cron` 返回 `HOLD_CRON`：停止或不恢复成组 `daily` / `outcome-update` cron。
+- `scripts/check_market_data_readiness.py --scope daily` 返回 `HOLD_DAILY`：停止 daily 写入。
 - `price_at_score` 覆盖率连续两个交易日低于 95%。
 - L3 覆盖率低于 90%。
 - 任一 L3 窗口出现 mixed source / mixed adjustment / unknown volume unit。

@@ -83,7 +83,7 @@ avg_score 有约 4-5 分系统性偏移，Phase 4 optimizer 训练需按 score_d
 **行情数据源（2026-06-09 起迁移，与基本面数据源分离）**：AKShare/东方财富**行情**入口已禁用，
 `lib/market_data.py` 默认 provider 返回 `SOURCE_DISABLED`。当前行情主源是 `a-stock-lib==0.1.2`
 中的 Tushare provider（需 `TUSHARE_TOKEN`），失败后降级到同包 BaoStock provider（degraded）。`_ensure_index_prices` 走同一套 provider，不再直连
-新浪/腾讯接口。启用前必须 `python3 scripts/check_market_data_readiness.py` 返回 `READY`
+新浪/腾讯接口。成组恢复 `daily` / `outcome-update` 前必须 `python3 scripts/check_market_data_readiness.py --scope cron` 返回 `READY_CRON`
 （最新探测报告见 `docs/reviews/*-tushare-capability-probe.md`）。详见
 `docs/runbooks/market-data-provider-recovery.md` 和
 `docs/plans/2026-06-09-market-data-provider-replacement-plan.md`。
