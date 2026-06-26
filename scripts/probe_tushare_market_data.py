@@ -7,7 +7,7 @@ import sys
 import time
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, Callable, NamedTuple
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -31,6 +31,34 @@ class ReferenceClose(NamedTuple):
     trade_date: str
 
 
+class ProbeCheck(NamedTuple):
+    label: str
+    kind: str
+    blocking: bool
+    code: str
+    status: str
+    source: str
+    error_code: str
+    error_message: str
+    rows: int
+    elapsed_ms: float
+    latest_trade_date: str
+    latest_close: float | None
+
+
+class ProbeDecision(NamedTuple):
+    write_gate_status: str
+    capability_status: str
+    exit_code: int
+    production_decision: str
+    dependent_jobs: str
+    reason: str
+
+
+CAPABILITY_KINDS = {"index_daily", "trade_cal"}
+DEGRADED_CAPABILITY_ERRORS = {"RATE_LIMITED"}
+
+
 def _load_dotenv() -> None:
     env_path = PROJECT_ROOT / ".env"
     if not env_path.exists():
@@ -43,7 +71,14 @@ def _load_dotenv() -> None:
         os.environ.setdefault(key.strip(), value.strip())
 
 
-def _timed(label: str, fn, code: str | None = None) -> dict[str, Any]:
+def _timed(
+    label: str,
+    fn: Callable[[], Any],
+    *,
+    kind: str,
+    blocking: bool,
+    code: str | None = None,
+) -> ProbeCheck:
     started = time.perf_counter()
     result = fn()
     elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
@@ -57,24 +92,32 @@ def _timed(label: str, fn, code: str | None = None) -> dict[str, Any]:
             row = result.value.iloc[-1]
             latest_trade_date = str(row["date"])[:10]
             latest_close = float(row["close"])
-    return {
-        "label": label,
-        "code": code or "",
-        "status": result.status,
-        "source": result.source,
-        "error_code": result.error_code or "",
-        "error_message": result.error_message or "",
-        "rows": ok_rows,
-        "elapsed_ms": elapsed_ms,
-        "latest_trade_date": latest_trade_date,
-        "latest_close": latest_close,
-    }
+    return ProbeCheck(
+        label=label,
+        kind=kind,
+        blocking=blocking,
+        code=code or "",
+        status=result.status,
+        source=result.source,
+        error_code=result.error_code or "",
+        error_message=result.error_message or "",
+        rows=ok_rows,
+        elapsed_ms=elapsed_ms,
+        latest_trade_date=latest_trade_date,
+        latest_close=latest_close,
+    )
 
 
-def _row(item: dict[str, Any]) -> str:
+def _item_value(item: dict[str, Any] | ProbeCheck, key: str) -> Any:
+    if isinstance(item, dict):
+        return item[key]
+    return getattr(item, key)
+
+
+def _row(item: ProbeCheck) -> str:
     return (
-        f"| {item['label']} | {item['status']} | {item['source']} | {item['rows']} | "
-        f"{item['elapsed_ms']} | {item['error_code']} | {item['error_message'][:120]} |"
+        f"| {item.label} | {'yes' if item.blocking else 'no'} | {item.status} | {item.source} | "
+        f"{item.rows} | {item.elapsed_ms} | {item.error_code} | {item.error_message[:120]} |"
     )
 
 
@@ -119,16 +162,16 @@ def _load_reference_close(code: str, trade_date: str) -> ReferenceClose | None:
     return ReferenceClose(float(result.value), result.source, reference_date)
 
 
-def _close_cross_checks(checks: list[dict[str, Any]]) -> tuple[str, list[str]]:
+def _close_cross_checks(checks: list[dict[str, Any] | ProbeCheck]) -> tuple[str, list[str]]:
     rows: list[str] = []
     failures = 0
     checked = 0
     missing_reference = 0
     date_mismatches = 0
     for item in checks:
-        code = item["code"]
-        trade_date = item["latest_trade_date"]
-        latest_close = item["latest_close"]
+        code = _item_value(item, "code")
+        trade_date = _item_value(item, "latest_trade_date")
+        latest_close = _item_value(item, "latest_close")
         if not code or not trade_date or latest_close is None:
             continue
         reference = _load_reference_close(code, trade_date)
@@ -160,41 +203,60 @@ def _close_cross_checks(checks: list[dict[str, Any]]) -> tuple[str, list[str]]:
     return "PASS", rows
 
 
-def main() -> int:
-    _load_dotenv()
-    token = os.environ.get("TUSHARE_TOKEN")
-    today = date.today()
-    start = (today - timedelta(days=365)).isoformat()
-    end = today.isoformat()
-    provider = TushareMarketDataProvider(token=token)
+def _classify_capabilities(checks: list[ProbeCheck]) -> str:
+    capability_checks = [item for item in checks if item.kind in CAPABILITY_KINDS]
+    failed = [item for item in capability_checks if item.status == "failed"]
+    if not failed:
+        return "PASS"
+    if all(item.error_code in DEGRADED_CAPABILITY_ERRORS for item in failed):
+        return "DEGRADED"
+    return "BLOCKED"
 
-    checks: list[dict[str, Any]] = []
-    for code in SAMPLES:
-        checks.append(
-            _timed(
-                f"daily {code} ({to_tushare_stock_code(code)})",
-                lambda code=code: provider.fetch_l3_bars(code, end, 120),
-                code=code,
-            )
-        )
-    checks.append(
-        _timed(
-            f"index_daily {INDEX_SAMPLE} ({to_tushare_index_code(INDEX_SAMPLE)})",
-            lambda: provider.fetch_index_bars(INDEX_SAMPLE),
-        )
-    )
-    checks.append(
-        _timed(
-            "trade_cal SSE",
-            lambda: provider.fetch_trade_calendar(start, end),
-        )
+
+def _decide_probe(token: str | None, checks: list[ProbeCheck], close_status: str) -> ProbeDecision:
+    capability_status = _classify_capabilities(checks)
+    blocking_failures = [item for item in checks if item.blocking and item.status == "failed"]
+    if not token:
+        write_gate_status = "FAIL"
+        reason = "TUSHARE_TOKEN is not configured"
+    elif blocking_failures:
+        write_gate_status = "FAIL"
+        reason = "blocking daily checks failed"
+    elif close_status == "PASS":
+        write_gate_status = "PASS"
+        reason = "daily close cross-check passed"
+    elif close_status == "MANUAL_REQUIRED":
+        write_gate_status = "MANUAL_REQUIRED"
+        reason = "daily close cross-check requires manual review"
+    else:
+        write_gate_status = "FAIL"
+        reason = "daily close cross-check failed"
+
+    exit_code = 0 if write_gate_status == "PASS" else 1
+    production_decision = "DAILY_WRITES_ALLOWED" if write_gate_status == "PASS" else "DAILY_WRITES_BLOCKED"
+    dependent_jobs = "ALLOWED" if write_gate_status == "PASS" and capability_status == "PASS" else "HOLD"
+    return ProbeDecision(
+        write_gate_status=write_gate_status,
+        capability_status=capability_status,
+        exit_code=exit_code,
+        production_decision=production_decision,
+        dependent_jobs=dependent_jobs,
+        reason=reason,
     )
 
-    close_status, close_rows = _close_cross_checks(checks)
-    passed = all(item["status"] != "failed" for item in checks) and close_status == "PASS"
-    report_date = today.isoformat()
-    report_path = PROJECT_ROOT / "docs" / "reviews" / f"{report_date}-tushare-capability-probe.md"
-    lines = [
+
+def _render_report(
+    *,
+    report_date: str,
+    token: str | None,
+    start: str,
+    end: str,
+    checks: list[ProbeCheck],
+    close_status: str,
+    close_rows: list[str],
+    decision: ProbeDecision,
+) -> list[str]:
+    return [
         "# Tushare Capability Probe",
         "",
         f"Run date: {report_date}",
@@ -202,8 +264,16 @@ def main() -> int:
         f"Date range: {start} -> {end}",
         f"Volume unit assumption: `{TUSHARE_VOLUME_UNIT}`",
         "",
-        "| Check | Status | Source | Rows | Latency ms | Error | Message |",
-        "|---|---|---|---:|---:|---|---|",
+        "## Decision",
+        "",
+        f"Write Gate: {decision.write_gate_status}",
+        f"Capability Checks: {decision.capability_status}",
+        f"Production Decision: {decision.production_decision}",
+        f"Index/Calendar Dependent Jobs: {decision.dependent_jobs}",
+        f"Reason: {decision.reason}",
+        "",
+        "| Check | Blocking | Status | Source | Rows | Latency ms | Error | Message |",
+        "|---|---|---|---|---:|---:|---|---|",
         *[_row(item) for item in checks],
         "",
         "## Close Cross-Check",
@@ -214,18 +284,69 @@ def main() -> int:
         "|---|---|---:|---|---:|---|---:|---|",
         *(close_rows or ["|  |  |  |  |  |  |  | MISSING_REFERENCE |"]),
         "",
-        "## Result",
+        "## Write Gate Result",
         "",
-        "PASS" if passed else "FAIL",
+        decision.write_gate_status,
         "",
-        "Close-price cross-check must be PASS before enabling production writes.",
+        "Daily production writes require Write Gate PASS. Capability DEGRADED/BLOCKED means index/calendar-dependent jobs remain on hold.",
     ]
+
+
+def main() -> int:
+    _load_dotenv()
+    token = os.environ.get("TUSHARE_TOKEN")
+    today = date.today()
+    start = (today - timedelta(days=365)).isoformat()
+    end = today.isoformat()
+    provider = TushareMarketDataProvider(token=token)
+
+    checks: list[ProbeCheck] = []
+    for code in SAMPLES:
+        checks.append(
+            _timed(
+                f"daily {code} ({to_tushare_stock_code(code)})",
+                lambda code=code: provider.fetch_l3_bars(code, end, 120),
+                kind="daily",
+                blocking=True,
+                code=code,
+            )
+        )
+    checks.append(
+            _timed(
+                f"index_daily {INDEX_SAMPLE} ({to_tushare_index_code(INDEX_SAMPLE)})",
+                lambda: provider.fetch_index_bars(INDEX_SAMPLE),
+                kind="index_daily",
+                blocking=False,
+            )
+        )
+    checks.append(
+            _timed(
+                "trade_cal SSE",
+                lambda: provider.fetch_trade_calendar(start, end),
+                kind="trade_cal",
+                blocking=False,
+            )
+        )
+
+    close_status, close_rows = _close_cross_checks(checks)
+    decision = _decide_probe(token, checks, close_status)
+    report_date = today.isoformat()
+    report_path = PROJECT_ROOT / "docs" / "reviews" / f"{report_date}-tushare-capability-probe.md"
+    lines = _render_report(
+        report_date=report_date,
+        token=token,
+        start=start,
+        end=end,
+        checks=checks,
+        close_status=close_status,
+        close_rows=close_rows,
+        decision=decision,
+    )
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"probe report: {report_path}")
-    if not passed:
+    if decision.exit_code != 0:
         print("Tushare probe failed; stop before Phase 1 production enablement.", file=sys.stderr)
-        return 1
-    return 0
+    return decision.exit_code
 
 
 if __name__ == "__main__":
