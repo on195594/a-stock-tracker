@@ -70,6 +70,7 @@ def timed_call_with_retry(fn: Callable[..., Any], *args: Any,
                           **kwargs: Any) -> Any | str | tuple[str, str]:
     """带指数退避的重试版 timed_call，专用于已知不稳定的 API"""
     import time
+    result: Any = ("ERROR", "no attempts made")
     for attempt in range(max_retries):
         result = timed_call(fn, *args, timeout=timeout, **kwargs)
         if isinstance(result, (str, tuple)):
@@ -97,6 +98,8 @@ def parse_float(val: Any, default: float | None = None) -> float | None:
 
 def avg_of(series: Any, n: int) -> float | None:
     """取 series 最后 n 行，计算非 None 值的均值，保留2位小数"""
+    if series is None:
+        return None
     vals = [fv for v in series.tail(n) if (fv := parse_float(v)) is not None]
     return round(sum(vals) / len(vals), 2) if vals else None
 

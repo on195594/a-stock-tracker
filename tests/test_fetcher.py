@@ -490,3 +490,24 @@ def test_gross_margin_sort_order_latest_first(monkeypatch):
     # 如果排序错误取最旧3年：2021(20%), 2022(25%), 2023(30%) → 均值25%
     assert result is not None
     assert abs(result - 28.33) < 0.1, f"应取最新3年，期望≈28.33%，实际={result}"
+
+
+# ---------------------------------------------------------------------------
+# timed_call_with_retry / avg_of 回归测试（2026-06-29 修复）
+# ---------------------------------------------------------------------------
+
+def test_timed_call_with_retry_max_retries_zero_returns_not_raises():
+    """max_retries=0 时不应抛 UnboundLocalError，应返回失败哨兵而非崩溃。"""
+    def always_fail() -> str:
+        return "TIMEOUT"
+
+    result = fetcher_mod.timed_call_with_retry(always_fail, max_retries=0, timeout=1)
+    assert isinstance(result, (str, tuple)), (
+        f"max_retries=0 应返回失败哨兵（str/tuple），实际得到 {type(result)}"
+    )
+
+
+def test_avg_of_none_series_returns_none():
+    """series=None 时应直接返回 None，不抛 AttributeError。"""
+    result = fetcher_mod.avg_of(None, 3)
+    assert result is None
