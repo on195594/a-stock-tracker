@@ -2,7 +2,7 @@ akshare
 tushare
 baostock
 --find-links ../a-stock-lib/dist
-a-stock-lib==0.1.2
+a-stock-lib==0.1.3
 pytest
 ruff
 mypy
