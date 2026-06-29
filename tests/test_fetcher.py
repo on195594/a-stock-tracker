@@ -497,13 +497,14 @@ def test_gross_margin_sort_order_latest_first(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_timed_call_with_retry_max_retries_zero_returns_not_raises():
-    """max_retries=0 时不应抛 UnboundLocalError，应返回失败哨兵而非崩溃。"""
+    """max_retries=0 时不应抛 UnboundLocalError，应返回初始化哨兵而非崩溃。"""
+    # fn is never called when max_retries=0; range(0) is an empty sequence
     def always_fail() -> str:
         return "TIMEOUT"
 
     result = fetcher_mod.timed_call_with_retry(always_fail, max_retries=0, timeout=1)
-    assert isinstance(result, (str, tuple)), (
-        f"max_retries=0 应返回失败哨兵（str/tuple），实际得到 {type(result)}"
+    assert result == ("ERROR", "no attempts made"), (
+        f"max_retries=0 应返回初始化哨兵 ('ERROR', 'no attempts made')，实际得到 {result!r}"
     )
 
 
