@@ -13,6 +13,7 @@ import logging
 from typing import Any, Callable
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+from a_stock_lib.fetcher_utils import detect_split_ratio as _detect_split_ratio
 
 import pandas as pd
 
@@ -278,42 +279,6 @@ def _compute_gross_margin(code: str, industry: str) -> float | None:
         logger.warning(f"  ⚠️ {code} 毛利率 {result_val}% 超出合理范围，置 None")
         return None
     return result_val
-
-
-def _detect_split_ratio(
-    fhps_df: Any,
-    latest_report_year: int | None,
-) -> tuple[float, str | None]:
-    """从 stock_fhps_detail_em 数据检测年报截止日后已实施的送转比例。
-
-    触发条件：方案进度==实施分配 + 除权日在最新年报12-31之后 + 除权日<=今日 + 送转比例>0
-    返回 (cumulative_split_ratio, latest_ex_date_str)。无送转时返回 (0.0, None)。
-    """
-    import pandas as pd
-    if fhps_df is None or getattr(fhps_df, 'empty', True) or not latest_report_year:
-        return 0.0, None
-    ratio_col = '送转股份-送转总比例'
-    date_col  = '除权除息日'
-    prog_col  = '方案进度'
-    if ratio_col not in fhps_df.columns or date_col not in fhps_df.columns:
-        return 0.0, None
-    df = fhps_df.copy()
-    df['_ex_date'] = pd.to_datetime(df[date_col], errors='coerce')
-    df['_ratio']   = pd.to_numeric(df[ratio_col], errors='coerce').fillna(0)
-    cutoff = pd.Timestamp(f'{latest_report_year}-12-31')
-    today  = pd.Timestamp.now().normalize()
-    cond = (df['_ex_date'] > cutoff) & (df['_ex_date'] <= today) & (df['_ratio'] > 0)
-    if prog_col in df.columns:
-        cond = cond & (df[prog_col] == '实施分配')
-    recent = df[cond]
-    if recent.empty:
-        return 0.0, None
-    recent = recent.sort_values('_ex_date')
-    latest_ex_date = recent.iloc[-1]['_ex_date'].strftime('%Y-%m-%d')
-    factor = 1.0
-    for _, row in recent.iterrows():
-        factor *= (1.0 + float(row['_ratio']) / 10)
-    return round(factor - 1.0, 6), latest_ex_date
 
 
 # ─── 命令实现 ────────────────────────────────────────────────────────────────
