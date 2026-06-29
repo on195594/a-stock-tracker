@@ -118,6 +118,10 @@ def _fetch_dividends(code: str) -> Any:
     return akshare_provider.stock_history_dividend_detail(code)
 
 
+def _fetch_fhps_detail(code: str) -> Any:
+    return akshare_provider.stock_fhps_detail_em(code)
+
+
 def _fetch_price_history(code: str, start_date: str, end_date: str) -> Any:
     return akshare_provider.stock_zh_a_hist(code, start_date, end_date)
 
@@ -273,6 +277,42 @@ def _compute_gross_margin(code: str, industry: str) -> float | None:
     return result_val
 
 
+def _detect_split_ratio(
+    fhps_df: Any,
+    latest_report_year: int | None,
+) -> tuple[float, str | None]:
+    """从 stock_fhps_detail_em 数据检测年报截止日后已实施的送转比例。
+
+    触发条件：方案进度==实施分配 + 除权日在最新年报12-31之后 + 除权日<=今日 + 送转比例>0
+    返回 (cumulative_split_ratio, latest_ex_date_str)。无送转时返回 (0.0, None)。
+    """
+    import pandas as pd
+    if fhps_df is None or getattr(fhps_df, 'empty', True) or not latest_report_year:
+        return 0.0, None
+    ratio_col = '送转股份-送转总比例'
+    date_col  = '除权除息日'
+    prog_col  = '方案进度'
+    if ratio_col not in fhps_df.columns or date_col not in fhps_df.columns:
+        return 0.0, None
+    df = fhps_df.copy()
+    df['_ex_date'] = pd.to_datetime(df[date_col], errors='coerce')
+    df['_ratio']   = pd.to_numeric(df[ratio_col], errors='coerce').fillna(0)
+    cutoff = pd.Timestamp(f'{latest_report_year}-12-31')
+    today  = pd.Timestamp.now().normalize()
+    cond = (df['_ex_date'] > cutoff) & (df['_ex_date'] <= today) & (df['_ratio'] > 0)
+    if prog_col in df.columns:
+        cond = cond & (df[prog_col] == '实施分配')
+    recent = df[cond]
+    if recent.empty:
+        return 0.0, None
+    recent = recent.sort_values('_ex_date')
+    latest_ex_date = recent.iloc[-1]['_ex_date'].strftime('%Y-%m-%d')
+    factor = 1.0
+    for _, row in recent.iterrows():
+        factor *= (1.0 + float(row['_ratio']) / 10)
+    return round(factor - 1.0, 6), latest_ex_date
+
+
 # ─── 命令实现 ────────────────────────────────────────────────────────────────
 
 def cmd_fetch(args: list[str]) -> None:
@@ -339,6 +379,30 @@ def cmd_fetch(args: list[str]) -> None:
         print(f"  ✅ ROE3y={results.get('roe_3y_avg')}% | "
               f"净利增速={results.get('net_profit_growth')}% | "
               f"负债率={results.get('debt_ratio')}% | EPS={eps} | BPS={bps}")
+
+    # ── Step 2.5：送转复权检测（修正 BPS 口径）──
+    print("  [2.5/7] 送转复权检测...", flush=True)
+    latest_report_year: int | None = None
+    try:
+        if results.get('report_period'):
+            latest_report_year = int(str(results['report_period'])[:4])
+    except (ValueError, TypeError):
+        pass
+    fhps_df = timed_call(_fetch_fhps_detail, code, timeout=API_TIMEOUT)
+    if isinstance(fhps_df, (str, tuple)):
+        logger.warning("  ⚠️ 送转数据获取失败，跳过复权检测")
+    elif fhps_df is not None and bps is not None:
+        split_ratio, split_ex_date = _detect_split_ratio(fhps_df, latest_report_year)
+        if split_ratio > 0:
+            bps_adj = round(bps / (1 + split_ratio), 4)
+            logger.warning(
+                "  ⚠️ 检测到送转（比例=%.4f，除权日=%s），BPS调整: %.4f→%.4f",
+                split_ratio, split_ex_date, bps, bps_adj,
+            )
+            bps = bps_adj
+            results['bps'] = bps_adj
+        else:
+            print("  ✅ 无送转，BPS无需调整")
 
     # ── Step 3：PE / PB / 最新价（stock_zh_a_spot_em 当日快照）──
     print("  [3/7] PE_TTM / PB / 最新价（spot_em 快照）...", flush=True)
@@ -419,6 +483,19 @@ def cmd_fetch(args: list[str]) -> None:
         results['pb'] = round(current_price / bps, 2)
         null_reasons.pop('pb', None)
         print(f"  ✅ PB fallback={results['pb']}")
+
+    # 跨源一致性校验：PE口径偏差超过25%时告警（可能是未处理的送转复权）
+    _pe_from_market = results.get('pe_ttm')
+    if (_pe_from_market and _pe_from_market > 0
+            and eps and eps > 0 and current_price and current_price > 0):
+        _pe_from_eps = current_price / eps
+        _pe_deviation = abs(_pe_from_eps - _pe_from_market) / _pe_from_market
+        if _pe_deviation > 0.25:
+            logger.warning(
+                "  ⚠️ PE口径偏差 %.0f%%：price/eps=%.2f vs spot_pe=%.2f，"
+                "可能存在未处理送转复权，请检查 Step 2.5 日志",
+                _pe_deviation * 100, _pe_from_eps, _pe_from_market,
+            )
 
     # ── Step 4：股息率（分红历史 ÷ 当前价）──
     print("  [4/7] 计算股息率...", flush=True)

@@ -42,3 +42,7 @@ def stock_zh_valuation_baidu(code: str) -> Any:
 def stock_financial_report_sina(code: str) -> Any:
     prefix = "sh" if code.startswith("6") else "sz"
     return ak.stock_financial_report_sina(stock=f"{prefix}{code}", symbol="利润表")
+
+
+def stock_fhps_detail_em(code: str) -> Any:
+    return ak.stock_fhps_detail_em(symbol=code)

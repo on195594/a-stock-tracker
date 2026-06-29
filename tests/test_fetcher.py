@@ -298,6 +298,110 @@ def test_daily_pb_percentile_rounding():
 
 
 # ---------------------------------------------------------------------------
+# _detect_split_ratio 测试
+# ---------------------------------------------------------------------------
+
+def _make_fhps_df(ratio: float, ex_date: str, progress: str = "实施分配") -> pd.DataFrame:
+    """构造 stock_fhps_detail_em 风格的 DataFrame。"""
+    return pd.DataFrame({
+        "送转股份-送转总比例": [ratio],
+        "除权除息日":          [ex_date],
+        "方案进度":            [progress],
+    })
+
+
+def test_detect_split_ratio_no_data():
+    """None/empty 输入返回 (0.0, None)。"""
+    assert fetcher_mod._detect_split_ratio(None, 2025) == (0.0, None)
+    assert fetcher_mod._detect_split_ratio(pd.DataFrame(), 2025) == (0.0, None)
+    assert fetcher_mod._detect_split_ratio(_make_fhps_df(2.0, "2026-05-26"), None) == (0.0, None)
+
+
+def test_detect_split_ratio_normal():
+    """10转2（比例=2）在报告年后实施 → 返回 (0.2, 除权日)。"""
+    fhps_df = _make_fhps_df(ratio=2.0, ex_date="2026-05-26")
+    ratio, ex_date = fetcher_mod._detect_split_ratio(fhps_df, latest_report_year=2025)
+    assert abs(ratio - 0.2) < 1e-5
+    assert ex_date == "2026-05-26"
+
+
+def test_detect_split_ratio_future_ex_date_ignored():
+    """除权日在今天之后的送转不计入。"""
+    fhps_df = _make_fhps_df(ratio=2.0, ex_date="2099-01-01")
+    ratio, ex_date = fetcher_mod._detect_split_ratio(fhps_df, latest_report_year=2025)
+    assert ratio == 0.0
+    assert ex_date is None
+
+
+def test_detect_split_ratio_before_report_year_ignored():
+    """除权日在年报截止日（2025-12-31）之前的送转不计入。"""
+    fhps_df = _make_fhps_df(ratio=2.0, ex_date="2025-06-01")
+    ratio, _ = fetcher_mod._detect_split_ratio(fhps_df, latest_report_year=2025)
+    assert ratio == 0.0
+
+
+def test_detect_split_ratio_not_implemented_ignored():
+    """方案进度非"实施分配"的记录不计入。"""
+    fhps_df = _make_fhps_df(ratio=2.0, ex_date="2026-05-26", progress="董事会预案")
+    ratio, _ = fetcher_mod._detect_split_ratio(fhps_df, latest_report_year=2025)
+    assert ratio == 0.0
+
+
+def test_bps_adjusted_in_cmd_fetch(monkeypatch) -> None:
+    """cmd_fetch 检测到送转后，results['bps'] 应按比例缩减（10转2 → bps/1.2）。"""
+    captured: dict = {}
+    fin_df = pd.DataFrame({
+        "报告期": ["2023", "2024", "2025"],
+        "净资产收益率": [10.0, 11.0, 12.0],
+        "净利润同比增长率": [5.0, 6.0, 7.0],
+        "资产负债率": [40.0, 41.0, 42.0],
+        "基本每股收益": [1.0, 1.1, 1.2],
+        "每股净资产": [8.0, 9.0, 12.04],
+    })
+    fhps_df = _make_fhps_df(ratio=2.0, ex_date="2026-05-26")
+    div_df = pd.DataFrame({
+        "进度": ["实施"],
+        "除权除息日": ["2026-01-15"],
+        "派息": [2.0],
+    })
+    snapshot = [{
+        "代码": "603606",
+        "市盈率-动态": "27.0",
+        "市净率": "4.1",
+        "最新价": "42.0",
+        "总市值": "100",
+        "流通市值": "80",
+    }]
+
+    def fake_timed_call(fn, *args, **kwargs):
+        if fn is fetcher_mod._fetch_info:
+            return {"股票简称": "东方电缆", "行业": "电力设备", "最新": "42.0"}
+        if fn is fetcher_mod._fetch_fhps_detail:
+            return fhps_df
+        if fn is fetcher_mod._fetch_dividends:
+            return div_df
+        return ("ERROR", "unexpected")
+
+    monkeypatch.setattr(fetcher_mod, "timed_call", fake_timed_call)
+    monkeypatch.setattr(fetcher_mod, "timed_call_with_retry", lambda *a, **k: fin_df)
+    monkeypatch.setattr(fetcher_mod, "get_spot_em_snapshot", lambda *a, **k: snapshot)
+    monkeypatch.setattr(fetcher_mod, "_compute_gross_margin", lambda *a, **k: 30.0)
+    monkeypatch.setattr(fetcher_mod, "_fetch_pb_hist_and_percentile", lambda *a, **k: (20.0, [1.0] * 24))
+    monkeypatch.setattr(
+        fetcher_mod, "set_fundamentals",
+        lambda code, name, industry, data, ttl=None, merge=False: captured.update({"data": data}) or "ok",
+    )
+
+    fetcher_mod.cmd_fetch(["603606"])
+
+    bps_stored = captured["data"]["bps"]
+    expected_bps = round(12.04 / 1.2, 4)
+    assert abs(bps_stored - expected_bps) < 1e-4, (
+        f"BPS 未正确复权：期望 {expected_bps}，实际 {bps_stored}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # set_fundamentals merge=True 测试
 # ---------------------------------------------------------------------------
 
