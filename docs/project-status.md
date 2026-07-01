@@ -7,6 +7,8 @@
 
 项目已从行情修复/cron 恢复阶段切回稳定运行观察阶段。当前 active phase 是 **Phase 6 report-only 深化**；Framework B 仍不得生产写入。
 
+2026-07-01 已完成共享包版本对齐：本项目锁定并验证 `a-stock-lib==0.2.0`，继续只保留 tracker 专属的环境门禁、SQLite 缓存、cron 编排和评分管道。
+
 ## Active Phase
 
 | Phase | 状态 | 当前动作 | 下一检查点 | Exit criteria |
@@ -20,7 +22,7 @@
 
 | 项目 | 当前状态 | 证据 |
 |---|---|---|
-| 行情 provider | Tushare 主源 + 隔离 BaoStock degraded fallback | `a-stock-lib==0.2.0`，`lib/market_data.py` 已使用 `IsolatedBaoStockMarketDataProvider` |
+| 行情 provider | Tushare 主源 + 隔离 BaoStock degraded fallback | `a-stock-lib==0.2.0`，`lib/market_data.py` 已使用 `IsolatedBaoStockMarketDataProvider`；2026-07-01 tracker 测试 `205 passed` |
 | readiness | `READY_CRON` | `scripts/check_market_data_readiness.py --scope cron` |
 | cron | 已恢复 | managed block 管理 weekly / daily / outcome-update |
 | 真实 probe | 已通过 | `docs/reviews/2026-06-26-tushare-capability-probe.md` |
@@ -35,6 +37,7 @@
 |---|---|---|---|---|
 | `docs/evolution-roadmap.md` | v1.6 当前基线 | Hermes PM | 随 Phase 状态变化更新 | 和真实系统状态一致 |
 | `docs/plans/2026-06-26-phase6-report-only-next-steps.md` | active | Hermes PM | cron 自然运行一轮后执行 P3-B 周度复核 | B label review 前 report-only 流程稳定 |
+| `/home/lin/a-stock-lib/docs/plans/2026-07-01-three-project-next-work-plan.md` | active cross-project plan | Hermes PM | 按 P0/P1/P2 顺序推进共享包、tracker、research 联动事项 | 三项目版本/文档/任务边界一致 |
 | `docs/runbooks/market-data-provider-recovery.md` | active | Hermes PM | 若 readiness/cron 语义变更则同步 | HOLD/READY 行为与 `cron-setup.sh` 一致 |
 | `docs/reviews/2026-06-26-tushare-capability-probe.md` | latest readiness evidence | 系统探测 | 新 probe 覆盖旧证据 | 最新交易日 probe PASS |
 | `accuracy_report.txt` | latest report | pipeline | 每周更新 | Phase 6 仍明确 report-only |
@@ -45,7 +48,7 @@
 |---|---|---|---|
 | B label 已结案样本不足 `0/20` | 阻止 Framework B 生产化 | 已结案 ≥20 且 overdue=0 | 最早 2026-07-26 后 |
 | L3 30d 样本不足 `0/30` | 无法判断 L3 信号有效性 | L3 30d 已结案 ≥30 | 等自然结案 |
-| cron 恢复后尚需自然跑一轮 | 需要确认非手动运行稳定性 | weekly/daily/outcome 日志均正常 | 2026-06-29 晚后 |
+| cron 自然运行日志待复核 | 需要确认非手动运行稳定性 | weekly/daily/outcome 最新日志均正常 | 每周 PM loop |
 | Framework A strong 层级尚未证明优于基准 | 不宜调权重或宣称模型有效 | 另开权重复核 spec | 待更多样本与独立审查 |
 
 ## Weekly PM Loop
@@ -53,6 +56,7 @@
 | 日期 | 检查 | 结果 | 决策 |
 |---|---|---|---|
 | 2026-06-26 | 真实 probe/backfill/daily、readiness、cron 恢复 | `READY_CRON`，cron 已恢复，Phase 6 仍 report-only | 进入 cron 自然运行观察，不做生产化写入 |
+| 2026-07-01 | 共享包版本对齐、tracker 依赖锁定、全量测试 | `a-stock-lib==0.2.0`，tracker 测试 `205 passed` | 继续 Phase 6 report-only；下一步只做日志/样本复核，不恢复 B 生产写入 |
 | 2026-06-29 后 | `logs/weekly.log` / `logs/daily.log` / `logs/outcome.log`、`READY_CRON`、`accuracy-report` | 待执行 | 若异常，先修行情/cron；若正常，只提交报告/状态更新 |
 | 2026-07-26 后 | B label 30d 结案、overdue、行业覆盖、B-A delta | 待执行 | 满足门槛后写 `phase6-b-label-review.md`，不直接上线 |
 
