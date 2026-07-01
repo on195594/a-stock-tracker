@@ -34,7 +34,7 @@
 | Telegram 推送 | ✅ 正常 | ≥ buy_strong 且 L3 entry_signal=1 触发；2026-06-26 daily 推送成功 1 只股票 |
 | Outcome 追踪 | ✅ 正常 | `outcome-update` 已恢复到 cron；accuracy-report 显示 Framework A 30d 结案 533 条，其中 post-fix 315 条 |
 | L3 买点层 | ✅ 正常 | L3 v1 已接入 daily/推送/report；当前 v1 记录 700，覆盖率 100.0%，30d 样本仍不足 |
-| 行情数据源 | ✅ READY_CRON | `a-stock-lib==0.1.2`：Tushare 主源 + 隔离 BaoStock degraded fallback；`check_market_data_readiness.py --scope cron` 返回 `READY_CRON` |
+| 行情数据源 | ✅ READY_CRON | `a-stock-lib==0.2.0`：Tushare 主源 + 隔离 BaoStock degraded fallback；`check_market_data_readiness.py --scope cron` 返回 `READY_CRON` |
 | cron | ✅ 已恢复 | managed block 管理 weekly/daily/outcome-update；恢复前真实 probe/backfill/daily 已验证 |
 
 ### 关键数据规模

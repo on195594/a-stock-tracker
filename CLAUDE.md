@@ -40,7 +40,7 @@ pytest tests/ -v                  # 修改前必须全通过
 | `config.py` | watchlist / DB_PATH / LOG_DIR（禁止硬编码股票代码或路径）|
 | `.env` | GEMINI_API_KEY / TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID |
 | `lib/fetcher.py` | AKShare 封装，仅用于基本面/估值/财报缓存（来自 a-stock-research skill，独立演进）|
-| `lib/market_data.py` | 行情数据 provider 兼容入口；协议原语和 Tushare/BaoStock 实现来自 `a-stock-lib==0.1.2`，AKShare/东方财富行情入口已禁用（`SOURCE_DISABLED`） |
+| `lib/market_data.py` | 行情数据 provider 兼容入口；协议原语和 Tushare/BaoStock 实现来自 `a-stock-lib==0.2.0`，AKShare/东方财富行情入口已禁用（`SOURCE_DISABLED`） |
 | `a_stock_lib.providers.tushare_quotes` | 行情主源（需 `TUSHARE_TOKEN`），probe 通过后启用 |
 | `a_stock_lib.providers.baostock_quotes` | 行情 degraded fallback，仅 Tushare 失败后或显式 backfill 使用 |
 | `lib/cache.py` | SQLite 管理（predictions / index_prices / qualitative_scores 表）|
@@ -81,7 +81,7 @@ pytest tests/ -v                  # 修改前必须全通过
 avg_score 有约 4-5 分系统性偏移，Phase 4 optimizer 训练需按 score_date 分层。详见 `docs/lessons-learned.md`。
 
 **行情数据源（2026-06-09 起迁移，与基本面数据源分离）**：AKShare/东方财富**行情**入口已禁用，
-`lib/market_data.py` 默认 provider 返回 `SOURCE_DISABLED`。当前行情主源是 `a-stock-lib==0.1.2`
+`lib/market_data.py` 默认 provider 返回 `SOURCE_DISABLED`。当前行情主源是 `a-stock-lib==0.2.0`
 中的 Tushare provider（需 `TUSHARE_TOKEN`），失败后降级到同包 BaoStock provider（degraded）。`_ensure_index_prices` 走同一套 provider，不再直连
 新浪/腾讯接口。成组恢复 `daily` / `outcome-update` 前必须 `python3 scripts/check_market_data_readiness.py --scope cron` 返回 `READY_CRON`
 （最新探测报告见 `docs/reviews/*-tushare-capability-probe.md`）。详见

@@ -20,7 +20,7 @@
 
 | 项目 | 当前状态 | 证据 |
 |---|---|---|
-| 行情 provider | Tushare 主源 + 隔离 BaoStock degraded fallback | `a-stock-lib==0.1.2`，`lib/market_data.py` 已使用 `IsolatedBaoStockMarketDataProvider` |
+| 行情 provider | Tushare 主源 + 隔离 BaoStock degraded fallback | `a-stock-lib==0.2.0`，`lib/market_data.py` 已使用 `IsolatedBaoStockMarketDataProvider` |
 | readiness | `READY_CRON` | `scripts/check_market_data_readiness.py --scope cron` |
 | cron | 已恢复 | managed block 管理 weekly / daily / outcome-update |
 | 真实 probe | 已通过 | `docs/reviews/2026-06-26-tushare-capability-probe.md` |
