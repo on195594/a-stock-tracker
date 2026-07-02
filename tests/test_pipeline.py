@@ -1358,6 +1358,36 @@ def test_accuracy_report_framework_b_dry_run_does_not_write_predictions(
     ])
 
 
+def test_accuracy_report_framework_b_dry_run_flags_roe_trend_warning(
+    tmp_db, capsys, fake_weights, small_watchlist, monkeypatch
+):
+    """roe_latest 显著低于 roe_3y_avg 时，B dry-run 报告行带 ⚠️ROE趋势预警 标注，
+    且分数/排序跟改动前一致（纯展示，不改变打分行为）。"""
+    monkeypatch.setattr(pipeline, "_load_weights", lambda: fake_weights)
+    warned_data = {**_full_data(), "roe_3y_avg": 15.0, "roe_latest": 8.0}
+    stable_data = {**_full_data(), "roe_3y_avg": 15.0, "roe_latest": 14.5}
+    _insert_fundamentals("600036", "招商银行", "银行", warned_data)
+    _insert_fundamentals("601318", "中国平安", "保险", stable_data)
+    _insert_prediction("600036", "2026-05-30", 35.0, total_score=50.0)
+    monkeypatch.setattr(config, "WATCHLIST", [
+        {"code": "600036", "name": "招商银行"},
+        {"code": "601318", "name": "中国平安"},
+    ])
+
+    out = _run_accuracy_report_without_b_writes(capsys)
+
+    assert "招商银行(600036)" in out
+    warned_line = next(line for line in out.splitlines() if "招商银行(600036)" in line and "B=" in line)
+    assert "⚠️ROE趋势预警" in warned_line
+    stable_lines = [line for line in out.splitlines() if "中国平安(601318)" in line and "B=" in line]
+    assert stable_lines and all("⚠️ROE趋势预警" not in line for line in stable_lines)
+
+    # 分数本身不受影响：用同样的数据直接调用打分逻辑核对，确认报告里的 B 分数没有被打分前置调整改过
+    from scorer import score_stock
+    expected_b = score_stock("600036", "B", warned_data, weights=fake_weights, enforce_supported=False)
+    assert f"B={expected_b['total_score']:.1f}" in warned_line
+
+
 def test_accuracy_report_framework_b_quality_expansion_report_only(
     tmp_db, capsys, fake_weights, small_watchlist, monkeypatch
 ):

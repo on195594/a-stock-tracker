@@ -51,7 +51,7 @@ class DataQualityResult:
 
 
 _REQUIRED_FIELDS = ("roe_3y_avg", "net_profit_growth", "debt_ratio", "gross_margin")
-_SUPPORT_FIELDS = ("report_period", "price_at_score")
+_SUPPORT_FIELDS = ("report_period", "price_at_score", "roe_latest")
 _DERIVED_SUPPORT = ("bps", "pb_hist_monthly")
 _PB_DAILY_DEPENDENCIES = ("price_at_score", "bps", "pb_hist_monthly")
 

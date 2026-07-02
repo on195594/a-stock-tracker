@@ -16,6 +16,21 @@ from scorer import (
 
 POST_FIX_DATE = "2026-05-15"
 
+# 与 a-stock-monitor SKILL.md "ROE连续下滑>3pts→黄色预警" 阈值保持数值一致，避免三项目各定一套数字
+ROE_TREND_WARNING_THRESHOLD_PTS = 3.0
+
+
+def _has_roe_trend_warning(data: dict) -> bool:
+    """最新单年 ROE 是否显著低于3年均值。纯报告标注用途——
+    不返回替换值，不修改 data，不影响任何打分结果（Framework B 打分行为保持不变，
+    避免触碰本项目"不顺手调评分权重/行为，另开spec"的治理红线）。
+    """
+    roe_3y_avg = data.get("roe_3y_avg")
+    roe_latest = data.get("roe_latest")
+    if roe_3y_avg is None or roe_latest is None:
+        return False
+    return roe_3y_avg - roe_latest > ROE_TREND_WARNING_THRESHOLD_PTS
+
 
 def _is_framework_b_candidate(item: dict, fundamentals: dict | None) -> bool:
     text_parts = [item.get("name", "")]
@@ -104,12 +119,16 @@ def _is_framework_b_quality_candidate(data: dict, industry: str, rule: dict[str,
 
 
 def _framework_b_quality_reason(data: dict) -> str:
-    return (
+    reason = (
         f"ROE={data.get('roe_3y_avg')}, "
+        f"ROE最新={data.get('roe_latest')}, "
         f"GM={data.get('gross_margin')}, "
         f"Debt={data.get('debt_ratio')}, "
         f"PBpct={data.get('pb_percentile_10y')}"
     )
+    if _has_roe_trend_warning(data):
+        reason += " ⚠️ROE趋势预警"
+    return reason
 
 
 def _score_framework_b_candidate(
@@ -128,7 +147,12 @@ def _score_framework_b_candidate(
         "score_a": score_a,
         "score_b": score_b,
         "delta": score_b["total_score"] - score_a["total_score"],
+        "roe_trend_warning": _has_roe_trend_warning(data),
     }
+
+
+def _roe_trend_warning_suffix(row: dict) -> str:
+    return " ⚠️ROE趋势预警" if row.get("roe_trend_warning") else ""
 
 
 def _append_framework_b_deep_dive(
@@ -173,6 +197,7 @@ def _append_framework_b_deep_dive(
         lines.append(
             f"  - {row['name']}({row['code']}) "
             f"B={row['score_b']['total_score']:.1f} A={row['score_a']['total_score']:.1f} Δ={row['delta']:+.1f}"
+            f"{_roe_trend_warning_suffix(row)}"
         )
 
     lines.append("B-A delta Bottom：")
@@ -180,6 +205,7 @@ def _append_framework_b_deep_dive(
         lines.append(
             f"  - {row['name']}({row['code']}) "
             f"B={row['score_b']['total_score']:.1f} A={row['score_a']['total_score']:.1f} Δ={row['delta']:+.1f}"
+            f"{_roe_trend_warning_suffix(row)}"
         )
 
 
@@ -255,6 +281,7 @@ def append_framework_b_dry_run(lines: list[str], db: sqlite3.Connection, weights
         lines.append(
             f"  - {row['name']}({row['code']}) "
             f"B={row['score_b']['total_score']:.1f} A={row['score_a']['total_score']:.1f} Δ={row['delta']:+.1f}"
+            f"{_roe_trend_warning_suffix(row)}"
         )
     _append_framework_b_deep_dive(lines, scored, industry_counts, len(config.WATCHLIST))
     if skipped:
@@ -646,12 +673,14 @@ def append_framework_b_quality_expansion(lines: list[str], db: sqlite3.Connectio
             lines.append(
                 f"    - {row['name']}({row['code']}) [{row['industry']}] "
                 f"B={row['score_b']['total_score']:.1f} A={row['score_a']['total_score']:.1f} Δ={row['delta']:+.1f}"
+                f"{_roe_trend_warning_suffix(row)}"
             )
         lines.append("  Bottom delta：")
         for row in sorted(summary["scored"], key=lambda item: item["delta"])[:3]:
             lines.append(
                 f"    - {row['name']}({row['code']}) [{row['industry']}] "
                 f"B={row['score_b']['total_score']:.1f} A={row['score_a']['total_score']:.1f} Δ={row['delta']:+.1f}"
+                f"{_roe_trend_warning_suffix(row)}"
             )
 
     base_summary = summaries.get("base", {"scored": [], "industry_counts": {}, "candidate_count": 0, "scored_count": 0, "skipped_count": 0})

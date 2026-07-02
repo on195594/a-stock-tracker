@@ -189,6 +189,55 @@ def test_cmd_fetch_uses_recent_spot_snapshot_when_today_fetch_fails(monkeypatch)
     assert data["pb"] == 2.1
     assert data["float_to_total_ratio"] == 80.0
     assert data["dividend_yield"] == 0.95
+    assert data["roe_3y_avg"] == 11.0
+    assert data["roe_latest"] == 12.0  # fin_df 最后一行（2025）
+
+
+def test_cmd_fetch_roe_latest_null_when_financial_api_times_out(monkeypatch) -> None:
+    """财务 API 超时时，roe_latest 跟 roe_3y_avg 一样走 null_reasons 分支，不抛异常。"""
+    captured: dict = {}
+    div_df = pd.DataFrame({
+        "进度": ["实施"],
+        "除权除息日": ["2026-01-15"],
+        "派息": [2.0],
+    })
+    recent_snapshot = [{
+        "代码": "603606",
+        "市盈率-动态": "18.5",
+        "市净率": "2.1",
+        "最新价": "21.0",
+        "总市值": "100",
+        "流通市值": "80",
+    }]
+
+    def fake_timed_call(fn, *args, **kwargs):
+        if fn is fetcher_mod._fetch_info:
+            return {"股票简称": "东方电缆", "行业": "电力设备", "最新": "20.0"}
+        if fn is fetcher_mod._fetch_dividends:
+            return div_df
+        if fn is fetcher_mod._fetch_price_history:
+            raise AssertionError("recent snapshot has price, should not fetch latest close")
+        return ("ERROR", "unexpected")
+
+    def fake_set_fundamentals(code, name, industry, data, ttl=None, merge=False):
+        captured.update({"code": code, "name": name, "industry": industry, "data": data, "merge": merge})
+        return "ok"
+
+    monkeypatch.setattr(fetcher_mod, "timed_call", fake_timed_call)
+    monkeypatch.setattr(fetcher_mod, "timed_call_with_retry", lambda *a, **k: "TIMEOUT")
+    monkeypatch.setattr(fetcher_mod, "get_spot_em_snapshot", lambda *a, **k: None)
+    monkeypatch.setattr(fetcher_mod, "_fetch_spot_em_safe", lambda *a, **k: ("ERROR", "remote closed"))
+    monkeypatch.setattr(fetcher_mod, "get_recent_spot_em_snapshot", lambda *a, **k: ("2026-06-03", recent_snapshot))
+    monkeypatch.setattr(fetcher_mod, "_compute_gross_margin", lambda *a, **k: 25.0)
+    monkeypatch.setattr(fetcher_mod, "_fetch_pb_hist_and_percentile", lambda *a, **k: (42.0, [1.0] * 24))
+    monkeypatch.setattr(fetcher_mod, "set_fundamentals", fake_set_fundamentals)
+
+    fetcher_mod.cmd_fetch(["603606"])
+
+    data = captured["data"]
+    assert "roe_latest" in data
+    assert data["roe_latest"] is None
+    assert data["roe_3y_avg"] is None
 
 
 def test_cmd_fetch_falls_back_to_latest_close_for_pb_and_dividend(monkeypatch) -> None:

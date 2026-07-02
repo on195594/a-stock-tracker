@@ -37,6 +37,7 @@ FIELDS = {
     'pe_ttm':             ('PE_TTM（市盈率）',         'akshare'),
     'pb':                 ('PB（市净率）',               'akshare'),
     'roe_3y_avg':         ('ROE近3年均值(%)',            'akshare'),
+    'roe_latest':         ('ROE最新单年(%)',              'akshare'),
     'net_profit_growth':  ('净利润增速近3年均值(%)',      'akshare'),
     'debt_ratio':         ('资产负债率(%)',               'akshare'),
     'bps':                ('每股净资产(元)',               'akshare'),
@@ -348,18 +349,19 @@ def cmd_fetch(args: list[str]) -> None:
     fin_df = timed_call_with_retry(_fetch_financials, code, timeout=API_TIMEOUT)
     if isinstance(fin_df, str):   # 'TIMEOUT'
         reason = '财务API超时'
-        for k in ('roe_3y_avg', 'net_profit_growth', 'debt_ratio'):
+        for k in ('roe_3y_avg', 'roe_latest', 'net_profit_growth', 'debt_ratio'):
             null_reasons[k] = reason
         eps = bps = None
         logger.warning("  ⚠️ 财务指标 获取失败（同花顺限速，已重试 3 次）")
     elif fin_df is None or isinstance(fin_df, tuple):
         reason = fin_df[1] if isinstance(fin_df, tuple) else '财务API失败'
-        for k in ('roe_3y_avg', 'net_profit_growth', 'debt_ratio'):
+        for k in ('roe_3y_avg', 'roe_latest', 'net_profit_growth', 'debt_ratio'):
             null_reasons[k] = reason
         eps = bps = None
         logger.warning("  ⚠️ 财务指标 获取失败（同花顺限速，已重试 3 次）")
     else:
         results['roe_3y_avg']        = avg_of(fin_df['净资产收益率'], 3)
+        results['roe_latest']        = parse_float(fin_df['净资产收益率'].iloc[-1])
         results['net_profit_growth'] = avg_of(fin_df['净利润同比增长率'], 3)
         results['debt_ratio']        = parse_float(fin_df['资产负债率'].iloc[-1])
         eps = parse_float(fin_df['基本每股收益'].iloc[-1])
@@ -375,10 +377,10 @@ def cmd_fetch(args: list[str]) -> None:
         except Exception:
             pass
 
-        for k in ('roe_3y_avg', 'net_profit_growth', 'debt_ratio'):
+        for k in ('roe_3y_avg', 'roe_latest', 'net_profit_growth', 'debt_ratio'):
             if results.get(k) is None:
                 null_reasons[k] = '数据含缺失值'
-        print(f"  ✅ ROE3y={results.get('roe_3y_avg')}% | "
+        print(f"  ✅ ROE3y={results.get('roe_3y_avg')}% | ROE最新={results.get('roe_latest')}% | "
               f"净利增速={results.get('net_profit_growth')}% | "
               f"负债率={results.get('debt_ratio')}% | EPS={eps} | BPS={bps}")
 
