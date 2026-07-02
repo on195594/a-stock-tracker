@@ -39,6 +39,16 @@ tail -n 120 logs/weekly-pm-loop.log
 cat logs/weekly-pm-loop-summary.txt
 ```
 
+## Framework B dry-run ROE 趋势预警标注（2026-07-02 已完成）
+
+**What:** Framework B（report-only）打分依赖 `roe_3y_avg`（3年均值），可能掩盖最近一个完整财年才出现的 ROE 结构性下滑。新增 `roe_latest`（最新单年ROE）字段抓取，`roe_3y_avg` 显著高于 `roe_latest`（差值>3pts）时给 dry-run 报告候选行追加 `⚠️ROE趋势预警` 文本标注。
+
+**Status:** 已实现并提交，commit `92eada5`。**纯报告层展示，不改变任何打分数值/权重/排序**——A/B 两次 `score_stock` 调用均用原始未修改的 data，不碰 `weights.json`，符合本项目"不修改 weights.json"、"不顺手调评分权重"的治理红线（见 `docs/project-status.md` 禁止事项）。codex 独立审查 0 Critical/Important。验证：`223 passed`。
+
+**Context:** 同步 a-stock-research v2.5.0"历史分位极低须做反向解读检验"教训（源自招商银行案例的 agy 审查发现）到本项目结构相似的场景。数据粒度限制：tracker 财务数据为同花顺年度报表，只能做"最新完整财年 vs 3年均值"比较，不是季度级粒度。
+
+**How to apply:** `python3 pipeline.py accuracy-report` 后查看 "Framework B 金融候选 dry-run" / "Framework B 非金融质量候选" 章节，候选行末尾出现 `⚠️ROE趋势预警` 即为触发。
+
 ## L3 / market data boundary 后续工作
 
 **What:** 继续执行 `docs/plans/2026-06-05-market-data-boundary-refactor-plan.md` 的小步改造。
