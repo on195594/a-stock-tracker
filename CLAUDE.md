@@ -128,3 +128,12 @@ When the user's request matches an available skill, invoke it via the Skill tool
 - Bug / 错误排查 → invoke /investigate
 - Code review → invoke /review
 - 部署 / PR → invoke /ship
+
+
+<!-- ai-collab:routing -->
+## AI协作模式（ai-collab）
+本项目采用 ai-collab 三方协作模式（Claude=PM/架构师，codex=执行，QA工具=审查）。
+新会话只要看到本项目有 `.claude/ai-collab/config.yaml`，对多步骤编码任务默认
+调用 collab-pipeline skill 执行"实现→审查→提交"循环；完成一个完整plan或一批
+任务后调用 collab-retro skill 复盘。配置与历史记录见 `.claude/ai-collab/`。
+<!-- /ai-collab:routing -->
