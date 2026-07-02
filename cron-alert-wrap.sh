@@ -17,7 +17,7 @@ LABEL="${2:-$CMD}"
 bash -c "$CMD"
 EXIT_CODE=$?
 
-if [ "$EXIT_CODE" -ne 0 ] && [ -f "$ENV_FILE" ]; then
+if [ "$EXIT_CODE" -ne 0 ] && [ "$EXIT_CODE" -ne 2 ] && [ -f "$ENV_FILE" ]; then
     TOKEN=$(grep -m1 '^TELEGRAM_BOT_TOKEN=' "$ENV_FILE" | cut -d= -f2-)
     CHAT_ID=$(grep -m1 '^TELEGRAM_CHAT_ID=' "$ENV_FILE" | cut -d= -f2-)
     if [ -n "$TOKEN" ] && [ -n "$CHAT_ID" ]; then

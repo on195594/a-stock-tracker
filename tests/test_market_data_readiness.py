@@ -76,6 +76,23 @@ def test_cron_readiness_rejects_stale_report(tmp_path, monkeypatch, capsys) -> N
     assert "latest Tushare capability probe is stale" in out
 
 
+def test_cron_readiness_allows_stale_report_with_explicit_weekly_loop_grace(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    _write_report(tmp_path, "2026-06-25-tushare-capability-probe.md", _new_report())
+    monkeypatch.setattr(readiness, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(readiness, "_today", lambda: date(2026, 6, 30))
+    monkeypatch.setitem(os.environ, "TUSHARE_TOKEN", "token")
+
+    assert readiness.main(["--scope", "cron", "--allow-stale-days", "9"]) == 0
+
+    out = capsys.readouterr().out
+    assert "READY_CRON" in out
+    assert "latest Tushare capability probe is stale" not in out
+
+
 def test_readiness_rejects_duplicate_decision_fields(tmp_path, monkeypatch) -> None:
     _write_report(
         tmp_path,

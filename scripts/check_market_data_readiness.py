@@ -5,7 +5,7 @@ import os
 import sys
 from argparse import ArgumentParser
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 import re
 
@@ -109,7 +109,14 @@ def parse_probe_decision(report_path: Path) -> ProbeDecision:
     )
 
 
-def readiness_status(*, require_fresh_report: bool = False) -> ReadinessStatus:
+def _report_is_fresh_enough(report_date: date | None, *, allow_stale_days: int) -> bool:
+    if report_date is None:
+        return False
+    oldest_allowed = _today() - timedelta(days=allow_stale_days)
+    return oldest_allowed <= report_date <= _today()
+
+
+def readiness_status(*, require_fresh_report: bool = False, allow_stale_days: int = 0) -> ReadinessStatus:
     _load_dotenv()
     reasons: list[str] = []
     if not os.environ.get("TUSHARE_TOKEN"):
@@ -122,7 +129,11 @@ def readiness_status(*, require_fresh_report: bool = False) -> ReadinessStatus:
         reasons.append("no Tushare capability probe report found")
     else:
         report_date = _probe_report_date(report)
-        if require_fresh_report and report_date != _today():
+        stale_report = require_fresh_report and not _report_is_fresh_enough(
+            report_date,
+            allow_stale_days=allow_stale_days,
+        )
+        if stale_report:
             reasons.append(f"latest Tushare capability probe is stale: {_format_path(report)}")
         decision = parse_probe_decision(report)
         required_fields = {
@@ -146,7 +157,7 @@ def readiness_status(*, require_fresh_report: bool = False) -> ReadinessStatus:
                 reasons.append(f"Close cross-check is {decision.close_cross_check}")
             daily_ready = (
                 bool(os.environ.get("TUSHARE_TOKEN"))
-                and not (require_fresh_report and report_date != _today())
+                and not stale_report
                 and decision.write_gate == "PASS"
                 and decision.production_decision == "DAILY_WRITES_ALLOWED"
                 and decision.close_cross_check == "PASS"
@@ -185,9 +196,21 @@ def main(argv: list[str] | None = None) -> int:
         default="cron",
         help="cron requires daily and index/calendar readiness; daily checks staged daily writes only.",
     )
+    parser.add_argument(
+        "--allow-stale-days",
+        type=int,
+        default=0,
+        help="When freshness is required, accept probe reports up to this many days old.",
+    )
     args = parser.parse_args(argv)
 
-    status = readiness_status(require_fresh_report=args.scope == "cron")
+    if args.allow_stale_days < 0:
+        parser.error("--allow-stale-days must be >= 0")
+
+    status = readiness_status(
+        require_fresh_report=args.scope == "cron",
+        allow_stale_days=args.allow_stale_days,
+    )
     if args.scope == "daily":
         if status.daily_ready:
             print("READY_DAILY: daily market data writes can be considered for staged recovery")
