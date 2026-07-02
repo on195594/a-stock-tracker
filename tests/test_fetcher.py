@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from unittest.mock import patch
 
 import pandas as pd
@@ -18,6 +19,11 @@ if PROJECT_ROOT not in sys.path:
 import lib.fetcher as fetcher_mod  # noqa: E402
 import lib.cache as cache_mod  # noqa: E402
 import pipeline  # noqa: E402
+
+
+def _sleep_longer_than_timeout() -> str:
+    time.sleep(5)
+    return "done"
 
 
 # ---------------------------------------------------------------------------
@@ -506,6 +512,15 @@ def test_timed_call_with_retry_max_retries_zero_returns_not_raises():
     assert result == ("ERROR", "no attempts made"), (
         f"max_retries=0 应返回初始化哨兵 ('ERROR', 'no attempts made')，实际得到 {result!r}"
     )
+
+
+def test_timed_call_timeout_terminates_child_process_quickly():
+    start = time.monotonic()
+    result = fetcher_mod.timed_call(_sleep_longer_than_timeout, timeout=1)
+    elapsed = time.monotonic() - start
+
+    assert result == "TIMEOUT"
+    assert elapsed < 3
 
 
 def test_avg_of_none_series_returns_none():

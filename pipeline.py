@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import sqlite3
+import subprocess
 import sys
 import time
 from datetime import date, datetime, timedelta
@@ -67,6 +68,8 @@ from scorer import (
     compute_daily_pb_percentile,
     score_stock,
 )
+
+FETCHER_STOCK_TIMEOUT_SECONDS = 420
 
 
 def _load_dotenv() -> None:
@@ -288,22 +291,35 @@ def _log_l3_coverage(db: sqlite3.Connection, today: str, strong_threshold: float
 
 def _refresh_fundamentals(label: str) -> tuple[int, int]:
     """对 WATCHLIST 每只股票执行 fetch，刷新 stock_fundamentals 缓存。返回 (success, failed)。"""
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "lib"))
-    import fetcher
-
     success = failed = 0
     for item in config.WATCHLIST:
         code = item["code"]
         logger.info(f"  fetch {code} {item['name']} ...")
-        try:
-            fetcher.cmd_fetch([code])
+        result = _run_fetcher_process(code)
+        if result == 0:
             logger.info(f"  ✓ {code}")
             success += 1
-        except (Exception, SystemExit) as e:
-            logger.error(f"  ✗ {code} fetch 失败：{e}")
+        else:
+            logger.error(f"  ✗ {code} fetch 失败：exit={result}")
             failed += 1
     logger.info(f"{label} 完成：成功 {success} 只，失败 {failed} 只")
     return success, failed
+
+
+def _run_fetcher_process(code: str, timeout: int = FETCHER_STOCK_TIMEOUT_SECONDS) -> int | str:
+    """用独立进程刷新单只股票，避免底层 SDK 卡死拖住整轮 weekly。"""
+    fetcher_path = os.path.join(os.path.dirname(__file__), "lib", "fetcher.py")
+    try:
+        completed = subprocess.run(
+            [sys.executable, fetcher_path, "fetch", code],
+            cwd=os.path.dirname(__file__),
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        logger.error("  ✗ %s fetch 超过 %ss，已终止子进程", code, timeout)
+        return "TIMEOUT"
+    return completed.returncode
 
 
 # ──────────────────────────────────────────────

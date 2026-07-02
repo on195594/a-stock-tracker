@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import subprocess
 import sys
 import types
 from datetime import date, timedelta
@@ -2097,22 +2098,47 @@ def test_ttl_expiry_regression(tmp_db):
 # ---------------------------------------------------------------------------
 def test_refresh_fundamentals_counts(tmp_db, small_watchlist, monkeypatch):
     """_refresh_fundamentals 正确统计成功/失败次数并返回元组。"""
-    import types
     call_count = [0]
 
-    def fake_cmd_fetch(args):
+    def fake_run_fetcher_process(code):
         call_count[0] += 1
-        if args[0] == "000858":  # 五粮液失败
-            raise RuntimeError("fetch failed")
+        if code == "000858":  # 五粮液失败
+            return 1
+        return 0
 
-    fake_fetcher_mod = types.ModuleType("fetcher")
-    fake_fetcher_mod.cmd_fetch = fake_cmd_fetch
-    monkeypatch.setitem(sys.modules, "fetcher", fake_fetcher_mod)
+    monkeypatch.setattr(pipeline, "_run_fetcher_process", fake_run_fetcher_process)
 
     success, failed = pipeline._refresh_fundamentals("test")
     assert success == 1  # 600036 成功
     assert failed == 1   # 000858 失败
     assert call_count[0] == 2
+
+
+def test_refresh_fundamentals_continues_after_fetch_timeout(tmp_db, small_watchlist, monkeypatch):
+    """单只 fetch 超时应计入失败，并继续刷新后续股票。"""
+    seen = []
+
+    def fake_run_fetcher_process(code):
+        seen.append(code)
+        if code == "600036":
+            return "TIMEOUT"
+        return 0
+
+    monkeypatch.setattr(pipeline, "_run_fetcher_process", fake_run_fetcher_process)
+
+    success, failed = pipeline._refresh_fundamentals("test")
+    assert success == 1
+    assert failed == 1
+    assert seen == ["600036", "000858"]
+
+
+def test_run_fetcher_process_returns_timeout_on_subprocess_timeout(monkeypatch):
+    def fake_run(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=kwargs.get("args", "fetch"), timeout=kwargs["timeout"])
+
+    monkeypatch.setattr(pipeline.subprocess, "run", fake_run)
+
+    assert pipeline._run_fetcher_process("600036", timeout=1) == "TIMEOUT"
 
 
 # ---------------------------------------------------------------------------

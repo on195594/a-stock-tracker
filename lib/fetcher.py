@@ -10,9 +10,10 @@ A股基本面数据自动获取工具
 import sys
 import os
 import logging
+import multiprocessing as mp
+import queue
 from typing import Any, Callable
 from datetime import datetime, timedelta
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from a_stock_lib.fetcher_utils import detect_split_ratio as _detect_split_ratio
 
 import pandas as pd
@@ -55,15 +56,48 @@ FIELDS = {
 
 def timed_call(fn: Callable[..., Any], *args: Any,
                timeout: int = API_TIMEOUT, **kwargs: Any) -> Any | str | tuple[str, str]:
-    """在独立线程中执行 fn，超时返回 'TIMEOUT'，异常返回 ('ERROR', msg)"""
-    with ThreadPoolExecutor(max_workers=1) as ex:
-        future = ex.submit(fn, *args, **kwargs)
-        try:
-            return future.result(timeout=timeout)
-        except FuturesTimeout:
-            return 'TIMEOUT'
-        except Exception as e:
-            return ('ERROR', str(e))
+    """在独立进程中执行 fn，超时返回 'TIMEOUT'，异常返回 ('ERROR', msg)。"""
+    ctx = mp.get_context("fork" if "fork" in mp.get_all_start_methods() else None)
+    result_queue: mp.Queue = ctx.Queue(maxsize=1)
+    proc = ctx.Process(
+        target=_timed_call_worker,
+        args=(result_queue, fn, args, kwargs),
+        daemon=True,
+    )
+    proc.start()
+    try:
+        status, payload = result_queue.get(timeout=timeout)
+    except queue.Empty:
+        _stop_process(proc)
+        return 'TIMEOUT'
+    finally:
+        if proc.is_alive():
+            proc.join(timeout=1)
+        if proc.is_alive():
+            _stop_process(proc)
+    if status == "ok":
+        return payload
+    return ("ERROR", payload)
+
+
+def _stop_process(proc: mp.Process) -> None:
+    proc.terminate()
+    proc.join(timeout=1)
+    if proc.is_alive():
+        proc.kill()
+        proc.join(timeout=1)
+
+
+def _timed_call_worker(
+    result_queue: mp.Queue,
+    fn: Callable[..., Any],
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+) -> None:
+    try:
+        result_queue.put(("ok", fn(*args, **kwargs)))
+    except Exception as e:
+        result_queue.put(("error", str(e)))
 
 
 def timed_call_with_retry(fn: Callable[..., Any], *args: Any,
