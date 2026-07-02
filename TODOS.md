@@ -8,8 +8,9 @@ Phase 1-3.6 历史实施记录，不再作为后续计划来源。
 当前工作重心：
 
 1. 继续 daily/outcome-update，等待 post-fix Framework A 30d outcome 自然结案。
-2. 先修 L3/market data boundary 的覆盖率和审计可解释性，再讨论 Framework B 生产写入。
-3. Framework B 只保持 report-only；生产化必须另写实施计划并获得明确授权。
+2. Phase 6 weekly PM loop 已自动化为每周一 09:30 cron + Telegram 摘要；下一步等首轮自然运行验证。
+3. 先修 L3/market data boundary 的覆盖率和审计可解释性，再讨论 Framework B 生产写入。
+4. Framework B 只保持 report-only；生产化必须另写实施计划并获得明确授权。
 
 ## Phase 6 生产化门槛（当前有效）
 
@@ -20,6 +21,23 @@ Phase 1-3.6 历史实施记录，不再作为后续计划来源。
 3. Framework B 金融候选 dry-run 全覆盖：`scored_count == candidate_count` 且候选数 > 0。
 4. B label 非金融质量候选自然结案样本 ≥ 20，且无 overdue outcome 风险。
 5. 上述条件满足后，仍先进入人工 report-only 审阅；生产写入需单独计划、测试和回滚方案。
+
+## Phase 6 weekly PM loop 自动化（2026-07-02 已完成）
+
+**What:** 每周一 09:30 自动运行 `scripts/weekly_pm_loop.py`，检查 weekly/daily/outcome 日志、`READY_CRON` 和 `accuracy-report`，生成本地摘要并通过 Telegram bot 通知。
+
+**Status:** 已实现并安装 crontab，commit `f181010`。实现前已写 `docs/specs/2026-07-02-weekly-pm-loop-automation-spec.md`，并经 agy 独立审查 PASS。验证基线：`211 passed, 1 skipped`。
+
+**Next:** 等首轮自然 cron 摘要。若摘要为 WARN/FAIL，先修行情/cron/数据质量链路；不得把自动摘要作为启用 Framework B 生产写入的授权。
+
+**How to apply:**
+
+```bash
+cd /home/lin/a-stock-tracker
+python3 scripts/weekly_pm_loop.py --dry-run --no-telegram
+tail -n 120 logs/weekly-pm-loop.log
+cat logs/weekly-pm-loop-summary.txt
+```
 
 ## L3 / market data boundary 后续工作
 
