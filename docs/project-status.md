@@ -11,7 +11,7 @@
 
 2026-07-02 weekly PM loop 已完成：daily/outcome 自然运行正常，`probe_tushare_market_data.py` 已刷新当天 report，`READY_CRON` 恢复。随后已定向补齐 watchlist 后 14 支股票的基本面缓存并重跑 `accuracy-report`；数据质量门槛恢复 OK，Phase 6 仍因 B label 已结案样本不足保持 report-only。
 
-P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外部行情调用中，进程残留到 2026-07-02，导致后 14 支股票缓存停留在 2026-06-20 并超过 168h TTL。后续应修复 `fetcher`/`weekly` 的进程级超时保护，避免线程级 timeout 被底层 SDK 卡死绕过。
+P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外部行情调用中，进程残留到 2026-07-02，导致后 14 支股票缓存停留在 2026-06-20 并超过 168h TTL。`fetcher`/`weekly` 的进程级超时保护已完成（commit `89fd7c5`，验证 `208 passed`），后续通过自然 cron 观察是否复发。
 
 ## Active Phase
 
@@ -19,7 +19,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 |---|---|---|---|---|
 | Phase 4 验证基础 | 已完成，持续观察 | 每周看 accuracy-report，不在此阶段顺手调权重 | 每周一 | 若要调权重，另开 spec |
 | Phase 5 L3 买点层 | 已完成，持续观察 | 观察 L3 30d 样本自然结案 | 每周一 | L3 30d 样本 ≥30 后再评估信号有效性 |
-| Phase 6 多框架激活 | report-only 观察 | 继续只读观察 B label / dry-run；修复 weekly 外部调用卡死风险 | 2026-07-26 后首次 B label 自然结案复核；另开 timeout hardening 任务 | B label 已结案 ≥20、overdue=0、数据质量门槛 OK、独立审查通过、另写生产化 spec |
+| Phase 6 多框架激活 | report-only 观察 | 继续只读观察 B label / dry-run；观察 weekly timeout hardening 后的自然运行 | 2026-07-26 后首次 B label 自然结案复核 | B label 已结案 ≥20、overdue=0、数据质量门槛 OK、独立审查通过、另写生产化 spec |
 | Phase 7 选股宇宙扩展 | 未启动 | 等 Phase 6 或明确降级策略 | 暂无 | 单独设计动态池和 API 压测 |
 
 ## 当前事实基线
@@ -28,7 +28,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 |---|---|---|
 | 行情 provider | Tushare 主源 + 隔离 BaoStock degraded fallback | `a-stock-lib==0.2.0`，`lib/market_data.py` 已使用 `IsolatedBaoStockMarketDataProvider`；2026-07-01 tracker 测试 `205 passed` |
 | readiness | `READY_CRON` | 2026-07-02 `scripts/check_market_data_readiness.py --scope cron` |
-| cron | 已恢复，latest daily/outcome 自然运行正常；weekly 需 hardening | daily: 2026-07-01 16:30 写入 21/跳过 14；outcome: 2026-07-01 17:00 更新 35；weekly 2026-06-27 实际卡在第 22 只 `002119`，残留进程已于 2026-07-02 清理 |
+| cron | 已恢复，latest daily/outcome 自然运行正常；weekly timeout hardening 已完成 | daily: 2026-07-01 16:30 写入 21/跳过 14；outcome: 2026-07-01 17:00 更新 35；weekly 2026-06-27 残留进程已于 2026-07-02 清理；commit `89fd7c5` 已加固单股 fetch 子进程超时 |
 | 真实 probe | 已刷新并通过 | `docs/reviews/2026-07-02-tushare-capability-probe.md` |
 | 真实 backfill | 已完成 | 35/35 行情刷新成功，L3 metadata 已重算 |
 | 真实 daily | 已完成 | 2026-06-26 daily 完整跑完，因当日已有 A 框记录幂等写入 0 条 |
@@ -51,7 +51,6 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | Blocker | Impact | Unblock condition | ETA |
 |---|---|---|---|
 | B label 已结案样本不足 `0/20` | 阻止 Framework B 生产化 | 已结案 ≥20 且 overdue=0 | 最早 2026-07-26 后 |
-| weekly/fetcher 缺少可靠进程级超时 | 外部行情 SDK 卡死时 weekly 可能残留，导致后续缓存过期 | 为单股 fetch 或外部 SDK 调用增加可杀掉的 timeout，并补回归测试 | 下一 hardening 任务 |
 | L3 30d 样本不足 `9/30` | 无法判断 L3 信号有效性 | L3 30d 已结案 ≥30 | 等自然结案 |
 | cron 自然运行日志待复核 | 需要持续确认非手动运行稳定性 | weekly/daily/outcome 最新日志均正常 | 每周 PM loop |
 | Framework A strong 层级尚未证明优于基准 | 不宜调权重或宣称模型有效 | 另开权重复核 spec | 待更多样本与独立审查 |
@@ -64,6 +63,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | 2026-07-01 | 共享包版本对齐、tracker 依赖锁定、全量测试 | `a-stock-lib==0.2.0`，tracker 测试 `205 passed` | 继续 Phase 6 report-only；下一步只做日志/样本复核，不恢复 B 生产写入 |
 | 2026-07-02 | `logs/weekly.log` / `logs/daily.log` / `logs/outcome.log`、`READY_CRON`、`accuracy-report` | daily/outcome 最新自然运行正常；当天 probe PASS 后 `READY_CRON`；accuracy-report 显示 cache 缺失/过期 14/35、L3 30d 9/30、B label 0/20 | 不进入生产化；下一步先补齐 watchlist 基本面缓存并重跑 accuracy-report |
 | 2026-07-02 | P0 cache 修复：清理 2026-06-27 残留 weekly，定向刷新后 14 支过期缓存，重跑 `accuracy-report` | 基本面缓存可用 35/35，required 字段可接受 35/35，PB 日度可计算 35/35；B label 候选增至 11，已结案仍为 0/20 | 数据质量阻塞解除；下一步修 weekly/fetcher timeout hardening，继续等待 B label 自然结案 |
+| 2026-07-02 | weekly/fetcher timeout hardening | 单股 fetch 独立子进程 + fetcher 内部进程级 timeout；`208 passed` | 等下一轮自然 weekly 验证，不恢复 B 生产写入 |
 | 2026-07-26 后 | B label 30d 结案、overdue、行业覆盖、B-A delta | 待执行 | 满足门槛后写 `phase6-b-label-review.md`，不直接上线 |
 
 ## 每周复核命令
