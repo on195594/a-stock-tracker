@@ -2395,7 +2395,7 @@ def test_cmd_weekly_attempts_all_stocks_on_fetcher_timeout(tmp_db, small_watchli
 
 
 def test_cmd_outcome_update_sends_telegram_summary(tmp_db, monkeypatch):
-    """cmd_outcome_update calls send_daily_push with a non-empty summary."""
+    """Smoke test: cmd_outcome_update runs cleanly on an empty DB with Telegram mocked."""
     push_calls = []
 
     def fake_send(msg: str) -> bool:
@@ -2404,30 +2404,32 @@ def test_cmd_outcome_update_sends_telegram_summary(tmp_db, monkeypatch):
 
     monkeypatch.setattr(pipeline, "send_daily_push", fake_send, raising=False)
 
-    # Mock the price fetcher so we don't hit real market data
-    monkeypatch.setattr(pipeline, "_ensure_index_prices", lambda *a, **kw: None)
-    monkeypatch.setattr(pipeline, "_fetch_outcome_price", lambda *a, **kw: None, raising=False)
-
     class _NoNetworkProvider:
         def fetch_outcome_price(self, *a, **kw):
-            return market_data.MarketDataResult(None, "test.fetch_outcome_price")
-
-        def fetch_index_bars(self, *a, **kw):
-            return market_data.MarketDataResult(None, "test.fetch_index_bars")
+            return None
+        def fetch_index_prices(self, *a, **kw):
+            return {}
 
     monkeypatch.setattr(pipeline, "get_default_market_data_provider", lambda: _NoNetworkProvider())
+    monkeypatch.setattr(pipeline, "_fetch_outcome_price", lambda *a, **kw: None, raising=False)
 
-    try:
-        pipeline.cmd_outcome_update(window="30d")
-    except TypeError:
-        pipeline.cmd_outcome_update()
-    # May send 0 or 1 calls depending on whether predictions exist —
-    # what matters is that send_daily_push is reachable and does not crash
-    assert isinstance(push_calls, list)
+    pipeline.cmd_outcome_update()
+    assert push_calls == []  # empty DB -> no predictions to summarize -> no push
 
 
 def test_cmd_outcome_update_rejects_invalid_window(tmp_db, monkeypatch):
     """cmd_outcome_update raises ValueError for an unknown window string."""
     import pytest
-    with pytest.raises((ValueError, SystemExit, TypeError)):
-        pipeline.cmd_outcome_update(window="999d")
+
+    class _NoNetworkProvider:
+        def fetch_outcome_price(self, *a, **kw):
+            return None
+        def fetch_index_prices(self, *a, **kw):
+            return {}
+
+    monkeypatch.setattr(pipeline, "get_default_market_data_provider", lambda: _NoNetworkProvider())
+    monkeypatch.setattr(pipeline, "send_daily_push", lambda *a, **kw: True, raising=False)
+    monkeypatch.setattr(pipeline, "_OUTCOME_WINDOWS", frozenset())
+
+    with pytest.raises(ValueError):
+        pipeline.cmd_outcome_update()
