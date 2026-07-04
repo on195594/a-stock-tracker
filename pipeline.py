@@ -322,8 +322,11 @@ def _run_fetcher_process(code: str, timeout: int = FETCHER_STOCK_TIMEOUT_SECONDS
         if completed.stderr:
             for line in completed.stderr.strip().splitlines():
                 logger.warning("fetcher[%s] %s", code, line)
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as e:
         logger.error("  ✗ %s fetch 超过 %ss，已终止子进程", code, timeout)
+        if e.stderr:
+            for line in e.stderr.strip().splitlines():
+                logger.warning("fetcher[%s] %s", code, line)
         return "TIMEOUT"
     return completed.returncode
 
