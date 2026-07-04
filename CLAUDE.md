@@ -34,7 +34,7 @@ pytest tests/ -v                  # 修改前必须全通过
 |------|------|
 | `pipeline.py` | 主编排器（init / daily / outcome-update / accuracy-report）|
 | `scorer.py` | 评分引擎（breakpoints 线性插值，不调 AKShare）|
-| `gemini_scorer.py` | Phase 3：Gemini 定性评分（30天缓存，all-or-nothing fallback）|
+| `gemini_scorer.py` | Phase 3：Gemini 定性评分（30天缓存，退避重试，过期缓存降级，all-or-nothing fallback）|
 | `telegram_push.py` | Phase 3：每日信号推送（≥44分触发）|
 | `weights.json` | 模型权重（阈值 buy_strong=44/moderate=35/light=26）|
 | `config.py` | watchlist / DB_PATH / LOG_DIR（禁止硬编码股票代码或路径）|
@@ -102,18 +102,18 @@ avg_score 有约 4-5 分系统性偏移，Phase 4 optimizer 训练需按 score_d
 
 ---
 
-## Phase 3 状态（2026-04-26 上线）
+## Phase 状态快照（2026-07-04）
 
-- Gemini 定性评分已接入（moat/market_pos/sentiment，30天缓存，fallback=phase1_fixed）
-- Telegram 推送已接入（≥44分触发）
-- 2026-04-21 存量9条记录使用固定定性分，Phase 3 后新记录由 Gemini 填写，跨期比较需注意
+| Phase | 状态 | 说明 |
+|-------|------|------|
+| Phase 3 Gemini/Telegram | ✅ 上线 | 定性评分（30天缓存，退避重试，过期缓存降级）；推送 ≥44 分 AND L3=1 触发 |
+| Phase 4 验证基础 | ✅ 完成，持续观察 | A框架 30d 结案 533 条；hit_rate 待验证 |
+| Phase 5 L3 买点层 | ✅ 完成，持续观察 | L3 v1 接入 daily/推送/report；30d 样本不足 |
+| Phase 6 多框架激活 | 🔶 report-only | Framework B 仍不写生产；B label 0/20 自然结案 |
+| Phase 7 选股宇宙 | ⏸ 未启动 | 待 Phase 6 完成或明确降级策略 |
 
-## Phase 4 预留
-
-optimizer.py 启动门槛（2026-05-12 CEO review 确认）：
-- Framework A 30d 结案 ≥ 100 条 AND
-- accuracy-report 任一信号层级 `hit_rate_vs_300 > 55%` 且样本 ≥ 20
-- 预期 2026-06/07。Framework B 当前暂停（73条历史保留），重启：scorer.py 加回 "B"
+optimizer.py 启动门槛：Framework A 30d 结案 ≥ 100（已满足） AND `hit_rate_vs_300 > 55%`（待验证）。  
+Framework B 重启：在 scorer.py 加回 "B"，另写生产化 spec 并经独立审查。
 
 ---
 

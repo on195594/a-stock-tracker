@@ -168,3 +168,23 @@ cat logs/weekly-pm-loop-summary.txt
 **Trigger:** 当 Gemini 出现连续失败告警（daily_log.txt 中连续 3 天出现 fallback 日志）时再实施。
 
 **Context:** 发现于 /plan-eng-review 2026-05-11。
+
+## agy 工程审查修复完成（2026-07-04）
+
+**What:** agy 对 a-stock-tracker 进行工程视角独立审查，发现 2 Critical + 6 Important 问题，
+通过 collab-pipeline Batch A + B 全部修复（11 commits，743e195 → 37a646e）。
+
+**已修复：**
+- A1: DB per-stock SAVEPOINT 隔离 + 崩溃幂等重跑（06f3d88/b3f1c4c）
+- A2: cmd_init/cmd_weekly 测试覆盖（3a72a47/63e3eb4）
+- B1: spot_em 改重试计数器，连续 3 次失败才今日锁定（23bd764/e056e93）
+- B2+B5: Gemini 退避重试（429/5xx）+ 过期缓存降级（4058688）
+- B3: subprocess TimeoutExpired stderr 转发（1e8b401）
+- B4a: cache._ensure_columns 列名正则白名单（ab9fdb9）
+- B4b: outcome window SQL 常量防注入（1ccc3da）
+- B6: agent_reviewer 接入真实 Gemini，失败回退 fallback（df765cb/37a646e）
+- B7: cmd_outcome_update Telegram mock 测试（5e44ec2/165aa1b）
+
+**验证基线：** `225 passed, 1 skipped`
+
+**Next:** 无新 TODO 由本次修复产生；继续等待 Framework A 30d outcome 结案样本 ≥ 100。

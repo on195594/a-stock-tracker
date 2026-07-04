@@ -59,6 +59,15 @@
 
 ### B-1｜GENERATED COLUMN 不能直接写入
 
+---
+
+### B-5｜批量写入无 per-stock 原子隔离，单股崩溃导致后续 stock 跳过
+
+**现象（agy 工程审查发现，2026-07-04）：** `cmd_batch()` 在整个 daily 批次用同一个事务，若某只股票崩溃，该 stock 之后的所有写入也被回滚，导致幂等重跑仍全量重新计算，且无法精确定位哪只股票出了问题。  
+**根因：** 外层 `conn.commit()` 在整批完成后才提交；异常 `ROLLBACK` 的粒度是整批次。  
+**修复：** 每只股票用独立 `SAVEPOINT sp_stock` / `RELEASE sp_stock` 包裹；捕获异常时 `ROLLBACK TO sp_stock`，已成功的股票已经释放 savepoint，不受影响。引入 `savepoint_created` 布尔标志，避免双重异常时重复 `ROLLBACK TO`。`checkpoint` 批量更新加 `AND framework IN (placeholders)` 防止意外跨框架写入。  
+**防复发：** 任何"批量处理 N 个独立实体 → 写 DB"的模式，都应使用 per-entity SAVEPOINT。事务粒度 = 失败恢复粒度，设计时先问："崩溃重跑的最小代价单元是什么？"
+
 **现象：** `INSERT INTO predictions (..., alpha_30d, ...)` 报错 `table predictions has no column named alpha_30d`（或写入报错）。
 **根因：** `alpha_30d / alpha_60d / alpha_90d` 是 SQLite `GENERATED ALWAYS AS (...) VIRTUAL` 列，由数据库自动计算，任何 INSERT/UPDATE 都不能包含这些列名。
 **修复：** 从所有 INSERT/UPDATE 语句中删除 `alpha_*d` 列。
@@ -133,6 +142,15 @@
 ## D. 外部 API 陷阱
 
 ### D-1｜东方财富 index_zh_a_hist 长期不稳定
+
+---
+
+### D-5｜外部 API 单次失败即锁定今日，导致当天后续全量跳过
+
+**现象（agy 工程审查发现，2026-07-04）：** `_fetch_spot_em_safe()` 初始实现在首次失败时立即设 `_spot_em_failed_today = today`，锁定整日。一次网络抖动后，当天剩余 34 只股票全部静默跳过，`price_at_score` 全部为 NULL，推送和 outcome 计算受影响。  
+**根因：** 没有区分"偶发失败"和"系统性故障"——设计上只有"成功/今日锁定"两种状态，缺少"失败计数 < 阈值时允许重试"的中间状态。  
+**修复：** 引入 `_spot_em_fail_count` 全局计数器和 `MAX_SPOT_EM_RETRIES=3`：连续失败 ≥ 3 次才设今日锁定；单次失败只递增计数，仍允许下一次调用重试；成功时重置计数器。日期切换时两个状态变量同步重置。  
+**防复发：** "外部 API 不稳定 → 降级/跳过"类设计，必须显式区分"偶发抖动（允许重试）"和"系统性故障（锁定降级）"。锁定条件应是连续 N 次失败，而不是单次失败。
 
 **现象：** `ak.index_zh_a_hist(symbol="000300")` 频繁返回空 DataFrame 或超时，导致 `benchmark_30d=NULL`，`alpha_30d` 无法计算。
 **根因：** AKShare 依赖的东方财富接口不稳定，尤其指数历史数据接口故障率高。
@@ -238,6 +256,17 @@ with patch("akshare.stock_financial_report_sina", return_value=df):
 
 ### F-5｜L3 从缓存计算时只检查行数，遗漏 freshness
 
+---
+
+### F-6｜公共符号重命名未同步调用方导致 ImportError
+
+**现象：** `fake_review` 函数重命名为 `_fake_review_fallback` 后，`pytest` 在收集 `tests/test_agent_reviewer.py` 时立即报 `ImportError: cannot import name 'fake_review'`，整个测试模块无法运行。  
+**根因：** 重命名只修改了 `lib/agent_reviewer.py` 的定义，没有 grep 仓库内的调用方。测试文件第 3 行仍从旧名导入。QA reviewer 识别了风险模式（"diff 外可能有调用方"）但因为只看 diff 无法确认，标注为 `unverified`，未触发强制修复流程。  
+**修复：** 在测试导入行改为 `from lib.agent_reviewer import _fake_review_fallback as fake_review`。  
+**防复发：** 重命名或删除任何公共符号（函数、类、常量）前，先 `grep -r 旧名 .` 确认调用方清单。collab-pipeline Step 8 的 QA rubric 已强制要求：`refactor/split` 和 `feature/new-code` 任务若涉及公共符号重命名，必须在 diff 外 grep 或标注 `unverified-needs-grep`，不得仅凭 diff 判断安全。
+
+---
+
 **现象：** Market Data Boundary 重构后，L3 买点层改为从本地 `daily_bars` 读取 120 条标准化日线再计算 `entry_signal`。代码最初只检查 `len(rows) >= 120`，如果当天 L3 refresh 失败但历史缓存里仍有 120 条旧数据，系统可能用几周前的 bars 计算出 `entry_signal=1/v1`，进而触发用户可见的买点信号。
 
 **根因：** 把“有足够窗口”和“窗口足够新”混为一谈。`price_at_score` 有 5 个自然日 freshness SLA，但 L3 缓存窗口没有同步校验最新 `trade_date` 距 `score_date/today` 的新鲜度。缓存边界迁移后，网络失败不再直接表现为缺数据，旧缓存会让行数检查误判为可计算。
@@ -274,6 +303,7 @@ entry_signal_reason='SOURCE_STALE'
 | SQLite 版本 | B-2 |
 | weights_hash 误变更 | B-3 |
 | 新增列不生效 | B-4 |
+| 批量写入无 per-stock 原子隔离 | B-5 |
 | 均分跳变 / 系统性偏移 | C-1 |
 | Gemini 历史不可比 | C-2 |
 | weights_hash 变更 | C-3 |
@@ -281,10 +311,12 @@ entry_signal_reason='SOURCE_STALE'
 | 沪深300 benchmark NULL | D-1 |
 | AKShare 返回 str | D-2 |
 | Codex stdin 挂起 | D-3 |
+| spot_em 单次失败即今日锁定 | D-5 |
 | 测试污染生产数据库 | E-1 |
 | 测试发真实网络请求 | E-2 |
 | Sheets 阻断 cron | F-1 |
 | entry_signal 版本化 | F-2 |
-| daily_bars stale / SOURCE_STALE / L3 旧缓存 | F-5 |
 | 阶段依赖缺失 | F-3 |
 | 边界定义冲突 | F-4 |
+| daily_bars stale / SOURCE_STALE / L3 旧缓存 | F-5 |
+| 公共符号重命名未 grep 调用方 | F-6 |

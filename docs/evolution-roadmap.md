@@ -1,7 +1,7 @@
 # a-stock-tracker 进化路线图
 
-**版本：** v1.6
-**基线日期：** 2026-06-26
+**版本：** v1.7
+**基线日期：** 2026-07-04
 **文档定位：** 系统演化的顶层规划文档。所有后续 Phase 的修改、补丁、设计决策均以本文档为基线。若实施中发现偏差，先更新本文档，再改代码。
 
 ---
@@ -20,7 +20,7 @@
 
 ---
 
-## 二、当前系统基线（2026-06-26 快照）
+## 二、当前系统基线（2026-07-04 快照）
 
 ### 能力盘点
 
@@ -30,7 +30,7 @@
 | Framework B 评分 | ⏸ report-only | 73 条历史记录保留，`SUPPORTED_FRAMEWORKS={"A"}`；B label 自然结案样本不足 `0/20`，最早 2026-07-26 后复核，不启用生产写入 |
 | 每日 PB 分位 | ✅ 正常 | current_pb = 收盘价/bps，ranked in pb_hist_monthly；当前 watchlist PB 日度可计算 35/35 |
 | 毛利率字段 | ✅ 正常 | 基本面缓存 35/35，金融行业 gross_margin 不适用按规则跳过 |
-| Gemini 定性评分 | ✅ 正常 | 30天缓存，all-or-nothing fallback；当前缓存存在 35/35 |
+| Gemini 定性评分 | ✅ 正常 | 30天缓存，退避重试（429/5xx，最多3次），过期缓存降级，all-or-nothing fallback；当前缓存存在 35/35 |
 | Telegram 推送 | ✅ 正常 | ≥ buy_strong 且 L3 entry_signal=1 触发；2026-06-26 daily 推送成功 1 只股票 |
 | Outcome 追踪 | ✅ 正常 | `outcome-update` 已恢复到 cron；accuracy-report 显示 Framework A 30d 结案 533 条，其中 post-fix 315 条 |
 | L3 买点层 | ✅ 正常 | L3 v1 已接入 daily/推送/report；当前 v1 记录 700，覆盖率 100.0%，30d 样本仍不足 |
@@ -242,3 +242,4 @@
 | v1.4 | 2026-06-05 | Phase 6 readiness 报告增强：明确生产化阻塞项与下一步，保持 Framework B report-only，不启用生产写入 |
 | v1.5 | 2026-06-21 | 补记 2026-06-09~06-16 行情数据源迁移：AKShare/东方财富行情入口禁用，迁移到 Tushare 主源 + BaoStock degraded fallback（基本面/估值/财报抓取不受影响，仍用 AKShare）；2026-06-21 重新探测 `scripts/probe_tushare_market_data.py` 结果 PASS，`check_market_data_readiness.py` 转为 READY，此前 06-09 探测因 Tushare 限频(1次/小时)误报 FAIL 已更新为最新通过记录 |
 | v1.6 | 2026-06-26 | 同步真实恢复状态：`a-stock-lib==0.1.2`、隔离 BaoStock fallback、真实 probe/backfill/daily、`READY_CRON`、managed cron block；Phase 4 标记完成并转持续观察，Phase 6 明确为 report-only 深化，不启用 Framework B 生产写入；新增 `docs/project-status.md` 作为 PM/spec 台账 |
+| v1.7 | 2026-07-04 | agy 工程审查修复（Batch A+B，11 commits）：DB per-stock SAVEPOINT 隔离、spot_em 重试计数器（连续3次才今日锁定）、Gemini 退避重试+过期缓存降级、subprocess stderr 转发、cache._ensure_columns SQL identifier allowlist、_OUTCOME_WINDOWS frozenset、agent_reviewer 接入真实 Gemini REST API（_fake_review_fallback 降级）；新增 cmd_init/cmd_weekly/cmd_outcome_update 测试覆盖；测试基线 225 passed, 1 skipped（含 3 个新测试模块补丁） |
