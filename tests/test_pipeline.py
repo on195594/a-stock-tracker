@@ -2368,21 +2368,27 @@ def test_cmd_weekly_delegates_to_refresh_fundamentals(tmp_db, small_watchlist, m
     assert calls == ['weekly']
 
 
-def test_cmd_init_propagates_partial_failure(tmp_db, small_watchlist, monkeypatch):
-    """cmd_init 中部分 fetch 失败不应抛出异常，仍正常返回。"""
+def test_cmd_init_attempts_all_stocks_on_fetcher_failure(tmp_db, small_watchlist, monkeypatch):
+    """cmd_init 在全部 fetch 失败时仍尝试全部股票，不抛出异常。"""
+    calls = []
+
     def fake_run_fetcher_process(code, timeout=None):
+        calls.append(code)
         return 1  # all fail
 
-    monkeypatch.setattr(pipeline, '_run_fetcher_process', fake_run_fetcher_process)
-    # Should not raise
+    monkeypatch.setattr(pipeline, "_run_fetcher_process", fake_run_fetcher_process)
     pipeline.cmd_init()
+    assert len(calls) == len(config.WATCHLIST)
 
 
-def test_cmd_weekly_propagates_partial_failure(tmp_db, small_watchlist, monkeypatch):
-    """cmd_weekly 中部分 fetch 超时不应抛出异常，仍正常返回。"""
+def test_cmd_weekly_attempts_all_stocks_on_fetcher_timeout(tmp_db, small_watchlist, monkeypatch):
+    """cmd_weekly 在全部 fetch 超时时仍尝试全部股票，不抛出异常。"""
+    calls = []
+
     def fake_run_fetcher_process(code, timeout=None):
-        return 'TIMEOUT'
+        calls.append(code)
+        return "TIMEOUT"
 
-    monkeypatch.setattr(pipeline, '_run_fetcher_process', fake_run_fetcher_process)
-    # Should not raise
+    monkeypatch.setattr(pipeline, "_run_fetcher_process", fake_run_fetcher_process)
     pipeline.cmd_weekly()
+    assert len(calls) == len(config.WATCHLIST)
