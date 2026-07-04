@@ -169,20 +169,34 @@ def _fetch_spot_em() -> Any:
     return akshare_provider.stock_zh_a_spot_em()
 
 
+MAX_SPOT_EM_RETRIES: int = 3
 _spot_em_failed_today: str | None = None
+_spot_em_fail_count: int = 0
 
 
 def _fetch_spot_em_safe(today: str) -> Any:
-    """spot_em 带今日失败记忆：进程内只尝试一次，避免 N 只股票 N 次无效调用。"""
-    global _spot_em_failed_today
-    if _spot_em_failed_today == today:
+    """spot_em 带重试计数：连续失败 MAX_SPOT_EM_RETRIES 次后今日锁定，单次抖动不影响后续股票。"""
+    global _spot_em_failed_today, _spot_em_fail_count
+    if _spot_em_failed_today != today:
+        _spot_em_fail_count = 0
+        _spot_em_failed_today = None
+    if _spot_em_failed_today == today and _spot_em_fail_count >= MAX_SPOT_EM_RETRIES:
+        return ('ERROR', 'spot_em 今日已达最大重试次数，跳过')
+    if _spot_em_failed_today == today and _spot_em_fail_count <= 0:
         return ('ERROR', 'spot_em 今日已失败，跳过重复拉取')
     result = timed_call(_fetch_spot_em, timeout=SPOT_EM_TIMEOUT)
-    if result is None:
+    is_failure = result is None or isinstance(result, (str, tuple))
+    if is_failure:
+        _spot_em_fail_count += 1
         _spot_em_failed_today = today
-        return ('ERROR', 'spot_em 返回空')
-    if isinstance(result, (str, tuple)):  # 'TIMEOUT' or ('ERROR', msg)
-        _spot_em_failed_today = today
+        if _spot_em_fail_count >= MAX_SPOT_EM_RETRIES:
+            logger.warning("spot_em 连续失败 %d 次，今日锁定", _spot_em_fail_count)
+        else:
+            logger.warning("spot_em 失败（%d/%d），下次仍重试", _spot_em_fail_count, MAX_SPOT_EM_RETRIES)
+        if result is None:
+            return ('ERROR', 'spot_em 返回空')
+    else:
+        _spot_em_fail_count = 0
     return result
 
 
