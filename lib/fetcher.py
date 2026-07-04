@@ -180,16 +180,14 @@ def _fetch_spot_em_safe(today: str) -> Any:
     if _spot_em_failed_today != today:
         _spot_em_fail_count = 0
         _spot_em_failed_today = None
-    if _spot_em_failed_today == today and _spot_em_fail_count >= MAX_SPOT_EM_RETRIES:
+    if _spot_em_failed_today == today:
         return ('ERROR', 'spot_em 今日已达最大重试次数，跳过')
-    if _spot_em_failed_today == today and _spot_em_fail_count <= 0:
-        return ('ERROR', 'spot_em 今日已失败，跳过重复拉取')
     result = timed_call(_fetch_spot_em, timeout=SPOT_EM_TIMEOUT)
     is_failure = result is None or isinstance(result, (str, tuple))
     if is_failure:
         _spot_em_fail_count += 1
-        _spot_em_failed_today = today
         if _spot_em_fail_count >= MAX_SPOT_EM_RETRIES:
+            _spot_em_failed_today = today
             logger.warning("spot_em 连续失败 %d 次，今日锁定", _spot_em_fail_count)
         else:
             logger.warning("spot_em 失败（%d/%d），下次仍重试", _spot_em_fail_count, MAX_SPOT_EM_RETRIES)

@@ -131,7 +131,7 @@ def test_fetch_spot_em_safe_returns_error_after_same_day_failure(monkeypatch) ->
     """同日失败记忆命中时返回明确错误，不返回 None 触发 to_dict 解析异常。"""
     monkeypatch.setattr(fetcher_mod, "_spot_em_failed_today", "2026-06-04")
     result = fetcher_mod._fetch_spot_em_safe("2026-06-04")
-    assert result == ("ERROR", "spot_em 今日已失败，跳过重复拉取")
+    assert result == ("ERROR", "spot_em 今日已达最大重试次数，跳过")
 
 
 def test_cmd_fetch_uses_recent_spot_snapshot_when_today_fetch_fails(monkeypatch) -> None:
