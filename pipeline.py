@@ -70,6 +70,7 @@ from scorer import (
 )
 
 FETCHER_STOCK_TIMEOUT_SECONDS = 420
+_OUTCOME_WINDOWS: frozenset[str] = frozenset({"30d", "60d", "90d"})
 
 
 def _load_dotenv() -> None:
@@ -315,7 +316,12 @@ def _run_fetcher_process(code: str, timeout: int = FETCHER_STOCK_TIMEOUT_SECONDS
             cwd=os.path.dirname(__file__),
             timeout=timeout,
             check=False,
+            capture_output=True,
+            text=True,
         )
+        if completed.stderr:
+            for line in completed.stderr.strip().splitlines():
+                logger.warning("fetcher[%s] %s", code, line)
     except subprocess.TimeoutExpired:
         logger.error("  ✗ %s fetch 超过 %ss，已终止子进程", code, timeout)
         return "TIMEOUT"
@@ -660,6 +666,8 @@ def cmd_outcome_update() -> None:
 
             updated = 0
             for window, days in [("30d", 30), ("60d", 60), ("90d", 90)]:
+                if window not in _OUTCOME_WINDOWS:
+                    raise ValueError(f"未知 window: {window!r}")
                 outcome_col = f"outcome_{window}"
                 benchmark_col = f"benchmark_{window}"
 
