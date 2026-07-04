@@ -6,6 +6,7 @@ Gemini 定性评分模块。
 import json
 import logging
 import os
+import time
 import urllib.request
 import urllib.error
 from datetime import date, timedelta
@@ -24,6 +25,8 @@ CACHE_TTL_DAYS = 30
 GEMINI_TIMEOUT_S = 10
 GEMINI_MODEL = "gemini-2.5-flash"
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+MAX_GEMINI_RETRIES: int = 3
+GEMINI_RETRY_DELAYS: tuple[int, ...] = (2, 4)
 
 
 def _check_cache(code: str) -> dict | None:
@@ -40,6 +43,21 @@ def _check_cache(code: str) -> dict | None:
     moat, market_pos, sentiment, scored_date = row
     if date.today() - date.fromisoformat(scored_date) > timedelta(days=CACHE_TTL_DAYS):
         return None
+    return {"moat": moat, "market_pos": market_pos, "sentiment": sentiment}
+
+
+def _check_cache_stale(code: str) -> dict | None:
+    """返回最新缓存值，无论是否过期。缓存不存在时返回 None。"""
+    db = get_db()
+    row = db.execute(
+        "SELECT moat, market_pos, sentiment FROM qualitative_scores"
+        " WHERE code=? ORDER BY scored_date DESC LIMIT 1",
+        (code,),
+    ).fetchone()
+    db.close()
+    if row is None:
+        return None
+    moat, market_pos, sentiment = row
     return {"moat": moat, "market_pos": market_pos, "sentiment": sentiment}
 
 
@@ -88,30 +106,39 @@ def _call_gemini(code: str, name: str) -> dict | None:
     url = GEMINI_API_URL.format(model=GEMINI_MODEL, key=api_key)
     req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
 
-    try:
-        with urllib.request.urlopen(req, timeout=GEMINI_TIMEOUT_S) as resp:
-            body = json.loads(resp.read().decode("utf-8"))
-        text = body["candidates"][0]["content"]["parts"][0]["text"].strip()
-        # 去掉可能的 markdown 代码块包装
-        if text.startswith("```"):
-            text = text.split("```")[1]
-            if text.startswith("json"):
-                text = text[4:]
-        raw = json.loads(text)
-        return _validate(raw)
-    except TimeoutError:
-        logger.warning(f"{code} Gemini 超时（>{GEMINI_TIMEOUT_S}s），使用 fallback")
-    except urllib.error.HTTPError as e:
-        if e.code in (401, 403):
-            logger.error(f"{code} Gemini 鉴权失败（{e.code}），请更新 .env GEMINI_API_KEY")
-        elif e.code == 429:
-            logger.warning(f"{code} Gemini quota 超限（429），将在下次 weekly 重试")
-        else:
-            logger.warning(f"{code} Gemini HTTP 错误 {e.code}")
-    except (json.JSONDecodeError, KeyError, IndexError) as e:
-        logger.warning(f"{code} Gemini 响应解析失败：{e}，触发 fallback")
-    except Exception as e:
-        logger.warning(f"{code} Gemini 调用异常：{e}，触发 fallback")
+    for attempt in range(MAX_GEMINI_RETRIES):
+        try:
+            with urllib.request.urlopen(req, timeout=GEMINI_TIMEOUT_S) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+            text = body["candidates"][0]["content"]["parts"][0]["text"].strip()
+            # 去掉可能的 markdown 代码块包装
+            if text.startswith("```"):
+                text = text.split("```")[1]
+                if text.startswith("json"):
+                    text = text[4:]
+            raw = json.loads(text)
+            return _validate(raw)
+        except TimeoutError:
+            logger.warning(f"{code} Gemini 超时（>{GEMINI_TIMEOUT_S}s），使用 fallback")
+            return None
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                logger.error(f"{code} Gemini 鉴权失败（{e.code}），请更新 .env GEMINI_API_KEY")
+                return None
+            retryable = e.code == 429 or e.code >= 500
+            delay = GEMINI_RETRY_DELAYS[min(attempt, len(GEMINI_RETRY_DELAYS) - 1)]
+            if retryable and attempt < MAX_GEMINI_RETRIES - 1:
+                logger.warning(f"{code} Gemini HTTP {e.code}，{delay}s 后重试（{attempt + 1}/{MAX_GEMINI_RETRIES}）")
+                time.sleep(delay)
+            else:
+                logger.warning(f"{code} Gemini HTTP 错误 {e.code}，触发 fallback")
+                return None
+        except (json.JSONDecodeError, KeyError, IndexError) as e:
+            logger.warning(f"{code} Gemini 响应解析失败：{e}，触发 fallback")
+            return None
+        except Exception as e:
+            logger.warning(f"{code} Gemini 调用异常：{e}，触发 fallback")
+            return None
     return None
 
 
@@ -127,10 +154,15 @@ def get_qualitative_score(code: str, name: str) -> dict:
         return cached
 
     result = _call_gemini(code, name)
-    if result is None:
-        logger.info(f"{code} 定性评分使用 fallback：{FALLBACK}")
-        return dict(FALLBACK)
+    if result is not None:
+        _write_cache(code, result)
+        logger.info(f"{code} 定性评分 Gemini：{result}")
+        return result
 
-    _write_cache(code, result)
-    logger.info(f"{code} 定性评分 Gemini：{result}")
-    return result
+    stale = _check_cache_stale(code)
+    if stale is not None:
+        logger.info(f"{code} Gemini失败，使用过期缓存：{stale}")
+        return stale
+
+    logger.info(f"{code} 定性评分使用 fallback：{FALLBACK}")
+    return dict(FALLBACK)
