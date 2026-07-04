@@ -2336,3 +2336,53 @@ def test_backfill_null_prices_uses_db_cache(tmp_db) -> None:
     assert provider.calls == 0
     assert row is not None
     assert row[0] == pytest.approx(38.50)
+
+
+# ---------------------------------------------------------------------------
+# cmd_init and cmd_weekly entry point tests
+# ---------------------------------------------------------------------------
+
+def test_cmd_init_delegates_to_refresh_fundamentals(tmp_db, small_watchlist, monkeypatch):
+    """cmd_init 必须以 'init' 标签调用 _refresh_fundamentals。"""
+    calls = []
+
+    def fake_refresh(label: str):
+        calls.append(label)
+        return (len(config.WATCHLIST), 0)
+
+    monkeypatch.setattr(pipeline, '_refresh_fundamentals', fake_refresh)
+    pipeline.cmd_init()
+    assert calls == ['init']
+
+
+def test_cmd_weekly_delegates_to_refresh_fundamentals(tmp_db, small_watchlist, monkeypatch):
+    """cmd_weekly 必须以 'weekly' 标签调用 _refresh_fundamentals。"""
+    calls = []
+
+    def fake_refresh(label: str):
+        calls.append(label)
+        return (len(config.WATCHLIST), 0)
+
+    monkeypatch.setattr(pipeline, '_refresh_fundamentals', fake_refresh)
+    pipeline.cmd_weekly()
+    assert calls == ['weekly']
+
+
+def test_cmd_init_propagates_partial_failure(tmp_db, small_watchlist, monkeypatch):
+    """cmd_init 中部分 fetch 失败不应抛出异常，仍正常返回。"""
+    def fake_run_fetcher_process(code, timeout=None):
+        return 1  # all fail
+
+    monkeypatch.setattr(pipeline, '_run_fetcher_process', fake_run_fetcher_process)
+    # Should not raise
+    pipeline.cmd_init()
+
+
+def test_cmd_weekly_propagates_partial_failure(tmp_db, small_watchlist, monkeypatch):
+    """cmd_weekly 中部分 fetch 超时不应抛出异常，仍正常返回。"""
+    def fake_run_fetcher_process(code, timeout=None):
+        return 'TIMEOUT'
+
+    monkeypatch.setattr(pipeline, '_run_fetcher_process', fake_run_fetcher_process)
+    # Should not raise
+    pipeline.cmd_weekly()
