@@ -455,6 +455,14 @@ def cmd_daily() -> None:
                     skipped.append(code)
                     continue
 
+                written_today = db.execute(
+                    "SELECT COUNT(DISTINCT framework) FROM predictions WHERE code=? AND score_date=? AND weights_hash=?",
+                    (code, today, weights_hash),
+                ).fetchone()[0]
+                if written_today == len(SUPPORTED_FRAMEWORKS):
+                    logger.info(f"  检查点跳过 {code}：今日 {written_today}/{len(SUPPORTED_FRAMEWORKS)} 框架已完整写入")
+                    continue
+
                 data = dict(fundamentals.get("data", fundamentals))
                 report_period = data.get("report_period")
                 price_at_score = snapshot_data.get(code)
@@ -477,19 +485,21 @@ def cmd_daily() -> None:
                 threshold_adjusted = 0
                 entry_signal_result = _compute_stock_entry_signal(db, code, today)
 
-                for framework in sorted(SUPPORTED_FRAMEWORKS):
-                    try:
-                        result = score_stock(code, framework, data, weights=weights)
-                    except InsufficientDataError as e:
-                        logger.warning(f"  跳过 {code}/{framework}：{e}")
-                        skipped.append(f"{code}/{framework}")
-                        continue
-                    except UnsupportedFrameworkError as e:
-                        logger.error(f"  错误 {code}/{framework}：{e}")
-                        skipped.append(f"{code}/{framework}")
-                        continue
+                stock_written = 0
+                try:
+                    db.execute("SAVEPOINT sp_stock")
+                    for framework in sorted(SUPPORTED_FRAMEWORKS):
+                        try:
+                            result = score_stock(code, framework, data, weights=weights)
+                        except InsufficientDataError as e:
+                            logger.warning(f"  跳过 {code}/{framework}：{e}")
+                            skipped.append(f"{code}/{framework}")
+                            continue
+                        except UnsupportedFrameworkError as e:
+                            logger.error(f"  错误 {code}/{framework}：{e}")
+                            skipped.append(f"{code}/{framework}")
+                            continue
 
-                    try:
                         cursor = db.execute(
                             """INSERT OR IGNORE INTO predictions
                                (code, name, framework, score_date, price_at_score,
@@ -530,15 +540,18 @@ def cmd_daily() -> None:
                                     today,
                                 ),
                             )
-                        db.commit()
                         if cursor.rowcount > 0:
-                            written += 1
+                            stock_written += 1
                         logger.info(
                             f"  ✓ {code} {name} [{framework}]  总分={result['total_score']}  "
                             f"data_quality={result['data_quality']}"
                         )
-                    except Exception as e:
-                        logger.error(f"  写入 {code}/{framework} 失败：{e}")
+                    db.execute("RELEASE SAVEPOINT sp_stock")
+                    written += stock_written
+                except Exception as e:
+                    logger.error(f"  {code} 写入异常，回滚本股全部框架: {e}")
+                    db.execute("ROLLBACK TO SAVEPOINT sp_stock")
+                    db.execute("RELEASE SAVEPOINT sp_stock")
 
             log_line = (
                 f"{today} daily 完成：写入 {written} 条，跳过 {len(skipped)} 条"
