@@ -455,9 +455,10 @@ def cmd_daily() -> None:
                     skipped.append(code)
                     continue
 
+                placeholders = ",".join("?" * len(SUPPORTED_FRAMEWORKS))
                 written_today = db.execute(
-                    "SELECT COUNT(DISTINCT framework) FROM predictions WHERE code=? AND score_date=? AND weights_hash=?",
-                    (code, today, weights_hash),
+                    f"SELECT COUNT(DISTINCT framework) FROM predictions WHERE code=? AND score_date=? AND weights_hash=? AND framework IN ({placeholders})",
+                    (code, today, weights_hash, *sorted(SUPPORTED_FRAMEWORKS)),
                 ).fetchone()[0]
                 if written_today == len(SUPPORTED_FRAMEWORKS):
                     logger.info(f"  检查点跳过 {code}：今日 {written_today}/{len(SUPPORTED_FRAMEWORKS)} 框架已完整写入")
@@ -486,8 +487,10 @@ def cmd_daily() -> None:
                 entry_signal_result = _compute_stock_entry_signal(db, code, today)
 
                 stock_written = 0
+                savepoint_created = False
                 try:
                     db.execute("SAVEPOINT sp_stock")
+                    savepoint_created = True
                     for framework in sorted(SUPPORTED_FRAMEWORKS):
                         try:
                             result = score_stock(code, framework, data, weights=weights)
@@ -550,8 +553,9 @@ def cmd_daily() -> None:
                     written += stock_written
                 except Exception as e:
                     logger.error(f"  {code} 写入异常，回滚本股全部框架: {e}")
-                    db.execute("ROLLBACK TO SAVEPOINT sp_stock")
-                    db.execute("RELEASE SAVEPOINT sp_stock")
+                    if savepoint_created:
+                        db.execute("ROLLBACK TO SAVEPOINT sp_stock")
+                        db.execute("RELEASE SAVEPOINT sp_stock")
 
             log_line = (
                 f"{today} daily 完成：写入 {written} 条，跳过 {len(skipped)} 条"
