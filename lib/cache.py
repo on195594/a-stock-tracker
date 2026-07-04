@@ -13,12 +13,15 @@ A 股选股管道的 SQLite 缓存层。
 
 import json
 import os
+import re as _re
 import sqlite3
 import sys
 from datetime import datetime, timedelta
 from typing import Any
 
 DB_PATH = os.path.expanduser("~/a-stock-tracker/tracker.db")
+
+_SAFE_IDENTIFIER_RE = _re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
 
 # 行业 → TTL 映射（关键词匹配，越靠前优先级越高）
 INDUSTRY_TTL_MAP = [
@@ -41,6 +44,8 @@ def get_industry_ttl(industry: str) -> int:
 def _ensure_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
     existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
     for name, definition in columns.items():
+        if not _SAFE_IDENTIFIER_RE.match(name):
+            raise ValueError(f"unsafe column name: {name!r}")
         if name not in existing:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
 
