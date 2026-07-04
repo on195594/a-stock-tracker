@@ -1,6 +1,6 @@
 import pytest
 
-from lib.agent_reviewer import ReviewInput, fake_review, validate_review_output
+from lib.agent_reviewer import ReviewInput, _fake_review_fallback as fake_review, validate_review_output
 
 
 def _input() -> ReviewInput:
