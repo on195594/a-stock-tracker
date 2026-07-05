@@ -17,7 +17,6 @@ import os
 import sqlite3
 import subprocess
 import sys
-import time
 from datetime import date, datetime, timedelta
 import pandas as pd
 
@@ -120,24 +119,6 @@ def _compute_weights_hash(weights: dict) -> str:
     ).hexdigest()[:8]
 
 
-def _retry(fn, *args, retries: int = 3, context: dict | None = None, **kwargs):
-    """指数退避重试，失败返回 None。"""
-    context_text = ""
-    if context:
-        context_text = " " + " ".join(f"{k}={v}" for k, v in context.items())
-    for attempt in range(retries):
-        try:
-            return fn(*args, **kwargs)
-        except Exception as e:
-            if attempt < retries - 1:
-                wait = 2 ** attempt
-                logger.warning(f"重试 {attempt + 1}/{retries}{context_text}，{wait}s 后重试：{e}")
-                time.sleep(wait)
-            else:
-                logger.error(f"重试耗尽{context_text}：{e}")
-    return None
-
-
 def _today() -> str:
     return date.today().isoformat()
 
@@ -148,18 +129,6 @@ def _add_days(d: str, n: int) -> str:
 
 def _compute_daily_pb_percentile(price: float, data: dict) -> float | None:
     return compute_daily_pb_percentile(price, data)
-
-
-def _normalize_entry_signal_bars(hist) -> object:
-    """把 AKShare 日线中文列名归一化为 entry_signal 纯函数输入。"""
-    if hist is None or getattr(hist, "empty", False):
-        return hist
-    rename_map = {"日期": "date", "收盘": "close", "成交量": "volume"}
-    normalized = hist.rename(columns=rename_map)
-    required = {"date", "close", "volume"}
-    if not required.issubset(set(normalized.columns)):
-        return normalized
-    return normalized[["date", "close", "volume"]]
 
 
 def _compute_stock_entry_signal(db: sqlite3.Connection, code: str, today: str) -> EntrySignalResult:
@@ -439,14 +408,14 @@ def cmd_daily() -> None:
             )
 
             # 获取今日 price_at_score（优先 daily_bars 最近交易日 close，5 天 freshness SLA）
-            snapshot_data: dict = {}
+            score_prices: dict = {}
             for item in config.WATCHLIST:
                 code = item["code"]
                 price = _get_score_price(db, provider, code, today)
                 if price is not None:
-                    snapshot_data[code] = price
-            if snapshot_data:
-                logger.info(f"price_at_score：获取到 {len(snapshot_data)} 只股票收盘价")
+                    score_prices[code] = price
+            if score_prices:
+                logger.info(f"price_at_score：获取到 {len(score_prices)} 只股票收盘价")
                 _backfill_null_prices(db, today, provider)
             else:
                 logger.error("price_at_score 全部失败，今日评分中止（今日记录不写入，明日将写入明日数据）")
@@ -475,7 +444,7 @@ def cmd_daily() -> None:
 
                 data = dict(fundamentals.get("data", fundamentals))
                 report_period = data.get("report_period")
-                price_at_score = snapshot_data.get(code)
+                price_at_score = score_prices.get(code)
 
                 # 注入日度实时 PB 分位（股价变化→分位变化→评分每日变化）
                 if price_at_score:
@@ -664,9 +633,6 @@ def cmd_outcome_update() -> None:
             if earliest:
                 _ensure_index_prices(db, earliest, today, provider)
 
-            # target_date==today 的记录走 provider outcome price 路径（见下方循环）
-            snapshot_data: dict = {}
-
             updated = 0
             for window, days in [("30d", 30), ("60d", 60), ("90d", 90)]:
                 if window not in _OUTCOME_WINDOWS:
@@ -689,17 +655,12 @@ def cmd_outcome_update() -> None:
                     # 获取股票到期价格（向前找 10 个自然日，覆盖黄金周 7 天停牌）
                     outcome_price = None
                     estimate_flag = 0
-                    exact_price = snapshot_data.get(code) if target_date == today else None
-
-                    if exact_price:
-                        outcome_price = exact_price
-                    else:
-                        result = provider.fetch_outcome_price(code, target_date)
-                        insert_market_data_audit(db, result, "outcome_price", code, today)
-                        if result.value is not None:
-                            outcome_price = result.value
-                            if result.freshness_days and result.freshness_days > 0:
-                                estimate_flag = 1
+                    result = provider.fetch_outcome_price(code, target_date)
+                    insert_market_data_audit(db, result, "outcome_price", code, today)
+                    if result.value is not None:
+                        outcome_price = result.value
+                        if result.freshness_days and result.freshness_days > 0:
+                            estimate_flag = 1
 
                     if outcome_price is None:
                         logger.info(f"  {code} {window} 到期日 {target_date} 无可用价格（10日内），置 NULL")
