@@ -23,8 +23,63 @@ def _send(token: str, chat_id: str, text: str) -> None:
         resp.read()
 
 
-def push_daily_signals(score_date: str, threshold: float = 55.0) -> None:
-    """查询当日评分 >= threshold 的股票，发送 Telegram 消息。"""
+def _interpret(
+    quant_score: float,
+    total_score: float,
+    moat: int | None,
+    market_pos: int | None,
+) -> str:
+    timing = round(total_score - quant_score, 1)
+    parts: list[str] = []
+
+    if moat is not None:
+        if moat >= 8:
+            parts.append(f"护城河{moat}/10(强)")
+        elif moat >= 5:
+            parts.append(f"护城河{moat}/10")
+        else:
+            parts.append(f"护城河{moat}/10(弱)")
+
+    if market_pos is not None:
+        if market_pos >= 4:
+            parts.append(f"行业龙头({market_pos}/5)")
+        elif market_pos == 3:
+            parts.append(f"行业中等({market_pos}/5)")
+        else:
+            parts.append(f"行业地位弱({market_pos}/5)")
+
+    if timing >= 12:
+        parts.append("择时佳")
+    elif timing <= 5:
+        parts.append("择时弱")
+
+    return "  ".join(parts) if parts else ""
+
+
+def _format_stock_line(
+    code: str,
+    name: str | None,
+    total_score: float,
+    quant_score: float,
+    entry_signal: int | None,
+    entry_signal_version: str | None,
+    moat: int | None,
+    market_pos: int | None,
+) -> str:
+    label = f"{name}({code})" if name else code
+    interp = _interpret(quant_score, total_score, moat, market_pos)
+    l3_tag = "✓ L3买点" if entry_signal == 1 else "等待L3"
+    if entry_signal_version:
+        l3_tag += f"({entry_signal_version})"
+
+    line = f"  {label}  总分:{total_score:.1f}  量化:{quant_score:.1f}  {l3_tag}"
+    if interp:
+        line += f"\n    {interp}"
+    return line
+
+
+def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: float = 35.0) -> None:
+    """查询当日分层推荐股票，发送 Telegram 消息。"""
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
     if not token or not chat_id:
@@ -32,29 +87,66 @@ def push_daily_signals(score_date: str, threshold: float = 55.0) -> None:
         return
 
     db = get_db()
-    rows = db.execute(
-        """SELECT code, name, total_score, quant_score, entry_signal_version
-           FROM predictions
-           WHERE score_date=? AND total_score >= ? AND entry_signal = 1
-           ORDER BY total_score DESC""",
+    primary = db.execute(
+        """SELECT p.code, p.name, p.total_score, p.quant_score, p.entry_signal,
+                  p.entry_signal_version, q.moat, q.market_pos
+           FROM predictions p
+           LEFT JOIN qualitative_scores q ON p.code = q.code
+           WHERE p.score_date=? AND p.total_score >= ? AND p.entry_signal = 1
+           ORDER BY p.total_score DESC""",
         (score_date, threshold),
+    ).fetchall()
+    backup = db.execute(
+        """SELECT p.code, p.name, p.total_score, p.quant_score, p.entry_signal,
+                  p.entry_signal_version, q.moat, q.market_pos
+           FROM predictions p
+           LEFT JOIN qualitative_scores q ON p.code = q.code
+           WHERE p.score_date=? AND p.total_score >= ?
+             AND (p.entry_signal IS NULL OR p.entry_signal != 1)
+           ORDER BY p.total_score DESC""",
+        (score_date, threshold),
+    ).fetchall()
+    radar = db.execute(
+        """SELECT p.code, p.name, p.total_score, p.quant_score, p.entry_signal,
+                  p.entry_signal_version, q.moat, q.market_pos
+           FROM predictions p
+           LEFT JOIN qualitative_scores q ON p.code = q.code
+           WHERE p.score_date=? AND p.total_score >= ? AND p.total_score < ?
+           ORDER BY p.total_score DESC""",
+        (score_date, radar_min, threshold),
     ).fetchall()
     db.close()
 
-    if not rows:
-        logger.info(f"今日无 >= {threshold} 分的评分信号，跳过推送")
-        return
+    sections = [f"📊 A股推荐 {score_date}\n"]
 
-    lines = [f"A股每日信号 {score_date}（>={threshold:.0f}分，L3通过）\n"]
-    for code, name, total, quant, entry_version in rows:
-        label = f"{name}({code})" if name else code
-        l3_label = f"L3:{entry_version or 'unknown'} 通过"
-        lines.append(f"  {label}  总分:{total:.1f}  量化:{quant:.1f}  {l3_label}")
-    text = "\n".join(lines)
+    if primary:
+        lines = [f"🟢 主推（买点触发，总分>={threshold:.0f}）"]
+        for code, name, total, quant, entry_signal, entry_version, moat, market_pos in primary:
+            lines.append(_format_stock_line(code, name, total, quant, entry_signal, entry_version, moat, market_pos))
+        sections.append("\n".join(lines))
+
+    if backup:
+        lines = [f"🟡 候补（高分等待买点，总分>={threshold:.0f}）"]
+        for code, name, total, quant, _entry_signal, entry_version, moat, market_pos in backup:
+            lines.append(_format_stock_line(code, name, total, quant, 0, entry_version, moat, market_pos))
+        sections.append("\n".join(lines))
+
+    if radar:
+        lines = [f"🔵 雷达（{radar_min:.0f}~{threshold:.0f}分，关注）"]
+        for code, name, total, quant, entry_signal, entry_version, moat, market_pos in radar:
+            lines.append(_format_stock_line(code, name, total, quant, entry_signal, entry_version, moat, market_pos))
+        sections.append("\n".join(lines))
+
+    total_counted = len(primary) + len(backup) + len(radar)
+    if total_counted == 0:
+        sections.append("今日无推荐信号")
+
+    sections.append(f"\n共评估{total_counted}只股票（{score_date}盘后）")
+    text = "\n\n".join(section for section in sections if section)
 
     try:
         _send(token, chat_id, text)
-        logger.info(f"Telegram 推送成功：{len(rows)} 只股票")
+        logger.info(f"Telegram 推送成功：{total_counted} 只股票")
     except urllib.error.HTTPError as e:
         logger.warning(f"Telegram 推送失败（HTTP {e.code}）：{e}")
     except Exception as e:
