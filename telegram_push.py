@@ -91,7 +91,11 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
         """SELECT p.code, p.name, p.total_score, p.quant_score, p.entry_signal,
                   p.entry_signal_version, q.moat, q.market_pos
            FROM predictions p
-           LEFT JOIN qualitative_scores q ON p.code = q.code
+           LEFT JOIN qualitative_scores q
+             ON p.code = q.code
+            AND q.scored_date = (
+              SELECT MAX(sq.scored_date) FROM qualitative_scores sq WHERE sq.code = p.code
+            )
            WHERE p.score_date=? AND p.total_score >= ? AND p.entry_signal = 1
            ORDER BY p.total_score DESC""",
         (score_date, threshold),
@@ -100,7 +104,11 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
         """SELECT p.code, p.name, p.total_score, p.quant_score, p.entry_signal,
                   p.entry_signal_version, q.moat, q.market_pos
            FROM predictions p
-           LEFT JOIN qualitative_scores q ON p.code = q.code
+           LEFT JOIN qualitative_scores q
+             ON p.code = q.code
+            AND q.scored_date = (
+              SELECT MAX(sq.scored_date) FROM qualitative_scores sq WHERE sq.code = p.code
+            )
            WHERE p.score_date=? AND p.total_score >= ?
              AND (p.entry_signal IS NULL OR p.entry_signal != 1)
            ORDER BY p.total_score DESC""",
@@ -110,7 +118,11 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
         """SELECT p.code, p.name, p.total_score, p.quant_score, p.entry_signal,
                   p.entry_signal_version, q.moat, q.market_pos
            FROM predictions p
-           LEFT JOIN qualitative_scores q ON p.code = q.code
+           LEFT JOIN qualitative_scores q
+             ON p.code = q.code
+            AND q.scored_date = (
+              SELECT MAX(sq.scored_date) FROM qualitative_scores sq WHERE sq.code = p.code
+            )
            WHERE p.score_date=? AND p.total_score >= ? AND p.total_score < ?
            ORDER BY p.total_score DESC""",
         (score_date, radar_min, threshold),

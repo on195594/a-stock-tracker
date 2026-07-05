@@ -152,3 +152,28 @@ def test_tiered_push_interpretation_includes_moat(tmp_db, telegram_env, monkeypa
 
     assert len(sent) == 1
     assert "护城河8/10(强)" in sent[0][2]
+
+
+def test_tiered_push_no_duplicate_when_multiple_qualitative_dates(tmp_db, telegram_env, monkeypatch):
+    sent = []
+    monkeypatch.setattr(telegram_push, "_send", lambda *args: sent.append(args))
+    _insert_prediction("600036", 66.0, 1)
+    # Insert two qualitative_scores rows for same code, different scored_date
+    db = cache_mod.get_db()
+    db.execute(
+        "INSERT INTO qualitative_scores (code, moat, market_pos, sentiment, scored_date) VALUES (?, 7, 4, 3, '2026-06-01')",
+        ("600036",),
+    )
+    db.execute(
+        "INSERT INTO qualitative_scores (code, moat, market_pos, sentiment, scored_date) VALUES (?, 8, 5, 4, '2026-07-01')",
+        ("600036",),
+    )
+    db.commit()
+    db.close()
+    telegram_push.push_daily_signals("2026-05-30", threshold=44.0)
+    assert len(sent) == 1
+    text = sent[0][2]
+    # Stock must appear exactly once (no duplicates from multi-date JOIN)
+    assert text.count("N600036(600036)") == 1
+    # Must use the most recent scored_date (2026-07-01: moat=8 -> "护城河8/10(强)")
+    assert "护城河8/10(强)" in text
