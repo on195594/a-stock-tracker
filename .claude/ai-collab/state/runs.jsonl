@@ -7,3 +7,5 @@
 {"date": "2026-07-04", "task_id": "B2-B5-gemini-retry-stale", "qa_tool": "codex-self-review", "commit_hash": "4058688", "status": "done", "desc": "", "goal_honored": "UNKNOWN"}
 {"date": "2026-07-04", "task_id": "B7-outcome-telegram-tests", "qa_tool": "codex-self-review", "commit_hash": "165aa1b", "status": "done", "desc": "", "goal_honored": "UNKNOWN"}
 {"date": "2026-07-04", "task_id": "B6-agent-reviewer-gemini", "qa_tool": "codex-self-review", "commit_hash": "37a646e", "status": "done", "desc": "", "goal_honored": "UNKNOWN"}
+{"date": "2026-07-05", "task_id": "tiered-push-v1", "qa_tool": "codex-self-review", "commit_hash": "cd2534c", "status": "done", "desc": "", "goal_honored": "HONORED"}
+{"date": "2026-07-05", "task_id": "tiered-push-fix-join", "qa_tool": "codex-self-review", "commit_hash": "ad4d7f3", "status": "done", "desc": "", "goal_honored": "HONORED"}
