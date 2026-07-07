@@ -35,7 +35,7 @@ pytest tests/ -v                  # 修改前必须全通过
 | `pipeline.py` | 主编排器（init / daily / outcome-update / accuracy-report）|
 | `scorer.py` | 评分引擎（breakpoints 线性插值，不调 AKShare）|
 | `gemini_scorer.py` | Phase 3：Gemini 定性评分（30天缓存，退避重试，过期缓存降级，all-or-nothing fallback）|
-| `telegram_push.py` | Phase 3：每日信号推送（≥44分触发）|
+| `telegram_push.py` | Phase 3：每日信号推送（≥44 分 AND L3=1 触发）|
 | `weights.json` | 模型权重（阈值 buy_strong=44/moderate=35/light=26）|
 | `config.py` | watchlist / DB_PATH / LOG_DIR（禁止硬编码股票代码或路径）|
 | `.env` | GEMINI_API_KEY / TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID |

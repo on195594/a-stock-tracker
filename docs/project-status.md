@@ -43,7 +43,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 
 | Spec / Plan | 状态 | Owner | 下一动作 | Exit criteria |
 |---|---|---|---|---|
-| `docs/evolution-roadmap.md` | v1.6 当前基线 | Hermes PM | 随 Phase 状态变化更新 | 和真实系统状态一致 |
+| `docs/evolution-roadmap.md` | v1.7 当前基线 | Hermes PM | 随 Phase 状态变化更新 | 和真实系统状态一致 |
 | `docs/plans/2026-06-26-phase6-report-only-next-steps.md` | active | Hermes PM | 继续 P3-B 周度复核，并单独 harden weekly/fetcher timeout | B label review 前 report-only 流程稳定 |
 | `docs/specs/2026-07-02-weekly-pm-loop-automation-spec.md` | implemented | Hermes PM + agy review | 等首轮自然 cron 摘要；异常先修行情/cron | 每周一自动 Telegram 摘要可用，不重复告警，不越权启用生产化 |
 | `/home/lin/a-stock-lib/docs/plans/2026-07-01-three-project-next-work-plan.md` | active cross-project plan | Hermes PM | 按 P0/P1/P2 顺序推进共享包、tracker、research 联动事项 | 三项目版本/文档/任务边界一致 |

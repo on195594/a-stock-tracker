@@ -163,4 +163,4 @@ Branch: master
 | `test_validate_rejects_out_of_range` | moat>10/market_pos>5/float/缺字段 → `_validate` 返回 None |
 | `test_cache_hit_skips_api` | 30天内缓存命中 → `_call_gemini` 不被调用 |
 
-**总计：36 个测试用例**（scorer: 11，pipeline: 15+5，gemini_scorer: 5）
+**总计：229 个测试用例**（详见各模块测试文件；基线日期：2026-07-07）
