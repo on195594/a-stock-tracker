@@ -6,3 +6,10 @@ logs/
 tracker.db
 backups/
 credentials/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+accuracy_report.txt
+.agents/
+.codex/
+.claude/
