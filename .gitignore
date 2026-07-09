@@ -9,6 +9,7 @@ credentials/
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
+.coverage
 accuracy_report.txt
 .agents/
 .codex/

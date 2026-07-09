@@ -23,21 +23,21 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 |---|---|---|---|---|
 | Phase 4 验证基础 | 已完成，持续观察 | weekly PM loop 自动检查 accuracy-report；不在此阶段顺手调权重 | 每周一自动摘要 | 若要调权重，另开 spec |
 | Phase 5 L3 买点层 | 已完成，持续观察 | weekly PM loop 自动提示 L3 30d 样本状态 | 每周一自动摘要 | L3 30d 样本 ≥30 后再评估信号有效性 |
-| Phase 6 多框架激活 | report-only 观察 | 自动化 weekly PM loop 只读观察 B label / dry-run / cron 日志 | 2026-07-26 后首次 B label 自然结案复核 | B label 已结案 ≥20、overdue=0、数据质量门槛 OK、独立审查通过、另写生产化 spec |
+| Phase 6 多框架激活 | report-only 观察 | 自动化 weekly PM loop 只读观察 B label / dry-run / cron 日志 | 2026-08-02 后首次 B label 自然结案复核 | B label 已结案 ≥20、overdue=0、数据质量门槛 OK、独立审查通过、另写生产化 spec |
 | Phase 7 选股宇宙扩展 | 未启动 | 等 Phase 6 或明确降级策略 | 暂无 | 单独设计动态池和 API 压测 |
 
 ## 当前事实基线
 
 | 项目 | 当前状态 | 证据 |
 |---|---|---|
-| 行情 provider | Tushare 主源 + 隔离 BaoStock degraded fallback | `a-stock-lib==0.2.0`，`lib/market_data.py` 已使用 `IsolatedBaoStockMarketDataProvider`；2026-07-04 tracker 测试 `225 passed, 1 skipped` |
+| 行情 provider | Tushare 主源 + 隔离 BaoStock degraded fallback | `a-stock-lib==0.2.0`，`lib/market_data.py` 已使用 `IsolatedBaoStockMarketDataProvider`；2026-07-09 tracker 测试 `250 passed` |
 | readiness | `READY_CRON` | 2026-07-02 `scripts/check_market_data_readiness.py --scope cron` |
 | cron | 已恢复，latest daily/outcome 自然运行正常；weekly timeout hardening 与 weekly PM loop 自动化已完成 | daily: 2026-07-01 16:30 写入 21/跳过 14；outcome: 2026-07-01 17:00 更新 35；weekly 2026-06-27 残留进程已于 2026-07-02 清理；commit `89fd7c5` 加固单股 fetch 子进程超时；commit `f181010` 安装每周一 09:30 `weekly-pm-loop` |
 | 真实 probe | 已刷新并通过 | `docs/reviews/2026-07-02-tushare-capability-probe.md` |
 | 真实 backfill | 已完成 | 35/35 行情刷新成功，L3 metadata 已重算 |
 | 真实 daily | 已完成 | 2026-06-26 daily 完整跑完，因当日已有 A 框记录幂等写入 0 条 |
 | Framework B | report-only | `SUPPORTED_FRAMEWORKS={"A"}`，不写 B 生产 predictions |
-| Phase 6 阻塞 | B label 已结案样本不足 | 数据质量门槛 OK；B label `0/20`，最早可评估日期 `2026-07-26` |
+| Phase 6 阻塞 | B label 已结案样本不足 | 数据质量门槛 OK；B label `0/20`，最早可评估日期 `2026-08-02` |
 
 ## Spec Ledger
 
@@ -50,13 +50,15 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | `docs/runbooks/market-data-provider-recovery.md` | active | Hermes PM | 若 readiness/cron 语义变更则同步 | HOLD/READY 行为与 `cron-setup.sh` 一致 |
 | `docs/reviews/2026-07-02-tushare-capability-probe.md` | latest readiness evidence | 系统探测 | 新 probe 覆盖旧证据 | 最新交易日 probe PASS |
 | `accuracy_report.txt` | latest report | pipeline | 每周更新 | Phase 6 仍明确 report-only |
+| `docs/specs/2026-07-08-l3-v2-entry-signal-spec.md` | draft | Hermes PM + agy review | 先做只读离线回测，不写生产 DB/Telegram | qfq、v1/v2、去重冷却、交易成本均有证据 |
+| `docs/plans/2026-07-08-l3-v2-offline-backtest-plan.md` | draft-for-review | Hermes PM + agy review | 待用户批准后新增只读回测脚本和报告 | 脚本只读 `tracker.db`，独立 review gate 通过 |
 
 ## Open Blockers
 
 | Blocker | Impact | Unblock condition | ETA |
 |---|---|---|---|
-| B label 已结案样本不足 `0/20` | 阻止 Framework B 生产化 | 已结案 ≥20 且 overdue=0 | 最早 2026-07-26 后 |
-| L3 30d 样本不足 `9/30` | 无法判断 L3 信号有效性 | L3 30d 已结案 ≥30 | 等自然结案 |
+| B label 已结案样本不足 `0/20` | 阻止 Framework B 生产化 | 已结案 ≥20 且 overdue=0 | 最早 2026-08-02 后 |
+| L3 30d 样本不足 `28/30` | 无法判断 L3 信号有效性 | L3 30d 已结案 ≥30 | 等自然结案 |
 | 首轮自动 weekly PM loop 待自然验证 | 需要确认新 cron 能按时发送 Telegram 摘要 | `weekly-pm-loop` 周一 09:30 自然运行并产生日志/摘要 | 下一周一 |
 | Framework A strong 层级尚未证明优于基准 | 不宜调权重或宣称模型有效 | 另开权重复核 spec | 待更多样本与独立审查 |
 
@@ -71,7 +73,9 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | 2026-07-02 | weekly/fetcher timeout hardening | 单股 fetch 独立子进程 + fetcher 内部进程级 timeout；`208 passed` | 等下一轮自然 weekly 验证，不恢复 B 生产写入 |
 | 2026-07-02 | Phase 6 weekly PM loop 自动化 | spec 经 agy 审查 PASS；新增 `scripts/weekly_pm_loop.py`、Telegram 摘要、exit code 2 去重、readiness 9 天宽限、日志最新日期过滤；`211 passed, 1 skipped`；crontab 已安装每周一 09:30 | 等首轮自然自动摘要；当前仍不恢复 B 生产写入 |
 | 2026-07-04 | agy 工程审查修复（Batch A+B）：DB per-stock SAVEPOINT、spot_em 重试计数器、Gemini 退避重试+过期缓存降级、subprocess stderr 转发、SQL identifier allowlist、outcome window allowlist、agent_reviewer 接入真实 Gemini、测试补全 | 11 commits；`225 passed, 1 skipped`（+14 vs 上轮）；agy 复核全通过；collab-retro 已记录，lessons-learned 新增 B-5/D-5/F-6 |
-| 2026-07-26 后 | B label 30d 结案、overdue、行业覆盖、B-A delta | 待执行 | 满足门槛后写 `phase6-b-label-review.md`，不直接上线 |
+| 2026-07-06 | 最新 `accuracy-report` 同步 | post-fix A 30d 结案 490/100 OK；数据质量 OK；B label 0/20，最早可评估 2026-08-02；L3 30d 已结案 28/30 | Phase 6 继续 report-only；L3 仍等满 30 条后只读复核 |
+| 2026-07-09 | 当前工作区测试验证 | `.venv/bin/python -m pytest -q`：`250 passed`；`git diff --check` 已清理为通过 | 可继续整理未提交文档/测试改动，不恢复 B 生产写入 |
+| 2026-08-02 后 | B label 30d 结案、overdue、行业覆盖、B-A delta | 待执行 | 满足门槛后写 `phase6-b-label-review.md`，不直接上线 |
 
 ## 每周自动复核
 
