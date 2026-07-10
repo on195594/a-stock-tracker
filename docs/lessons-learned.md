@@ -1,6 +1,6 @@
 # a-stock-tracker 知识库：踩坑记录
 
-**最后更新：** 2026-07-04
+**最后更新：** 2026-07-10
 **范围：** 项目立项（2026-04）至今的技术坑、设计失误、调试经验。
 **用法：** 新功能开发前先检索本文档；每次踩到新坑立即补录。
 
@@ -159,6 +159,23 @@
 
 ---
 
+### D-6｜Tushare adj_factor 限频让 qfq 回测不能一次性全量拉取
+
+**现象（2026-07-10 L3 v2 离线回测）：** 项目 `.env` 中的 `TUSHARE_TOKEN` 可用，但 `scripts/offline_l3_v2_backtest.py --allow-tushare-fetch` 逐股调用 `daily + adj_factor` 时，`adj_factor` 返回 `频率超限(1次/分钟)`。最终 qfq panels `0/38`，buy_strong qfq issue `766`，decision gate 正确保持 `NEED_QFQ`。
+
+**根因：** 把“有 token”误等同于“可以快速全量拉 qfq”。`daily` 与 `adj_factor` 的接口权限和频率限制不同；即使 token 存在，`adj_factor` 也可能因分钟级限频无法在一次交互式回测里覆盖 38 只股票。
+
+**修复：** 离线脚本新增 `.env` token fallback，并把 Tushare 频率限制归类为 `TUSHARE_RATE_LIMIT`，避免误报成 token 缺失。报告中显式记录 qfq reason counts；只要 qfq coverage 不足或 buy_strong 子集受影响，decision gate 不得输出 `GO_TDD`。
+
+**防复发：**
+
+- 任何 qfq 回测或 provider 方案都必须把 `adj_factor` 当成独立限频资源设计，不能只验证 `daily`。
+- 批量 qfq 获取必须显式限速、可恢复缓存或分批运行；不得用快速循环绕过限频。
+- token 不得写进报告、stdout 或 review prompt；脚本可以读取环境变量或项目 `.env`，但只能输出 loaded/missing/限频诊断。
+- qfq 覆盖不足是数据源问题，不是规则有效性结论；只能输出 `NEED_QFQ` 或 `NEED_SPEC_FIX`。
+
+---
+
 ### D-2｜AKShare 接口可能返回 str 而非 DataFrame
 
 **现象：** 某些情况下 AKShare 接口返回字符串（如错误信息）而不是 DataFrame，后续 `df.columns` 访问报 `AttributeError`。
@@ -256,17 +273,6 @@ with patch("akshare.stock_financial_report_sina", return_value=df):
 
 ### F-5｜L3 从缓存计算时只检查行数，遗漏 freshness
 
----
-
-### F-6｜公共符号重命名未同步调用方导致 ImportError
-
-**现象：** `fake_review` 函数重命名为 `_fake_review_fallback` 后，`pytest` 在收集 `tests/test_agent_reviewer.py` 时立即报 `ImportError: cannot import name 'fake_review'`，整个测试模块无法运行。  
-**根因：** 重命名只修改了 `lib/agent_reviewer.py` 的定义，没有 grep 仓库内的调用方。测试文件第 3 行仍从旧名导入。QA reviewer 识别了风险模式（"diff 外可能有调用方"）但因为只看 diff 无法确认，标注为 `unverified`，未触发强制修复流程。  
-**修复：** 在测试导入行改为 `from lib.agent_reviewer import _fake_review_fallback as fake_review`。  
-**防复发：** 重命名或删除任何公共符号（函数、类、常量）前，先 `grep -r 旧名 .` 确认调用方清单。collab-pipeline Step 8 的 QA rubric 已强制要求：`refactor/split` 和 `feature/new-code` 任务若涉及公共符号重命名，必须在 diff 外 grep 或标注 `unverified-needs-grep`，不得仅凭 diff 判断安全。
-
----
-
 **现象：** Market Data Boundary 重构后，L3 买点层改为从本地 `daily_bars` 读取 120 条标准化日线再计算 `entry_signal`。代码最初只检查 `len(rows) >= 120`，如果当天 L3 refresh 失败但历史缓存里仍有 120 条旧数据，系统可能用几周前的 bars 计算出 `entry_signal=1/v1`，进而触发用户可见的买点信号。
 
 **根因：** 把“有足够窗口”和“窗口足够新”混为一谈。`price_at_score` 有 5 个自然日 freshness SLA，但 L3 缓存窗口没有同步校验最新 `trade_date` 距 `score_date/today` 的新鲜度。缓存边界迁移后，网络失败不再直接表现为缺数据，旧缓存会让行数检查误判为可计算。
@@ -291,6 +297,45 @@ entry_signal_reason='SOURCE_STALE'
 
 ---
 
+### F-6｜公共符号重命名未同步调用方导致 ImportError
+
+**现象：** `fake_review` 函数重命名为 `_fake_review_fallback` 后，`pytest` 在收集 `tests/test_agent_reviewer.py` 时立即报 `ImportError: cannot import name 'fake_review'`，整个测试模块无法运行。
+**根因：** 重命名只修改了 `lib/agent_reviewer.py` 的定义，没有 grep 仓库内的调用方。测试文件第 3 行仍从旧名导入。QA reviewer 识别了风险模式（"diff 外可能有调用方"）但因为只看 diff 无法确认，标注为 `unverified`，未触发强制修复流程。
+**修复：** 在测试导入行改为 `from lib.agent_reviewer import _fake_review_fallback as fake_review`。
+**防复发：** 重命名或删除任何公共符号（函数、类、常量）前，先 `grep -r 旧名 .` 确认调用方清单。collab-pipeline Step 8 的 QA rubric 已强制要求：`refactor/split` 和 `feature/new-code` 任务若涉及公共符号重命名，必须在 diff 外 grep 或标注 `unverified-needs-grep`，不得仅凭 diff 判断安全。
+
+---
+
+### F-7｜离线回测去重口径不能用 sparse prediction dates 代替交易日
+
+**现象（2026-07-10 AGY 复审发现）：** L3 v2 离线脚本报告写“20-trading-day same-stock cooldown”，但初版 `build_dedup_events()` 用的是某只股票在 prediction 样本中出现过的日期序列。由于 predictions 对单股是稀疏的，20 个 prediction dates 可能远大于 20 个真实交易日，导致去重过严、样本数偏低。
+
+**根因：** 把“事件样本日”误当作“市场交易日”。回测样本域来自 `predictions` 是对的，但 cooldown 的时间轴必须来自市场交易日序列，而不是事件表自身。
+
+**修复：** `run_backtest()` 从 `index_prices` 读取沪深 300 日期作为全局市场交易日序列，`trading_day_distance()` 用该序列计算同股事件之间的交易日距离。修复后 dedup buy_strong 样本从 11 变为 12，AGY 复审转为 APPROVE。
+
+**防复发：**
+
+- 回测样本域可以是 sparse predictions，但所有“交易日 N 日窗口/冷却/持有期”必须使用市场交易日 calendar。
+- 报告文案写“trading day”时，代码里必须能指出交易日来源。
+- 独立复审要抽查 artifact 行数变化和具体样本，不能只看 summary metrics。
+
+---
+
+### F-8｜qfq 价格复权后 volume 也要调整，不能只改 OHLC
+
+**现象（2026-07-10 AGY 复审发现）：** 初版 qfq 派生对 OHLC 使用 `adj_factor_t / adj_factor_latest` 调整，但 volume 原样保留。若跨除权/拆细窗口做 `vol5/vol20`，价量口径不一致可能导致量能规则误判。
+
+**根因：** 只关注了 MA60/MA120 等价格指标，忽略 v2 candidate 还使用 volume tier。qfq 后为了保持成交额口径一致，volume 应按价格复权比例的倒数调整。
+
+**修复：** qfq panel 中 `qfq_volume = raw_volume / (adj_factor_t / adj_factor_latest)`；若 factor 为 0 或缺失，标记 `QFQ_ALIGNMENT_FAILED`，不得输出 `pass_strong`。
+
+**防复发：**
+
+- 只要信号同时用价格和成交量，复权方案必须说明 volume 是否调整，以及为什么。
+- qfq 对齐检查不只检查日期，也要检查 latest factor、zero factor、缺失 factor。
+- 离线脚本与报告必须保留 `source/adjusted/volume_unit/alignment_reason`，方便复审发现价量口径混用。
+
 ## 附录：快速检索
 
 | 关键词 | 对应条目 |
@@ -312,6 +357,7 @@ entry_signal_reason='SOURCE_STALE'
 | AKShare 返回 str | D-2 |
 | Codex stdin 挂起 | D-3 |
 | spot_em 单次失败即今日锁定 | D-5 |
+| Tushare adj_factor 限频 / qfq coverage | D-6 |
 | 测试污染生产数据库 | E-1 |
 | 测试发真实网络请求 | E-2 |
 | Sheets 阻断 cron | F-1 |
@@ -320,3 +366,5 @@ entry_signal_reason='SOURCE_STALE'
 | 边界定义冲突 | F-4 |
 | daily_bars stale / SOURCE_STALE / L3 旧缓存 | F-5 |
 | 公共符号重命名未 grep 调用方 | F-6 |
+| 回测去重 / 20 交易日冷却 / sparse prediction dates | F-7 |
+| qfq volume / 价量复权口径 | F-8 |

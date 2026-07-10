@@ -9,8 +9,22 @@ Phase 1-3.6 历史实施记录，不再作为后续计划来源。
 
 1. 继续 daily/outcome-update，等待 post-fix Framework A 30d outcome 自然结案。
 2. Phase 6 weekly PM loop 已自动化为每周一 09:30 cron + Telegram 摘要；下一步等首轮自然运行验证。
-3. 先修 L3/market data boundary 的覆盖率和审计可解释性，再讨论 Framework B 生产写入。
+3. 先解决 L3 v2 qfq 覆盖问题，再讨论 v2 TDD 或生产化。
 4. Framework B 只保持 report-only；生产化必须另写实施计划并获得明确授权。
+
+## L3 v2 qfq 覆盖修复（当前 TODO）
+
+**What:** 为 L3 v2 离线回测设计 qfq 获取方案，避开 Tushare `adj_factor` `1次/分钟` 限频。
+
+**Why:** `scripts/offline_l3_v2_backtest.py --allow-tushare-fetch` 已能读取项目 `.env` token，但当前 qfq panels 为 `0/38`，buy_strong qfq issue 为 `766`，decision gate 正确保持 `NEED_QFQ`。没有 qfq 覆盖不得进入 `GO_TDD` 或 TDD 实装。
+
+**Next:**
+1. 写 qfq 限速/缓存/分批方案，明确是否使用项目内文件缓存，默认仍不写 `tracker.db`。
+2. 支持断点续跑，逐步补齐 `daily + adj_factor` qfq panels。
+3. 重跑 `docs/reviews/2026-07-08-l3-v2-backtest-report.md`，目标是 buy_strong qfq issue 降为 0。
+4. 复审报告和 artifacts；只有 qfq 覆盖充分且 AGY/Codex 复审通过后，才讨论 L3 v2 TDD。
+
+**Evidence:** `docs/reviews/2026-07-10-l3-v2-backtest-retro.md`。
 
 ## Phase 6 生产化门槛（当前有效）
 

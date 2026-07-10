@@ -2,6 +2,13 @@
 
 所有重大变更按时间倒序记录。
 
+## 2026-07-10 — L3 v2 只读离线回测与复盘
+- 新增 `scripts/offline_l3_v2_backtest.py`，以 SQLite `mode=ro` + `PRAGMA query_only=ON` 只读回测 Framework A predictions。
+- 输出 `signals_daily.csv`、`events_raw_daily.csv`、`events_dedup_20d.csv`、`metrics_summary.json` 和 Markdown 报告。
+- 支持项目 `.env` 中的 `TUSHARE_TOKEN`，但当前 Tushare `adj_factor` 返回 `1次/分钟` 限频，qfq 覆盖为 `0/38`，decision gate 保持 `NEED_QFQ`。
+- 修复复审发现的回测口径问题：20 日冷却改为按市场交易日计算；qfq volume 按复权比例反向调整。
+- AGY 独立复审最终 `APPROVE`；本轮结论写入 `docs/reviews/2026-07-10-l3-v2-backtest-retro.md`。
+
 ## 2026-07-07 — 工程审查与文档清理
 - 修复核心文档（CLAUDE.md、test-plan.md、project-status.md）中的数据不一致问题。
 - 归档历史修复计划（REPAIR-PLAN.md）并清理无用备份、空目录及缓存文件。

@@ -1,7 +1,7 @@
 # a-stock-tracker 进化路线图
 
-**版本：** v1.7
-**基线日期：** 2026-07-04
+**版本：** v1.8
+**基线日期：** 2026-07-10
 **文档定位：** 系统演化的顶层规划文档。所有后续 Phase 的修改、补丁、设计决策均以本文档为基线。若实施中发现偏差，先更新本文档，再改代码。
 
 ---
@@ -14,7 +14,7 @@
 |------|------|---------|
 | L1 好公司 | 这家公司值不值得持有？ | ✅ 已成型（ROE/增速/负债率/毛利率/Gemini定性） |
 | L2 好价格 | 当前估值有没有安全边际？ | 🔶 部分成型（PB分位日度化，PE分位缺失） |
-| L3 合适买点 | 现在是不是好的入场时机？ | ✅ v1 已实现（MA60/MA120/量能 AND，接入 daily/推送/report） |
+| L3 合适买点 | 现在是不是好的入场时机？ | ✅ v1 已实现；v2 已完成只读离线回测，当前 NEED_QFQ |
 
 **系统不追踪价格动量**：框架是价值投资逻辑，股价下跌+基本面不变 = 估值改善 = 评分可能上升。这是设计决策，不是缺陷。
 
@@ -33,7 +33,7 @@
 | Gemini 定性评分 | ✅ 正常 | 30天缓存，退避重试（429/5xx，最多3次），过期缓存降级，all-or-nothing fallback；当前缓存存在 35/35 |
 | Telegram 推送 | ✅ 正常 | ≥ buy_strong 且 L3 entry_signal=1 触发；2026-06-26 daily 推送成功 1 只股票 |
 | Outcome 追踪 | ✅ 正常 | `outcome-update` 已恢复到 cron；accuracy-report 显示 Framework A 30d 结案 533 条，其中 post-fix 315 条 |
-| L3 买点层 | ✅ 正常 | L3 v1 已接入 daily/推送/report；当前 v1 记录 700，覆盖率 100.0%，30d 样本仍不足 |
+| L3 买点层 | ✅ v1 正常；v2 report-only | L3 v1 已接入 daily/推送/report；L3 v2 只读离线回测已实现并复审 APPROVE，但 qfq panels `0/38`，当前 gate 为 NEED_QFQ |
 | 行情数据源 | ✅ READY_CRON | `a-stock-lib==0.2.0`：Tushare 主源 + 隔离 BaoStock degraded fallback；`check_market_data_readiness.py --scope cron` 返回 `READY_CRON` |
 | cron | ✅ 已恢复 | managed block 管理 weekly/daily/outcome-update；恢复前真实 probe/backfill/daily 已验证 |
 
@@ -78,7 +78,7 @@
 
 ---
 
-### Phase 5：买点层（L3 补全）[已完成 2026-05-30]
+### Phase 5：买点层（L3 补全）[v1 已完成；v2 离线验证中]
 
 **目标：** 在现有评分基础上增加"入场时机确认"信号，解决最大缺口。
 
@@ -116,6 +116,26 @@
 **项目文档：**
 - Spec：`docs/specs/2026-05-30-phase5-l3-entry-signal-spec.md`
 - Plan：`docs/plans/2026-05-30-phase5-l3-entry-signal-implementation-plan.md`
+
+**2026-07-10 L3 v2 离线回测状态：**
+
+- v2 spec：`docs/specs/2026-07-08-l3-v2-entry-signal-spec.md`
+- 离线计划：`docs/plans/2026-07-08-l3-v2-offline-backtest-plan.md`
+- 实现：`scripts/offline_l3_v2_backtest.py`
+- 报告：`docs/reviews/2026-07-08-l3-v2-backtest-report.md`
+- 复盘：`docs/reviews/2026-07-10-l3-v2-backtest-retro.md`
+- 复审证据：`docs/reviews/agy-l3-v2-backtest-review/`
+
+当前结论：
+
+- 离线脚本只读 `tracker.db`，使用 SQLite `mode=ro` + `PRAGMA query_only=ON`，不触发 Telegram/cron/Gemini/Sheets。
+- 脚本可从项目 `.env` 读取 `TUSHARE_TOKEN`，但不会打印 token。
+- qfq 派生路径按 `daily + adj_factor` 对齐，价格使用 `adj_factor_t / adj_factor_latest`，volume 反向调整以保持价量口径一致。
+- 去重冷却按市场交易日序列执行 20 交易日同股冷却，不按 sparse prediction dates。
+- 当前 Tushare `adj_factor` 返回 `1次/分钟` 限频，导致 qfq 覆盖 `0/38`，buy_strong qfq issue `766`。
+- Decision gate 为 `NEED_QFQ`；不得进入 `GO_TDD`，不得把 none-adjusted 结果当作 v2 pass_strong 有效性证据。
+
+下一步必须单独设计 qfq 获取方案：显式限速、可恢复缓存或分批任务。该方案仍不得写 `tracker.db`，除非另开 spec 并获得授权。
 
 ---
 
