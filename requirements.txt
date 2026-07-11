@@ -4,6 +4,7 @@ baostock
 --find-links ../a-stock-lib/dist
 a-stock-lib==0.2.0
 pytest
+python-dotenv
 ruff
 mypy
 google-auth==2.49.2

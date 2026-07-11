@@ -15,12 +15,27 @@ import math
 import os
 import sqlite3
 import statistics
+import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from lib.l3_v2_qfq_cache import (  # noqa: E402
+    CacheInvalidError,
+    CacheMissingError,
+    FixedIntervalRateLimiter,
+    build_cache_frame,
+    derive_qfq_ohlcv,
+    read_cache,
+)
 
 
 DEFAULT_REPORT = Path("docs/reviews/2026-07-08-l3-v2-backtest-report.md")
@@ -41,6 +56,7 @@ class BacktestConfig:
     artifacts_dir: Path | None
     dry_run: bool
     codes: tuple[str, ...] | None
+    qfq_cache_dir: Path | None
     no_external_fetch: bool
     allow_tushare_fetch: bool
     buy_strong_threshold: float
@@ -148,6 +164,12 @@ def parse_args() -> BacktestConfig:
     parser.add_argument("--artifacts-dir", type=Path, default=None, help="Directory for CSV/JSON artifacts.")
     parser.add_argument("--dry-run", action="store_true", help="Print summary only; do not write artifacts/report.")
     parser.add_argument("--codes", nargs="*", default=None, help="Optional prediction code subset; comma or space separated.")
+    parser.add_argument(
+        "--qfq-cache-dir",
+        type=Path,
+        default=None,
+        help="Validated raw qfq cache directory; readable with --no-external-fetch.",
+    )
     parser.add_argument("--no-external-fetch", action="store_true", help="Disable external qfq fetch.")
     parser.add_argument("--allow-tushare-fetch", action="store_true", help="Allow Tushare daily + adj_factor qfq fetch.")
     parser.add_argument("--preload-trading-days", type=int, default=120, help="Trading days to preload before start.")
@@ -177,6 +199,7 @@ def parse_args() -> BacktestConfig:
         artifacts_dir=args.artifacts_dir,
         dry_run=args.dry_run,
         codes=parse_codes(args.codes),
+        qfq_cache_dir=args.qfq_cache_dir,
         no_external_fetch=args.no_external_fetch,
         allow_tushare_fetch=args.allow_tushare_fetch,
         buy_strong_threshold=threshold,
@@ -253,8 +276,21 @@ def run_backtest(config: BacktestConfig) -> BacktestResult:
     qfq_panels: dict[str, PricePanel] = {}
     qfq_contracts: dict[str, DataContractState] = {}
 
-    if config.allow_tushare_fetch and codes:
-        qfq_panels, qfq_contracts = fetch_tushare_qfq_panels(codes, preload_start, config.end)
+    if config.qfq_cache_dir is not None and codes:
+        qfq_panels, qfq_contracts = load_cached_qfq_panels(
+            config.qfq_cache_dir, codes, preload_start, config.end
+        )
+
+    missing_codes = tuple(code for code in codes if code not in qfq_panels)
+    if config.allow_tushare_fetch and missing_codes:
+        fetched_panels, fetched_contracts = fetch_tushare_qfq_panels(
+            missing_codes,
+            preload_start,
+            config.end,
+            limiter_cache_dir=config.qfq_cache_dir or Path("data/qfq_cache"),
+        )
+        qfq_panels.update(fetched_panels)
+        qfq_contracts.update(fetched_contracts)
 
     signals: list[dict[str, Any]] = []
     for prediction in predictions:
@@ -410,10 +446,79 @@ def load_index_rows(conn: sqlite3.Connection, end: date) -> tuple[tuple[date, fl
     return tuple((parse_date(row["date"]), float(row["close"])) for row in rows)
 
 
+def load_cached_qfq_panels(
+    cache_dir: Path,
+    codes: tuple[str, ...],
+    preload_start: date,
+    end: date,
+) -> tuple[dict[str, PricePanel], dict[str, DataContractState]]:
+    panels: dict[str, PricePanel] = {}
+    contracts: dict[str, DataContractState] = {}
+    for code in codes:
+        try:
+            raw, _metadata = read_cache(cache_dir, code, preload_start, end)
+            derived = derive_qfq_ohlcv(raw)
+            bars = tuple(
+                DailyBar(
+                    date=datetime.strptime(str(row["trade_date"]), "%Y%m%d").date(),
+                    open=float(row["open"]),
+                    high=float(row["high"]),
+                    low=float(row["low"]),
+                    close=float(row["close"]),
+                    volume=float(row["vol"]),
+                    source=str(row["source"]),
+                    adjusted="qfq",
+                    volume_unit="hand",
+                    fetched_at=str(row["fetched_at"]),
+                    quality_status="ok",
+                )
+                for _, row in derived.iterrows()
+            )
+        except CacheMissingError:
+            contracts[code] = qfq_failure_contract("QFQ_CACHE_MISSING")
+            continue
+        except CacheInvalidError as exc:
+            contracts[code] = qfq_failure_contract(f"QFQ_CACHE_INVALID:{exc.reason}")
+            continue
+        panels[code] = PricePanel(
+            code=code,
+            adjusted="qfq",
+            bars=bars,
+            source="tushare.daily+adj_factor",
+            volume_unit="hand",
+            preload_start=preload_start,
+            stale_reason=None,
+            limitation=None,
+        )
+        contracts[code] = DataContractState(
+            adjusted="qfq",
+            source="tushare.daily+adj_factor",
+            volume_unit="hand",
+            is_stale=False,
+            stale_reason=None,
+            unavailable_reason=None,
+            alignment_reason=None,
+        )
+    return panels, contracts
+
+
+def qfq_failure_contract(reason: str) -> DataContractState:
+    return DataContractState(
+        adjusted="qfq",
+        source="tushare.daily+adj_factor",
+        volume_unit="hand",
+        is_stale=False,
+        stale_reason=None,
+        unavailable_reason=reason,
+        alignment_reason="QFQ_UNAVAILABLE",
+    )
+
+
 def fetch_tushare_qfq_panels(
     codes: tuple[str, ...],
     preload_start: date,
     end: date,
+    limiter_cache_dir: Path = Path("data/qfq_cache"),
 ) -> tuple[dict[str, PricePanel], dict[str, DataContractState]]:
     token = get_tushare_token()
     panels: dict[str, PricePanel] = {}
@@ -447,12 +552,14 @@ def fetch_tushare_qfq_panels(
         return panels, contracts
 
     pro = ts.pro_api(token)
+    limiter = FixedIntervalRateLimiter(limiter_cache_dir)
     start_s = preload_start.strftime("%Y%m%d")
     end_s = end.strftime("%Y%m%d")
     for code in codes:
         ts_code = to_tushare_code(code)
         try:
             daily = pro.daily(ts_code=ts_code, start_date=start_s, end_date=end_s)
+            limiter.acquire()
             factors = pro.adj_factor(ts_code=ts_code, start_date=start_s, end_date=end_s)
         except Exception as exc:
             reason = classify_tushare_failure(exc)
@@ -534,53 +641,27 @@ def to_tushare_code(code: str) -> str:
 
 
 def derive_qfq_bars_from_tushare(code: str, daily: Any, factors: Any, preload_start: date) -> tuple[list[DailyBar], str | None]:
-    if daily is None or factors is None or getattr(daily, "empty", True) or getattr(factors, "empty", True):
-        return [], "QFQ_UNAVAILABLE"
-    required_daily = {"trade_date", "open", "high", "low", "close", "vol"}
-    required_factor = {"trade_date", "adj_factor"}
-    if not required_daily.issubset(set(daily.columns)) or not required_factor.issubset(set(factors.columns)):
-        return [], "QFQ_ALIGNMENT_FAILED:MISSING_COLUMNS"
-    daily_dates = [str(value) for value in daily["trade_date"].tolist()]
-    factor_dates = [str(value) for value in factors["trade_date"].tolist()]
-    if len(daily_dates) != len(set(daily_dates)) or len(factor_dates) != len(set(factor_dates)):
-        return [], "QFQ_ALIGNMENT_FAILED:DUPLICATE_TRADE_DATE"
-    if set(daily_dates) != set(factor_dates):
-        return [], "QFQ_ALIGNMENT_FAILED:DATE_MISMATCH"
-    if len(daily_dates) != len(factor_dates):
-        return [], "QFQ_ALIGNMENT_FAILED:LENGTH_MISMATCH"
-
-    factor_by_date = {str(row["trade_date"]): float(row["adj_factor"]) for _, row in factors.iterrows()}
-    latest_trade_date = max(daily_dates)
-    latest_factor = factor_by_date.get(latest_trade_date)
-    if latest_factor is None or latest_factor == 0:
-        return [], "QFQ_ALIGNMENT_FAILED:LATEST_FACTOR_MISSING"
-
-    bars: list[DailyBar] = []
-    for _, row in daily.iterrows():
-        trade_date_raw = str(row["trade_date"])
-        factor = factor_by_date.get(trade_date_raw)
-        if factor is None:
-            return [], "QFQ_ALIGNMENT_FAILED:MISSING_FACTOR"
-        if factor == 0:
-            return [], "QFQ_ALIGNMENT_FAILED:ZERO_FACTOR"
-        ratio = factor / latest_factor
-        raw_volume = optional_float(row["vol"])
-        bars.append(
-            DailyBar(
-                date=datetime.strptime(trade_date_raw, "%Y%m%d").date(),
-                open=float(row["open"]) * ratio,
-                high=float(row["high"]) * ratio,
-                low=float(row["low"]) * ratio,
-                close=float(row["close"]) * ratio,
-                volume=raw_volume / ratio if raw_volume is not None else None,
-                source="tushare.daily+adj_factor",
-                adjusted="qfq",
-                volume_unit="hand",
-                fetched_at=None,
-                quality_status="ok",
-            )
+    try:
+        raw = build_cache_frame(code, daily, factors)
+        derived = derive_qfq_ohlcv(raw)
+    except CacheInvalidError as exc:
+        return [], f"QFQ_ALIGNMENT_FAILED:{exc.reason}"
+    bars = [
+        DailyBar(
+            date=datetime.strptime(str(row["trade_date"]), "%Y%m%d").date(),
+            open=float(row["open"]),
+            high=float(row["high"]),
+            low=float(row["low"]),
+            close=float(row["close"]),
+            volume=float(row["vol"]),
+            source="tushare.daily+adj_factor",
+            adjusted="qfq",
+            volume_unit="hand",
+            fetched_at=str(row["fetched_at"]),
+            quality_status="ok",
         )
-    bars.sort(key=lambda bar: bar.date)
+        for _, row in derived.iterrows()
+    ]
     return bars, None
 
 
@@ -987,7 +1068,13 @@ def build_coverage(
         "buy_strong_qfq_issue_count": len(strong_qfq_issue_rows),
         "contract_counts": {"|".join(map(str, key)): value for key, value in contract_counts.items()},
         "high_dividend_examples": high_dividend_rows,
-        "external_fetch_mode": "allow_tushare_fetch" if config.allow_tushare_fetch else "no_external_fetch",
+        "external_fetch_mode": (
+            "allow_tushare_fetch"
+            if config.allow_tushare_fetch
+            else "qfq_file_cache"
+            if config.qfq_cache_dir is not None
+            else "no_external_fetch"
+        ),
     }
 
 
