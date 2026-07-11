@@ -225,8 +225,6 @@ def write_cache(
     try:
         _atomic_write_bytes(csv_path, csv_payload)
         _atomic_write_bytes(meta_path, _json_bytes(metadata))
-        if csv_bak is not None and csv_bak.exists():
-            csv_bak.unlink()
     except Exception as exc:
         if csv_bak is not None and csv_bak.exists():
             try:
@@ -236,6 +234,12 @@ def write_cache(
         if isinstance(exc, OSError):
             raise CacheWriteError(f"ATOMIC_WRITE_FAILED:{exc}") from exc
         raise
+    # Cleanup backup only after both writes succeed; failure is harmless.
+    if csv_bak is not None and csv_bak.exists():
+        try:
+            csv_bak.unlink()
+        except OSError:
+            pass
     return metadata
 
 
