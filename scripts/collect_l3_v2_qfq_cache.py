@@ -42,7 +42,12 @@ class CollectorError(RuntimeError):
 
 
 def _to_exchange_code(code: str) -> str:
-    suffix = "SH" if (code.startswith("6") or code.startswith("8")) else "SZ"
+    if code.startswith("6"):
+        suffix = "SH"
+    elif code.startswith(("4", "8")):
+        suffix = "BJ"
+    else:
+        suffix = "SZ"
     return f"{code}.{suffix}"
 
 
