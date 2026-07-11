@@ -177,3 +177,96 @@ def test_tiered_push_no_duplicate_when_multiple_qualitative_dates(tmp_db, telegr
     assert text.count("N600036(600036)") == 1
     # Must use the most recent scored_date (2026-07-01: moat=8 -> "护城河8/10(强)")
     assert "护城河8/10(强)" in text
+
+
+def test_interpret_edge_cases(monkeypatch, tmp_db, telegram_env):
+    """Test moat (5-7, <5), market_pos (3, <3), timing <= 5 in _interpret."""
+    sent = []
+    monkeypatch.setattr(telegram_push, "_send", lambda *args: sent.append(args))
+
+    _insert_prediction("000001", 66.0, 1)  # quant_score = 56.0 (total - 10)
+    # moat=6, market_pos=3 -> 护城河6/10, 行业中等(3/5)
+    _insert_qualitative_scores("000001", 6, 3)
+
+    _insert_prediction("000002", 66.0, 1)  # quant = 56
+    # moat=4, market_pos=2 -> 护城河4/10(弱), 行业地位弱(2/5)
+    _insert_qualitative_scores("000002", 4, 2)
+
+    # Timing <= 5 -> total=66, quant=62.0 -> timing = 4.0 <= 5 -> "择时弱"
+    db = cache_mod.get_db()
+    db.execute(
+        """INSERT INTO predictions (code, name, framework, score_date, price_at_score, quant_score, total_score, weights_hash, report_period, entry_signal, entry_signal_version, created_at)
+           VALUES ('000003', 'N000003', 'A', '2026-05-30', 10.0, 62.0, 66.0, 'hash', '2024-09-30', 1, 'v1', '2026-05-30T15:00:00')"""
+    )
+    db.commit()
+    db.close()
+
+    telegram_push.push_daily_signals("2026-05-30", threshold=44.0)
+    assert len(sent) == 1
+    text = sent[0][2]
+
+    assert "护城河6/10" in text
+    assert "行业中等(3/5)" in text
+    assert "护城河4/10(弱)" in text
+    assert "行业地位弱(2/5)" in text
+    assert "择时弱" in text
+
+
+def test_push_daily_signals_missing_env_vars(monkeypatch, tmp_db):
+    """When TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is missing, it skips pushing."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "")
+    sent = []
+    monkeypatch.setattr(telegram_push, "_send", lambda *args: sent.append(args))
+
+    telegram_push.push_daily_signals("2026-05-30")
+    assert len(sent) == 0
+
+
+def test_push_daily_signals_http_error(monkeypatch, tmp_db, telegram_env):
+    """Test HTTPError is caught."""
+    import urllib.error
+
+    def fail_send(*args):
+        raise urllib.error.HTTPError("url", 403, "Forbidden", {}, None)
+
+    monkeypatch.setattr(telegram_push, "_send", fail_send)
+    _insert_prediction("600036", 66.0, 1)
+
+    # Should not raise exception
+    telegram_push.push_daily_signals("2026-05-30", threshold=65.0)
+
+
+def test_interpret_timing_good(monkeypatch, tmp_db, telegram_env):
+    """Test timing >= 12 in _interpret."""
+    sent = []
+    monkeypatch.setattr(telegram_push, "_send", lambda *args: sent.append(args))
+
+    # Timing >= 12 -> total=66, quant=50.0 -> timing = 16.0 >= 12 -> "择时佳"
+    db = cache_mod.get_db()
+    db.execute(
+        """INSERT INTO predictions (code, name, framework, score_date, price_at_score, quant_score, total_score, weights_hash, report_period, entry_signal, entry_signal_version, created_at)
+           VALUES ('000004', 'N000004', 'A', '2026-05-30', 10.0, 50.0, 66.0, 'hash', '2024-09-30', 1, 'v1', '2026-05-30T15:00:00')"""
+    )
+    db.commit()
+    db.close()
+
+    telegram_push.push_daily_signals("2026-05-30", threshold=44.0)
+    assert len(sent) == 1
+    assert "择时佳" in sent[0][2]
+
+
+def test_send_real_execution(monkeypatch):
+    """Test _send executes urlopen correctly."""
+    import urllib.request
+    from unittest.mock import patch
+
+    with patch("urllib.request.urlopen") as mock_urlopen:
+        mock_urlopen.return_value.__enter__ = lambda s: s
+        mock_urlopen.return_value.__exit__ = lambda s, *a: False
+
+        telegram_push._send("test_token", "chat_123", "Hello World")
+
+        mock_urlopen.assert_called_once()
+        req = mock_urlopen.call_args[0][0]
+        assert req.full_url == "https://api.telegram.org/bottest_token/sendMessage"
+        assert req.get_method() == "POST"

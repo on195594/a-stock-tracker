@@ -186,3 +186,150 @@ def test_write_cache_insert_ignore_same_date(tmp_path, monkeypatch):
     db.close()
     assert len(rows) == 1
     assert rows[0][0] == 7  # 保留第一次写入的值
+
+
+# ---------------------------------------------------------------------------
+# 9. _check_cache 过期测试
+# ---------------------------------------------------------------------------
+def test_check_cache_expired(tmp_path, monkeypatch):
+    """超过 30 天的缓存应返回 None。"""
+    import gemini_scorer
+    from lib import cache as cache_mod
+    from datetime import date, timedelta
+
+    db_path = str(tmp_path / "tracker.db")
+    monkeypatch.setattr(cache_mod, "DB_PATH", db_path)
+
+    db = cache_mod.get_db()
+    old_date = (date.today() - timedelta(days=31)).isoformat()
+    db.execute(
+        "INSERT INTO qualitative_scores (code, moat, market_pos, sentiment, scored_date)"
+        " VALUES ('600036', 5, 2, 3, ?)", (old_date,)
+    )
+    db.commit()
+    db.close()
+
+    assert gemini_scorer._check_cache("600036") is None
+
+
+# ---------------------------------------------------------------------------
+# 10. _check_cache_stale 测试
+# ---------------------------------------------------------------------------
+def test_check_cache_stale(tmp_path, monkeypatch):
+    """无论是否过期，_check_cache_stale 都应返回最新值，不存在时返回 None。"""
+    import gemini_scorer
+    from lib import cache as cache_mod
+    from datetime import date, timedelta
+
+    db_path = str(tmp_path / "tracker.db")
+    monkeypatch.setattr(cache_mod, "DB_PATH", db_path)
+
+    assert gemini_scorer._check_cache_stale("000001") is None
+
+    db = cache_mod.get_db()
+    old_date = (date.today() - timedelta(days=50)).isoformat()
+    db.execute(
+        "INSERT INTO qualitative_scores (code, moat, market_pos, sentiment, scored_date)"
+        " VALUES ('000001', 9, 4, 4, ?)", (old_date,)
+    )
+    db.commit()
+    db.close()
+
+    result = gemini_scorer._check_cache_stale("000001")
+    assert result == {"moat": 9, "market_pos": 4, "sentiment": 4}
+
+
+# ---------------------------------------------------------------------------
+# 11. _call_gemini API Key 缺失
+# ---------------------------------------------------------------------------
+def test_call_gemini_empty_api_key(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "")
+    import gemini_scorer
+    assert gemini_scorer._call_gemini("000001", "平安银行") is None
+
+
+# ---------------------------------------------------------------------------
+# 12. _call_gemini HTTP Errors (Retries & Auth)
+# ---------------------------------------------------------------------------
+def test_call_gemini_http_errors(monkeypatch):
+    import gemini_scorer
+    import urllib.error
+    monkeypatch.setenv("GEMINI_API_KEY", "test")
+    monkeypatch.setattr(gemini_scorer, "GEMINI_RETRY_DELAYS", (0, 0)) # Speed up
+
+    # 401 Auth error -> returns None immediately
+    with patch("urllib.request.urlopen", side_effect=urllib.error.HTTPError("url", 401, "Auth", {}, None)) as mock_auth:
+        assert gemini_scorer._call_gemini("000001", "Bank") is None
+        assert mock_auth.call_count == 1
+
+    # 500 Server error -> retries then returns None
+    with patch("urllib.request.urlopen", side_effect=urllib.error.HTTPError("url", 500, "Error", {}, None)) as mock_server_err:
+        assert gemini_scorer._call_gemini("000001", "Bank") is None
+        assert mock_server_err.call_count == gemini_scorer.MAX_GEMINI_RETRIES
+
+    # 400 Bad Request -> No retry, returns None
+    with patch("urllib.request.urlopen", side_effect=urllib.error.HTTPError("url", 400, "Bad Req", {}, None)) as mock_bad_req:
+        assert gemini_scorer._call_gemini("000001", "Bank") is None
+        assert mock_bad_req.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# 13. _call_gemini Generic Exception
+# ---------------------------------------------------------------------------
+def test_call_gemini_generic_exception(monkeypatch):
+    import gemini_scorer
+    monkeypatch.setenv("GEMINI_API_KEY", "test")
+    with patch("urllib.request.urlopen", side_effect=Exception("Unknown Error")):
+        assert gemini_scorer._call_gemini("000001", "Bank") is None
+
+
+# ---------------------------------------------------------------------------
+# 14. get_qualitative_score 兜底旧缓存
+# ---------------------------------------------------------------------------
+def test_get_qualitative_score_stale_fallback():
+    import gemini_scorer
+    stale_data = {"moat": 8, "market_pos": 3, "sentiment": 2}
+    with patch.object(gemini_scorer, "_check_cache", return_value=None), \
+         patch.object(gemini_scorer, "_call_gemini", return_value=None), \
+         patch.object(gemini_scorer, "_check_cache_stale", return_value=stale_data):
+
+        result = gemini_scorer.get_qualitative_score("000001", "Bank")
+        assert result == stale_data
+
+
+# ---------------------------------------------------------------------------
+# 15. _check_cache 空结果
+# ---------------------------------------------------------------------------
+def test_check_cache_empty(tmp_path, monkeypatch):
+    import gemini_scorer
+    from lib import cache as cache_mod
+    db_path = str(tmp_path / "tracker.db")
+    monkeypatch.setattr(cache_mod, "DB_PATH", db_path)
+    assert gemini_scorer._check_cache("999999") is None
+
+
+# ---------------------------------------------------------------------------
+# 16. _write_cache 执行写入
+# ---------------------------------------------------------------------------
+def test_write_cache_execution(tmp_path, monkeypatch):
+    import gemini_scorer
+    from lib import cache as cache_mod
+    db_path = str(tmp_path / "tracker.db")
+    monkeypatch.setattr(cache_mod, "DB_PATH", db_path)
+
+    gemini_scorer._write_cache("000001", {"moat": 8, "market_pos": 4, "sentiment": 3})
+
+    db = cache_mod.get_db()
+    row = db.execute("SELECT moat, market_pos, sentiment FROM qualitative_scores WHERE code='000001'").fetchone()
+    db.close()
+    assert row == (8, 4, 3)
+
+
+# ---------------------------------------------------------------------------
+# 17. _call_gemini TimeoutError
+# ---------------------------------------------------------------------------
+def test_call_gemini_timeout(monkeypatch):
+    import gemini_scorer
+    monkeypatch.setenv("GEMINI_API_KEY", "test")
+    with patch("urllib.request.urlopen", side_effect=TimeoutError):
+        assert gemini_scorer._call_gemini("000001", "Bank") is None

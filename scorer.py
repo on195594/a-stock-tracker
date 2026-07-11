@@ -1,9 +1,6 @@
 # Framework A 定量评分引擎。从 weights.json 读取 breakpoints，对基本面/估值字段线性插值后加权求和。
 import json
-import logging
 from typing import Any
-
-logger = logging.getLogger(__name__)
 
 
 class UnsupportedFrameworkError(Exception):
