@@ -57,8 +57,9 @@ acquire():
     wait = max(0, 61.0 - elapsed)
     if wait > 0:
         time.sleep(wait)
-    原子写入跨重启 rate state
-    last_request_started_monotonic = monotonic_now
+    actual_start = time.monotonic()       ← sleep 后重新采样，记录实际请求发送时间
+    原子写入跨重启 rate state（使用 actual_start 对应的 UTC 时间）
+    last_request_started_monotonic = actual_start
 ```
 
 规则：
