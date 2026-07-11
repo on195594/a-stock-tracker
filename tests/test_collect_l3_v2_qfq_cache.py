@@ -48,29 +48,50 @@ def config(db: Path, cache_dir: Path, codes: tuple[str, ...]) -> Any:
     )
 
 
-class FakeLimiter:
-    def __init__(self) -> None:
-        self.calls = 0
+class FakeResponse:
+    error_code = "0"
+    error_msg = "success"
 
-    def acquire(self) -> None:
-        self.calls += 1
+    def __init__(self, rows: list[list[str]]) -> None:
+        self.rows = rows
+        self.index = -1
+
+    def next(self) -> bool:
+        self.index += 1
+        return self.index < len(self.rows)
+
+    def get_row_data(self) -> list[str]:
+        return self.rows[self.index]
 
 
-class FakePro:
-    def __init__(self, rate_limit: bool = False) -> None:
-        self.daily_calls: list[str] = []
-        self.factor_calls: list[str] = []
-        self.rate_limit = rate_limit
+class FakeLogin:
+    def __init__(self, error_code: str = "0", error_msg: str = "success") -> None:
+        self.error_code = error_code
+        self.error_msg = error_msg
 
-    def daily(self, **kwargs: str) -> pd.DataFrame:
-        self.daily_calls.append(kwargs["ts_code"])
-        return api_frames()[0]
 
-    def adj_factor(self, **kwargs: str) -> pd.DataFrame:
-        self.factor_calls.append(kwargs["ts_code"])
-        if self.rate_limit:
-            raise RuntimeError("频率超限(1次/分钟)")
-        return api_frames()[1]
+class FakeBaoStock:
+    def __init__(self, rows: list[list[str]] | None = None, login: FakeLogin | None = None) -> None:
+        self.rows = rows if rows is not None else [
+            ["2026-07-09", "10", "11", "9", "10.5", "100", "1"],
+            ["2026-07-08", "", "10", "8", "9", "50", "1"],
+            ["2026-07-07", "8", "9", "7", "8.5", "75", "0"],
+        ]
+        self.login_result = login or FakeLogin()
+        self.login_count = 0
+        self.logout_count = 0
+        self.calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+
+    def login(self) -> FakeLogin:
+        self.login_count += 1
+        return self.login_result
+
+    def logout(self) -> None:
+        self.logout_count += 1
+
+    def query_history_k_data_plus(self, *args: Any, **kwargs: Any) -> FakeResponse:
+        self.calls.append((args, kwargs))
+        return FakeResponse(self.rows)
 
 
 def seed_cache(cache_dir: Path, code: str) -> None:
@@ -79,32 +100,20 @@ def seed_cache(cache_dir: Path, code: str) -> None:
     cache.write_cache(cache_dir, code, frame, "2026-07-09", "2026-07-09")
 
 
-def test_cache_hit_skips_all_api_calls(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cache_hit_skips_all_api_calls(tmp_path: Path) -> None:
     db = tmp_path / "tracker.db"
     create_db(db)
     seed_cache(tmp_path / "cache", "000001")
-    pro = FakePro()
+    client = FakeBaoStock()
     messages: list[str] = []
-    monkeypatch.setattr(collector, "is_rate_limit", collector.is_rate_limit)
-    result = collector.collect(config(db, tmp_path / "cache", ("000001",)), pro, messages.append, FakeLimiter())
+
+    result = collector.collect(config(db, tmp_path / "cache", ("000001",)), client, messages.append)
+
     assert result == 0
-    assert pro.daily_calls == []
-    assert pro.factor_calls == []
+    assert client.login_count == 0
+    assert client.logout_count == 0
+    assert client.calls == []
     assert messages == ["SKIP cached complete: 000001"]
-
-
-def test_rate_limit_exits_nonzero_without_retry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    db = tmp_path / "tracker.db"
-    create_db(db)
-    pro = FakePro(rate_limit=True)
-    messages: list[str] = []
-    monkeypatch.setattr(collector, "MIN_PRELOAD_TRADING_DAYS", 120)
-    result = collector.collect(config(db, tmp_path / "cache", ("000001",)), pro, messages.append, FakeLimiter())
-    assert result != 0
-    assert pro.daily_calls == ["000001.SZ"]
-    assert pro.factor_calls == ["000001.SZ"]
-    assert "TUSHARE_RATE_LIMIT" in messages[-1]
-    assert not (tmp_path / "cache" / "000001.meta.json").exists()
 
 
 def test_atomic_write_cleans_temp_file_on_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -117,23 +126,72 @@ def test_atomic_write_cleans_temp_file_on_failure(tmp_path: Path, monkeypatch: p
 
     monkeypatch.setattr(cache.os, "replace", fail_csv_replace)
     with pytest.raises(cache.CacheWriteError, match="ATOMIC_WRITE_FAILED"):
-        cache.write_cache(tmp_path, "000001", cache.build_cache_frame("000001", *api_frames()), "2026-07-09", "2026-07-09")
+        cache.write_cache(
+            tmp_path,
+            "000001",
+            cache.build_cache_frame("000001", *api_frames()),
+            "2026-07-09",
+            "2026-07-09",
+        )
     assert list(tmp_path.glob("*.tmp")) == []
     assert list(tmp_path.glob(".*.tmp")) == []
     assert not (tmp_path / "000001.meta.json").exists()
 
 
-def test_resume_skips_complete_codes_and_fetches_pending_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resume_skips_complete_codes_and_fetches_pending_only(tmp_path: Path) -> None:
     db = tmp_path / "tracker.db"
     create_db(db)
     cache_dir = tmp_path / "cache"
     seed_cache(cache_dir, "000001")
-    pro = FakePro()
-    limiter = FakeLimiter()
-    monkeypatch.setattr(collector, "validate_code", cache.validate_code)
-    result = collector.collect(config(db, cache_dir, ("000001", "600900")), pro, lambda _: None, limiter)
+    client = FakeBaoStock()
+
+    result = collector.collect(config(db, cache_dir, ("000001", "600900")), client, lambda _: None)
+
     assert result == 0
-    assert pro.daily_calls == ["600900.SH"]
-    assert pro.factor_calls == ["600900.SH"]
-    assert limiter.calls == 1
-    cache.read_cache(cache_dir, "600900", "2026-07-09", "2026-07-09")
+    assert client.login_count == 1
+    assert client.logout_count == 1
+    assert len(client.calls) == 1
+    args, kwargs = client.calls[0]
+    assert args == ("sh.600900", "date,open,high,low,close,volume,tradestatus")
+    assert kwargs == {
+        "start_date": "2026-07-09",
+        "end_date": "2026-07-09",
+        "frequency": "d",
+        "adjustflag": "2",
+    }
+    frame, metadata = cache.read_cache(cache_dir, "600900", "2026-07-09", "2026-07-09")
+    assert frame["adj_factor"].tolist() == [1.0]
+    assert frame["source"].tolist() == ["baostock"]
+    assert frame["open"].tolist() == [10.0]
+    assert metadata["source"] == "baostock"
+
+
+def test_baostock_login_failure(tmp_path: Path) -> None:
+    db = tmp_path / "tracker.db"
+    create_db(db)
+    client = FakeBaoStock(login=FakeLogin("1001", "authentication failed"))
+
+    with pytest.raises(collector.CollectorError, match="BaoStock login failed: authentication failed"):
+        collector.collect(config(db, tmp_path / "cache", ("000001",)), client, lambda _: None)
+
+    assert client.login_count == 1
+    assert client.logout_count == 0
+    assert client.calls == []
+
+
+def test_empty_response_is_cache_miss_without_write(tmp_path: Path) -> None:
+    db = tmp_path / "tracker.db"
+    create_db(db)
+    cache_dir = tmp_path / "cache"
+    client = FakeBaoStock(rows=[])
+    messages: list[str] = []
+
+    result = collector.collect(config(db, cache_dir, ("000001",)), client, messages.append)
+
+    assert result == 1
+    assert client.login_count == 1
+    assert client.logout_count == 1
+    assert len(client.calls) == 1
+    assert "EMPTY_DATA" in messages[-1]
+    assert not (cache_dir / "000001.csv").exists()
+    assert not (cache_dir / "000001.meta.json").exists()

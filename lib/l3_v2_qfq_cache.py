@@ -20,7 +20,7 @@ import pandas as pd
 
 LOGGER = logging.getLogger(__name__)
 SCHEMA_VERSION = 1
-SOURCE = "tushare.daily+adj_factor"
+SOURCE = "baostock"
 MIN_ADJ_FACTOR_INTERVAL_SECONDS = 61.0
 CODE_RE = re.compile(r"^[0-9]{6}$")
 CSV_COLUMNS = (

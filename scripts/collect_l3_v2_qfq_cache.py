@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""Collect resumable raw daily and adj_factor files for L3 v2 backtests."""
+"""Collect resumable BaoStock qfq daily files for L3 v2 backtests."""
 
 from __future__ import annotations
 
 import argparse
-import os
 import sqlite3
 import sys
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import quote
+
+import baostock as bs
+import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -21,15 +23,16 @@ from lib.l3_v2_qfq_cache import (  # noqa: E402
     CacheInvalidError,
     CacheMissingError,
     CollectorLock,
-    FixedIntervalRateLimiter,
     LockUnavailableError,
     QfqCacheError,
-    build_cache_frame,
+    CSV_COLUMNS,
     read_cache,
     to_tushare_code,
     validate_code,
+    validate_cache_frame,
     write_cache,
 )
+from a_stock_lib.providers.baostock_quotes import to_baostock_stock_code  # noqa: E402
 
 
 MIN_PRELOAD_TRADING_DAYS = 120
@@ -37,14 +40,6 @@ MIN_PRELOAD_TRADING_DAYS = 120
 
 class CollectorError(RuntimeError):
     """Base error for collector failures."""
-
-
-class TushareRateLimitError(CollectorError):
-    """Raised when Tushare rejects an adj_factor request for quota."""
-
-
-class TushareFetchError(CollectorError):
-    """Raised when a remote fetch fails for another reason."""
 
 
 @dataclass(frozen=True)
@@ -131,101 +126,101 @@ def load_codes(conn: sqlite3.Connection, config: CollectorConfig) -> tuple[str, 
     return codes
 
 
-def is_rate_limit(exc: Exception) -> bool:
-    """Recognize Tushare's Chinese and English quota messages."""
-    message = str(exc).lower()
-    return "频率超限" in message or "rate limit" in message or "每分钟" in message
+def fetch_baostock_frame(client: Any, code: str, start: str, end: str) -> pd.DataFrame:
+    """Fetch qfq rows from BaoStock and normalize them to the cache schema."""
+    fields = "date,open,high,low,close,volume,tradestatus"
+    result = client.query_history_k_data_plus(
+        to_baostock_stock_code(code),
+        fields,
+        start_date=start,
+        end_date=end,
+        frequency="d",
+        adjustflag="2",
+    )
+    if result.error_code != "0":
+        raise CollectorError(f"BaoStock query failed: {result.error_msg}")
+
+    rows: list[list[str]] = []
+    while result.next():
+        rows.append(result.get_row_data())
+    if not rows:
+        raise CacheInvalidError("EMPTY_DATA")
+
+    frame = pd.DataFrame(rows, columns=fields.split(","))
+    frame = frame[frame["tradestatus"] == "1"].copy()
+    numeric = ["open", "high", "low", "close", "volume"]
+    frame[numeric] = frame[numeric].replace("", pd.NA)
+    frame = frame.dropna(subset=numeric)
+    if frame.empty:
+        raise CacheInvalidError("EMPTY_DATA")
+    for column in numeric:
+        frame[column] = frame[column].astype(float)
+
+    frame = frame.rename(columns={"date": "trade_date", "volume": "vol"})
+    frame["trade_date"] = frame["trade_date"].str.replace("-", "", regex=False)
+    frame["code"] = code
+    frame["ts_code"] = to_tushare_code(code)
+    frame["adj_factor"] = 1.0
+    frame["source"] = "baostock"
+    frame["fetched_at"] = datetime.now(timezone.utc).isoformat()
+    return validate_cache_frame(frame[list(CSV_COLUMNS)], expected_code=code)
 
 
 def collect(
     config: CollectorConfig,
-    pro: Any,
+    client: Any = bs,
     output: Callable[[str], None] = print,
-    limiter: FixedIntervalRateLimiter | None = None,
 ) -> int:
-    """Collect pending stocks once each, stopping immediately on rate limit."""
-    limiter = limiter or FixedIntervalRateLimiter(config.cache_dir)
+    """Collect pending stocks once each through a shared BaoStock session."""
     conn = open_readonly_db(config.db_path)
     try:
         preload_start = compute_preload_start(conn, config.start, config.preload_trading_days)
         codes = load_codes(conn, config)
     finally:
         conn.close()
-    start_s = preload_start.strftime("%Y%m%d")
-    end_s = config.end.strftime("%Y%m%d")
+    start_s = preload_start.isoformat()
+    end_s = config.end.isoformat()
 
+    logged_in = False
     try:
-        lock = CollectorLock(config.cache_dir)
-        with lock:
-            for code in codes:
-                try:
-                    read_cache(config.cache_dir, code, preload_start, config.end)
-                except (CacheMissingError, CacheInvalidError):
-                    pass
-                else:
-                    output(f"SKIP cached complete: {code}")
-                    continue
+        try:
+            lock = CollectorLock(config.cache_dir)
+            with lock:
+                for code in codes:
+                    try:
+                        read_cache(config.cache_dir, code, preload_start, config.end)
+                    except (CacheMissingError, CacheInvalidError):
+                        pass
+                    else:
+                        output(f"SKIP cached complete: {code}")
+                        continue
 
-                ts_code = to_tushare_code(code)
-                try:
-                    daily = pro.daily(ts_code=ts_code, start_date=start_s, end_date=end_s)
-                    limiter.acquire()
-                    factors = pro.adj_factor(ts_code=ts_code, start_date=start_s, end_date=end_s)
-                except Exception as exc:
-                    if is_rate_limit(exc):
-                        output(f"{code}: TUSHARE_RATE_LIMIT; recoverable, rerun to resume from completed cache")
-                        return 2
-                    output(f"{code}: TUSHARE_FETCH_FAILED:{str(exc).replace(chr(10), ' ').strip()}")
-                    return 1
-                try:
-                    frame = build_cache_frame(code, daily, factors)
-                    write_cache(config.cache_dir, code, frame, preload_start, config.end)
-                except (QfqCacheError, OSError) as exc:
-                    output(f"{code}: CACHE_WRITE_OR_VALIDATION_FAILED:{exc}")
-                    return 1
-                output(f"CACHED complete: {code}")
+                    if not logged_in:
+                        login_result = client.login()
+                        if login_result.error_code != "0":
+                            raise CollectorError(f"BaoStock login failed: {login_result.error_msg}")
+                        logged_in = True
+                    try:
+                        frame = fetch_baostock_frame(client, code, start_s, end_s)
+                        write_cache(config.cache_dir, code, frame, preload_start, config.end)
+                    except (QfqCacheError, OSError, CollectorError, ValueError) as exc:
+                        output(f"{code}: BAOSTOCK_FETCH_OR_CACHE_WRITE_FAILED:{exc}")
+                        return 1
+                    output(f"CACHED complete: {code}")
+        finally:
+            if logged_in:
+                client.logout()
     except LockUnavailableError as exc:
         output(str(exc))
         return 3
     return 0
 
 
-def build_tushare_client() -> Any:
-    """Load .env without override and create an authenticated Tushare client."""
-    load_project_dotenv(PROJECT_ROOT / ".env")
-    token = os.environ.get("TUSHARE_TOKEN")
-    if not token:
-        raise CollectorError("TUSHARE_TOKEN_MISSING")
-    try:
-        import tushare as ts  # type: ignore[import-not-found]
-    except ImportError as exc:
-        raise CollectorError(f"TUSHARE_IMPORT_FAILED:{exc}") from exc
-    return ts.pro_api(token)
-
-
-def load_project_dotenv(path: Path) -> None:
-    """Use python-dotenv, with a minimal compatibility path for bootstrap environments."""
-    try:
-        from dotenv import load_dotenv
-    except ImportError:
-        if not path.is_file():
-            return
-        for raw_line in path.read_text(encoding="utf-8").splitlines():
-            line = raw_line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
-        return
-    load_dotenv(path, override=False)
-
-
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point."""
     config = parse_args(argv)
     try:
-        pro = build_tushare_client()
-        return collect(config, pro)
+        return collect(config)
     except CollectorError as exc:
         print(str(exc), file=sys.stderr)
         return 1
