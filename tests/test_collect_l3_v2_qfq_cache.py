@@ -73,7 +73,7 @@ class FakeLogin:
 class FakeBaoStock:
     def __init__(self, rows: list[list[str]] | None = None, login: FakeLogin | None = None) -> None:
         self.rows = rows if rows is not None else [
-            ["2026-07-09", "10", "11", "9", "10.5", "100", "1"],
+            ["2026-07-09", "10", "11", "9", "10.5", "10000", "1"],
             ["2026-07-08", "", "10", "8", "9", "50", "1"],
             ["2026-07-07", "8", "9", "7", "8.5", "75", "0"],
         ]
@@ -163,6 +163,7 @@ def test_resume_skips_complete_codes_and_fetches_pending_only(tmp_path: Path) ->
     assert frame["adj_factor"].tolist() == [1.0]
     assert frame["source"].tolist() == ["baostock"]
     assert frame["open"].tolist() == [10.0]
+    assert frame["vol"].tolist() == [100.0]
     assert metadata["source"] == "baostock"
 
 
@@ -175,6 +176,23 @@ def test_baostock_login_failure(tmp_path: Path) -> None:
         collector.collect(config(db, tmp_path / "cache", ("000001",)), client, lambda _: None)
 
     assert client.login_count == 1
+    assert client.logout_count == 0
+    assert client.calls == []
+
+
+def test_login_exception(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    db = tmp_path / "tracker.db"
+    create_db(db)
+    client = FakeBaoStock()
+
+    def raise_connection_error() -> FakeLogin:
+        raise ConnectionError("network unavailable")
+
+    monkeypatch.setattr(client, "login", raise_connection_error)
+
+    with pytest.raises(collector.CollectorError, match="BAOSTOCK_LOGIN_EXCEPTION: network unavailable"):
+        collector.collect(config(db, tmp_path / "cache", ("000001",)), client, lambda _: None)
+
     assert client.logout_count == 0
     assert client.calls == []
 

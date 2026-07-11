@@ -27,7 +27,6 @@ from lib.l3_v2_qfq_cache import (  # noqa: E402
     QfqCacheError,
     CSV_COLUMNS,
     read_cache,
-    to_tushare_code,
     validate_code,
     validate_cache_frame,
     write_cache,
@@ -40,6 +39,11 @@ MIN_PRELOAD_TRADING_DAYS = 120
 
 class CollectorError(RuntimeError):
     """Base error for collector failures."""
+
+
+def _to_exchange_code(code: str) -> str:
+    suffix = "SH" if (code.startswith("6") or code.startswith("8")) else "SZ"
+    return f"{code}.{suffix}"
 
 
 @dataclass(frozen=True)
@@ -129,20 +133,30 @@ def load_codes(conn: sqlite3.Connection, config: CollectorConfig) -> tuple[str, 
 def fetch_baostock_frame(client: Any, code: str, start: str, end: str) -> pd.DataFrame:
     """Fetch qfq rows from BaoStock and normalize them to the cache schema."""
     fields = "date,open,high,low,close,volume,tradestatus"
-    result = client.query_history_k_data_plus(
-        to_baostock_stock_code(code),
-        fields,
-        start_date=start,
-        end_date=end,
-        frequency="d",
-        adjustflag="2",
-    )
+    try:
+        result = client.query_history_k_data_plus(
+            to_baostock_stock_code(code),
+            fields,
+            start_date=start,
+            end_date=end,
+            frequency="d",
+            adjustflag="2",
+        )
+    except CollectorError:
+        raise
+    except Exception as exc:
+        raise CollectorError(f"BAOSTOCK_QUERY_EXCEPTION: {exc}") from exc
     if result.error_code != "0":
         raise CollectorError(f"BaoStock query failed: {result.error_msg}")
 
     rows: list[list[str]] = []
-    while result.next():
-        rows.append(result.get_row_data())
+    try:
+        while result.next():
+            rows.append(result.get_row_data())
+    except CollectorError:
+        raise
+    except Exception as exc:
+        raise CollectorError(f"BAOSTOCK_ITERATION_EXCEPTION: {exc}") from exc
     if not rows:
         raise CacheInvalidError("EMPTY_DATA")
 
@@ -156,10 +170,11 @@ def fetch_baostock_frame(client: Any, code: str, start: str, end: str) -> pd.Dat
     for column in numeric:
         frame[column] = frame[column].astype(float)
 
+    frame["volume"] = frame["volume"] / 100.0
     frame = frame.rename(columns={"date": "trade_date", "volume": "vol"})
     frame["trade_date"] = frame["trade_date"].str.replace("-", "", regex=False)
     frame["code"] = code
-    frame["ts_code"] = to_tushare_code(code)
+    frame["ts_code"] = _to_exchange_code(code)
     frame["adj_factor"] = 1.0
     frame["source"] = "baostock"
     frame["fetched_at"] = datetime.now(timezone.utc).isoformat()
@@ -196,7 +211,12 @@ def collect(
                         continue
 
                     if not logged_in:
-                        login_result = client.login()
+                        try:
+                            login_result = client.login()
+                        except CollectorError:
+                            raise
+                        except Exception as exc:
+                            raise CollectorError(f"BAOSTOCK_LOGIN_EXCEPTION: {exc}") from exc
                         if login_result.error_code != "0":
                             raise CollectorError(f"BaoStock login failed: {login_result.error_msg}")
                         logged_in = True
@@ -209,7 +229,12 @@ def collect(
                     output(f"CACHED complete: {code}")
         finally:
             if logged_in:
-                client.logout()
+                try:
+                    client.logout()
+                except CollectorError:
+                    raise
+                except Exception as exc:
+                    raise CollectorError(f"BAOSTOCK_LOGOUT_EXCEPTION: {exc}") from exc
     except LockUnavailableError as exc:
         output(str(exc))
         return 3
