@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import tempfile
 import time
 from datetime import date, datetime, timezone
@@ -217,11 +218,24 @@ def write_cache(
         "status": "complete",
         "sha256": checksum,
     }
+    csv_bak: Path | None = None
+    if csv_path.exists() and meta_path.exists():
+        csv_bak = csv_path.with_name(f"{code}.csv.bak")
+        shutil.copy2(csv_path, csv_bak)
     try:
         _atomic_write_bytes(csv_path, csv_payload)
         _atomic_write_bytes(meta_path, _json_bytes(metadata))
-    except OSError as exc:
-        raise CacheWriteError(f"ATOMIC_WRITE_FAILED:{exc}") from exc
+        if csv_bak is not None and csv_bak.exists():
+            csv_bak.unlink()
+    except Exception as exc:
+        if csv_bak is not None and csv_bak.exists():
+            try:
+                csv_bak.replace(csv_path)
+            except OSError:
+                pass
+        if isinstance(exc, OSError):
+            raise CacheWriteError(f"ATOMIC_WRITE_FAILED:{exc}") from exc
+        raise
     return metadata
 
 
@@ -315,34 +329,46 @@ class FixedIntervalRateLimiter:
         self.interval_seconds = float(interval_seconds)
         self._last_monotonic: float | None = None
 
-    def _persistent_wait(self, now_wall: float) -> float:
-        if not self.state_path.exists():
-            return 0.0
-        try:
-            state = json.loads(self.state_path.read_text(encoding="utf-8"))
-            last_wall = float(state["last_request_started_epoch"])
-        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
-            raise CacheInvalidError("RATE_STATE_INVALID") from exc
-        return max(0.0, self.interval_seconds - max(0.0, now_wall - last_wall))
-
     def acquire(self) -> None:
         """Wait if needed, then persist the resampled actual request start."""
-        now_monotonic = time.monotonic()
-        now_wall = time.time()
-        process_wait = 0.0
-        if self._last_monotonic is not None:
-            process_wait = max(0.0, self.interval_seconds - (now_monotonic - self._last_monotonic))
-        wait = max(process_wait, self._persistent_wait(now_wall))
-        if wait > 0:
-            time.sleep(wait)
-        actual_monotonic = time.monotonic()
-        actual_wall = time.time()
-        state = {
-            "last_request_started_epoch": actual_wall,
-            "last_request_started_utc": datetime.fromtimestamp(actual_wall, timezone.utc).isoformat(),
-        }
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            _atomic_write_bytes(self.state_path, _json_bytes(state))
+            with self.state_path.open("a+b") as fh:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+                fh.seek(0)
+                raw = fh.read()
+                persistent_wait = 0.0
+                now_monotonic = time.monotonic()
+                now_wall = time.time()
+                if raw:
+                    try:
+                        previous_state = json.loads(raw)
+                        last_wall = float(previous_state["last_request_started_epoch"])
+                    except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+                        raise CacheInvalidError("RATE_STATE_INVALID") from exc
+                    persistent_wait = max(
+                        0.0, self.interval_seconds - max(0.0, now_wall - last_wall)
+                    )
+                process_wait = 0.0
+                if self._last_monotonic is not None:
+                    process_wait = max(
+                        0.0, self.interval_seconds - (now_monotonic - self._last_monotonic)
+                    )
+                wait = max(process_wait, persistent_wait)
+                if wait > 0:
+                    time.sleep(wait)
+                actual_monotonic = time.monotonic()
+                actual_wall = time.time()
+                state = {
+                    "last_request_started_epoch": actual_wall,
+                    "last_request_started_utc": datetime.fromtimestamp(
+                        actual_wall, timezone.utc
+                    ).isoformat(),
+                }
+                fh.seek(0)
+                fh.truncate()
+                fh.write(_json_bytes(state))
+                fh.flush()
         except OSError as exc:
             raise CacheWriteError(f"RATE_STATE_WRITE_FAILED:{exc}") from exc
         self._last_monotonic = actual_monotonic

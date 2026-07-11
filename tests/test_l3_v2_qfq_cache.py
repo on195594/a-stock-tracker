@@ -59,6 +59,31 @@ def test_cache_write_read_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert metadata["status"] == "complete"
 
 
+def test_write_cache_restores_csv_on_metadata_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = sample_frame()
+    cache.write_cache(tmp_path, "000001", original, "2026-07-09", "2026-07-10")
+    original_csv = (tmp_path / "000001.csv").read_bytes()
+    real_atomic_write = cache._atomic_write_bytes
+
+    def fail_metadata_write(path: Path, payload: bytes) -> None:
+        if path.name.endswith(".meta.json"):
+            raise OSError("metadata write failed")
+        real_atomic_write(path, payload)
+
+    monkeypatch.setattr(cache, "_atomic_write_bytes", fail_metadata_write)
+    updated = sample_frame()
+    updated.loc[0, "close"] = 99
+
+    with pytest.raises(cache.CacheWriteError, match="ATOMIC_WRITE_FAILED"):
+        cache.write_cache(tmp_path, "000001", updated, "2026-07-09", "2026-07-10")
+
+    restored, _ = cache.read_cache(tmp_path, "000001", "2026-07-09", "2026-07-10")
+    assert (tmp_path / "000001.csv").read_bytes() == original_csv
+    pd.testing.assert_frame_equal(restored, original, check_dtype=False)
+
+
 def test_checksum_corruption_is_detected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     cache.write_cache(tmp_path, "000001", sample_frame(), "2026-07-09", "2026-07-10")
