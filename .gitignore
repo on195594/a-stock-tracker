@@ -14,3 +14,4 @@ accuracy_report.txt
 .agents/
 .codex/
 .claude/
+data/
