@@ -1,0 +1,23 @@
+你是 AGY。请独立执行一份“可工程实现性（engineering/spec-implementability）”评审，目标是仅评审以下规范文件：
+- docs/specs/2026-07-08-l3-v2-entry-signal-spec.md
+
+请在评审中覆盖并明确判断：
+1. 需求范围是否清晰，是否存在模糊/自相矛盾/边界未定义条款。
+2. 数据契约是否完整（输入/输出字段、类型、空值处理、时间窗口定义）。
+3. 状态机是否完整、可落地（L3 信号状态、触发/退避/回滚路径）。
+4. 任何 DDL 决策门（如数据库表结构/索引/字段迁移）是否明确、可执行、无隐含假设。
+5. qfq/source/freshness 的处理是否合理且与现有实现风格一致。
+6. 是否存在对未来函数/未来行为的推测性要求导致当前实现不应新增行为。
+7. market_state 注入是否可行、是否与 pipeline/push/评分链路一致。
+8. 测试覆盖计划是否覆盖关键分支（report-only、回退、边界条件）。
+9. report-only 上线与回滚方案是否明确且可执行。
+10. 规避“推断性行为”（invented behavior）并给出可落地性结论：spec 是否可直接指导实现。
+
+请给出如下结构化结论（中文）：
+- Verdict: PASS | PASS_WITH_NOTES | REQUEST_CHANGES
+- Blocking findings: 列出阻塞项（若无则写“无”）
+- Important notes: 列出关键观察/风险（非阻塞）
+- Safety boundary assessment: 明确说明是否存在超出现有代码边界的风险
+- Recommended next step: 下一步建议
+
+请仅依据仓库当前内容与该规范本身给出评估，不要编造需求。

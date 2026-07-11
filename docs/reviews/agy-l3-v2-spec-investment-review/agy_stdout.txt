@@ -1,0 +1,80 @@
+# L3 v2 入场信号规则（Entry Signal Spec）独立评审报告
+
+本评审报告由独立评审人以量化投资与证券研究视角，对 `docs/specs/2026-07-08-l3-v2-entry-signal-spec.md` 进行只读复核。本评审不修改任何代码、配置或数据库。
+
+---
+
+### Verdict: REQUEST_CHANGES
+
+---
+
+### Blocking findings (阻塞级问题)
+
+1. **前复权（QFQ）数据源死锁（QFQ Dependency Lock）**
+   * **证据：** 
+     * Spec 规定：**REQ-005**（“必须明确使用前复权 qfq 价格”）与 **REQ-006**（“不得在不复权 `adjusted='none'` 价格上输出 `pass_strong`”）。
+     * 现状：数据库 `tracker.db` 中当前只有 `adjusted='none'` 或空字符串的价格数据；且系统所依赖的底层行情库 `a_stock_lib==0.2.0`（参见 [.venv/lib/python3.13/site-packages/a_stock_lib/providers/tushare_quotes.py](file:///.venv/lib/python3.13/site-packages/a_stock_lib/providers/tushare_quotes.py#L283) 和 `baostock_quotes.py`）其接口实现中均将 `adjusted` 字段硬编码为 `"none"`。
+     * **影响：** 由于行情库不支持且数据库内无 qfq 数据，根据 **REQ-006** 和 **REQ-015**，L3 v2 在实际运行中将**永远无法输出 `pass_strong` 信号**（全部因数据缺失而被降级为 `pass_weak` 或 `unavailable`），导致强弱分层的核心目标（G1）完全失效。
+
+2. **大盘过滤（Market Gate）逻辑未定义（Undefined Market State Logic）**
+   * **证据：** 
+     * Spec 规定：**REQ-012** 和 **REQ-013** 引入了 `market_bullish`、`market_weak` 和 `market_unknown` 状态。
+     * 缺陷：Spec 中仅在 **REQ-011** 的规则候选里写了 `market_weak: pass_strong downgraded to pass_weak` 等状态映射，但**完全没有定义**判断大盘强弱的定量条件（例如：沪深 300 价格是否高于其 MA20/MA60，或者斜率是否为正值）。
+     * **影响：** 规则因为缺少执行边界和数学定义而**不可执行**，开发人员和回测引擎无法编写逻辑。
+
+3. **突破与压力位指标公式二义性（Ambiguous Resistance Formula）**
+   * **证据：** 
+     * Spec 规定：**REQ-011** 候选定义中 `high_20d_prev = max(high or close over previous 20 trading days, excluding today)`。
+     * 缺陷：“high or close” 是模糊措辞。在量化交易中，最高价（`high`，代表盘中极端阻力）与收盘价（`close`，代表收盘共识阻力）是两个截然不同的价格水平。
+     * **影响：** 产生公式二义性，容易导致回测逻辑和实盘逻辑由于细节实现不同而产生信号错位（如回测用 close，实盘用 high）。
+
+4. **回测与实盘去重/冷却机制不一致（Backtest-to-Production Mismatch）**
+   * **证据：** 
+     * Spec 规定：**REQ-020** & **REQ-021** 要求回测必须使用 20 个交易日的冷却去重口径。
+     * 现状：但在实盘推送侧（[telegram_push.py](file:///home/lin/a-stock-tracker/telegram_push.py#L99)），Telegram 每日推送依然是只要满足 `p.entry_signal = 1` 就会每天重复推送。
+     * **影响：** 造成“回测胜率高（去重后首发），实盘每天推（频繁被动追高/噪音泛滥）”的严重背离。若实盘不进行信号去重压缩，将极易诱发交易员过度交易。
+
+---
+
+### Important notes (非阻塞关键建议)
+
+1. **存在未使用的冗余指标（Unused Variable Redundancy）**
+   * **证据：** **REQ-011** 中定义了 `high_60d_prev = max(high or close over previous 60 trading days, excluding today)`，但在后续的 `pass_strong`（**REQ-012**）、`pass_weak`（**REQ-013**）、`reject`（**REQ-014**）等任何规则逻辑中，均**没有使用**该变量。建议在 Spec 中予以清除或显式引入。
+2. **成交量均线比值易受单日极值噪声污染（Volume Spike Noise）**
+   * **分析：** 规则设计为 `vol5 >= vol20 * 1.15`。由于 A 股波动大，单日爆量（如指数成分股调整、大宗交易或偶发消息）会瞬间拉高 5 日均量，导致随后 5 天均被动触发“放量强买点”；而真正的温和放量突破由于 vol20 同时被拉高，反而可能被误判为 weak。
+   * **建议：** 离线回测中应考虑对比“剔除单日最大值后的 5 日均量”或使用 Volume Z-Score（成交量标准差得分），以降低短期噪声敏感度。
+3. **全市场单参数偏离阈值对不同 Beta 股票的适配性偏差（Sector & Beta Incompatibility）**
+   * **分析：** watchlist 既包含极低波动率的高股息银行蓝筹（农行、中行），也包含高波动率的科技成长股（比亚迪、工业富联）。统一采用固定值（如 `close / MA60 - 1 > 5%` 为乖离率偏离）会导致：低 Beta 股在极佳的突破初期就被判定为“过度偏离”而被过滤，高 Beta 股却在严重超买时仍被放行。
+   * **建议：** 推动 **REQ-017** 的落地，在回测中强制加入基于波动率自适应（如 `2 * ATR_60` 或 `1.5 * std_60`）的偏离度阈值。
+4. **历史数据回测缺乏“样本分离（Train/Test Split）”与“泛化验证”**
+   * **分析：** 当前 watchlist 仅 43 只股票，且多为近两年极度强势的高股息/央企红利风格。若仅在 watchlist 上调参，会面临严重的过度拟合和数据窥视风险。
+   * **建议：** 正式回测计划中，必须要求至少包含 50% 样本外（Out-of-Sample）股票的泛化测试，或在全市场（如中证 800）进行宽幅验证，以证明参数和规则的普适性。
+5. **回测指标口径不完备**
+   * **分析：** 仅评估 30d 静态持有期收益和 Alpha（**REQ-022**）是不够的。
+   * **建议：** 必须在回测指标中加入 **最大回撤（Max Drawdown）**、**夏普比率（Sharpe Ratio）**、**换手率/交易频率** 以及包含印花税（单边 0.05%）和佣金滑点的**交易摩擦摩擦成本模型**。
+
+---
+
+### Investment risk assessment (投资风险评估)
+
+**分级：Medium**
+
+* **说明：** 
+  * 现行 Spec 的规则候选（REQ-011）在逻辑上引入了“不含今日的 20d 高点”和“MA60 趋势方向”，基本规避了未来函数，且通过强弱分层有较好的降噪倾向。
+  * 但由于前复权（QFQ）底层数据的缺失，若贸然绕过约束在不复权数据上运行，会在 6-7 月分红除权季对高股息 watchlist 造成 MA60/120 严重失真，导致错失低吸良机并在反弹高位被动追高，从而引入局部的风格亏损风险。
+  * 此外，大盘弱势降级逻辑未明确，在大盘单边下跌（熊市）时缺乏系统性熔断保护，单靠个股突破极易频繁吃亏（Fake Breakouts）。
+
+---
+
+### Recommended next step (下一步建议)
+
+1. **推迟生产实施，先行推进离线回测实验（Milestone 002 先行）**
+   * 在修改任何 DB schema 和 predictions 写入代码前，必须先在离线环境中编写回测脚本。
+2. **解决 QFQ 数据源设计问题（解决 OQ-002）**
+   * 回测脚本必须首先实现“利用 Tushare 获取 `adj_factor`（复权因子）并在内存中动态计算 QFQ 价格”或“升级 `a_stock_lib` 引入复权行情”的逻辑，确保能够跑出准确的无偏指标。
+3. **补充和明确以下 Spec 细节（修改 Spec 漏洞）**
+   * 明确大盘强弱（`market_weak` / `market_bullish`）的定量条件（例如：沪深 300 收盘价 > 20 日均线且 20 日均线向上）。
+   * 将 `high_20d_prev` 公式中的 "high or close" 统一规范为 "high"（最高价）。
+   * 删除 REQ-011 中未被使用的 `high_60d_prev`。
+   * 细化数据契约：在 `compute_entry_signal` 纯函数的输入端，明确如何传递复权类型及状态（例如在 `daily_bars` DataFrame 中加入 `adjusted` 和 `market_state` 字段）。
+   * 引入 Telegram 每日推送的去重与冷却逻辑，保证实盘消息频次与回测假设一致。

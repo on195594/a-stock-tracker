@@ -1,0 +1,39 @@
+# AGY Read-only Review Prompt — L3 v2 Offline Backtest Plan
+
+你是 a-stock-tracker 项目的独立工程/量化计划 reviewer。请只读评审，不要修改任何文件，不要创建除本次 stdout/stderr 外的文件，不要运行会写入 DB、日志、报告、缓存或外部服务的命令。
+
+## 评审目标
+
+请评审以下计划是否足够安全、可执行、可验证，能否作为后续实现 `scripts/offline_l3_v2_backtest.py` 的依据：
+
+- Plan: `docs/plans/2026-07-08-l3-v2-offline-backtest-plan.md`
+- Spec: `docs/specs/2026-07-08-l3-v2-entry-signal-spec.md`
+- Prior review evidence:
+  - `docs/reviews/agy-l3-v2-spec-engineering-review/agy_stdout.txt`
+  - `docs/reviews/agy-l3-v2-spec-investment-review/agy_stdout.txt`
+
+## 重点检查
+
+1. 只读边界是否足够：是否能确保不写 `tracker.db`、不触发 cron/Telegram/Gemini/Sheets、不改生产代码。
+2. P0 脚本骨架是否有足够的 read-only DB guard 与验证命令。
+3. QFQ 派生计划是否可落地：Tushare `daily + adj_factor` 内存派生是否表达清楚；无外部权限时是否能安全降级。
+4. v1 replay 与 v2 candidate 是否避免污染生产 `lib/entry_signal.py`。
+5. 去重冷却规则是否和未来实盘推送一致性风险说清楚。
+6. 交易成本模型是否够用，默认参数是否可解释且可覆盖。
+7. 输出 artifacts 与报告路径是否安全、可复现、不会混入生产数据写入。
+8. GO_TDD / NEED_SPEC_FIX / STOP 门槛是否足够明确，是否避免样本不足时过度结论。
+9. 验证命令、rollback、stop 条件是否完整。
+10. 是否遗漏关键测试/审查项，例如未来函数、样本泄漏、qfq/none 混用、market_state 缺失、成本单位错误。
+
+## 输出格式
+
+请用中文输出：
+
+1. `Verdict`: `PASS`, `PASS_WITH_NOTES`, 或 `REQUEST_CHANGES`。
+2. `Blocking findings`: 阻塞项，要求包含证据、风险、最小修复。
+3. `Important notes`: 非阻塞建议。
+4. `Safety boundary assessment`: 安全边界评估，尤其是 DB/cron/Telegram/外部 API。
+5. `Plan readiness assessment`: 计划是否足够让实现者不猜测；若不够，列出缺失的精确定义。
+6. `Recommended next step`: 只给一个下一步。
+
+请不要泛泛讲投资理论；重点审计划本身是否可执行、可验证、不会误伤生产。
