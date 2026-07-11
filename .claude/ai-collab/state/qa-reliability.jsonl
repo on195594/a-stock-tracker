@@ -8,3 +8,4 @@
 {"date": "2026-07-04", "task_id": "B6-agent-reviewer-gemini", "qa_tool": "codex-self-review", "findings_total": 1, "findings_valid": 1, "findings_fabricated": 0, "findings_unverified": 0, "verdict": "reliable"}
 {"date": "2026-07-05", "task_id": "tiered-push-v1", "qa_tool": "codex-self-review", "findings_total": 4, "findings_valid": 2, "findings_fabricated": 0, "findings_unverified": 1, "verdict": "reliable"}
 {"date": "2026-07-11", "task_id": "l3-v2-qfq-spec-doc", "qa_tool": "codex-self-review", "findings_total": 3, "findings_valid": 2, "findings_fabricated": 0, "findings_unverified": 1, "verdict": "mixed", "recorded_at": "2026-07-11T10:06:21.587327Z", "event_seq": 2}
+{"date": "2026-07-11", "task_id": "l3-v2-qfq-impl", "qa_tool": "codex-self-review", "findings_total": 3, "findings_valid": 3, "findings_fabricated": 0, "findings_unverified": 0, "verdict": "reliable", "recorded_at": "2026-07-11T10:45:22.547569Z", "event_seq": 5}
