@@ -33,7 +33,7 @@
 | Gemini 定性评分 | ✅ 正常 | 30天缓存，退避重试（429/5xx，最多3次），过期缓存降级，all-or-nothing fallback；当前缓存存在 35/35 |
 | Telegram 推送 | ✅ 正常 | ≥ buy_strong 且 L3 entry_signal=1 触发；2026-06-26 daily 推送成功 1 只股票 |
 | Outcome 追踪 | ✅ 正常 | `outcome-update` 已恢复到 cron；accuracy-report 显示 Framework A 30d 结案 533 条，其中 post-fix 315 条 |
-| L3 买点层 | ✅ v1 正常；v2 report-only | L3 v1 已接入 daily/推送/report；L3 v2 只读离线回测已实现并复审 APPROVE，但 qfq panels `0/38`，当前 gate 为 NEED_QFQ |
+| L3 买点层 | ✅ v1 正常；v2 Phase 2 完成 | L3 v1 已接入 daily/推送/report；L3 v2 QFQ 采集完成（35/35 codes × 130 rows），pass_strong 已激活，cron 每日 16:00 采集 |
 | 行情数据源 | ✅ READY_CRON | `a-stock-lib==0.2.0`：Tushare 主源 + 隔离 BaoStock degraded fallback；`check_market_data_readiness.py --scope cron` 返回 `READY_CRON` |
 | cron | ✅ 已恢复 | managed block 管理 weekly/daily/outcome-update；恢复前真实 probe/backfill/daily 已验证 |
 
@@ -126,16 +126,14 @@
 - 复盘：`docs/reviews/2026-07-10-l3-v2-backtest-retro.md`
 - 复审证据：`docs/reviews/agy-l3-v2-backtest-review/`
 
-当前结论：
+**2026-07-12 Phase 2（QFQ 采集）完成：**
 
-- 离线脚本只读 `tracker.db`，使用 SQLite `mode=ro` + `PRAGMA query_only=ON`，不触发 Telegram/cron/Gemini/Sheets。
-- 脚本可从项目 `.env` 读取 `TUSHARE_TOKEN`，但不会打印 token。
-- qfq 派生路径按 `daily + adj_factor` 对齐，价格使用 `adj_factor_t / adj_factor_latest`，volume 反向调整以保持价量口径一致。
-- 去重冷却按市场交易日序列执行 20 交易日同股冷却，不按 sparse prediction dates。
-- 当前 Tushare `adj_factor` 返回 `1次/分钟` 限频，导致 qfq 覆盖 `0/38`，buy_strong qfq issue `766`。
-- Decision gate 为 `NEED_QFQ`；不得进入 `GO_TDD`，不得把 none-adjusted 结果当作 v2 pass_strong 有效性证据。
-
-下一步必须单独设计 qfq 获取方案：显式限速、可恢复缓存或分批任务。该方案仍不得写 `tracker.db`，除非另开 spec 并获得授权。
+- QFQ spec：`docs/specs/phase2-qfq-daily-bars-collector.md`
+- 实现：`scripts/fetch_qfq_daily_bars.py`（BaoStock `adjustflag="2"`，`daily_bars` 表 `adjusted='qfq'`）
+- 采集结果：35/35 codes × 130 行回填（≥ 120 行门槛），全量验证 pass_strong
+- cron：`00 16 * * 1-5` 每工作日 16:00 自动采集
+- pipeline 变更：`lib/l3_v2_pipeline.py` 新增 `_select_daily_rows()`，QFQ 优先（≥120 行 → pass_strong），回退 none-adjusted（→ pass_weak/QFQ_UNAVAILABLE）
+- Decision gate：已清除 `NEED_QFQ`；v2 信号从下个工作日起写入生产
 
 ---
 
