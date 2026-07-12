@@ -33,15 +33,25 @@ def _insert_prediction(
     total_score: float,
     entry_signal: int | None,
     score_date: str = "2026-05-30",
+    l3_v2_signal: int | None = None,
 ) -> None:
     db = cache_mod.get_db()
     db.execute(
         """INSERT INTO predictions
            (code, name, framework, score_date, price_at_score, quant_score,
             total_score, weights_hash, report_period, entry_signal,
-            entry_signal_version, created_at)
-           VALUES (?, ?, 'A', ?, 10.0, ?, ?, 'hash', '2024-09-30', ?, 'v1', ?)""",
-        (code, f"N{code}", score_date, total_score - 10, total_score, entry_signal, score_date + "T15:00:00"),
+            entry_signal_version, l3_v2_signal, created_at)
+           VALUES (?, ?, 'A', ?, 10.0, ?, ?, 'hash', '2024-09-30', ?, 'v1', ?, ?)""",
+        (
+            code,
+            f"N{code}",
+            score_date,
+            total_score - 10,
+            total_score,
+            entry_signal,
+            l3_v2_signal,
+            score_date + "T15:00:00",
+        ),
     )
     db.commit()
     db.close()
@@ -62,7 +72,7 @@ def _insert_qualitative_scores(code: str, moat: int, market_pos: int) -> None:
 def test_push_daily_signals_sends_only_when_score_and_l3_pass(tmp_db, telegram_env, monkeypatch):
     sent: list[tuple[str, str, str]] = []
     monkeypatch.setattr(telegram_push, "_send", lambda token, chat_id, text: sent.append((token, chat_id, text)))
-    _insert_prediction("600036", 66.0, 1)
+    _insert_prediction("600036", 66.0, 1, l3_v2_signal=1)
 
     telegram_push.push_daily_signals("2026-05-30", threshold=65.0)
 
@@ -73,10 +83,52 @@ def test_push_daily_signals_sends_only_when_score_and_l3_pass(tmp_db, telegram_e
     assert "✓ L3买点(v1)" in text
 
 
+def test_l3_v2_pass_triggers_primary_when_v1_rejects(tmp_db, telegram_env, monkeypatch):
+    sent: list[tuple[Any, ...]] = []
+    monkeypatch.setattr(telegram_push, "_send", lambda *args: sent.append(args))
+    _insert_prediction("600037", 66.0, 0, l3_v2_signal=1)
+
+    telegram_push.push_daily_signals("2026-05-30", threshold=65.0)
+
+    assert len(sent) == 1
+    text = sent[0][2]
+    assert "🟢 主推" in text
+    assert "N600037(600037)" in text
+    assert "🟡 候补" not in text
+
+
+def test_l3_v2_reject_routes_v1_pass_to_backup(tmp_db, telegram_env, monkeypatch):
+    sent: list[tuple[Any, ...]] = []
+    monkeypatch.setattr(telegram_push, "_send", lambda *args: sent.append(args))
+    _insert_prediction("600038", 66.0, 1, l3_v2_signal=0)
+
+    telegram_push.push_daily_signals("2026-05-30", threshold=65.0)
+
+    assert len(sent) == 1
+    text = sent[0][2]
+    assert "🟢 主推" not in text
+    assert "🟡 候补" in text
+    assert "N600038(600038)" in text
+
+
+def test_l3_v2_null_routes_v1_pass_to_backup(tmp_db, telegram_env, monkeypatch):
+    sent: list[tuple[Any, ...]] = []
+    monkeypatch.setattr(telegram_push, "_send", lambda *args: sent.append(args))
+    _insert_prediction("600039", 66.0, 1, l3_v2_signal=None)
+
+    telegram_push.push_daily_signals("2026-05-30", threshold=65.0)
+
+    assert len(sent) == 1
+    text = sent[0][2]
+    assert "🟢 主推" not in text
+    assert "🟡 候补" in text
+    assert "N600039(600039)" in text
+
+
 def test_tiered_push_backup_tier_sends_when_l3_zero(tmp_db, telegram_env, monkeypatch):
     sent: list[tuple[Any, ...]] = []
     monkeypatch.setattr(telegram_push, "_send", lambda *args: sent.append(args))
-    _insert_prediction("600036", 66.0, 0)
+    _insert_prediction("600036", 66.0, 0, l3_v2_signal=0)
 
     telegram_push.push_daily_signals("2026-05-30", threshold=65.0)
 
@@ -89,7 +141,7 @@ def test_tiered_push_backup_tier_sends_when_l3_zero(tmp_db, telegram_env, monkey
 
 def test_push_daily_signals_swallows_send_exception(tmp_db, telegram_env, monkeypatch):
     calls: list[tuple[str, str, str]] = []
-    _insert_prediction("600036", 66.0, 1)
+    _insert_prediction("600036", 66.0, 1, l3_v2_signal=1)
 
     def fail_send(token: str, chat_id: str, text: str) -> None:
         calls.append((token, chat_id, text))
@@ -129,8 +181,8 @@ def test_tiered_push_always_sends_when_all_tiers_empty(tmp_db, telegram_env, mon
 def test_tiered_push_all_three_tiers(tmp_db, telegram_env, monkeypatch):
     sent: list[tuple[Any, ...]] = []
     monkeypatch.setattr(telegram_push, "_send", lambda *args: sent.append(args))
-    _insert_prediction("600001", 66.0, 1)
-    _insert_prediction("600002", 66.0, 0)
+    _insert_prediction("600001", 66.0, 1, l3_v2_signal=1)
+    _insert_prediction("600002", 66.0, 0, l3_v2_signal=0)
     _insert_prediction("600003", 38.0, 0)
 
     telegram_push.push_daily_signals("2026-05-30", threshold=44.0, radar_min=35.0)
@@ -145,7 +197,7 @@ def test_tiered_push_all_three_tiers(tmp_db, telegram_env, monkeypatch):
 def test_tiered_push_interpretation_includes_moat(tmp_db, telegram_env, monkeypatch):
     sent: list[tuple[Any, ...]] = []
     monkeypatch.setattr(telegram_push, "_send", lambda *args: sent.append(args))
-    _insert_prediction("600036", 66.0, 1)
+    _insert_prediction("600036", 66.0, 1, l3_v2_signal=1)
     _insert_qualitative_scores("600036", 8, 5)
 
     telegram_push.push_daily_signals("2026-05-30", threshold=44.0, radar_min=35.0)
@@ -157,7 +209,7 @@ def test_tiered_push_interpretation_includes_moat(tmp_db, telegram_env, monkeypa
 def test_tiered_push_no_duplicate_when_multiple_qualitative_dates(tmp_db, telegram_env, monkeypatch):
     sent = []
     monkeypatch.setattr(telegram_push, "_send", lambda *args: sent.append(args))
-    _insert_prediction("600036", 66.0, 1)
+    _insert_prediction("600036", 66.0, 1, l3_v2_signal=1)
     # Insert two qualitative_scores rows for same code, different scored_date
     db = cache_mod.get_db()
     db.execute(
@@ -184,19 +236,19 @@ def test_interpret_edge_cases(monkeypatch, tmp_db, telegram_env):
     sent = []
     monkeypatch.setattr(telegram_push, "_send", lambda *args: sent.append(args))
 
-    _insert_prediction("000001", 66.0, 1)  # quant_score = 56.0 (total - 10)
+    _insert_prediction("000001", 66.0, 1, l3_v2_signal=1)  # quant_score = 56.0 (total - 10)
     # moat=6, market_pos=3 -> 护城河6/10, 行业中等(3/5)
     _insert_qualitative_scores("000001", 6, 3)
 
-    _insert_prediction("000002", 66.0, 1)  # quant = 56
+    _insert_prediction("000002", 66.0, 1, l3_v2_signal=1)  # quant = 56
     # moat=4, market_pos=2 -> 护城河4/10(弱), 行业地位弱(2/5)
     _insert_qualitative_scores("000002", 4, 2)
 
     # Timing <= 5 -> total=66, quant=62.0 -> timing = 4.0 <= 5 -> "择时弱"
     db = cache_mod.get_db()
     db.execute(
-        """INSERT INTO predictions (code, name, framework, score_date, price_at_score, quant_score, total_score, weights_hash, report_period, entry_signal, entry_signal_version, created_at)
-           VALUES ('000003', 'N000003', 'A', '2026-05-30', 10.0, 62.0, 66.0, 'hash', '2024-09-30', 1, 'v1', '2026-05-30T15:00:00')"""
+        """INSERT INTO predictions (code, name, framework, score_date, price_at_score, quant_score, total_score, weights_hash, report_period, entry_signal, entry_signal_version, l3_v2_signal, created_at)
+           VALUES ('000003', 'N000003', 'A', '2026-05-30', 10.0, 62.0, 66.0, 'hash', '2024-09-30', 1, 'v1', 1, '2026-05-30T15:00:00')"""
     )
     db.commit()
     db.close()
@@ -230,7 +282,7 @@ def test_push_daily_signals_http_error(monkeypatch, tmp_db, telegram_env):
         raise urllib.error.HTTPError("url", 403, "Forbidden", {}, None)
 
     monkeypatch.setattr(telegram_push, "_send", fail_send)
-    _insert_prediction("600036", 66.0, 1)
+    _insert_prediction("600036", 66.0, 1, l3_v2_signal=1)
 
     # Should not raise exception
     telegram_push.push_daily_signals("2026-05-30", threshold=65.0)
@@ -244,8 +296,8 @@ def test_interpret_timing_good(monkeypatch, tmp_db, telegram_env):
     # Timing >= 12 -> total=66, quant=50.0 -> timing = 16.0 >= 12 -> "择时佳"
     db = cache_mod.get_db()
     db.execute(
-        """INSERT INTO predictions (code, name, framework, score_date, price_at_score, quant_score, total_score, weights_hash, report_period, entry_signal, entry_signal_version, created_at)
-           VALUES ('000004', 'N000004', 'A', '2026-05-30', 10.0, 50.0, 66.0, 'hash', '2024-09-30', 1, 'v1', '2026-05-30T15:00:00')"""
+        """INSERT INTO predictions (code, name, framework, score_date, price_at_score, quant_score, total_score, weights_hash, report_period, entry_signal, entry_signal_version, l3_v2_signal, created_at)
+           VALUES ('000004', 'N000004', 'A', '2026-05-30', 10.0, 50.0, 66.0, 'hash', '2024-09-30', 1, 'v1', 1, '2026-05-30T15:00:00')"""
     )
     db.commit()
     db.close()

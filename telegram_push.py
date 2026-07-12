@@ -101,7 +101,7 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
             AND q.scored_date = (
               SELECT MAX(sq.scored_date) FROM qualitative_scores sq WHERE sq.code = p.code
             )
-           WHERE p.score_date=? AND p.total_score >= ? AND p.entry_signal = 1
+           WHERE p.score_date=? AND p.total_score >= ? AND p.l3_v2_signal = 1
            ORDER BY p.total_score DESC""",
         (score_date, threshold),
     ).fetchall()
@@ -115,7 +115,7 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
               SELECT MAX(sq.scored_date) FROM qualitative_scores sq WHERE sq.code = p.code
             )
            WHERE p.score_date=? AND p.total_score >= ?
-             AND (p.entry_signal IS NULL OR p.entry_signal != 1)
+             AND (p.l3_v2_signal IS NULL OR p.l3_v2_signal != 1)
            ORDER BY p.total_score DESC""",
         (score_date, threshold),
     ).fetchall()
