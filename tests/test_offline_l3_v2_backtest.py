@@ -12,12 +12,15 @@ if PROJECT_ROOT not in sys.path:
 
 from scripts.offline_l3_v2_backtest import (  # noqa: E402
     FREEFALL_THRESHOLD,
+    OVERSOLD_UPPER_THRESHOLD,
+    OVERSOLD_VOLUME_RATIO,
+    V2_OVERSOLD_VERSION,
     V2_VERSION,
     DataContractState,
     DailyBar,
-    MarketState,
     PricePanel,
     compute_l3_v2_candidate,
+    compute_l3_v2_oversold,
 )
 
 
@@ -121,7 +124,7 @@ def test_v2_unavailable_when_data_contract_is_stale() -> None:
 
 
 def test_v2_rejects_freefall() -> None:
-    # ma120 = 100.0; latest_close must be < 100.0 * 0.65 = 65.0
+    # ma120 ≈ 99.667 (= (119*100 + 60)/120); threshold ≈ 64.78; close=60 < threshold
     closes = [100.0] * 119 + [60.0]
     panel = _make_panel(closes)
     result = compute_l3_v2_candidate(panel, _qfq_contract())
@@ -218,3 +221,116 @@ def test_v2_metrics_contain_close_ma60_ma120() -> None:
     assert result.metrics["close"] == pytest.approx(100.0)
     assert result.metrics["ma60"] == pytest.approx(100.0)
     assert result.metrics["ma120"] == pytest.approx(100.0)
+
+
+def test_v2_freefall_boundary_exact_equal_is_not_freefall() -> None:
+    # close == MA120 * FREEFALL_THRESHOLD should NOT be rejected (strict <, not <=)
+    # Solve: c = ((119*100 + c)/120) * FREEFALL_THRESHOLD  =>  c = 11900*T/(120-T)
+    boundary = 11900.0 * FREEFALL_THRESHOLD / (120.0 - FREEFALL_THRESHOLD)
+    closes = [100.0] * 119 + [boundary]
+    panel = _make_panel(closes)
+    result = compute_l3_v2_candidate(panel, _qfq_contract())
+
+    assert result.signal == 1
+    assert result.status == "pass_strong"
+
+
+# ---------------------------------------------------------------------------
+# compute_l3_v2_oversold — basic coverage
+# ---------------------------------------------------------------------------
+
+def _make_oversold_panel(
+    last_close: float = 85.0,
+    vol_early: float = 100.0,
+    vol_last5: float = 50.0,
+) -> PricePanel:
+    """115 early bars (vol=vol_early, close=100) + 5 recent bars (vol=vol_last5, close=last_close)."""
+    early_bars = [_make_bar(100.0) for _ in range(115)]
+    for i, b in enumerate(early_bars):
+        early_bars[i] = DailyBar(
+            date=b.date, open=b.open, high=b.high, low=b.low, close=b.close,
+            volume=vol_early,
+            source=b.source, adjusted=b.adjusted, volume_unit=b.volume_unit,
+            fetched_at=b.fetched_at, quality_status=b.quality_status,
+        )
+    last_bars = []
+    for _ in range(5):
+        b = _make_bar(last_close)
+        last_bars.append(DailyBar(
+            date=b.date, open=b.open, high=b.high, low=b.low, close=last_close,
+            volume=vol_last5,
+            source=b.source, adjusted=b.adjusted, volume_unit=b.volume_unit,
+            fetched_at=b.fetched_at, quality_status=b.quality_status,
+        ))
+    return PricePanel(
+        code="000001", adjusted="qfq", bars=tuple(early_bars + last_bars),
+        source="baostock", volume_unit="lot",
+        preload_start=date(2025, 1, 1), stale_reason=None, limitation=None,
+    )
+
+
+def test_oversold_version_constant() -> None:
+    assert V2_OVERSOLD_VERSION == "v2.2-oversold"
+
+
+def test_oversold_unavailable_when_insufficient_bars() -> None:
+    panel = _make_panel([80.0] * 119)
+    result = compute_l3_v2_oversold(panel, _qfq_contract())
+
+    assert result.signal is None
+    assert result.version == V2_OVERSOLD_VERSION
+    assert result.reason == "INSUFFICIENT_WINDOW"
+
+
+def test_oversold_rejects_freefall() -> None:
+    # close=60 is well below MA120*0.65; checked before zone filter
+    panel = _make_oversold_panel(last_close=60.0, vol_early=100.0, vol_last5=50.0)
+    result = compute_l3_v2_oversold(panel, _qfq_contract())
+
+    assert result.signal == 0
+    assert result.version == V2_OVERSOLD_VERSION
+    assert result.reason == "FREEFALL"
+
+
+def test_oversold_rejects_above_zone() -> None:
+    # close=97: MA120≈(119*100+97)/120≈99.975; OVERSOLD_UPPER=0.95 → threshold≈94.98; 97>94.98
+    panel = _make_oversold_panel(last_close=97.0, vol_early=100.0, vol_last5=50.0)
+    result = compute_l3_v2_oversold(panel, _qfq_contract())
+
+    assert result.signal == 0
+    assert result.version == V2_OVERSOLD_VERSION
+    assert result.reason == "ABOVE_OVERSOLD_ZONE"
+
+
+def test_oversold_rejects_volume_not_shrinking() -> None:
+    # close=85 is in zone; vol5=100, vol20=100 → 100 > 100*0.90=90 → not shrinking
+    panel = _make_oversold_panel(last_close=85.0, vol_early=100.0, vol_last5=100.0)
+    result = compute_l3_v2_oversold(panel, _qfq_contract())
+
+    assert result.signal == 0
+    assert result.version == V2_OVERSOLD_VERSION
+    assert result.reason == "VOLUME_NOT_SHRINKING"
+
+
+def test_oversold_pass_strong_in_zone_with_shrinking_volume() -> None:
+    # close=85 in zone; vol_last5=50 < vol20*0.90 → shrinking; QFQ available
+    # vol20 = (115*100 + 5*50)/120... wait, only last 20 bars matter:
+    # last 20 = 15 early (100) + 5 last (50) → vol20=(15*100+5*50)/20=87.5; vol5=50
+    # 50 <= 87.5*0.90=78.75 → shrinking ✓
+    panel = _make_oversold_panel(last_close=85.0, vol_early=100.0, vol_last5=50.0)
+    result = compute_l3_v2_oversold(panel, _qfq_contract())
+
+    assert result.signal == 1
+    assert result.version == V2_OVERSOLD_VERSION
+    assert result.status == "pass_strong"
+    assert result.reason == "PASS_STRONG"
+
+
+def test_oversold_pass_weak_when_qfq_unavailable() -> None:
+    panel = _make_oversold_panel(last_close=85.0, vol_early=100.0, vol_last5=50.0)
+    result = compute_l3_v2_oversold(panel, _none_contract())
+
+    assert result.signal == 1
+    assert result.version == V2_OVERSOLD_VERSION
+    assert result.status == "pass_weak"
+    assert result.reason == "QFQ_UNAVAILABLE"
