@@ -41,8 +41,8 @@ from lib.l3_v2_qfq_cache import (  # noqa: E402
 DEFAULT_REPORT = Path("docs/reviews/2026-07-08-l3-v2-backtest-report.md")
 DEFAULT_ARTIFACTS_DIR = Path("docs/reviews/l3-v2-backtest-artifacts")
 MARKET_SYMBOL = "000300"
-V2_VERSION = "v2-candidate-offline"
-EXTENDED_FROM_MA60_THRESHOLD = 0.05
+V2_VERSION = "v2.1-no-tech-gate"
+FREEFALL_THRESHOLD = 0.65
 MIN_PRELOAD_TRADING_DAYS = 120
 
 
@@ -311,7 +311,7 @@ def run_backtest(config: BacktestConfig) -> BacktestResult:
         )
         if v2_panel and v2_panel.adjusted == "none":
             v2_panel = replace_panel_bars(v2_panel, none_bars)
-        v2 = compute_l3_v2_candidate(v2_panel, market_state, v2_contract)
+        v2 = compute_l3_v2_candidate(v2_panel, v2_contract)
         signals.append(build_signal_row(config, prediction, v1, v2, v2_panel, v2_contract, market_state, preload_start))
 
     raw_events = build_raw_events(config, signals)
@@ -697,7 +697,6 @@ def compute_l3_v1_replay(bars: tuple[DailyBar, ...]) -> SignalResult:
 
 def compute_l3_v2_candidate(
     price_panel: PricePanel | None,
-    market_state: MarketState,
     data_contract: DataContractState,
 ) -> SignalResult:
     if price_panel is None:
@@ -707,75 +706,28 @@ def compute_l3_v2_candidate(
         return SignalResult(None, V2_VERSION, "unavailable", "INSUFFICIENT_WINDOW", empty_metrics())
     if data_contract.is_stale:
         return SignalResult(None, V2_VERSION, "unavailable", data_contract.stale_reason or "SOURCE_STALE", empty_metrics())
-    if any(bar.volume is None for bar in bars[-20:]):
-        return SignalResult(None, V2_VERSION, "unavailable", "MISSING_VOLUME", empty_metrics())
-    if any(bar.high is None for bar in bars[-21:]):
-        return SignalResult(None, V2_VERSION, "unavailable", "MISSING_HIGH", empty_metrics())
 
     closes = [bar.close for bar in bars]
-    highs = [float(bar.high) for bar in bars]
-    volumes = [float(bar.volume) for bar in bars]
     latest_close = closes[-1]
     ma60 = mean(closes[-60:])
     ma120 = mean(closes[-120:])
-    ma60_5d_ago = mean(closes[-65:-5])
-    vol5 = mean(volumes[-5:])
-    vol20 = mean(volumes[-20:])
-    high_20d_prev = max(highs[-21:-1])
-    breakout_20d = latest_close >= high_20d_prev
-    near_resistance = latest_close < high_20d_prev and latest_close >= high_20d_prev * 0.98
-    extended_from_ma60 = latest_close / ma60 - 1 > EXTENDED_FROM_MA60_THRESHOLD if ma60 else True
-    metrics = {
+    metrics: dict[str, float | str | None] = {
         "close": latest_close,
         "ma60": ma60,
         "ma120": ma120,
-        "ma60_5d_ago": ma60_5d_ago,
-        "vol5": vol5,
-        "vol20": vol20,
-        "high_20d_prev": high_20d_prev,
     }
 
-    if latest_close <= ma60:
-        return SignalResult(0, V2_VERSION, "reject", "BELOW_MA60", metrics)
-    if latest_close <= ma120:
-        return SignalResult(0, V2_VERSION, "reject", "BELOW_MA120", metrics)
-    if vol5 <= vol20:
-        return SignalResult(0, V2_VERSION, "reject", "LOW_VOLUME", metrics)
+    if latest_close < ma120 * FREEFALL_THRESHOLD:
+        return SignalResult(0, V2_VERSION, "reject", "FREEFALL", metrics)
 
-    reasons: list[str] = []
-    if data_contract.adjusted != "qfq":
-        reasons.extend(["QFQ_UNAVAILABLE", "ADJUSTED_NONE"])
-        return SignalResult(1, V2_VERSION, "pass_weak", ";".join(reasons), metrics)
-    if data_contract.unavailable_reason or data_contract.alignment_reason:
-        reasons.append(data_contract.alignment_reason or data_contract.unavailable_reason or "QFQ_UNAVAILABLE")
-        return SignalResult(1, V2_VERSION, "pass_weak", ";".join(reasons), metrics)
-
-    strong_volume = vol5 >= vol20 * 1.15
-    weak_volume = vol5 > vol20 and not strong_volume
-    weak_ma60_slope = ma60 < ma60_5d_ago and (ma60_5d_ago / ma60 - 1) <= 0.01 if ma60 else False
-    severe_ma60_slope = ma60 < ma60_5d_ago and not weak_ma60_slope
-
-    if severe_ma60_slope:
-        return SignalResult(0, V2_VERSION, "reject", "MA60_SLOPE_DOWN", metrics)
-    if weak_volume:
-        reasons.append("WEAK_VOLUME")
-    if weak_ma60_slope:
-        reasons.append("WEAK_MA60_SLOPE")
-    if near_resistance and not breakout_20d:
-        reasons.append("NEAR_20D_RESISTANCE")
-    if extended_from_ma60:
-        reasons.append("EXTENDED_FROM_MA60")
-    if market_state.state == "market_weak":
-        reasons.append("MARKET_WEAK")
-    elif market_state.state == "market_unknown":
-        reasons.append("MARKET_UNKNOWN")
-
-    strong_position = breakout_20d or not near_resistance
-    market_allows_strong = market_state.state in {"market_bullish", "market_unknown"}
-    if strong_volume and strong_position and not extended_from_ma60 and market_allows_strong and not weak_ma60_slope:
-        reason = "PASS_STRONG" if market_state.state == "market_bullish" else "PASS_STRONG;MARKET_UNKNOWN"
-        return SignalResult(1, V2_VERSION, "pass_strong", reason, metrics)
-    return SignalResult(1, V2_VERSION, "pass_weak", ";".join(reasons or ["TREND_REPAIRED_SOFT_DEFECT"]), metrics)
+    qfq_ok = (
+        data_contract.adjusted == "qfq"
+        and not data_contract.unavailable_reason
+        and not data_contract.alignment_reason
+    )
+    if qfq_ok:
+        return SignalResult(1, V2_VERSION, "pass_strong", "PASS_STRONG", metrics)
+    return SignalResult(1, V2_VERSION, "pass_weak", "QFQ_UNAVAILABLE", metrics)
 
 
 def compute_market_state(index_rows: tuple[tuple[date, float], ...], score_date: date) -> MarketState:
