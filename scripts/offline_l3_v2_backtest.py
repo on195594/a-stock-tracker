@@ -43,6 +43,9 @@ DEFAULT_ARTIFACTS_DIR = Path("docs/reviews/l3-v2-backtest-artifacts")
 MARKET_SYMBOL = "000300"
 V2_VERSION = "v2.1-no-tech-gate"
 FREEFALL_THRESHOLD = 0.65
+OVERSOLD_UPPER_THRESHOLD = 0.95
+OVERSOLD_VOLUME_RATIO = 0.90
+V2_OVERSOLD_VERSION = "v2.2-oversold"
 MIN_PRELOAD_TRADING_DAYS = 120
 
 
@@ -67,6 +70,7 @@ class BacktestConfig:
     commission_bps: float
     slippage_bps: float
     stamp_tax_bps: float
+    algorithm: str = "no-tech-gate"
 
 
 @dataclass(frozen=True)
@@ -180,6 +184,9 @@ def parse_args() -> BacktestConfig:
     parser.add_argument("--commission-bps", type=float, default=2.5)
     parser.add_argument("--slippage-bps", type=float, default=5.0)
     parser.add_argument("--stamp-tax-bps", type=float, default=5.0)
+    parser.add_argument("--algorithm", default="no-tech-gate",
+                        choices=["no-tech-gate", "oversold"],
+                        help="v2 candidate algorithm variant.")
     args = parser.parse_args()
 
     if args.start > args.end:
@@ -210,6 +217,7 @@ def parse_args() -> BacktestConfig:
         commission_bps=args.commission_bps,
         slippage_bps=args.slippage_bps,
         stamp_tax_bps=args.stamp_tax_bps,
+        algorithm=args.algorithm,
     )
 
 
@@ -311,7 +319,10 @@ def run_backtest(config: BacktestConfig) -> BacktestResult:
         )
         if v2_panel and v2_panel.adjusted == "none":
             v2_panel = replace_panel_bars(v2_panel, none_bars)
-        v2 = compute_l3_v2_candidate(v2_panel, v2_contract)
+        if config.algorithm == "oversold":
+            v2 = compute_l3_v2_oversold(v2_panel, v2_contract)
+        else:
+            v2 = compute_l3_v2_candidate(v2_panel, v2_contract)
         signals.append(build_signal_row(config, prediction, v1, v2, v2_panel, v2_contract, market_state, preload_start))
 
     raw_events = build_raw_events(config, signals)
@@ -728,6 +739,51 @@ def compute_l3_v2_candidate(
     if qfq_ok:
         return SignalResult(1, V2_VERSION, "pass_strong", "PASS_STRONG", metrics)
     return SignalResult(1, V2_VERSION, "pass_weak", "QFQ_UNAVAILABLE", metrics)
+
+
+def compute_l3_v2_oversold(
+    price_panel: PricePanel | None,
+    data_contract: DataContractState,
+) -> SignalResult:
+    """Oversold zone filter (方案1): only pass when close is in MA120×[0.65, 0.95] and volume shrinking."""
+    if price_panel is None:
+        return SignalResult(None, V2_OVERSOLD_VERSION, "unavailable", data_contract.unavailable_reason or "PRICE_PANEL_UNAVAILABLE", empty_metrics())
+    bars = price_panel.bars
+    if len(bars) < 120:
+        return SignalResult(None, V2_OVERSOLD_VERSION, "unavailable", "INSUFFICIENT_WINDOW", empty_metrics())
+    if data_contract.is_stale:
+        return SignalResult(None, V2_OVERSOLD_VERSION, "unavailable", data_contract.stale_reason or "SOURCE_STALE", empty_metrics())
+    if any(bar.volume is None for bar in bars[-20:]):
+        return SignalResult(None, V2_OVERSOLD_VERSION, "unavailable", "MISSING_VOLUME", empty_metrics())
+
+    closes = [bar.close for bar in bars]
+    volumes = [float(bar.volume) for bar in bars]  # type: ignore[arg-type]
+    latest_close = closes[-1]
+    ma120 = mean(closes[-120:])
+    vol5 = mean(volumes[-5:])
+    vol20 = mean(volumes[-20:])
+    metrics: dict[str, float | str | None] = {
+        "close": latest_close,
+        "ma120": ma120,
+        "vol5": vol5,
+        "vol20": vol20,
+    }
+
+    if latest_close < ma120 * FREEFALL_THRESHOLD:
+        return SignalResult(0, V2_OVERSOLD_VERSION, "reject", "FREEFALL", metrics)
+    if latest_close > ma120 * OVERSOLD_UPPER_THRESHOLD:
+        return SignalResult(0, V2_OVERSOLD_VERSION, "reject", "ABOVE_OVERSOLD_ZONE", metrics)
+    if vol5 > vol20 * OVERSOLD_VOLUME_RATIO:
+        return SignalResult(0, V2_OVERSOLD_VERSION, "reject", "VOLUME_NOT_SHRINKING", metrics)
+
+    qfq_ok = (
+        data_contract.adjusted == "qfq"
+        and not data_contract.unavailable_reason
+        and not data_contract.alignment_reason
+    )
+    if qfq_ok:
+        return SignalResult(1, V2_OVERSOLD_VERSION, "pass_strong", "PASS_STRONG", metrics)
+    return SignalResult(1, V2_OVERSOLD_VERSION, "pass_weak", "QFQ_UNAVAILABLE", metrics)
 
 
 def compute_market_state(index_rows: tuple[tuple[date, float], ...], score_date: date) -> MarketState:
