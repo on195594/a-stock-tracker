@@ -93,6 +93,11 @@ def get_db() -> sqlite3.Connection:
         entry_signal_reason TEXT,
         entry_signal_source TEXT,
         entry_signal_fetched_at TEXT,
+        l3_v2_signal    INTEGER,
+        l3_v2_version   TEXT,
+        l3_v2_status    TEXT,
+        l3_v2_reason    TEXT,
+        l3_v2_fetched_at TEXT,
         created_at      TEXT,
         UNIQUE(code, framework, score_date)
     )""")
@@ -103,6 +108,11 @@ def get_db() -> sqlite3.Connection:
         "entry_signal_reason": "TEXT",
         "entry_signal_source": "TEXT",
         "entry_signal_fetched_at": "TEXT",
+        "l3_v2_signal": "INTEGER",
+        "l3_v2_version": "TEXT",
+        "l3_v2_status": "TEXT",
+        "l3_v2_reason": "TEXT",
+        "l3_v2_fetched_at": "TEXT",
     })
     conn.execute("""CREATE TABLE IF NOT EXISTS daily_bars (
         code TEXT NOT NULL,

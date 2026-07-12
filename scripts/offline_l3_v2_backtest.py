@@ -28,6 +28,19 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from lib.l3_v2 import (  # noqa: E402
+    FREEFALL_THRESHOLD,
+    OVERSOLD_UPPER_THRESHOLD,
+    OVERSOLD_VOLUME_RATIO,
+    V2_OVERSOLD_VERSION,
+    V2_VERSION,
+    DataContractState,
+    DailyBar,
+    PricePanel,
+    SignalResult,
+    compute_l3_v2_candidate,
+    compute_l3_v2_oversold,
+)
 from lib.l3_v2_qfq_cache import (  # noqa: E402
     CacheInvalidError,
     CacheMissingError,
@@ -41,11 +54,6 @@ from lib.l3_v2_qfq_cache import (  # noqa: E402
 DEFAULT_REPORT = Path("docs/reviews/2026-07-08-l3-v2-backtest-report.md")
 DEFAULT_ARTIFACTS_DIR = Path("docs/reviews/l3-v2-backtest-artifacts")
 MARKET_SYMBOL = "000300"
-V2_VERSION = "v2.1-no-tech-gate"
-FREEFALL_THRESHOLD = 0.65
-OVERSOLD_UPPER_THRESHOLD = 0.95
-OVERSOLD_VOLUME_RATIO = 0.90
-V2_OVERSOLD_VERSION = "v2.2-oversold"
 MIN_PRELOAD_TRADING_DAYS = 120
 
 
@@ -84,53 +92,6 @@ class Prediction:
     entry_signal: int | None
     entry_signal_status: str | None
     entry_signal_reason: str | None
-
-
-@dataclass(frozen=True)
-class DailyBar:
-    date: date
-    open: float | None
-    high: float | None
-    low: float | None
-    close: float
-    volume: float | None
-    source: str
-    adjusted: str
-    volume_unit: str
-    fetched_at: str | None
-    quality_status: str | None
-
-
-@dataclass(frozen=True)
-class PricePanel:
-    code: str
-    adjusted: str
-    bars: tuple[DailyBar, ...]
-    source: str
-    volume_unit: str
-    preload_start: date
-    stale_reason: str | None
-    limitation: str | None
-
-
-@dataclass(frozen=True)
-class DataContractState:
-    adjusted: str
-    source: str
-    volume_unit: str
-    is_stale: bool
-    stale_reason: str | None
-    unavailable_reason: str | None
-    alignment_reason: str | None
-
-
-@dataclass(frozen=True)
-class SignalResult:
-    signal: int | None
-    version: str
-    status: str
-    reason: str
-    metrics: dict[str, float | str | None]
 
 
 @dataclass(frozen=True)
@@ -704,86 +665,6 @@ def compute_l3_v1_replay(bars: tuple[DailyBar, ...]) -> SignalResult:
     if vol5 <= vol20:
         return SignalResult(0, "v1-replay", "reject", "LOW_VOLUME", metrics)
     return SignalResult(1, "v1-replay", "pass", "PASS", metrics)
-
-
-def compute_l3_v2_candidate(
-    price_panel: PricePanel | None,
-    data_contract: DataContractState,
-) -> SignalResult:
-    if price_panel is None:
-        return SignalResult(None, V2_VERSION, "unavailable", data_contract.unavailable_reason or "PRICE_PANEL_UNAVAILABLE", empty_metrics())
-    bars = price_panel.bars
-    if len(bars) < 120:
-        return SignalResult(None, V2_VERSION, "unavailable", "INSUFFICIENT_WINDOW", empty_metrics())
-    if data_contract.is_stale:
-        return SignalResult(None, V2_VERSION, "unavailable", data_contract.stale_reason or "SOURCE_STALE", empty_metrics())
-
-    closes = [bar.close for bar in bars]
-    latest_close = closes[-1]
-    ma60 = mean(closes[-60:])
-    ma120 = mean(closes[-120:])
-    metrics: dict[str, float | str | None] = {
-        "close": latest_close,
-        "ma60": ma60,
-        "ma120": ma120,
-    }
-
-    if latest_close < ma120 * FREEFALL_THRESHOLD:
-        return SignalResult(0, V2_VERSION, "reject", "FREEFALL", metrics)
-
-    qfq_ok = (
-        data_contract.adjusted == "qfq"
-        and not data_contract.unavailable_reason
-        and not data_contract.alignment_reason
-    )
-    if qfq_ok:
-        return SignalResult(1, V2_VERSION, "pass_strong", "PASS_STRONG", metrics)
-    return SignalResult(1, V2_VERSION, "pass_weak", "QFQ_UNAVAILABLE", metrics)
-
-
-def compute_l3_v2_oversold(
-    price_panel: PricePanel | None,
-    data_contract: DataContractState,
-) -> SignalResult:
-    """Oversold zone filter (方案1): only pass when close is in MA120×[0.65, 0.95] and volume shrinking."""
-    if price_panel is None:
-        return SignalResult(None, V2_OVERSOLD_VERSION, "unavailable", data_contract.unavailable_reason or "PRICE_PANEL_UNAVAILABLE", empty_metrics())
-    bars = price_panel.bars
-    if len(bars) < 120:
-        return SignalResult(None, V2_OVERSOLD_VERSION, "unavailable", "INSUFFICIENT_WINDOW", empty_metrics())
-    if data_contract.is_stale:
-        return SignalResult(None, V2_OVERSOLD_VERSION, "unavailable", data_contract.stale_reason or "SOURCE_STALE", empty_metrics())
-    if any(bar.volume is None for bar in bars[-20:]):
-        return SignalResult(None, V2_OVERSOLD_VERSION, "unavailable", "MISSING_VOLUME", empty_metrics())
-
-    closes = [bar.close for bar in bars]
-    volumes = [float(bar.volume) for bar in bars]  # type: ignore[arg-type]
-    latest_close = closes[-1]
-    ma120 = mean(closes[-120:])
-    vol5 = mean(volumes[-5:])
-    vol20 = mean(volumes[-20:])
-    metrics: dict[str, float | str | None] = {
-        "close": latest_close,
-        "ma120": ma120,
-        "vol5": vol5,
-        "vol20": vol20,
-    }
-
-    if latest_close < ma120 * FREEFALL_THRESHOLD:
-        return SignalResult(0, V2_OVERSOLD_VERSION, "reject", "FREEFALL", metrics)
-    if latest_close > ma120 * OVERSOLD_UPPER_THRESHOLD:
-        return SignalResult(0, V2_OVERSOLD_VERSION, "reject", "ABOVE_OVERSOLD_ZONE", metrics)
-    if vol5 > vol20 * OVERSOLD_VOLUME_RATIO:
-        return SignalResult(0, V2_OVERSOLD_VERSION, "reject", "VOLUME_NOT_SHRINKING", metrics)
-
-    qfq_ok = (
-        data_contract.adjusted == "qfq"
-        and not data_contract.unavailable_reason
-        and not data_contract.alignment_reason
-    )
-    if qfq_ok:
-        return SignalResult(1, V2_OVERSOLD_VERSION, "pass_strong", "PASS_STRONG", metrics)
-    return SignalResult(1, V2_OVERSOLD_VERSION, "pass_weak", "QFQ_UNAVAILABLE", metrics)
 
 
 def compute_market_state(index_rows: tuple[tuple[date, float], ...], score_date: date) -> MarketState:

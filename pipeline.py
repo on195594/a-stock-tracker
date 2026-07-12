@@ -45,6 +45,7 @@ from lib.entry_signal import (
     REASON_MIXED_SOURCE_VOLUME_UNSAFE,
     compute_entry_signal,
 )
+from lib.l3_v2_pipeline import compute_l3_v2_from_daily_bars, now_isoformat as _l3v2_now
 from lib.framework_b_report import (
     POST_FIX_DATE,
     append_framework_b_dry_run,
@@ -463,6 +464,8 @@ def cmd_daily() -> None:
 
                 threshold_adjusted = 0
                 entry_signal_result = _compute_stock_entry_signal(db, code, today)
+                l3_v2_result = compute_l3_v2_from_daily_bars(db, code, today)
+                l3_v2_fetched_at = _l3v2_now()
 
                 stock_written = 0
                 savepoint_created = False
@@ -487,8 +490,10 @@ def cmd_daily() -> None:
                                 quant_score, total_score, weights_hash, report_period,
                                 threshold_adjusted, entry_signal, entry_signal_version,
                                 entry_signal_status, entry_signal_reason, entry_signal_source,
-                                entry_signal_fetched_at, created_at)
-                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                entry_signal_fetched_at,
+                                l3_v2_signal, l3_v2_version, l3_v2_status, l3_v2_reason,
+                                l3_v2_fetched_at, created_at)
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                             (
                                 code, name, framework, today, price_at_score,
                                 result["quant_score"], result["total_score"],
@@ -496,7 +501,10 @@ def cmd_daily() -> None:
                                 threshold_adjusted, entry_signal_result.signal,
                                 entry_signal_result.version, entry_signal_result.status,
                                 entry_signal_result.reason, entry_signal_result.source,
-                                entry_signal_result.fetched_at, datetime.now().isoformat(),
+                                entry_signal_result.fetched_at,
+                                l3_v2_result.signal, l3_v2_result.version,
+                                l3_v2_result.status, l3_v2_result.reason,
+                                l3_v2_fetched_at, datetime.now().isoformat(),
                             ),
                         )
                         if cursor.rowcount == 0:
@@ -507,7 +515,12 @@ def cmd_daily() -> None:
                                        entry_signal_status=?,
                                        entry_signal_reason=?,
                                        entry_signal_source=?,
-                                       entry_signal_fetched_at=?
+                                       entry_signal_fetched_at=?,
+                                       l3_v2_signal=?,
+                                       l3_v2_version=?,
+                                       l3_v2_status=?,
+                                       l3_v2_reason=?,
+                                       l3_v2_fetched_at=?
                                    WHERE code=? AND framework=? AND score_date=?""",
                                 (
                                     entry_signal_result.signal,
@@ -516,6 +529,11 @@ def cmd_daily() -> None:
                                     entry_signal_result.reason,
                                     entry_signal_result.source,
                                     entry_signal_result.fetched_at,
+                                    l3_v2_result.signal,
+                                    l3_v2_result.version,
+                                    l3_v2_result.status,
+                                    l3_v2_result.reason,
+                                    l3_v2_fetched_at,
                                     code,
                                     framework,
                                     today,

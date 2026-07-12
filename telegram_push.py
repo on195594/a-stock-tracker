@@ -65,12 +65,17 @@ def _format_stock_line(
     entry_signal_version: str | None,
     moat: int | None,
     market_pos: int | None,
+    l3_v2_signal: int | None = None,
 ) -> str:
     label = f"{name}({code})" if name else code
     interp = _interpret(quant_score, total_score, moat, market_pos)
     l3_tag = "✓ L3买点" if entry_signal == 1 else "等待L3"
     if entry_signal_version:
         l3_tag += f"({entry_signal_version})"
+    if l3_v2_signal == 1:
+        l3_tag += " (v2✓)"
+    elif l3_v2_signal == 0:
+        l3_tag += " (v2✗)"
 
     line = f"  {label}  总分:{total_score:.1f}  量化:{quant_score:.1f}  {l3_tag}"
     if interp:
@@ -89,7 +94,7 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
     db = get_db()
     primary = db.execute(
         """SELECT p.code, p.name, p.total_score, p.quant_score, p.entry_signal,
-                  p.entry_signal_version, q.moat, q.market_pos
+                  p.entry_signal_version, q.moat, q.market_pos, p.l3_v2_signal
            FROM predictions p
            LEFT JOIN qualitative_scores q
              ON p.code = q.code
@@ -102,7 +107,7 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
     ).fetchall()
     backup = db.execute(
         """SELECT p.code, p.name, p.total_score, p.quant_score, p.entry_signal,
-                  p.entry_signal_version, q.moat, q.market_pos
+                  p.entry_signal_version, q.moat, q.market_pos, p.l3_v2_signal
            FROM predictions p
            LEFT JOIN qualitative_scores q
              ON p.code = q.code
@@ -116,7 +121,7 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
     ).fetchall()
     radar = db.execute(
         """SELECT p.code, p.name, p.total_score, p.quant_score, p.entry_signal,
-                  p.entry_signal_version, q.moat, q.market_pos
+                  p.entry_signal_version, q.moat, q.market_pos, p.l3_v2_signal
            FROM predictions p
            LEFT JOIN qualitative_scores q
              ON p.code = q.code
@@ -133,20 +138,20 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
 
     if primary:
         lines = [f"🟢 主推（买点触发，总分>={threshold:.0f}）"]
-        for code, name, total, quant, entry_signal, entry_version, moat, market_pos in primary:
-            lines.append(_format_stock_line(code, name, total, quant, entry_signal, entry_version, moat, market_pos))
+        for code, name, total, quant, entry_signal, entry_version, moat, market_pos, v2_signal in primary:
+            lines.append(_format_stock_line(code, name, total, quant, entry_signal, entry_version, moat, market_pos, v2_signal))
         sections.append("\n".join(lines))
 
     if backup:
         lines = [f"🟡 候补（高分等待买点，总分>={threshold:.0f}）"]
-        for code, name, total, quant, _entry_signal, entry_version, moat, market_pos in backup:
-            lines.append(_format_stock_line(code, name, total, quant, 0, entry_version, moat, market_pos))
+        for code, name, total, quant, _entry_signal, entry_version, moat, market_pos, v2_signal in backup:
+            lines.append(_format_stock_line(code, name, total, quant, 0, entry_version, moat, market_pos, v2_signal))
         sections.append("\n".join(lines))
 
     if radar:
         lines = [f"🔵 雷达（{radar_min:.0f}~{threshold:.0f}分，关注）"]
-        for code, name, total, quant, entry_signal, entry_version, moat, market_pos in radar:
-            lines.append(_format_stock_line(code, name, total, quant, entry_signal, entry_version, moat, market_pos))
+        for code, name, total, quant, entry_signal, entry_version, moat, market_pos, v2_signal in radar:
+            lines.append(_format_stock_line(code, name, total, quant, entry_signal, entry_version, moat, market_pos, v2_signal))
         sections.append("\n".join(lines))
 
     total_counted = len(primary) + len(backup) + len(radar)
