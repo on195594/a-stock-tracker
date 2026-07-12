@@ -179,7 +179,7 @@ def collect_codes(
 
 def parse_args(argv: Sequence[str] | None = None) -> Args:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--backfill-days", type=int, default=150)
+    parser.add_argument("--backfill-days", type=int, default=200)
     parser.add_argument("--code")
     namespace = parser.parse_args(argv)
     if namespace.backfill_days <= 0:
