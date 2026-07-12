@@ -1057,17 +1057,22 @@ def decide(
     dedup_buy = metrics["dedup_20d"]["buy_strong"]
     v2_strong = dedup_buy.get("v2:pass_strong", {})
     v1_pass = dedup_buy.get("v1:pass", {})
-    oos = metrics["is_oos"]["out_of_sample"]["dedup_buy_strong"].get("v2:pass_strong", {})
+    oos_raw = metrics["is_oos"]["out_of_sample"]["raw_buy_strong"]
+    oos_dedup = metrics["is_oos"]["out_of_sample"]["dedup_buy_strong"]
+    oos_dedup_v2 = oos_dedup.get("v2:pass_strong", {})
+    oos_raw_v2 = oos_raw.get("v2:pass_strong", {})
+    oos_raw_v1 = oos_raw.get("v1:pass", {})
     if v2_strong.get("settled_n", 0) < 20:
         reasons.append("v2 pass_strong settled dedup sample is below 20.")
-    if oos.get("n", 0) == 0:
+    if oos_dedup_v2.get("n", 0) == 0:
         reasons.append("OOS v2 pass_strong sample is empty.")
-    v2_alpha = v2_strong.get("avg_net_alpha_30d")
-    v1_alpha = v1_pass.get("avg_net_alpha_30d")
+    # Alpha gate uses raw OOS (settled_n typically 10x larger than dedup, avoids small-sample noise)
+    v2_alpha = oos_raw_v2.get("avg_net_alpha_30d") if oos_raw_v2.get("settled_n", 0) >= 20 else None
+    v1_alpha = oos_raw_v1.get("avg_net_alpha_30d") if oos_raw_v1.get("settled_n", 0) >= 20 else None
     v2_hit = v2_strong.get("hit_rate")
     v1_hit = v1_pass.get("hit_rate")
     if v2_alpha is None or v1_alpha is None or v2_alpha <= v1_alpha:
-        reasons.append("v2 pass_strong net alpha does not exceed v1 pass.")
+        reasons.append("v2 pass_strong raw OOS net alpha does not exceed v1 pass.")
     if v2_hit is None or v1_hit is None or v2_hit <= v1_hit:
         reasons.append("v2 pass_strong hit rate does not exceed v1 pass.")
     if reasons:
