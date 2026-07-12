@@ -107,9 +107,9 @@ avg_score 有约 4-5 分系统性偏移，Phase 4 optimizer 训练需按 score_d
 | Phase | 状态 | 说明 |
 |-------|------|------|
 | Phase 3 Gemini/Telegram | ✅ 上线 | 定性评分（30天缓存，退避重试，过期缓存降级）；推送 ≥44 分 AND L3=1 触发 |
-| Phase 4 验证基础 | ✅ 完成，持续观察 | A框架 30d 结案 533 条；hit_rate 待验证 |
+| Phase 4 验证基础 | ✅ 完成，持续观察 | A框架 30d 结案 883 条；hit_rate 待验证 |
 | Phase 5 L3 买点层 v1 | ✅ 完成，持续观察 | L3 v1 接入 daily/推送/report；30d 样本不足 |
-| Phase 5 L3 v2（QFQ）| ✅ Phase 2 完成 | daily_bars QFQ 35/35×130 行回填；pass_strong 已激活；cron 16:00 每日采集 |
+| Phase 5 L3 v2（QFQ）| ✅ Phase 2+3 完成 | Phase 2: QFQ 35/35×130 行回填，pass_strong 激活，cron 16:00；Phase 3: 推送触发切换至 l3_v2_signal=1（commit e080f15） |
 | Phase 6 多框架激活 | 🔶 report-only | Framework B 仍不写生产；B label 0/20 自然结案 |
 | Phase 7 选股宇宙 | ⏸ 未启动 | 待 Phase 6 完成或明确降级策略 |
 

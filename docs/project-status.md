@@ -33,14 +33,16 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | 项目 | 当前状态 | 证据 |
 |---|---|---|
 | 行情 provider | Tushare 主源 + 隔离 BaoStock degraded fallback | `a-stock-lib==0.2.0`，`lib/market_data.py` 已使用 `IsolatedBaoStockMarketDataProvider`；2026-07-09 tracker 测试 `250 passed` |
-| readiness | `READY_CRON` | 2026-07-02 `scripts/check_market_data_readiness.py --scope cron` |
-| cron | 已恢复，latest daily/outcome 自然运行正常；weekly timeout hardening 与 weekly PM loop 自动化已完成 | daily: 2026-07-01 16:30 写入 21/跳过 14；outcome: 2026-07-01 17:00 更新 35；weekly 2026-06-27 残留进程已于 2026-07-02 清理；commit `89fd7c5` 加固单股 fetch 子进程超时；commit `f181010` 安装每周一 09:30 `weekly-pm-loop` |
-| 真实 probe | 已刷新并通过 | `docs/reviews/2026-07-02-tushare-capability-probe.md` |
-| 真实 backfill | 已完成 | 35/35 行情刷新成功，L3 metadata 已重算 |
-| 真实 daily | 已完成 | 2026-06-26 daily 完整跑完，因当日已有 A 框记录幂等写入 0 条 |
+| readiness | `READY_CRON` | 2026-07-12 `scripts/check_market_data_readiness.py --scope cron`（2026-07-02 probe 过期，今日重跑刷新） |
+| cron | daily + outcome-update 已正式恢复（2026-07-12 market-data-backfill ok=35 后执行 cron-setup.sh） | `30 16 * * 1-5 pipeline.py daily`；`00 17 * * 1-5 pipeline.py outcome-update`；weekly/weekly-pm-loop/qfq-daily-bars 不变 |
+| 真实 probe | 已刷新并通过 | `docs/reviews/2026-07-12-tushare-capability-probe.md` |
+| 真实 backfill | 已完成 | 2026-07-12 35/35 行情刷新成功（ok=35, degraded=0, failed=0） |
+| 真实 daily | 自然运行中 | predictions 覆盖至 2026-07-10，daily cron 从 2026-07-14（下一交易日）起自动写入 |
 | Framework B | report-only | `SUPPORTED_FRAMEWORKS={"A"}`，不写 B 生产 predictions |
-| Phase 6 阻塞 | B label 已结案样本不足 | 数据质量门槛 OK；B label `0/20`，最早可评估日期 `2026-08-02` |
-| L3 v2 offline backtest | 已实现，结论 NEED_QFQ | `scripts/offline_l3_v2_backtest.py`；报告显示 qfq panels `0/38`、`TUSHARE_RATE_LIMIT`、buy_strong qfq issue `766`；AGY 复审 APPROVE |
+| Phase 6 阻塞 | B label 已结案样本不足 | 数据质量门槛 OK；B label `0/20`，最早可评估日期 `2026-08-09`（accuracy-report 2026-07-12） |
+| L3 v2 offline backtest | 已实现，结论 NEED_QFQ | `scripts/offline_l3_v2_backtest.py`；qfq panels `0/38`、`TUSHARE_RATE_LIMIT`；AGY 复审 APPROVE |
+| L3 v2 Phase 3 push trigger | 已完成，生产推送已切换 | `telegram_push.py` 触发条件 `entry_signal=1` → `l3_v2_signal=1`；commit `e080f15`；298/298 tests passed |
+| Framework A 倒置诊断 | 已完成，结论：不调权重 | Q5 avg_alpha_30d=-9.91%；根因=截面校准偏差+11支伪复制；agy投资审查：Priority 1=延伸60d/90d；60d首批到期 2026-07-14 |
 
 ## Spec Ledger
 
@@ -57,6 +59,8 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | `docs/plans/2026-07-08-l3-v2-offline-backtest-plan.md` | implemented | Hermes PM + agy review | 进入 qfq 获取方案设计，不写生产 DB | 脚本只读 `tracker.db`，独立 review gate 通过 |
 | `docs/reviews/2026-07-08-l3-v2-backtest-report.md` | latest L3 v2 offline evidence | offline script | qfq 限频解除/缓存方案完成后重跑覆盖报告 | buy_strong qfq issue 为 0，且 v2 pass_strong 有可评估样本 |
 | `docs/reviews/2026-07-10-l3-v2-backtest-retro.md` | task retrospective | Hermes PM | 后续 qfq 方案前先读 | 防止重复踩 token/限频/去重/qfq volume 问题 |
+| `docs/specs/phase3-l3-v2-push-trigger-switch.md` | implemented | Hermes PM + agy review | 已上线，下一步观察 l3_v2_signal 推送分布 | Phase 3 全量测试通过（298/298），可选 Phase 3.1 accuracy-report 信号分布 section |
+| `docs/reviews/2026-07-12-framework-a-inversion-diagnosis.md` | final | Hermes PM + agy review | 等 60d/90d 数据到位后跑延伸评估 | 首批 60d 到期 2026-07-14，结案后可跑五分位 alpha 对比 |
 
 ## Open Blockers
 
@@ -67,6 +71,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | 首轮自动 weekly PM loop 待自然验证 | 需要确认新 cron 能按时发送 Telegram 摘要 | `weekly-pm-loop` 周一 09:30 自然运行并产生日志/摘要 | 下一周一 |
 | Framework A strong 层级尚未证明优于基准 | 不宜调权重或宣称模型有效 | 另开权重复核 spec | 待更多样本与独立审查 |
 | L3 v2 qfq 覆盖不足 | 阻止 GO_TDD 和 pass_strong 有效性结论 | 设计分批/缓存/限速的 qfq 数据获取方案，避开 Tushare `adj_factor` 1次/分钟限制，并重跑只读报告 | 待单独计划 |
+| Framework A 60d 评估窗口未到期 | 无法验证"持有期错配"假说（agy Priority 1） | outcome-update 已恢复，首批 60d 2026-07-14 自动入库；入库后跑五分位对比 | 2026-07-14 后可执行 |
 
 ## Weekly PM Loop
 
@@ -82,7 +87,8 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | 2026-07-06 | 最新 `accuracy-report` 同步 | post-fix A 30d 结案 490/100 OK；数据质量 OK；B label 0/20，最早可评估 2026-08-02；L3 30d 已结案 28/30 | Phase 6 继续 report-only；L3 仍等满 30 条后只读复核 |
 | 2026-07-09 | 当前工作区测试验证 | `.venv/bin/python -m pytest -q`：`250 passed`；`git diff --check` 已清理为通过 | 可继续整理未提交文档/测试改动，不恢复 B 生产写入 |
 | 2026-07-10 | L3 v2 offline backtest | 只读脚本、报告、artifacts、AGY 复审完成；脚本自动读取 `.env` token；修复 20 交易日冷却口径和 qfq volume 复权；`py_compile`、`ruff`、`git diff --check` 通过；AGY APPROVE | 当前决策 NEED_QFQ；阻塞为 Tushare `adj_factor` 限频，不是 token 缺失；下一步单独设计 qfq 分批/缓存方案 |
-| 2026-08-02 后 | B label 30d 结案、overdue、行业覆盖、B-A delta | 待执行 | 满足门槛后写 `phase6-b-label-review.md`，不直接上线 |
+| 2026-07-12 | Phase 5 L3 v2 Phase 2+3 对齐；Framework A 倒置诊断；Tushare probe 刷新；cron 恢复 | Phase 3 推送触发已切换（commit `e080f15`，298/298 passed）；Framework A 倒置 4 假设诊断完成（Q5 avg_alpha=-9.91%，11只伪复制，不调权重）；agy 投资视角审查完成（Priority 1=60d/90d延伸）；probe 刷新 `READY_CRON`；market-data-backfill ok=35；cron-setup.sh 恢复 daily+outcome-update | 等 2026-07-14 首批 60d 入库后跑延伸评估；Phase 3.1（accuracy-report 增加 l3_v2 信号分布）可选 |
+| 2026-08-09 后 | B label 30d 结案、overdue、行业覆盖、B-A delta | 待执行 | 满足门槛后写 `phase6-b-label-review.md`，不直接上线 |
 
 ## 每周自动复核
 

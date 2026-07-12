@@ -135,6 +135,13 @@
 - pipeline 变更：`lib/l3_v2_pipeline.py` 新增 `_select_daily_rows()`，QFQ 优先（≥120 行 → pass_strong），回退 none-adjusted（→ pass_weak/QFQ_UNAVAILABLE）
 - Decision gate：已清除 `NEED_QFQ`；v2 信号从下个工作日起写入生产
 
+**2026-07-12 Phase 3（推送触发切换）完成：**
+
+- spec：`docs/specs/phase3-l3-v2-push-trigger-switch.md`
+- 变更：`telegram_push.py` 主推/备推查询条件 `entry_signal=1` → `l3_v2_signal=1`；NULL fail-closed 自动生效（SQLite NULL≠1）
+- 测试：`tests/test_telegram_push.py` 新增 3 条 gate 测试（v2 pass/v2 reject/v2 null 三路由验证）；298/298 passed
+- commit：`e080f15`
+
 ---
 
 ### Phase 6：多框架激活（L1 完备化）[report-only 深化中]
@@ -261,3 +268,4 @@
 | v1.5 | 2026-06-21 | 补记 2026-06-09~06-16 行情数据源迁移：AKShare/东方财富行情入口禁用，迁移到 Tushare 主源 + BaoStock degraded fallback（基本面/估值/财报抓取不受影响，仍用 AKShare）；2026-06-21 重新探测 `scripts/probe_tushare_market_data.py` 结果 PASS，`check_market_data_readiness.py` 转为 READY，此前 06-09 探测因 Tushare 限频(1次/小时)误报 FAIL 已更新为最新通过记录 |
 | v1.6 | 2026-06-26 | 同步真实恢复状态：`a-stock-lib==0.1.2`、隔离 BaoStock fallback、真实 probe/backfill/daily、`READY_CRON`、managed cron block；Phase 4 标记完成并转持续观察，Phase 6 明确为 report-only 深化，不启用 Framework B 生产写入；新增 `docs/project-status.md` 作为 PM/spec 台账 |
 | v1.7 | 2026-07-04 | agy 工程审查修复（Batch A+B，11 commits）：DB per-stock SAVEPOINT 隔离、spot_em 重试计数器（连续3次才今日锁定）、Gemini 退避重试+过期缓存降级、subprocess stderr 转发、cache._ensure_columns SQL identifier allowlist、_OUTCOME_WINDOWS frozenset、agent_reviewer 接入真实 Gemini REST API（_fake_review_fallback 降级）；新增 cmd_init/cmd_weekly/cmd_outcome_update 测试覆盖；测试基线 225 passed, 1 skipped（含 3 个新测试模块补丁） |
+| v1.8 | 2026-07-12 | Phase 5 L3 v2 Phase 2+3 完成：QFQ 采集（35/35×130行，pass_strong 激活）+ 推送触发切换至 l3_v2_signal=1；Framework A 倒置诊断（Q5 avg_alpha=-9.91%，根因=截面校准偏差+11支伪复制，不调权重）；agy 投资视角审查（持有期错配+价值风格轮出；Priority 1=延伸60d/90d评估）；Tushare probe 刷新（上次 2026-07-02 已过期）；daily+outcome-update cron 正式恢复（market-data-backfill ok=35） |
