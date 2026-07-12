@@ -23,9 +23,10 @@ CURRENT_CRONTAB=$(crontab -l 2>/dev/null || true)
 
 # cron 规则
 WEEKLY_RULE="00 10 * * 6 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python pipeline.py weekly\" weekly >> $PROJECT_DIR/logs/weekly.log 2>&1"
+PM_LOOP_RULE="30 09 * * 1 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python scripts/weekly_pm_loop.py\" weekly-pm-loop >> $PROJECT_DIR/logs/weekly-pm-loop.log 2>&1"
+QFQ_RULE="00 16 * * 1-5 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python scripts/fetch_qfq_daily_bars.py\" qfq-daily-bars >> $PROJECT_DIR/logs/qfq-daily-bars.log 2>&1"
 DAILY_RULE="30 16 * * 1-5 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python pipeline.py daily\" daily >> $PROJECT_DIR/logs/daily.log 2>&1"
 OUTCOME_RULE="00 17 * * 1-5 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python pipeline.py outcome-update\" outcome-update >> $PROJECT_DIR/logs/outcome.log 2>&1"
-PM_LOOP_RULE="30 09 * * 1 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python scripts/weekly_pm_loop.py\" weekly-pm-loop >> $PROJECT_DIR/logs/weekly-pm-loop.log 2>&1"
 
 MARKET_DATA_READY=0
 if "$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/scripts/check_market_data_readiness.py" >/tmp/a-stock-market-data-readiness.log 2>&1; then
@@ -45,6 +46,7 @@ BASE_CRONTAB=$(printf '%s\n' "$CURRENT_CRONTAB" | awk \
     /# a-stock-tracker/ { next }
     /a-stock-tracker\/cron-alert-wrap\.sh/ && /pipeline\.py (weekly|daily|outcome-update)/ { next }
     /a-stock-tracker\/cron-alert-wrap\.sh/ && /weekly_pm_loop\.py/ { next }
+    /a-stock-tracker\/cron-alert-wrap\.sh/ && /fetch_qfq_daily_bars\.py/ { next }
     { print }
 ')
 
@@ -55,10 +57,14 @@ $WEEKLY_RULE
 
 # a-stock-tracker Phase 6 weekly PM loop (每周一 09:30)
 $PM_LOOP_RULE
+
+# a-stock-tracker QFQ 日线采集 (工作日 16:00，pipeline 前)
+$QFQ_RULE
 EOF
 )
 echo "✅ 已配置 weekly 任务"
 echo "✅ 已配置 weekly PM loop"
+echo "✅ 已配置 qfq-daily-bars 任务"
 
 if [ "$MARKET_DATA_READY" -eq 1 ]; then
     MANAGED_CRONTAB=$(cat <<EOF
@@ -93,6 +99,7 @@ echo "=========================================="
 echo "任务详情："
 echo "  • weekly:         每周六 10:00 刷新基本面缓存"
 echo "  • weekly-pm-loop: 每周一 09:30 复核 Phase 6 并发送 Telegram 摘要"
+echo "  • qfq-daily-bars: 每个工作日 16:00 采集 QFQ 前复权日线"
 if [ "$MARKET_DATA_READY" -eq 1 ]; then
     echo "  • daily:          每个工作日 16:30 评分 + Sheets 同步"
     echo "  • outcome-update: 每个工作日 17:00 更新到期结果"
