@@ -173,6 +173,8 @@ Official-doc constraints recorded for this spec:
 
 freshness_policy 由 `claim_category` 决定，不再由 `evidence_type` 决定——衰减速度取决于"证明的是什么"而非"来自什么载体"：同一份 `company_disclosure`，若 `claim_category=market_sentiment`（如例行公告）按 30 天衰减，若 `claim_category=competitive_moat`（如专利获批）按 365 天衰减。
 
+> ⚠️ **状态型证据的有效期与事件新鲜度分离（见 REQ-064）**：`regulatory_filing`、`ip_record`、`counterparty_disclosure` 三类 `evidence_type` 常常记录的是一项持续有效的权利或合同（牌照、专利保护期、长期供货协议），而不是一次性事件——公告/登记发布已超过 `max_age_365d` 不代表该权利本身已失效。这类证据必须额外声明 `state_type`（`event | status`）；`state_type=status` 时新鲜度改按 `effective_until`（该权利/合同的当前有效截止日）相对 `as_of_date` 判定，不再套用 `claim_category` 的固定 `max_age_365d`；`state_type=event`（如"公司宣布获得专利"这类一次性播报）仍按标准 freshness_policy 衰减。
+
 #### 6.1.3 evidence_type × claim_category 兼容矩阵
 
 验证器必须拒绝矩阵之外的组合（例如 `financial_metric` 不得携带 `market_sentiment`，`ip_record` 不得携带 `industry_position`）：
@@ -229,8 +231,8 @@ freshness_policy 由 `claim_category` 决定，不再由 `evidence_type` 决定�
 - **REQ-004:** `evidence_id` 必须唯一并符合 6.1 命名空间；业务授权主要由 `claim_category`（而非 `evidence_type` 或字符串前缀）决定，字符串前缀只验证 registry 一致性。
 - **REQ-005:** Validator 必须拒绝重复 evidence ID，未知 evidence_type/claim_category/dimension/directness/policy，`evidence_type` 与 `claim_category` 不在 6.1.3 兼容矩阵内的组合，未来日期，声明 freshness 与计算结果不一致，以及 claim_category、allowed dimensions、directness、policy 之间不符合 6.1.2 的矛盾组合。
 - **REQ-006:** 现有基本面缓存可提供候选 `evidence_type=financial_metric`、`claim_category=financial_performance` 证据：`roe_3y_avg`、`roe_latest`、`net_profit_growth`、`debt_ratio`、`gross_margin`、`report_period`。`pb_percentile_10y` 的 `claim_category` 是 `valuation`，只能作 context，不能证明 moat 或 market_pos。**当前未确定任何 `competitive_moat`（direct）候选证据来源**——这是 REQ-059 证据可得性摸底要解决的问题，不由本条假设其存在。
-- **REQ-007:** `moat=scored` 的机械最低门槛是模型该维度输出 `evidence_ids` 中**实际引用**至少一条 fresh、`direct`、`claim_category=competitive_moat` 的证据，并**实际引用**至少一条 fresh、`claim_category=financial_performance` 的 supporting evidence；缺任一类必须为 `insufficient_data`。证据包中存在合格证据但模型未在 `evidence_ids` 中引用，不满足本门槛。`competitive_moat` 证据的 `evidence_type` 可以是 `company_disclosure`、`regulatory_filing`、`ip_record` 或 `counterparty_disclosure`（见 6.1.3），不再局限于单一来源载体。
-- **REQ-008:** `market_pos=scored` 的机械最低门槛是模型该维度输出 `evidence_ids` 中**实际引用**至少一条 fresh、`direct`、`claim_category=industry_position` 的证据；公司自身财务或估值不能单独证明行业地位。`industry_position` 证据的 `evidence_type` 可以是 `company_disclosure`、`regulatory_filing`、`counterparty_disclosure`、`news_report` 或 `analyst_consensus`（见 6.1.3）。证据包中存在合格证据但模型未引用，不满足本门槛。
+- **REQ-007:** `moat=scored` 的机械最低门槛是模型该维度输出 `evidence_ids` 中**实际引用**至少一条 fresh、`direct`、`claim_category=competitive_moat` 的证据，并**实际引用**至少一条 fresh、`claim_category=financial_performance` 的 supporting evidence；缺任一类必须为 `insufficient_data`。证据包中存在合格证据但模型未在 `evidence_ids` 中引用，不满足本门槛。`competitive_moat` 证据的合法 `evidence_type` 以 6.1.3 兼容矩阵为唯一权威来源（当前含 `company_disclosure`、`regulatory_filing`、`ip_record`、`counterparty_disclosure`、`news_report`），不再局限于单一来源载体；本条不得重复列举具体清单，以免与 6.1.3 未来变更后不同步。
+- **REQ-008:** `market_pos=scored` 的机械最低门槛是模型该维度输出 `evidence_ids` 中**实际引用**至少一条 fresh、`direct`、`claim_category=industry_position` 的证据；公司自身财务或估值不能单独证明行业地位。`industry_position` 证据的合法 `evidence_type` 以 6.1.3 兼容矩阵为唯一权威来源，本条不重复列举具体清单。证据包中存在合格证据但模型未引用，不满足本门槛。
 - **REQ-009:** `sentiment=scored` 的机械最低门槛是模型该维度输出 `evidence_ids` 中**实际引用**至少一条 fresh、`direct`、`claim_category=market_sentiment` 的证据，且该证据须满足 REQ-062 的持续期要求（`persistence_horizon` 为 `multi_quarter` 或 `structural`，仅 `one_time` 不满足本门槛）；财报、估值或价格趋势不能替代。证据包中存在合格证据但模型未引用，不满足本门槛。
 - **REQ-010:** 机械门槛只判断合同资格，不宣称证据真实、相关、独立或足以支撑某个分数；这些语义质量与评分充分性仍由版本化 rubric 和盲审人工判断。
 - **REQ-011:** 缺少 REQ-007~009 的证据必须显式产生 `insufficient_data`；不得用固定分数伪装成模型结果，也不得降低门槛以提高通过率。
@@ -308,13 +310,13 @@ freshness_policy 由 `claim_category` 决定，不再由 `evidence_type` 决定�
   - 3：主要参与者，但没有明确头部证据。
   - 4：细分或行业头部，有直接排名/份额证据。
   - 5：明确领导者，且有多条最新直接证据；不得只凭公司规模推断。
-- **REQ-034:** `sentiment` 锚点（1/5 档要求 `materiality=major` 且 `persistence_horizon` 为 `multi_quarter`/`structural`；`persistence_horizon=one_time` 最高只能落在 2/4 档；详见 REQ-061）：
-  - 1：近期重大明确负面，且影响预计持续多个季度或为结构性（非一次性事件）。
-  - 2：偏负面，或负面事件重大但影响预计为一次性（`persistence_horizon=one_time`）。
+- **REQ-034:** `sentiment` 锚点（与 REQ-062 严格一致，不得有例外分支：`persistence_horizon=one_time` 的证据不得单独支持任何档位（含 2/4），只能在已引用至少一条 `multi_quarter`/`structural` 证据的前提下作为补充材料；1/5 档额外要求 `materiality=major`）：
+  - 1：近期重大明确负面，且引用证据中至少一条 `persistence_horizon` 为 `multi_quarter` 或 `structural`、`materiality=major`。
+  - 2：偏负面，且引用证据中至少一条 `persistence_horizon` 为 `multi_quarter` 或 `structural`；同时引用的 `one_time` 证据只能作为补充说明，不得替代该持续性证据。
   - 3：中性或多空抵消。
-  - 4：偏正面，或正面事件重大但影响预计为一次性（`persistence_horizon=one_time`）。
-  - 5：近期重大明确正面，且影响预计持续多个季度或为结构性。
-  - 无新鲜证据，或全部证据 `persistence_horizon=one_time` 且无法归入 2/4 档：`insufficient_data`，不是默认 3。
+  - 4：偏正面，且引用证据中至少一条 `persistence_horizon` 为 `multi_quarter` 或 `structural`；同时引用的 `one_time` 证据只能作为补充说明，不得替代该持续性证据。
+  - 5：近期重大明确正面，且引用证据中至少一条 `persistence_horizon` 为 `multi_quarter` 或 `structural`、`materiality=major`。
+  - 无新鲜证据，或全部引用证据 `persistence_horizon=one_time`：`insufficient_data`，不是默认 3（与 REQ-062 一致，无例外）。
 - **REQ-035:** Schema/evidence validity 与 rubric agreement 必须和 predictive validity 分开报告；前者改善不证明正 alpha 或投资准确性提升。
 
 ### 7.5 缓存与 fallback
@@ -386,6 +388,15 @@ CREATE TABLE qualitative_score_evaluations (
 - **REQ-062:** `sentiment=scored` 除 REQ-009 门槛外，额外要求所引用的 `market_sentiment` 证据中至少一条 `persistence_horizon` 为 `multi_quarter` 或 `structural`；全部引用证据均为 `one_time` 时，`sentiment` 必须为 `insufficient_data`（可选地仍允许模型在 `rationale` 中提及该 one_time 证据作为背景，但不得据此给出 `scored` 状态）。
 - **REQ-063:** Production cutover（MILESTONE-006）批准材料必须包含每个维度至少一次自然结案后的 predictive validity 检查结果（30/60/90 日 alpha 或 hit rate 相对 Framework A baseline 的比较），并明确写出该检查所用样本量与置信限制；若样本不足以得出统计结论，批准材料必须显式声明"cutover 在预测有效性未确认情况下进行"作为一项被记录的决策，而不能沉默地跳过这项报告。本条不改变 REQ-057 的报告内容要求，只是把它从"事后报告"提升为"cutover 批准材料的必要组成部分"。
 
+### 7.9 第二轮 codex 复核后修正（关闭 REQ-059~062 遗留缺口）
+
+> 本节回应对 7.8 节初版修订的复核：REQ-007 与 6.1.3 矩阵不一致已在原条文直接修正（改为引用 6.1.3 为唯一权威清单）；REQ-034 与 REQ-062 的 one-time 冲突已直接重写 REQ-034（见下方）；以下为新增补充 REQ。
+
+- **REQ-064:** `evidence_type ∈ {regulatory_filing, ip_record, counterparty_disclosure}` 的证据必须额外声明 `state_type`（`event | status`）。`state_type=status` 时必须额外提供 `effective_until`（ISO `YYYY-MM-DD`，该权利/合同的当前有效截止日，或显式 `null` 表示无固定期限）；freshness_status 改按 `effective_until >= as_of_date`（或 `effective_until=null`）判定为 fresh，不套用 claim_category 的固定 `freshness_policy`。`state_type=event` 仍按标准 `freshness_policy` 衰减。Validator 必须拒绝声明 `state_type=status` 却缺失 `effective_until` 字段的证据，以及 `evidence_type` 不在上述三类却声明 `state_type` 的证据。
+- **REQ-065:** MILESTONE-004 证据可得性摸底的样本分层方案、每层最小样本量、覆盖率通过阈值、置信区间和 direct 标签复核协议（含是否双人复核、冲突处理方式）必须在看到任何审计结果前预先书面注册并经用户/reviewer 批准；审计完成后不得回头调整这些参数以使结果达标。候选 evidence source/provider 在此阶段只获得"审计授权"（allowed to be probed for feasibility），与 REQ-012/047 所需的最终"生产/real-shadow 数据授权"是两个独立、分别批准的状态，不得混同——完成审计不自动升级候选来源为已批准生产来源。
+- **REQ-066:** REQ-060 的分层选择性偏差报告必须包含一个预注册的最低可评分覆盖率阈值（在 REQ-065 一并预注册）；若某分层（行业/市值层）该阈值未达标，该分层必须从当前阶段的适用范围中显式排除（不得进入 production cutover 的覆盖范围），或触发对该分层的重新审计；仅报告偏差而不采取上述任一动作不满足本条。
+- **REQ-067:** 第 8 节 test matrix 必须为 `claim_category`、`persistence_horizon`、`materiality`、`state_type`、`effective_until` 各自补充未知枚举、缺失必填字段（含 `state_type=status` 缺 `effective_until`）、以及字段与实际 `evidence_type`/`claim_category` 矛盾（如非 sentiment 证据携带 `persistence_horizon`）的负例，不得只测试门槛结果、遗漏字段级 shape 校验。
+
 ## 8. Test matrix
 
 以下是未来实现合同，不授权本次新增测试或运行真实 API。Fixture-first cases 使用纯本地对象、mock HTTP 和临时路径；later shadow 与 production-cutover cases 不阻塞第一阶段完成。
@@ -401,6 +412,9 @@ CREATE TABLE qualitative_score_evaluations (
 | Fixture-first | evidence_type × claim_category 组合不在 6.1.3 兼容矩阵内 | 如 `financial_metric` 声明 `claim_category=market_sentiment`、`ip_record` 声明 `claim_category=industry_position` 等非法组合均拒绝 |
 | Fixture-first | 同一来源不同 claim_category 均可评分 | `company_disclosure` 分别声明 `claim_category=competitive_moat`（如专利获批公告）与 `claim_category=market_sentiment`（如例行公告）时，两者按各自 claim_category 的 allowed_dimensions/freshness_policy 独立生效，不因载体相同而混淆 |
 | Fixture-first | sentiment persistence_horizon 门槛 | 全部引用 `market_sentiment` 证据 `persistence_horizon=one_time` 时 `sentiment` 必须为 `insufficient_data`；至少一条 `multi_quarter`/`structural` 时可 `scored`；1/5 档要求 `materiality=major` 且非 `one_time`，否则拒绝该档位 |
+| Fixture-first | REQ-034/062 一致性：one_time 不得单独决定 2/4 档 | 仅引用 `persistence_horizon=one_time` 证据、无任何 `multi_quarter`/`structural` 证据时，即使 `materiality=major`，2/4 档也必须拒绝为 `insufficient_data`，不得放行（覆盖 REQ-034 重写后与 REQ-062 的一致性） |
+| Fixture-first | claim_category/persistence_horizon/materiality/state_type 缺失或未知 | 各字段缺失必填、使用未知枚举值、或非适用证据携带该字段（如非 sentiment 证据带 `persistence_horizon`）均拒绝（覆盖 REQ-067） |
+| Fixture-first | state_type=status 缺 effective_until | `evidence_type ∈ {regulatory_filing, ip_record, counterparty_disclosure}` 声明 `state_type=status` 但缺失 `effective_until` 时拒绝；`effective_until >= as_of_date` 或为 `null` 时判定 fresh，不套用固定 `max_age_365d`（覆盖 REQ-064） |
 | Fixture-first | stale 与边界日期 | age 等于窗口上限为 fresh；多一天为 stale；未来日期拒绝；声明状态不一致拒绝 |
 | Fixture-first | schema-valid 但语义无效 | 状态/overall 矛盾、最低门槛不足由 validator 拒绝；注入盲审判定的 unsupported rationale 时分类 semantic invalid |
 | Fixture-first | 证据包含合格证据但模型未引用 | fixture 输入包含满足 REQ-007~009 门槛的合格证据，但模型输出该维度 `evidence_ids` 未包含它（只引用了不合格或不足的证据）时，仍必须拒绝为 `scored`，不得因证据包本身合格而放行（验证 REQ-007~009/028 检查的是引用集合而非包可用性）|
@@ -415,6 +429,9 @@ CREATE TABLE qualitative_score_evaluations (
 | Later shadow | shadow 物理隔离 | artifact/evaluation 不写生产表、pipeline、predictions、Telegram、cron |
 | Later shadow | 证据可得性摸底分层覆盖率报告 | MILESTONE-004 产出的分层覆盖率报告必须按行业/市值区分，且在覆盖率过低时不得直接放宽 REQ-007 门槛（验证 REQ-059） |
 | Later shadow | 选择性偏差分层报告 | Shadow 报告按行业/市值分层暴露 scored/insufficient_data 占比，不得只报告总体通过率（验证 REQ-060） |
+| Later shadow | 审计协议预注册 | MILESTONE-004 的分层方案、样本量、覆盖率阈值、置信区间、direct 标签复核协议必须在审计结果产出前已批准存档；审计后修改这些参数以达标视为不满足本条（验证 REQ-065） |
+| Later shadow | 审计授权与生产授权分离 | 候选 evidence source 完成 MILESTONE-004 审计后，不自动获得 REQ-012/047 所需的生产/real-shadow 数据授权，两者是分别记录、分别批准的状态（验证 REQ-065） |
+| Later shadow | 分层覆盖率不达标的阻断动作 | 任一分层 `scored` 覆盖率低于预注册阈值时，该分层必须显式排除出当前阶段适用范围或触发重新审计，不得仅记录偏差后放行（验证 REQ-066） |
 | Production cutover | fresh same-version cache | schema/rubric/taxonomy/input-hash 全匹配且 fresh 时优先读取 |
 | Production cutover | stale same-version cache | 新调用失败后可用同版本 stale validated cache |
 | Production cutover | legacy migration fallback | 仅兼容窗口按明确优先级读取 legacy cache，且来源/版本可区分 |
@@ -497,9 +514,9 @@ Local evidence sources
 - **AC-007 maps to REQ-053~058:** Cutover plan 必须覆盖版本化 DB 策略、备份/readback/rollback、v1 兼容和分层后验报告，且所有批准仍 pending。
 - **AC-008:** 第 8 节 test matrix 覆盖要求的成功、失败、retry、cache、版本、兼容与隔离 cases，并标记 Fixture-first/Later shadow/Production cutover。
 - **AC-009:** 本次只修改本 Spec，不修改代码、DB、测试、依赖、weights、历史记录、cron 或 Telegram。
-- **AC-010:** REQ 与 AC 编号唯一连续（REQ-001~063，AC-001~012）、range/milestone mapping 一致，无 trailing whitespace，`git diff --check` 通过。
+- **AC-010:** REQ 与 AC 编号唯一连续（REQ-001~067，AC-001~012）、range/milestone mapping 一致，无 trailing whitespace，`git diff --check` 通过。
 - **AC-011:** 用户/Reviewer 明确决定第 15 节开放项；未决定不阻塞 fixture-first，但阻塞对应 real-shadow 或 cutover 阶段。
-- **AC-012 maps to REQ-059~063:** 证据可得性摸底必须在 real shadow 前完成并报告分层覆盖率；shadow/生产 reporting 必须按行业/市值分层暴露选择性偏差；sentiment 引入 `persistence_horizon`/`materiality` 字段并联动 REQ-034 锚点和 REQ-009/062 门槛；production cutover 批准材料必须包含逐维度 predictive validity 检查结果或显式声明未确认。
+- **AC-012 maps to REQ-059~067:** 证据可得性摸底必须在预注册协议下于 real shadow 前完成并报告分层覆盖率，审计授权与生产授权分离，覆盖率不达标分层必须排除或重审；shadow/生产 reporting 必须按行业/市值分层暴露选择性偏差并对不达标分层采取阻断动作；sentiment 引入 `persistence_horizon`/`materiality` 字段，REQ-034 锚点与 REQ-009/062 门槛严格一致（one_time 不得单独支持任何档位）；状态型 moat/industry_position 证据（牌照/专利/合同）按 `state_type`/`effective_until` 判定有效期而非固定 365 天；production cutover 批准材料必须包含逐维度 predictive validity 检查结果或显式声明未确认；test matrix 覆盖新字段的缺失/未知枚举负例。
 
 ## 12. Milestones and plan handoff
 
@@ -519,7 +536,7 @@ Verification signal:
 
 ### MILESTONE-002: Fixture-first contract implementation
 
-Maps to: REQ-001~035, REQ-045~046, REQ-061~062, AC-001~004, AC-008, AC-012
+Maps to: REQ-001~035, REQ-045~046, REQ-061~062, REQ-064, REQ-067, AC-001~004, AC-008, AC-012
 
 Outcome:
 - 实现 dataclass、schema builder、Prompt builder 和纯本地 validator，含两层 taxonomy（`evidence_type`×`claim_category` 兼容矩阵）和 sentiment `persistence_horizon`/`materiality` 字段。
@@ -543,23 +560,24 @@ Outcome:
 Verification signal:
 - `tmp_path` migration/CRUD 测试通过；真实 `tracker.db` 未改动。
 
-### MILESTONE-004: Evidence feasibility audit（07-14 投资视角审查后新增）
+### MILESTONE-004: Evidence feasibility audit（07-14 投资视角审查后新增，07-14 第二轮复核后细化）
 
-Maps to: REQ-059~060, AC-012
+Maps to: REQ-059~060, REQ-065~066, AC-012
 
 Outcome:
-- 按行业/市值分层，对代表性 A 股样本摸底 `claim_category=competitive_moat`（direct）候选证据的真实可得覆盖率，产出分层覆盖率报告。
-- 报告结果供 MILESTONE-005 批准材料使用；若覆盖率过低（具体阈值由 audit 实施计划定义），必须先修订 evidence source 策略或 taxonomy，而非直接放宽 REQ-007 门槛。
+- 先按 REQ-065 预注册分层方案、样本量、覆盖率阈值、置信区间和 direct 标签复核协议并经批准，再按行业/市值分层对代表性 A 股样本摸底 `claim_category=competitive_moat`（direct）候选证据的真实可得覆盖率，产出分层覆盖率报告。
+- 候选 evidence source 在本里程碑只获得审计授权，不等同于 REQ-012/047 所需的生产/real-shadow 数据授权（两者分别批准，见 REQ-065）。
+- 报告结果供 MILESTONE-005 批准材料使用；任一分层覆盖率低于预注册阈值时，按 REQ-066 排除该分层或重新审计，不得直接放宽 REQ-007 门槛。
 
 Non-scope:
 - 不写真实 DB，不接 pipeline，不调用真实 Gemini（只核实证据来源可得性，不做评分）。
 
 Verification signal:
-- 分层覆盖率报告已产出并经用户/reviewer 确认可以进入 MILESTONE-005，或明确决定修订 taxonomy/evidence source 后重做本里程碑。
+- 预注册协议已批准存档在先；分层覆盖率报告已产出并经用户/reviewer 确认可以进入 MILESTONE-005，或明确决定修订 taxonomy/evidence source 后重做本里程碑。
 
 ### MILESTONE-005: Bounded real shadow review
 
-Maps to: REQ-047~052, REQ-060, AC-006, AC-008, AC-012
+Maps to: REQ-047~052, REQ-060, REQ-064, AC-006, AC-008, AC-012
 
 Outcome:
 - 只有批准的 provider 或带 provenance 静态数据集就绪、且 MILESTONE-004 覆盖率摸底已完成后，才可按获批样本运行固定次数 shadow。
@@ -660,7 +678,7 @@ Spec-only 阶段只允许人工撤销本 Spec 的本次 patch，不得触碰其�
 
 ### 待用户/Reviewer确认
 
-1. **真实 evidence source**：直接竞争优势、行业地位和 sentiment 后续使用可审计 provider，还是批准带 provenance 的静态 dataset？Fixture-first 不需要此决定；MILESTONE-004 证据可得性摸底会在决定 provider/dataset 后提供实际覆盖率数据，供本问题最终拍板参考。
+1. **真实 evidence source**：直接竞争优势、行业地位和 sentiment 后续使用可审计 provider，还是批准带 provenance 的静态 dataset？Fixture-first 不需要此决定。按 REQ-065，本问题分两步拍板：先只批准候选 provider/dataset 进入 MILESTONE-004 的"审计授权"（allowed to be probed），据此产出分层覆盖率数据；再基于覆盖率数据决定是否将其升级为 REQ-012/047 所需的最终"生产/real-shadow 数据授权"。这避免了"先定来源才能审计，又靠审计决定来源"的循环——审计授权门槛低于生产授权，可以先给一个或多个候选来源发放审计授权。
 2. **sentiment 数据边界**：项目路线图当前不建设独立舆情层；real shadow 是否批准静态 evidence dataset，或继续让真实 sentiment unavailable？REQ-061 的 `persistence_horizon` 字段假设未来证据来源能标注事件影响持续期，若批准的来源无法可靠提供该字段，需要重新评估本问题。
 3. **Shadow 存储**：先用 JSONL/Markdown artifact，还是经确认新增独立 SQLite evaluation 表？
 4. **真实 shadow 计划**：6 只股票 × 单次调用是否只作 provisional 首轮，以及升级 gate 的每维度样本数、人工复核比例和行业覆盖是多少？
