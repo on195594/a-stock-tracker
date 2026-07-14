@@ -17,7 +17,20 @@ from dataclasses import dataclass, field
 
 @dataclass(frozen=True)
 class Evidence:
-    """One item of the evidence packet (section 6.1)."""
+    """One item of the evidence packet (section 6.1).
+
+    ⚠️ codex review note on state_type/effective_until (REQ-064): this
+    dataclass defaults `effective_until` to None, which makes "field omitted
+    entirely" and "field explicitly set to null" indistinguishable once an
+    Evidence object has been constructed. REQ-064 requires the validator to
+    reject `state_type=status` evidence that is *missing* `effective_until`,
+    while still accepting an *explicit* null (meaning no fixed term). The
+    validator (qualitative_v2_validator.py) MUST therefore check field
+    presence on the raw input (dict/JSON) BEFORE constructing an Evidence
+    object -- constructing Evidence first and inspecting `.effective_until`
+    afterwards cannot recover this distinction and must not be used for that
+    check.
+    """
 
     evidence_id: str
     evidence_type: str
@@ -104,17 +117,14 @@ class DimensionResult:
 
 
 @dataclass(frozen=True)
-class ScoringResult:
-    """The full structured output envelope (REQ-015~016)."""
+class Dimensions:
+    """REQ-016: the `dimensions` object must contain exactly moat/market_pos/sentiment."""
 
-    schema_version: str
-    overall_status: str  # "scored" | "insufficient_data" | "invalid"
-    as_of_date: str
     moat: DimensionResult
     market_pos: DimensionResult
     sentiment: DimensionResult
 
-    def dimension(self, name: str) -> DimensionResult:
+    def get(self, name: str) -> DimensionResult:
         if name == "moat":
             return self.moat
         if name == "market_pos":
@@ -124,4 +134,21 @@ class ScoringResult:
         raise ValueError(f"unknown dimension: {name!r}")
 
 
-__all__ = ["Evidence", "QualitativeContext", "DimensionResult", "ScoringResult"]
+@dataclass(frozen=True)
+class ScoringResult:
+    """The full structured output envelope (REQ-015): top level contains exactly
+    schema_version, overall_status, as_of_date, dimensions -- not the three
+    dimension results flattened at the top level (codex review caught this:
+    the original draft flattened moat/market_pos/sentiment onto ScoringResult
+    itself, which does not match the REQ-015/016 wire shape)."""
+
+    schema_version: str
+    overall_status: str  # "scored" | "insufficient_data" | "invalid"
+    as_of_date: str
+    dimensions: Dimensions
+
+    def dimension(self, name: str) -> DimensionResult:
+        return self.dimensions.get(name)
+
+
+__all__ = ["Evidence", "QualitativeContext", "DimensionResult", "Dimensions", "ScoringResult"]

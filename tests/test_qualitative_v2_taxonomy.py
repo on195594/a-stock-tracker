@@ -22,27 +22,37 @@ def test_financial_performance_and_valuation_cannot_be_direct() -> None:
     assert "direct" not in taxonomy.CLAIM_CATEGORY_REGISTRY["valuation"].directness_values
 
 
+def test_context_directness_allowed_for_moat_industry_position_and_sentiment() -> None:
+    """codex review: only financial_performance/valuation restrict directness beyond the
+    full direct|supporting|context set (spec 6.1); the other three claim_categories must
+    still permit context evidence (it just can't alone trigger scored -- validator's job)."""
+    for claim_category in ("competitive_moat", "industry_position", "market_sentiment"):
+        assert taxonomy.is_directness_allowed(claim_category, "context") is True
+
+
 def test_valuation_has_no_allowed_dimensions() -> None:
     assert taxonomy.canonical_allowed_dimensions("valuation") == frozenset()
 
 
-@pytest.mark.parametrize(
-    ("evidence_type", "claim_category", "expected"),
-    [
-        ("financial_metric", "financial_performance", True),
-        ("financial_metric", "market_sentiment", False),
-        ("ip_record", "competitive_moat", True),
-        ("ip_record", "industry_position", False),
-        ("news_report", "competitive_moat", True),
-        ("news_report", "market_sentiment", True),
-        ("analyst_consensus", "financial_performance", False),
-        ("regulatory_filing", "market_sentiment", False),
-    ],
-)
-def test_evidence_type_claim_category_compatibility_matrix(
-    evidence_type: str, claim_category: str, expected: bool
-) -> None:
-    assert taxonomy.is_evidence_type_claim_category_combo_valid(evidence_type, claim_category) is expected
+def test_evidence_type_claim_category_compatibility_matrix_matches_spec_6_1_3_exactly() -> None:
+    """Asserts the full 8x5 matrix against spec section 6.1.3, not a sample of cells."""
+    expected: dict[str, frozenset[str]] = {
+        "financial_metric": frozenset({"financial_performance"}),
+        "valuation_metric": frozenset({"valuation"}),
+        "company_disclosure": frozenset({"competitive_moat", "industry_position", "market_sentiment"}),
+        "regulatory_filing": frozenset({"competitive_moat", "industry_position"}),
+        "ip_record": frozenset({"competitive_moat"}),
+        "counterparty_disclosure": frozenset({"competitive_moat", "industry_position"}),
+        "news_report": frozenset({"competitive_moat", "industry_position", "market_sentiment"}),
+        "analyst_consensus": frozenset({"industry_position", "market_sentiment"}),
+    }
+    assert taxonomy.EVIDENCE_TYPE_CLAIM_CATEGORY_MATRIX == expected
+
+    for evidence_type in taxonomy.EVIDENCE_TYPES:
+        for claim_category in taxonomy.CLAIM_CATEGORIES:
+            actual = taxonomy.is_evidence_type_claim_category_combo_valid(evidence_type, claim_category)
+            want = claim_category in expected[evidence_type]
+            assert actual is want, f"{evidence_type} x {claim_category}: expected {want}, got {actual}"
 
 
 def test_unknown_claim_category_raises() -> None:

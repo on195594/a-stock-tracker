@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from qualitative_v2_types import DimensionResult, Evidence, QualitativeContext, ScoringResult
+from qualitative_v2_types import DimensionResult, Dimensions, Evidence, QualitativeContext, ScoringResult
 
 
 def _make_evidence(evidence_id: str = "fundamentals.roe_3y_avg") -> Evidence:
@@ -145,7 +145,10 @@ def test_evidence_canonical_dict_sorts_allowed_dimensions() -> None:
     assert canonical["allowed_dimensions"] == ["market_pos"]
 
 
-def test_scoring_result_dimension_accessor() -> None:
+def test_scoring_result_wraps_three_dimensions_under_dimensions_field() -> None:
+    """REQ-015/016: top-level must be schema_version/overall_status/as_of_date/dimensions,
+    with moat/market_pos/sentiment nested under dimensions -- not flattened at top level
+    (codex review caught the original flattened draft)."""
     dim = DimensionResult(
         status="insufficient_data", score=None, confidence="low", evidence_ids=(), rationale="no evidence"
     )
@@ -153,10 +156,10 @@ def test_scoring_result_dimension_accessor() -> None:
         schema_version="qualitative-score-v2",
         overall_status="insufficient_data",
         as_of_date="2026-07-14",
-        moat=dim,
-        market_pos=dim,
-        sentiment=dim,
+        dimensions=Dimensions(moat=dim, market_pos=dim, sentiment=dim),
     )
+    assert not hasattr(result, "moat")
+    assert result.dimensions.moat is dim
     assert result.dimension("moat") is dim
     assert result.dimension("market_pos") is dim
     assert result.dimension("sentiment") is dim
@@ -170,9 +173,7 @@ def test_scoring_result_dimension_accessor_rejects_unknown_name() -> None:
         schema_version="qualitative-score-v2",
         overall_status="insufficient_data",
         as_of_date="2026-07-14",
-        moat=dim,
-        market_pos=dim,
-        sentiment=dim,
+        dimensions=Dimensions(moat=dim, market_pos=dim, sentiment=dim),
     )
     try:
         result.dimension("not_a_dimension")

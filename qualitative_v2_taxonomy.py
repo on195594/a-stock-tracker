@@ -98,17 +98,17 @@ CLAIM_CATEGORY_REGISTRY: dict[ClaimCategory, ClaimCategorySpec] = {
     "competitive_moat": ClaimCategorySpec(
         allowed_dimensions=frozenset({"moat"}),
         freshness_policy="max_age_365d",
-        directness_values=frozenset({"direct", "supporting"}),
+        directness_values=frozenset({"direct", "supporting", "context"}),
     ),
     "industry_position": ClaimCategorySpec(
         allowed_dimensions=frozenset({"market_pos"}),
         freshness_policy="max_age_365d",
-        directness_values=frozenset({"direct", "supporting"}),
+        directness_values=frozenset({"direct", "supporting", "context"}),
     ),
     "market_sentiment": ClaimCategorySpec(
         allowed_dimensions=frozenset({"sentiment"}),
         freshness_policy="max_age_30d",
-        directness_values=frozenset({"direct", "supporting"}),
+        directness_values=frozenset({"direct", "supporting", "context"}),
     ),
 }
 
