@@ -1,6 +1,6 @@
 ---
 title: Source-Grounded Structured Qualitative Scoring Spec
-status: draft
+status: approved
 created: 2026-07-14
 updated: 2026-07-14
 owner: lin / Hermes
@@ -687,8 +687,8 @@ Spec-only 阶段只允许人工撤销本 Spec 的本次 patch，不得触碰其�
 
 ## 16. Approval state
 
-- Spec approval: pending
-- Implementation approval: pending
+- Spec approval: **approved (2026-07-14，含07-14两轮codex方法论复核后的修订)**
+- Implementation approval: **approved for MILESTONE-002 (Fixture-first) only, 2026-07-14**——不隐含 MILESTONE-003~006 的授权，各自仍需单独批准（REQ-058）。
 - Production DB schema approval: pending
 - Real Gemini shadow approval: pending
 - Production cutover approval: pending
