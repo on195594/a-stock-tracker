@@ -1,0 +1,529 @@
+--- spec-before.md
++++ spec-after.md
+@@ -120,20 +120,25 @@
+
+ - Gemini 2.5 Flash supports structured output.
+ - JSON Schema support is a subset, not the full specification.
++- 当前官方 `generateContent` structured-output 文档明确允许在 type 数组中包含 `"null"`，例如 `{"type": ["integer", "null"]}`；因此本 spec 保留稳定对象形状，`score` 始终存在，证据不足时为 `null`。
+ - Schema can constrain object/array/string/integer/enum/minimum/maximum 等字段。
+ - Structured output guarantees syntactically valid schema-shaped JSON，不保证值在业务语义上正确；应用仍必须校验。
+-- `generateContent` 已被官方标为上一代 API；本次为最小改动继续使用现有接口，是否迁移 Interactions API 属于独立任务。
++- 上述能力是 2026-07-14 的实施假设，不是永久 API 保证。Fixture-first 实施前必须重新读取[官方 structured-output 文档](https://ai.google.dev/gemini-api/docs/generate-content/structured-output)；mock tests 通过后，还必须经单独批准执行一次受控 smoke，再开始 real shadow。若字段或 nullable 支持变化则停止并修订计划。
++- 本 spec 继续使用现有 `generateContent` 接口，不迁移 Interactions API；接口迁移属于独立任务。
+
+ ## 6. 术语和状态
+
+ ### 6.1 Evidence packet
+
+-送入模型的唯一事实来源。每条证据必须包含：
++送入模型的唯一事实来源。Fixture 与未来真实 evidence packet 使用同一形状。每条证据至少包含：
+
+ ```json
+ {
+   "evidence_id": "fundamentals.roe_3y_avg",
+-  "dimension": "moat",
++  "evidence_type": "financial_metric",
++  "allowed_dimensions": ["moat"],
++  "directness": "supporting",
++  "freshness_policy": "max_age_550d",
+   "value": 14.2,
+   "unit": "percent",
+   "source": "local_fundamentals_cache",
+@@ -142,6 +147,39 @@
+ }
+ ```
+
++`evidence_id` 使用可读命名空间，但命名空间不是主要业务判断依据：
++
++- `fundamentals.*` → `financial_metric`
++- `valuation.*` → `valuation_metric`
++- `competitive_advantage.*` → `competitive_advantage`
++- `industry.*` → `industry_position`
++- `announcement.*` → `company_announcement`
++- `news.*` → `news_report`
++- `consensus.*` → `analyst_consensus`
++
++机器可检查词表：
++
++- `evidence_type`: `financial_metric | valuation_metric | competitive_advantage | industry_position | company_announcement | news_report | analyst_consensus`
++- `allowed_dimensions`: 只能是 `moat | market_pos | sentiment` 的去重、稳定排序子集；允许空数组表示只能作为上下文、不能支撑任何维度。
++- `directness`: `direct | supporting | context`。`direct` 直接测量或明确陈述待评分事实；`supporting` 只增强已有直接证据；`context` 不得单独或联合触发 `scored`。
++- `freshness_policy`: `max_age_30d | max_age_90d | max_age_365d | max_age_550d`。
++- `freshness_status`: `fresh | stale`，由本地验证器计算并与输入声明比对，不能由来源任意决定。
++- `value` 只能是 JSON string/number/boolean scalar；`unit` 是非空 string 或显式 `null`，`source` 是非空 bounded string，`source_date` 是 ISO `YYYY-MM-DD`。
++
++第一版 taxonomy registry 的规范映射如下；实现可用常量或版本化 fixture 表达，但不得让输入自行放宽：
++
++| evidence_type | 命名空间 | 规范 allowed_dimensions | 允许 directness | freshness_policy |
++|---|---|---|---|---|
++| `financial_metric` | `fundamentals.*` | `[moat]` | `supporting`, `context` | `max_age_550d` |
++| `valuation_metric` | `valuation.*` | `[]` | `context` | `max_age_30d` |
++| `competitive_advantage` | `competitive_advantage.*` | `[moat]` | `direct`, `supporting` | `max_age_365d` |
++| `industry_position` | `industry.*` | `[market_pos]` | `direct`, `supporting` | `max_age_365d` |
++| `company_announcement` | `announcement.*` | `[sentiment]` | `direct`, `supporting` | `max_age_30d` |
++| `news_report` | `news.*` | `[sentiment]` | `direct`, `supporting` | `max_age_30d` |
++| `analyst_consensus` | `consensus.*` | `[sentiment]` | `direct`, `supporting` | `max_age_90d` |
++
++验证器主要依据 `evidence_type`、`allowed_dimensions`、`directness` 和 `freshness_policy`；命名空间只做 registry 一致性校验和可读性检查，不得用字符串前缀替代 taxonomy。日期按 `as_of_date - source_date` 的自然日差确定：未来日期拒绝，`age <= max_age_days`（含边界日）为 `fresh`，超过为 `stale`。类型、维度、directness、policy 或 registry 组合未知/矛盾时拒绝整个输入。
++
+ ### 6.2 Dimension status
+
+ 每个维度只能使用：
+@@ -165,29 +203,31 @@
+
+ ### 7.1 输入证据契约
+
+-- **REQ-001:** 新评分入口必须接收显式 `QualitativeContext`，不得只接收 `code` 和 `name` 后让模型自由补全事实。
+-- **REQ-002:** `QualitativeContext` 必须至少包含 `code`、`name`、`industry`、`as_of_date`、`schema_version` 和 `evidence[]`。
+-- **REQ-003:** Evidence packet 只能包含本地已获取并标注来源/日期的数据；Prompt 必须明确“不得使用输入外知识”。
+-- **REQ-004:** 现有基本面缓存可提供候选证据：`roe_3y_avg`、`roe_latest`、`net_profit_growth`、`debt_ratio`、`gross_margin`、`report_period`。`pb_percentile_10y` 属于估值证据，不得单独用于证明护城河或市场地位。
+-- **REQ-005:** `moat` 要进入 `scored`，除财务持续性证据外，必须至少有一条直接竞争优势证据，例如品牌/成本/渠道/转换成本/网络效应/监管牌照；如果当前数据源没有这类证据，必须返回 `insufficient_data`。
+-- **REQ-006:** `market_pos` 要进入 `scored`，必须至少有一条行业地位证据，例如市场份额、行业排名、核心业务规模相对同行或明确的细分龙头证据；公司自身财务指标不能单独证明行业地位。
+-- **REQ-007:** `sentiment` 要进入 `scored`，必须有带日期且在配置的新鲜度窗口内的公告/新闻/一致预期等证据。仅有财报指标、PB 分位或价格趋势时必须返回 `insufficient_data`。
+-- **REQ-008:** 本 spec 初始 shadow 允许因为缺少 REQ-005~007 所需证据而大量返回 `insufficient_data`；这属于揭示数据缺口，不是可用固定分数掩盖的失败。
+-- **REQ-009:** 输入构建器必须输出稳定排序并计算 `input_hash`；相同输入内容必须得到相同 hash，日期或证据变化必须改变 hash。
+-- **REQ-010:** Prompt、日志和 evaluation 记录不得包含 API key、Telegram token、环境变量值或其他凭证。
++- **REQ-001:** 新评分入口必须接收显式 `QualitativeContext`；它必须至少包含 `code`、`name`、`industry`、`as_of_date`、`schema_version`、`rubric_version`、`taxonomy_version` 和 `evidence[]`。Evidence packet 是唯一事实来源，Prompt 必须禁止使用输入外知识。
++- **REQ-002:** 输入构建器必须规范化证据顺序和 `allowed_dimensions` 顺序并计算 `input_hash`；相同版本和内容必须得到相同 hash，日期、版本或证据变化必须改变 hash。
++- **REQ-003:** 每条 evidence 必须包含 6.1 定义的 `evidence_id`、`evidence_type`、`allowed_dimensions`、`directness`、`freshness_policy`、value/unit/source/source_date/freshness_status；缺失不适用的 unit 时必须显式使用 `null`，不得省略稳定字段。
++- **REQ-004:** `evidence_id` 必须唯一并符合 6.1 命名空间；业务授权主要由结构化 taxonomy 字段决定，字符串前缀只验证 registry 一致性。
++- **REQ-005:** Validator 必须拒绝重复 evidence ID，未知 type/dimension/directness/policy，未来日期，声明 freshness 与计算结果不一致，以及 type、namespace、allowed dimensions、directness、policy 之间的矛盾组合。
++- **REQ-006:** 现有基本面缓存可提供候选 `financial_metric`：`roe_3y_avg`、`roe_latest`、`net_profit_growth`、`debt_ratio`、`gross_margin`、`report_period`。`pb_percentile_10y` 是 `valuation_metric`，只能作 context，不能证明 moat 或 market_pos。
++- **REQ-007:** `moat=scored` 的机械最低门槛是至少一条 fresh、`direct`、允许 `moat` 的 `competitive_advantage`，并有至少一条 fresh `financial_metric` supporting evidence；缺任一类必须为 `insufficient_data`。
++- **REQ-008:** `market_pos=scored` 的机械最低门槛是至少一条 fresh、`direct`、允许 `market_pos` 的 `industry_position`；公司自身财务或估值不能单独证明行业地位。
++- **REQ-009:** `sentiment=scored` 的机械最低门槛是至少一条 fresh、`direct`、允许 `sentiment` 的 `company_announcement`、`news_report` 或 `analyst_consensus`；财报、估值或价格趋势不能替代。
++- **REQ-010:** 机械门槛只判断合同资格，不宣称证据真实、相关、独立或足以支撑某个分数；这些语义质量与评分充分性仍由版本化 rubric 和盲审人工判断。
++- **REQ-011:** 缺少 REQ-007~009 的证据必须显式产生 `insufficient_data`；不得用固定分数伪装成模型结果，也不得降低门槛以提高通过率。
++- **REQ-012:** 所有输入只允许来自本地 fixture、已批准静态数据集或已批准 provider，并保留可审计的来源和日期；未经批准不得让模型自行搜索或补齐事实。
+
+ ### 7.2 结构化输出契约
+
+-- **REQ-011:** 不新增 Outlines 依赖；使用现有标准库 HTTP 路径和 Gemini 原生 JSON Schema。
+-- **REQ-012:** Gemini 请求必须在 `generationConfig` 中声明 JSON MIME 类型和 schema；具体字段名以实施时再次读取的官方 `generateContent` 文档为准，不得依赖训练记忆。
+-- **REQ-013:** 顶层输出必须包含且只包含 `schema_version`、`overall_status`、`as_of_date`、`dimensions`。
+-- **REQ-014:** `dimensions` 必须且只包含 `moat`、`market_pos`、`sentiment`。
+-- **REQ-015:** 每个维度必须包含 `status`、`score`、`confidence`、`evidence_ids`、`rationale`。
+-- **REQ-016:** `score` 的类型为 `integer | null`；`moat` 范围 1-10，`market_pos` 和 `sentiment` 范围 1-5。
+-- **REQ-017:** `status=scored` 时 `score` 必须为整数且 `evidence_ids` 非空；`status=insufficient_data` 时 `score` 必须为 `null`，`evidence_ids` 可以为空，`rationale` 必须说明缺少什么证据。
+-- **REQ-018:** `rationale` 只允许解释输入证据与评分锚点之间的关系，不得引入输入中没有的新事实；长度必须有上限，避免把自由文本重新变成无法验证的主要载体。
+-- **REQ-019:** Schema 应使用 `required`、`additionalProperties=false`、`enum`、`minimum`、`maximum` 和数组数量限制等官方支持的约束；若 API 忽略某项约束，本地验证器必须补上。
+-- **REQ-020:** 返回 JSON 的 key 顺序、空白或换行不得成为业务逻辑；只能按解析后的对象判断。
++- **REQ-013:** 不新增 Outlines 依赖；使用现有标准库 HTTP 路径和 Gemini 2.5 Flash 原生 JSON Schema，不在本 spec 迁移 Interactions API。
++- **REQ-014:** Gemini 请求必须在 `generationConfig` 中声明 JSON MIME 类型和 schema；字段名和 nullable 能力必须在实施时依据[官方文档](https://ai.google.dev/gemini-api/docs/generate-content/structured-output)重查并在批准的真实 shadow 前 smoke，不得把当前能力当永久保证。
++- **REQ-015:** 顶层输出必须包含且只包含 `schema_version`、`overall_status`、`as_of_date`、`dimensions`。
++- **REQ-016:** `dimensions` 必须且只包含 `moat`、`market_pos`、`sentiment`。
++- **REQ-017:** 每个维度必须包含且只包含 `status`、`score`、`confidence`、`evidence_ids`、`rationale`；`score` 始终存在以保持稳定对象形状。
++- **REQ-018:** `score` 的 JSON Schema 类型必须为 `{"type": ["integer", "null"]}`；`moat` 的整数范围为 1-10，`market_pos` 和 `sentiment` 为 1-5，本地 validator 必须再次执行范围检查。
++- **REQ-019:** `status=scored` 时 `score` 必须为整数且 `evidence_ids` 非空；`status=insufficient_data` 时 `score` 必须为 `null`，`evidence_ids` 可为空，`rationale` 必须说明缺少的证据。
++- **REQ-020:** `rationale` 只允许解释输入证据与评分锚点之间的关系，不得引入输入外事实，并设置固定字符上限。
++- **REQ-021:** Schema 应使用官方当前支持的 `required`、`additionalProperties=false`、`enum`、`minimum`、`maximum` 和数组数量限制；API 未执行的约束由本地 validator 补齐。
++- **REQ-022:** JSON key 顺序、空白或换行不得成为业务逻辑；只能按解析后的对象判断。
+
+ 参考输出：
+
+@@ -224,48 +264,50 @@
+
+ ### 7.3 本地验证契约
+
+-- **REQ-021:** 新验证器必须独立于 HTTP 调用，可接受普通 Python 对象和 `QualitativeContext` 做纯函数校验。
+-- **REQ-022:** 本地验证必须拒绝缺字段、额外字段、错误类型、越界分数、未知枚举和错误 `schema_version`。
+-- **REQ-023:** 本地验证必须拒绝任何不在输入 evidence packet 中的 `evidence_id`。
+-- **REQ-024:** 本地验证必须拒绝 `scored + null score`、`insufficient_data + integer score`、`scored + empty evidence_ids` 等状态矛盾。
+-- **REQ-025:** 本地验证必须检查 `as_of_date` 与输入一致，不能接受模型自行生成其他日期。
+-- **REQ-026:** 本地验证必须检查维度证据类型：估值证据不能单独支持 moat/market_pos，过期公告或新闻不能支持 sentiment。
+-- **REQ-027:** 任一维度校验失败时，整个新结果为 `invalid`；不得只采用其他两个维度。
+-- **REQ-028:** 现有 `_validate()` 在生产 cutover 前不得删除；实施可将其演进为兼容旧 dict 与 v2 结果的边界适配器，但必须保留整数范围的二次检查。
++- **REQ-023:** 新 validator 必须独立于 HTTP，可接受普通 Python 对象和 `QualitativeContext` 做纯函数校验。
++- **REQ-024:** Validator 必须拒绝缺失/额外字段、错误类型、越界分数、未知枚举和输出 `schema_version` 不匹配；evaluation/cache boundary 必须另行拒绝 envelope 中 `rubric_version`、`taxonomy_version` 或 `input_hash` 不匹配。
++- **REQ-025:** Validator 必须拒绝未知或重复引用的 `evidence_id`，并拒绝任何引用证据不允许目标维度、不是所需 directness 或已 stale 的结果。
++- **REQ-026:** Validator 必须拒绝 `scored + null`、`insufficient_data + integer`、`scored + empty evidence_ids`、维度与 overall status 不一致等语义矛盾。
++- **REQ-027:** Validator 必须检查 `as_of_date` 与输入一致，并按 6.1 registry 重算 taxonomy 与 freshness；不能接受模型或 packet 自行放宽 policy。
++- **REQ-028:** Schema-valid 只表示结构通过。确定性 validator 必须拒绝未满足 REQ-007~009 最低门槛的结果；rationale 是否引入输入外事实、证据是否真实相关等主观语义由同 rubric 的盲审或显式注入的 review outcome 判断，并分类为 evidence/semantic invalid。两类失败都不得变成可信分数。
++- **REQ-029:** 任一维度 validation 失败时整个新结果为 `invalid`，不得只采用另两个维度；合法的 `insufficient_data` 则使 overall status 为 `insufficient_data`。
++- **REQ-030:** 现有 v1 `_validate()` 与生产路径在 cutover 批准前不得删除或改变；未来兼容适配器必须保留整数范围二次检查。
+
+ ### 7.4 评分锚点
+
+-- **REQ-029:** Prompt 和人工审查必须使用同一份版本化 rubric；rubric 变更必须更新 `schema_version` 或独立 `rubric_version`。
+-- **REQ-030:** `moat` 评分必须采用可解释锚点，而不是“凭感觉 1-10”：
++- **REQ-031:** Prompt 和人工审查必须使用同一份版本化 rubric；rubric 变更必须更新 `rubric_version`，不允许同版本静默变更。
++- **REQ-032:** `moat` 评分必须采用可解释锚点，而不是“凭感觉 1-10”：
+   - 1-2：存在明显竞争劣势或证据不支持持续优势。
+   - 3-4：优势弱、易复制或持续性证据不足。
+   - 5-6：存在一项可识别优势，但持续性/强度证据一般。
+   - 7-8：至少一项强且持续的竞争优势，有多条独立证据支持。
+   - 9-10：多重强优势且长期持续；必须有高质量直接证据，不得仅凭高 ROE/高毛利给出。
+-- **REQ-031:** `market_pos` 锚点：
++- **REQ-033:** `market_pos` 锚点：
+   - 1：边缘参与者或明确弱势。
+   - 2：非头部、地位一般。
+   - 3：主要参与者，但没有明确头部证据。
+   - 4：细分或行业头部，有直接排名/份额证据。
+   - 5：明确领导者，且有多条最新直接证据；不得只凭公司规模推断。
+-- **REQ-032:** `sentiment` 锚点：
++- **REQ-034:** `sentiment` 锚点：
+   - 1：近期重大明确负面。
+   - 2：偏负面。
+   - 3：中性或多空抵消。
+   - 4：偏正面。
+   - 5：近期重大明确正面。
+   - 无新鲜证据：`insufficient_data`，不是默认 3。
+-- **REQ-033:** Rubric 只约束模型评分一致性，不得宣称高分能预测正 alpha。
++- **REQ-035:** Schema/evidence validity 与 rubric agreement 必须和 predictive validity 分开报告；前者改善不证明正 alpha 或投资准确性提升。
+
+ ### 7.5 缓存与 fallback
+
+-- **REQ-034:** Shadow 阶段不得写现有 `qualitative_scores`，优先写独立 `qualitative_score_evaluations` 或项目内文件型 artifact。
+-- **REQ-035:** Shadow evaluation 必须保存 `code`、`scored_date`、`schema_version`、`rubric_version`、`model`、`input_hash`、`overall_status`、`context_json`、`result_json`、`validation_status`、`failure_reason`、`created_at`。
+-- **REQ-036:** Shadow evaluation 不得包含 API key 或原始 HTTP headers；`context_json` 只保存已允许的来源数据。
+-- **REQ-037:** 生产 cutover 后的读取优先级必须为：同版本 fresh validated result → 同版本 stale validated result → 旧版 stale cache（仅迁移期）→ 固定 `FALLBACK`。
+-- **REQ-038:** `insufficient_data` 或 `invalid` 结果不得写入现有生产分数缓存，也不得覆盖先前可信分数。
+-- **REQ-039:** 不允许 moat 使用 v2、market_pos 使用旧缓存、sentiment 使用 fixed fallback 的混合结果；保持 all-or-nothing。
+-- **REQ-040:** 新方法必须版本化，不能让旧版和新版定性分数在报告中无法区分。
++- **REQ-036:** Fixture 和 shadow 必须与生产物理隔离：不得写现有 `qualitative_scores`、`predictions` 或真实 `tracker.db`，不得注入 pipeline、影响 predictions/Telegram/cron；只可写经当前阶段批准的独立文件 artifact，未来独立 evaluation 表仍需 DB 批准。
++- **REQ-037:** Shadow evaluation 必须保存 `code`、`scored_date`、`schema_version`、`rubric_version`、`taxonomy_version`、`input_hash`、`model`、`overall_status`、`context_json`、`result_json`、`validation_status`、`failure_reason`、`created_at`。
++- **REQ-038:** `validation_status` 使用有界枚举：`VALID_SCORED | VALID_INSUFFICIENT_DATA | API_TIMEOUT | API_AUTH_ERROR | API_RATE_LIMIT | API_SERVER_ERROR | MALFORMED_RESPONSE | SCHEMA_INVALID | EVIDENCE_INVALID | SEMANTIC_INVALID`。401/403 映射 auth，429 映射 rate limit，5xx 映射 server error。
++- **REQ-039:** `failure_reason` 只能保存有界错误 code 和最多 256 字符的脱敏摘要；Prompt、日志、context/result、artifact/table 均不得保存 API key、token、环境变量值、原始 headers、stack trace 或其他凭证/秘密。
++- **REQ-040:** 当前生产表 `qualitative_scores(code, moat, market_pos, sentiment, scored_date)` 缺少版本和 input hash，因而阻塞 production cutover；它不阻塞 fixture-first 或物理隔离的文件 artifact shadow。Fixture-first 不得选择或实施生产 migration。
++- **REQ-041:** 后续获批 cutover plan 必须二选一：优先候选是新建版本化生产表；`ALTER` legacy 表是需说明风险与理由的替代方案。任何方案都不得让 v1/v2 分数不可区分，并必须定义 migration、indexes、cache priority、backward compatibility、backup、readback、rollback 和版本分层报告。
++- **REQ-042:** Cutover 后缓存读取优先级必须为：schema/rubric/taxonomy/input-hash 均匹配的 fresh validated v2 → 同版本 stale validated v2 → legacy stale cache（仅迁移期）→ 固定 `FALLBACK`。
++- **REQ-043:** `insufficient_data`、`invalid` 或 API failure 不得覆盖 trusted cache；不得混用 v2、v1 和 fallback 的不同维度，保持 all-or-nothing。
++- **REQ-044:** 外部调用可对 timeout、429、5xx 做有上限、带抖动的 retry；401/403、malformed response、schema、evidence 或 semantic error 不重试。具体次数/退避值留给 implementation plan，但测试必须证明有界。
+
+ 候选 shadow 表（仅设计，不构成 DB 修改批准）：
+
+@@ -278,53 +320,83 @@
+     rubric_version TEXT NOT NULL,
+     model TEXT NOT NULL,
+     input_hash TEXT NOT NULL,
+-    overall_status TEXT NOT NULL,
++    taxonomy_version TEXT NOT NULL,
++    overall_status TEXT,
+     context_json TEXT NOT NULL,
+     result_json TEXT,
+     validation_status TEXT NOT NULL,
+     failure_reason TEXT,
+     created_at TEXT NOT NULL,
+-    UNIQUE(code, scored_date, schema_version, input_hash)
++    UNIQUE(code, scored_date, schema_version, rubric_version, taxonomy_version, input_hash)
+ );
+ ```
+
+ ### 7.6 Shadow/report-only gate
+
+-- **REQ-041:** 第一阶段只能使用 mock/fixture，不发真实 Gemini 请求，不写真实 `tracker.db`。
+-- **REQ-042:** Fixture 至少覆盖：完整证据、缺 moat 直接证据、缺 market_pos 证据、sentiment 过期、未知 evidence ID、schema 合法但状态矛盾、越界分数、额外字段。
+-- **REQ-043:** 真实 shadow run 属于付费外部调用和生产数据读取，执行前必须单独确认范围、股票样本、调用次数和输出位置。
+-- **REQ-044:** 初始真实 shadow 样本应按行业分层选择 6 只代表性股票；不得只选择最熟悉或最容易评分的公司。
+-- **REQ-045:** Shadow 输出不得注入 pipeline，不得改变 Telegram 候选，不得写 `predictions`。
+-- **REQ-046:** 人工复核必须在不知道旧版 Gemini 分数的情况下，先根据同一 evidence packet 给出参考状态/评分，再比较 v2，避免锚定偏差。
+-- **REQ-047:** Shadow pass gate：
++- **REQ-045:** Fixture-first 只能使用 synthetic 或人工整理的本地 evidence packet，可同时包含完整 positive 与各维度 `insufficient_data` cases；fixture 必须确定性、免凭证、无网络，并携带与未来真实 packet 完全相同的 taxonomy。
++- **REQ-046:** Fixture 结果只证明 parser/schema/validator/rubric 路径行为，不证明真实数据可得、事实正确或投资准确。
++- **REQ-047:** Real shadow 必须等待单独批准的 evidence source/provider，或带 provenance 的已批准静态 evidence dataset。真实证据缺失是 real-shadow blocker，不是 fixture-first blocker；不得为通过 real shadow 降低 moat/market_pos/sentiment 门槛。
++- **REQ-048:** 真实 shadow 属于付费外部调用和生产数据读取，执行前必须单独确认 provider/dataset、范围、股票样本、调用次数、凭证处理和输出位置；初始样本候选为按行业分层的 6 只代表股票。
++- **REQ-049:** v2 独立入口是优先的未来隔离 seam；确切文件、函数和 patch 位置由 implementation plan 基于当时代码决定，本 spec 不预先授权改生产入口。
++- **REQ-050:** 人工复核必须先在不知道 v1 分数和模型结果的情况下，基于同一 evidence packet 给出参考状态/评分，再比较 v2。
++- **REQ-051:** Shadow pass gate：
+   1. Schema validity = 100%。
+   2. 未知 evidence ID 接受率 = 0%。
+   3. 无依据事实数量 = 0。
+   4. 所有证据不足 case 均 fail closed。
+   5. 对人工判定可评分的维度，至少 90% 落在人工参考分 ±1 内；样本不足时只能标记 provisional。
+-- **REQ-048:** Shadow gate 通过只代表结构/证据/评分锚点可接受，不代表投资预测有效；生产切换仍需单独批准。
++- **REQ-052:** `provisional` 只能在后续获批 evaluation plan 预先定义并达到每维度最小可评分样本数、人工复核比例和行业覆盖，且扩展样本继续满足 REQ-051 后升级；具体样本门槛是 real-shadow plan 的待决策项，不能由运行后补定。通过 gate 仍不代表预测有效或自动批准 cutover。
+
+ ### 7.7 生产切换与后验评估
+
+-- **REQ-049:** 生产 cutover 必须另写 implementation plan，列出确切文件、DB 迁移、备份、回滚、测试和一次受控 smoke。
+-- **REQ-050:** 修改生产 DB schema 前必须备份 `tracker.db` 并验证备份可打开；不得在本 spec 阶段执行。
+-- **REQ-051:** Cutover 不得回写历史 predictions；只影响批准日期之后的新评分。
+-- **REQ-052:** Cutover 后必须记录评分方法版本，使 `accuracy-report` 能按版本和 score_date 分层，不能与旧版混算。
+-- **REQ-053:** 后验投资验证至少分别报告 30/60/90 日 alpha、hit rate、样本数和置信限制；在样本不足前不得宣称准确性提升。
+-- **REQ-054:** 若新方法降低结构错误但未改善人工 rubric agreement 或后验 alpha，应分别报告，不得用一个指标掩盖另一个指标。
+-
+-## 8. 设计约束
++- **REQ-053:** Production cutover 必须另写并批准 implementation plan，列出确切代码 seam、REQ-041 的 DB 策略、migration/indexes、测试、受控 smoke、部署和回滚；本 spec 不批准任何实现或 DB 变更。
++- **REQ-054:** 修改生产 DB 前必须备份 `tracker.db`，验证备份可打开和关键表可读，并在 migration 后执行 readback；rollback 必须覆盖代码和物理 DB 恢复。
++- **REQ-055:** Cutover 不得回写历史 predictions，只影响批准日期之后的新评分；v1 生产路径在兼容期必须继续按当前合同工作。
++- **REQ-056:** Cutover 后必须记录评分方法版本，使 reporting/`accuracy-report` 按 schema/rubric/taxonomy 版本和 score_date 分层，禁止 v1/v2 混算。
++- **REQ-057:** 后验投资验证至少分别报告 30/60/90 日 alpha、hit rate、样本数和置信限制；在自然结案样本不足前不得宣称准确性提升。
++- **REQ-058:** Implementation、生产 DB、真实 Gemini shadow 和 production cutover 均保持 pending，必须分别批准；任何前一阶段通过都不隐含后一阶段授权。
++
++## 8. Test matrix
++
++以下是未来实现合同，不授权本次新增测试或运行真实 API。Fixture-first cases 使用纯本地对象、mock HTTP 和临时路径；later shadow 与 production-cutover cases 不阻塞第一阶段完成。
++
++| Stage | Case | Expected assertion |
++|---|---|---|
++| Fixture-first | 完整可评分结果 | 三维均 scored，整数范围、evidence 引用和 overall status 全部通过 |
++| Fixture-first | moat / market_pos / sentiment 各自缺证据 | 每个分支分别返回 `insufficient_data`，全局 fail closed |
++| Fixture-first | nullable score | scored+integer 与 insufficient+null 通过；反向组合拒绝；`score` 不得缺失 |
++| Fixture-first | 未知/重复 evidence ID | 输入重复、输出重复引用、输出未知引用均拒绝 |
++| Fixture-first | 未知 taxonomy | 未知 evidence type、dimension、directness、freshness policy 各自拒绝 |
++| Fixture-first | allowed-dimension mismatch | evidence 不允许目标维度或 registry 组合矛盾时拒绝 |
++| Fixture-first | stale 与边界日期 | age 等于窗口上限为 fresh；多一天为 stale；未来日期拒绝；声明状态不一致拒绝 |
++| Fixture-first | schema-valid 但语义无效 | 状态/overall 矛盾、最低门槛不足由 validator 拒绝；注入盲审判定的 unsupported rationale 时分类 semantic invalid |
++| Fixture-first | shape/range failures | extra field、missing field、错误类型及各维度上下界外值拒绝 |
++| Fixture-first | malformed response | 分类为 `MALFORMED_RESPONSE`，不产出 trusted result |
++| Fixture-first | mocked API timeout / 401 / 403 / 429 / 5xx | 分别映射 timeout/auth/rate-limit/server bounded status，reason 脱敏 |
++| Fixture-first | retry policy | auth/schema/evidence/semantic 不 retry；429/5xx 有界 retry；达到上限后 fallback |
++| Fixture-first | all-or-nothing | 任一维度 invalid/insufficient 时不拼接 v2、v1、fallback 维度 |
++| Fixture-first | 版本 mismatch | schema/rubric/taxonomy/input-hash 任一不符均不视为同版本 trusted result |
++| Fixture-first | 不覆盖 trusted cache | 用 mock repository 证明 invalid/insufficient/API failure 不触发可信缓存覆盖 |
++| Later shadow | provenance 与真实证据可用性 | 仅批准 provider/dataset 可运行；缺 moat/market_pos/sentiment 真实证据明确阻塞 |
++| Later shadow | shadow 物理隔离 | artifact/evaluation 不写生产表、pipeline、predictions、Telegram、cron |
++| Production cutover | fresh same-version cache | schema/rubric/taxonomy/input-hash 全匹配且 fresh 时优先读取 |
++| Production cutover | stale same-version cache | 新调用失败后可用同版本 stale validated cache |
++| Production cutover | legacy migration fallback | 仅兼容窗口按明确优先级读取 legacy cache，且来源/版本可区分 |
++| Production cutover | v1 backward compatibility | 当前 v1 production path 在切换前及兼容窗口行为不变 |
++| Production cutover | migration/readback/rollback/reporting | indexes、备份可读、迁移 readback、物理 rollback 和版本分层报告均验证 |
++
++## 9. 设计约束
+
+ ### Always do
+
+ - 新增函数必须有参数和返回值类型注解。
+ - 使用 `logger = logging.getLogger(__name__)`，禁止生产 `print`。
+ - 数据结构优先使用 `@dataclass`，不要让跨层契约长期依赖裸字典。
+-- 外部 API 错误必须带上下文并按现有 retry/fallback 策略处理。
++- 外部 API 错误必须按 REQ-038~044 分类、脱敏并遵守 retry/fallback 边界。
+ - 测试使用 `tmp_path`，不得访问真实 `tracker.db`。
+ - 所有网络调用必须 mock；真实 Gemini shadow 需要单独批准。
+ - 每次实现必须先写失败测试，再改代码。
+-- 实施前重新核对 Gemini 当前官方文档，因为结构化输出字段可能变化。
++- 实施前重新核对 Gemini 当前官方文档及 nullable schema，因为结构化输出字段可能变化。
+
+ ### Ask first
+
+@@ -346,9 +418,9 @@
+ - 提交 `.env`、API key、token 或真实私密 headers。
+ - 未经批准改写生产 `tracker.db`、predictions 或 cron。
+
+-## 9. 方案选择与被拒绝方案
+-
+-### 9.1 选择方案
++## 10. 方案选择与被拒绝方案
++
++### 10.1 选择方案
+
+ ```text
+ Local evidence sources
+@@ -362,7 +434,7 @@
+   → natural 30/60/90d outcome validation
+ ```
+
+-### 9.2 被拒绝方案
++### 10.2 被拒绝方案
+
+ - **直接安装 Outlines**：当前只有一个 Gemini REST 后端，原生结构化输出已覆盖核心需求；Outlines会新增依赖和适配层，不能解决 grounding。
+ - **只给当前 Prompt 加 JSON Schema**：会得到更稳定的无依据评分，降低可见错误但保留静默语义风险。
+@@ -371,29 +443,32 @@
+ - **sentiment 缺数据时自动给 3 分并标为模型结果**：掩盖数据缺口。固定 3 只能继续作为系统 fallback，并必须与模型评分区分。
+ - **直接扩展现有 qualitative_scores 后立刻切换**：无法在不影响生产的前提下比较 v1/v2，且 schema 变更需要额外批准。
+ - **部分字段采用新模型结果**：破坏现有 all-or-nothing 安全边界，使评分来源难以解释。
+-
+-## 10. Acceptance criteria
+-
+-- **AC-001 maps to REQ-001~010:** Spec 明确每个维度的最低证据门槛，并规定缺证据返回 `insufficient_data`。
+-- **AC-002 maps to REQ-011~020:** Spec 定义 Gemini 原生 JSON Schema 输出形状、范围、状态和禁止额外字段。
+-- **AC-003 maps to REQ-021~028:** Spec 定义应用端独立验证，包含 evidence ID、状态一致性、日期和维度证据类型检查。
+-- **AC-004 maps to REQ-029~033:** Spec 给出三个维度的版本化评分锚点，并明确不等于预测有效性。
+-- **AC-005 maps to REQ-034~040:** Spec 定义 shadow 隔离、版本、缓存和 all-or-nothing fallback。
+-- **AC-006 maps to REQ-041~048:** Spec 定义 fixture、真实 shadow 审批边界和量化 pass gate。
+-- **AC-007 maps to REQ-049~054:** Spec 定义 cutover、DB 备份、历史不可改写和 30/60/90 日后验验证。
+-- **AC-008:** 本次文档变更不修改 `gemini_scorer.py`、`pipeline.py`、`lib/cache.py`、`weights.json`、测试、cron 或真实 DB。
+-- **AC-009:** `git diff --check` 通过；spec 中 REQ 编号唯一，所有 AC 均能映射到 requirements。
+-- **AC-010:** 人工评审明确接受或修改以下判断点：证据门槛、shadow 样本、±1 rubric gate、生产 cutover 前置条件。
+-
+-## 11. Milestones and plan handoff
++- **为跑通 real shadow 放宽 evidence taxonomy**：把数据缺口转化为无依据分数；缺少批准的真实证据应阻塞 real shadow，而非削弱合同。
++- **fixture-first 决定生产表 migration**：本地合同测试不需要生产 schema；版本表或 legacy ALTER 必须在后续 cutover plan 中选择。
++
++## 11. Acceptance criteria
++
++- **AC-001 maps to REQ-001~012:** Evidence packet 有显式、版本化、机器可检查 taxonomy，未知/矛盾/过期证据 fail closed，主验证不依赖前缀推断。
++- **AC-002 maps to REQ-013~022:** Gemini 原生 JSON Schema 保持必填 `integer | null` score，并把当前 nullable 支持记录为实施时重查/smoke 的官方文档假设。
++- **AC-003 maps to REQ-023~030:** 独立 validator 覆盖 shape、版本、evidence、freshness、状态语义和 all-or-nothing invalidation。
++- **AC-004 maps to REQ-031~035:** 三维使用版本化 rubric，结构/evidence/rubric 指标与 predictive validity 分离。
++- **AC-005 maps to REQ-036~044:** Shadow 物理隔离、脱敏 bounded failure 分类、retry、cache 版本和 cutover-only migration blocker 均明确。
++- **AC-006 maps to REQ-045~052:** Fixture 与 real shadow 分阶段，真实证据缺失只阻塞 real shadow，gate/provisional 升级不弱化证据门槛。
++- **AC-007 maps to REQ-053~058:** Cutover plan 必须覆盖版本化 DB 策略、备份/readback/rollback、v1 兼容和分层后验报告，且所有批准仍 pending。
++- **AC-008:** 第 8 节 test matrix 覆盖要求的成功、失败、retry、cache、版本、兼容与隔离 cases，并标记 Fixture-first/Later shadow/Production cutover。
++- **AC-009:** 本次只修改本 Spec，不修改代码、DB、测试、依赖、weights、历史记录、cron 或 Telegram。
++- **AC-010:** REQ 与 AC 编号唯一连续、range/milestone mapping 一致，无 trailing whitespace，`git diff --check` 通过。
++- **AC-011:** 用户/Reviewer 明确决定第 15 节开放项；未决定不阻塞 fixture-first，但阻塞对应 real-shadow 或 cutover 阶段。
++
++## 12. Milestones and plan handoff
+
+ ### MILESTONE-001: Spec review
+
+-Maps to: AC-001~010
++Maps to: AC-001~011
+
+ Outcome:
+ - 用户与工程 reviewer 审查本 spec。
+-- 决定 evidence packet 第一版允许哪些现有字段、哪些维度必然 insufficient。
++- 接受 taxonomy、nullable schema 假设和阶段边界，或仅留下非阻塞修订。
+
+ Non-scope:
+ - 不改代码、DB、测试或生产行为。
+@@ -403,11 +478,11 @@
+
+ ### MILESTONE-002: Fixture-first contract implementation
+
+-Maps to: REQ-001~033, AC-001~004
++Maps to: REQ-001~035, REQ-045~046, AC-001~004, AC-008
+
+ Outcome:
+ - 实现 dataclass、schema builder、Prompt builder 和纯本地 validator。
+-- 新增 mock/fixture 测试；不调用真实 Gemini。
++- 使用 synthetic/curated 本地 packet 完成第 8 节 Fixture-first tests；不调用真实 Gemini。
+
+ Non-scope:
+ - 不写真实 DB，不接 pipeline，不影响生产评分。
+@@ -417,10 +492,10 @@
+
+ ### MILESTONE-003: Shadow persistence
+
+-Maps to: REQ-034~045, AC-005~006
++Maps to: REQ-036~039, REQ-045~046, AC-005~006, AC-008
+
+ Outcome:
+-- 在明确批准 DB schema 后，增加隔离 evaluation 表；或先用项目内文件 artifact 替代。
++- 经单独批准后使用物理隔离文件 artifact；若要独立 evaluation 表，仍需 DB schema 批准。
+ - 生产读路径保持不变。
+
+ Verification signal:
+@@ -428,10 +503,10 @@
+
+ ### MILESTONE-004: Bounded real shadow review
+
+-Maps to: REQ-043~048
++Maps to: REQ-047~052, AC-006, AC-008
+
+ Outcome:
+-- 经批准后对 6 只分行业代表股票运行固定次数 shadow。
++- 只有批准的 provider 或带 provenance 静态数据集就绪后，才可按获批样本运行固定次数 shadow。
+ - 生成结构、证据、rubric agreement 报告。
+
+ Non-scope:
+@@ -442,32 +517,33 @@
+
+ ### MILESTONE-005: Separately approved production cutover
+
+-Maps to: REQ-049~054
++Maps to: REQ-040~044, REQ-053~058, AC-005, AC-007~008
+
+ Outcome:
+-- 通过单独 implementation plan 和确认后，才允许新评分进入 production cache/pipeline。
++- 单独 plan 选择版本表（优先候选）或有理由的 legacy ALTER，并经确认后才允许进入 production cache/pipeline。
+
+ Verification signal:
+ - 备份、migration、全量测试、受控 smoke 和回滚演练均通过。
+
+-## 12. Validation contract
+-
+-### 12.1 本次 spec 验证
++## 13. Validation contract
++
++### 13.1 本次 spec 验证
+
+ ```bash
+ cd /home/lin/a-stock-tracker
+ git diff --check
+-git diff -- docs/specs/2026-07-14-source-grounded-structured-qualitative-scoring-spec.md docs/project-status.md
++git diff -- docs/specs/2026-07-14-source-grounded-structured-qualitative-scoring-spec.md
+ ```
+
+ 应证明：
+
+-1. 仅新增 spec，并在 PM ledger 中登记；无生产代码、DB、测试或配置变更。
++1. 相对本次任务开始状态，仅目标 Spec 改变；保留所有既有 dirty worktree 内容。
+ 2. REQ 与 AC 编号完整、唯一且可追踪。
+ 3. 明确“Outlines 思想、Gemini 原生 Schema、不新增依赖”的架构决策。
+-4. 明确“缺证据 fail closed”和 shadow-first 边界。
+-
+-### 12.2 未来实现最低验证
++4. 明确 nullable score、taxonomy、“缺证据 fail closed”、fixture/shadow/cutover 边界。
++5. 无 trailing whitespace，且 implementation、生产 DB、real shadow、cutover approvals 仍 pending。
++
++### 13.2 未来实现最低验证
+
+ 实施计划至少应包含：
+
+@@ -481,7 +557,7 @@
+
+ 若项目当时已有类型检查基线，再加入项目实际使用的 type checker；不得为满足本 spec 临时引入新工具。
+
+-### 12.3 必须报告的证据
++### 13.3 必须报告的证据
+
+ - Changed files
+ - 测试、lint、format 命令与退出码
+@@ -491,25 +567,18 @@
+ - 未满足条件、数据缺口和 deferred 项
+ - 生产 DB、cron、Telegram、weights、历史 predictions 是否保持未触碰
+
+-## 13. Rollback and stop conditions
++## 14. Rollback and stop conditions
+
+ ### Rollback
+
+-Spec-only 阶段：
+-
+-```bash
+-git restore -- docs/project-status.md
+-rm docs/specs/2026-07-14-source-grounded-structured-qualitative-scoring-spec.md
+-```
+-
+-未来代码阶段必须在 implementation plan 中给出精确 `git restore`/commit revert 和 DB 备份恢复命令；不得复用未验证的通用命令。
++Spec-only 阶段只允许人工撤销本 Spec 的本次 patch，不得触碰其他 dirty files。未来代码阶段必须在 implementation plan 中给出精确的代码 revert 和 DB 备份恢复/readback 命令；不得复用未验证的通用命令。
+
+ ### Stop if
+
+ - 官方 API 当前字段与 spec 假设不一致。
+ - Gemini 2.5 Flash 不再支持目标 structured output 能力。
+ - 需要新增依赖但尚未获批。
+-- Evidence packet 无法满足 moat/market_pos/sentiment 的最低证据门槛。
++- Fixture 无法表达 taxonomy 合同，或已批准真实 evidence source/dataset 无法满足 real-shadow 最低证据门槛；后者不阻塞 fixture-first。
+ - 模型生成未知 evidence ID 或输入外事实，且修复后仍复现。
+ - Shadow gate 未通过。
+ - 真实 DB 发生未批准写入。
+@@ -517,7 +586,7 @@
+ - 全量测试出现不能归因于本范围的失败。
+ - 工作区无关改动会被覆盖、格式化或误提交。
+
+-## 14. 风险与开放问题
++## 15. 风险与开放问题
+
+ ### 已决策
+
+@@ -526,17 +595,19 @@
+ 3. 使用原生 JSON Schema + 本地语义校验双层边界。
+ 4. 数据不足必须显式暴露，不允许模型猜分。
+ 5. 新方法先 shadow，不直接进入生产。
++6. `score` 保持必填 `integer | null`，实施时以当前官方文档重查和 smoke 为前置。
++7. 生产 cache schema mismatch 是 cutover blocker，不是 fixture-first 或文件 shadow blocker。
+
+ ### 待用户/Reviewer确认
+
+-1. **直接竞争优势证据来源**：现有 cache 不足；后续是扩展现有 fetcher、接入人工维护证据，还是保留 moat unavailable？
+-2. **行业地位证据来源**：是否允许人工/项目内静态 evidence packet，还是建设可审计 provider？
+-3. **sentiment 数据边界**：项目路线图当前明确不建设独立舆情层；是否继续让 sentiment 使用系统 fallback，而不让模型评分？
+-4. **Shadow 存储**：先用 JSONL/Markdown artifact，还是经确认新增独立 SQLite evaluation 表？
+-5. **真实 shadow 成本**：6 只股票 × 单次调用是否足够，还是需要第二轮反向边界样本？
+-6. **生产适用范围**：若只有 moat/market_pos 有足够证据，而 sentiment 长期 unavailable，是否继续坚持 all-or-nothing，还是将 sentiment 从 LLM 评分职责中移除？后者属于评分架构变更，需要单独 spec 决策。
+-
+-## 15. Approval state
++1. **真实 evidence source**：直接竞争优势、行业地位和 sentiment 后续使用可审计 provider，还是批准带 provenance 的静态 dataset？Fixture-first 不需要此决定。
++2. **sentiment 数据边界**：项目路线图当前不建设独立舆情层；real shadow 是否批准静态 evidence dataset，或继续让真实 sentiment unavailable？
++3. **Shadow 存储**：先用 JSONL/Markdown artifact，还是经确认新增独立 SQLite evaluation 表？
++4. **真实 shadow 计划**：6 只股票 × 单次调用是否只作 provisional 首轮，以及升级 gate 的每维度样本数、人工复核比例和行业覆盖是多少？
++5. **生产 cache 策略**：未来 cutover plan 是否采用优先候选的新版本表，还是提出充分理由 ALTER legacy 表？
++6. **生产适用范围**：若 sentiment 长期 unavailable，是否继续 all-or-nothing，还是另写 spec 将其移出 LLM 职责？本 spec 不允许静默放宽。
++
++## 16. Approval state
+
+ - Spec approval: pending
+ - Implementation approval: pending

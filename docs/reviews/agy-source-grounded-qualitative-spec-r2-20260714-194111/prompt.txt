@@ -1,0 +1,96 @@
+你是独立工程审查员。请对 a-stock-tracker 修订后的“来源约束的结构化定性评分 Spec”进行第二轮严格、只读、工程可实施性复审。
+
+## 审查边界
+
+- 项目根目录：`/home/lin/a-stock-tracker`
+- 唯一审查输入：`docs/reviews/agy-source-grounded-qualitative-spec-r2-20260714-194111/review-snapshot.md`
+- 目标 Spec：`docs/specs/2026-07-14-source-grounded-structured-qualitative-scoring-spec.md`
+- Snapshot 包含修订后 Spec 全文、必要代码/项目约束片段，以及第一轮 AGY review。
+- 只审查 Snapshot；不要读取其他文件、不要联网、不要调用 API。
+- 严格只读：不得创建、修改、删除、格式化或移动任何文件；不得写 DB/cache/log；不得修改 git index/branch/commit。
+- 工作区有无关 dirty changes 和父级保存的 review evidence；不得处理或评价其清理/提交。
+- 本轮只给复审 verdict，不修文件、不实现代码。
+
+## 第一轮结论与父级校正
+
+第一轮 AGY verdict 为 `REQUEST_CHANGES`。Codex 已按父级接受范围限定修订：
+
+1. 保留必填 `integer | null`；当前官方 Gemini `generateContent` structured-output 文档明确允许 type 数组包含 `"null"`，且 Gemini 2.5 Flash 支持 structured output。该事实已由父级对当前官方文档核验。不要继续基于旧 SDK/旧 Schema 枚举知识声称 null 不受支持；只审查 Spec 是否正确把它当作“实施时需重查和 smoke 的当前能力假设”。
+2. Evidence 增加 `evidence_type`、`allowed_dimensions`、`directness`、`freshness_policy`、命名空间和 registry。
+3. Fixture-first 明确可用 synthetic/人工 curated packet；真实 shadow 等待批准 provider/dataset，不降低证据门槛。
+4. Legacy cache 版本缺失改为 production-cutover blocker，不阻塞 fixture-first/隔离 artifact shadow。
+5. 增加 API failure、retry、cache/version/fallback、兼容性和 shadow 隔离 test matrix。
+6. 合并重复 requirements，保留 safety/grounding 边界。
+
+父级机械验证已通过：REQ-001~058 连续唯一、AC-001~011 连续唯一、引用均有定义、无 trailing whitespace、`git diff --check` 通过、仅目标 Spec hash 变化。
+
+## 必须复审的问题
+
+1. 第一轮四个 blocker 是否均已被准确解决或正确降级到对应里程碑。
+2. 修订后的 Evidence taxonomy 是否足够支持 fixture-first dataclass/schema/validator，而无需实现者猜测：
+   - 字段类型、null、枚举、日期和稳定排序；
+   - taxonomy registry、namespace 一致性；
+   - allowed_dimensions/directness/freshness 的矛盾处理；
+   - 确定性合同验证与人工语义判断的边界。
+3. `max_age_30d/90d/365d/550d` 是否工程上明确、内部一致；若 550d 或映射需要后续业务校准，判断它是 blocker 还是 non-blocking note，并说明理由。
+4. `integer | null` 的 schema、稳定对象形状与应用端状态校验是否一致。
+5. Fixture-first 是否真的不依赖未建设的真实 provider、生产 DB migration 或付费 API。
+6. Shadow 与 production table/pipeline/predictions/Telegram/cron 是否物理隔离。
+7. Cache versioning 是否被正确留到 cutover plan，同时没有让未来优先级/兼容行为含糊到无法规划。
+8. Test matrix 是否覆盖第一轮指出的 cache、retry、API failure、stale/version/fallback/backward compatibility 分支，且阶段划分不阻塞 fixture-first。
+9. Failure statuses 和 `failure_reason` 是否能审计且不会泄漏 secrets/stack trace；是否缺少必要状态。
+10. Requirements 合并后是否出现新冲突、重复、过度约束或不可验证要求。
+11. Milestone/AC mapping 是否足以派生下一份 fixture-first implementation plan。
+12. 最终判断必须区分：
+    - 能否进入 MILESTONE-002 fixture-first；
+    - 能否进入真实 shadow；
+    - 能否进入 production cutover。
+
+不要把后两个阶段尚未批准/未决的数据源或 DB 方案误判为 fixture-first blocker，除非它们确实让 fixture合同本身无法定义。
+
+## Finding 标准
+
+Blocking finding 必须包含：
+
+- Spec section / REQ / AC；
+- Snapshot 文件和行号；
+- 阻塞哪个具体里程碑；
+- 为什么实现者仍必须猜测或会造成错误生产语义；
+- 最小修复方向。
+
+偏好性措辞、未来 plan 才需要选择的实现细节、样本量不足等，如果不阻塞 fixture-first，不得列为本轮 P0/P1 blocker。把它们放入 Important notes 并标明对应后续阶段。
+
+## 输出契约
+
+严格输出中文 Markdown：
+
+# AGY 第二轮独立工程复审
+
+## Verdict
+`PASS`、`PASS_WITH_NOTES` 或 `REQUEST_CHANGES` 三选一。
+
+## Blocking findings
+没有写“无”。
+
+## First-review blocker resolution
+逐项说明第一轮四个 blocker 的状态。
+
+## Important notes
+区分 fixture-first、real shadow、production cutover。
+
+## Safety boundary assessment
+说明 DB、predictions、weights、cron、Telegram、API、依赖和历史数据边界。
+
+## Implementability by milestone
+分别给 MILESTONE-002、真实 shadow、production cutover 的 `READY | BLOCKED` 和理由。
+
+## Requirement and test assessment
+评价 taxonomy、状态、test matrix、cache/retry/fallback 和 AC mapping。
+
+## Recommended next step
+只给一个下一步。
+
+## Evidence references
+引用 Snapshot 中路径、Spec section/REQ/AC 和代码行号。
+
+不得声称修改、保存、执行实现或验证了文件。

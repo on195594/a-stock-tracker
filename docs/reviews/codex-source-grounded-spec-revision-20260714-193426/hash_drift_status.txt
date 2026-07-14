@@ -1,0 +1,2 @@
+EXPECTED_TARGET_ONLY
+docs/specs/2026-07-14-source-grounded-structured-qualitative-scoring-spec.md

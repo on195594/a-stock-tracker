@@ -56,6 +56,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | `docs/reviews/2026-07-02-tushare-capability-probe.md` | latest readiness evidence | 系统探测 | 新 probe 覆盖旧证据 | 最新交易日 probe PASS |
 | `accuracy_report.txt` | latest report | pipeline | 每周更新 | Phase 6 仍明确 report-only |
 | `docs/specs/2026-07-08-l3-v2-entry-signal-spec.md` | draft，已被离线回测验证约束 | Hermes PM + agy review | 等 qfq 覆盖问题解决后再决定是否修订 spec/TDD | 无 qfq 覆盖不得 GO_TDD |
+| `docs/specs/2026-07-14-source-grounded-structured-qualitative-scoring-spec.md` | draft，仅 spec，无生产变更 | Hermes PM | 审查 evidence 门槛、shadow gate 与 sentiment 职责；批准前不实施 | spec 获批后再派生 fixture-first implementation plan；真实 Gemini/DB/cutover 分别确认 |
 | `docs/plans/2026-07-08-l3-v2-offline-backtest-plan.md` | implemented | Hermes PM + agy review | 进入 qfq 获取方案设计，不写生产 DB | 脚本只读 `tracker.db`，独立 review gate 通过 |
 | `docs/reviews/2026-07-08-l3-v2-backtest-report.md` | latest L3 v2 offline evidence | offline script | qfq 限频解除/缓存方案完成后重跑覆盖报告 | buy_strong qfq issue 为 0，且 v2 pass_strong 有可评估样本 |
 | `docs/reviews/2026-07-10-l3-v2-backtest-retro.md` | task retrospective | Hermes PM | 后续 qfq 方案前先读 | 防止重复踩 token/限频/去重/qfq volume 问题 |

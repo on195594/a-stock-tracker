@@ -1,0 +1,8 @@
+M accuracy_report.txt
+ M docs/project-status.md
+ M scripts/fetch_qfq_daily_bars.py
+?? docs/reviews/agy-source-grounded-qualitative-spec-20260714-192539/
+?? docs/reviews/agy-source-grounded-qualitative-spec-r2-20260714-194111/
+?? docs/reviews/codex-source-grounded-spec-revision-20260714-193426/
+?? docs/specs/2026-07-14-source-grounded-structured-qualitative-scoring-spec.md
+?? tests/test_fetch_qfq_daily_bars.py

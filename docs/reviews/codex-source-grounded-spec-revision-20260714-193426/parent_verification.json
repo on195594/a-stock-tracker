@@ -1,0 +1,16 @@
+{
+  "req_contiguous": true,
+  "ac_contiguous": true,
+  "all_req_refs_defined": true,
+  "all_ac_refs_defined": true,
+  "no_trailing_whitespace": true,
+  "nullable_preserved": true,
+  "official_doc_cited": true,
+  "taxonomy_fields": true,
+  "fixture_real_shadow_split": true,
+  "cutover_only_blocker": true,
+  "test_matrix": true,
+  "approvals_pending": true,
+  "git_diff_check": true,
+  "only_target_hash_changed": true
+}
