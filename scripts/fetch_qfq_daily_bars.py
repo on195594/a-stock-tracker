@@ -5,12 +5,18 @@ import argparse
 import logging
 import re
 import sqlite3
+import sys
 from dataclasses import dataclass
 from datetime import date, timedelta
+from pathlib import Path
 from typing import Sequence
 
 import baostock as bs
 import pandas as pd
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from a_stock_lib.providers.baostock_quotes import to_baostock_stock_code
 from config import WATCHLIST
