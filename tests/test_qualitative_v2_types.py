@@ -97,6 +97,36 @@ def test_input_hash_changes_when_rubric_version_changes() -> None:
     assert ctx_a.compute_input_hash() != ctx_b.compute_input_hash()
 
 
+def test_input_hash_changes_when_schema_version_changes() -> None:
+    ctx_a = _make_context((_make_evidence(),))
+    ctx_b = QualitativeContext(
+        code=ctx_a.code,
+        name=ctx_a.name,
+        industry=ctx_a.industry,
+        as_of_date=ctx_a.as_of_date,
+        schema_version="qualitative-score-v3",
+        rubric_version=ctx_a.rubric_version,
+        taxonomy_version=ctx_a.taxonomy_version,
+        evidence=ctx_a.evidence,
+    )
+    assert ctx_a.compute_input_hash() != ctx_b.compute_input_hash()
+
+
+def test_input_hash_changes_when_taxonomy_version_changes() -> None:
+    ctx_a = _make_context((_make_evidence(),))
+    ctx_b = QualitativeContext(
+        code=ctx_a.code,
+        name=ctx_a.name,
+        industry=ctx_a.industry,
+        as_of_date=ctx_a.as_of_date,
+        schema_version=ctx_a.schema_version,
+        rubric_version=ctx_a.rubric_version,
+        taxonomy_version="taxonomy-v2",
+        evidence=ctx_a.evidence,
+    )
+    assert ctx_a.compute_input_hash() != ctx_b.compute_input_hash()
+
+
 def test_evidence_canonical_dict_sorts_allowed_dimensions() -> None:
     evidence = Evidence(
         evidence_id="industry.market_share",
