@@ -26,6 +26,8 @@ files = [
     "sheets_sync.py",
     "lib",
     "tests",
+    "qualitative_v2_types.py",
+    "qualitative_v2_taxonomy.py",
 ]
 ignore_missing_imports = true
 follow_imports = "skip"
