@@ -209,9 +209,9 @@ Official-doc constraints recorded for this spec:
 - **REQ-004:** `evidence_id` 必须唯一并符合 6.1 命名空间；业务授权主要由结构化 taxonomy 字段决定，字符串前缀只验证 registry 一致性。
 - **REQ-005:** Validator 必须拒绝重复 evidence ID，未知 type/dimension/directness/policy，未来日期，声明 freshness 与计算结果不一致，以及 type、namespace、allowed dimensions、directness、policy 之间的矛盾组合。
 - **REQ-006:** 现有基本面缓存可提供候选 `financial_metric`：`roe_3y_avg`、`roe_latest`、`net_profit_growth`、`debt_ratio`、`gross_margin`、`report_period`。`pb_percentile_10y` 是 `valuation_metric`，只能作 context，不能证明 moat 或 market_pos。
-- **REQ-007:** `moat=scored` 的机械最低门槛是至少一条 fresh、`direct`、允许 `moat` 的 `competitive_advantage`，并有至少一条 fresh `financial_metric` supporting evidence；缺任一类必须为 `insufficient_data`。
-- **REQ-008:** `market_pos=scored` 的机械最低门槛是至少一条 fresh、`direct`、允许 `market_pos` 的 `industry_position`；公司自身财务或估值不能单独证明行业地位。
-- **REQ-009:** `sentiment=scored` 的机械最低门槛是至少一条 fresh、`direct`、允许 `sentiment` 的 `company_announcement`、`news_report` 或 `analyst_consensus`；财报、估值或价格趋势不能替代。
+- **REQ-007:** `moat=scored` 的机械最低门槛是模型该维度输出 `evidence_ids` 中**实际引用**至少一条 fresh、`direct`、允许 `moat` 的 `competitive_advantage`，并**实际引用**至少一条 fresh `financial_metric` supporting evidence；缺任一类必须为 `insufficient_data`。证据包中存在合格证据但模型未在 `evidence_ids` 中引用，不满足本门槛。
+- **REQ-008:** `market_pos=scored` 的机械最低门槛是模型该维度输出 `evidence_ids` 中**实际引用**至少一条 fresh、`direct`、允许 `market_pos` 的 `industry_position`；公司自身财务或估值不能单独证明行业地位。证据包中存在合格证据但模型未引用，不满足本门槛。
+- **REQ-009:** `sentiment=scored` 的机械最低门槛是模型该维度输出 `evidence_ids` 中**实际引用**至少一条 fresh、`direct`、允许 `sentiment` 的 `company_announcement`、`news_report` 或 `analyst_consensus`；财报、估值或价格趋势不能替代。证据包中存在合格证据但模型未引用，不满足本门槛。
 - **REQ-010:** 机械门槛只判断合同资格，不宣称证据真实、相关、独立或足以支撑某个分数；这些语义质量与评分充分性仍由版本化 rubric 和盲审人工判断。
 - **REQ-011:** 缺少 REQ-007~009 的证据必须显式产生 `insufficient_data`；不得用固定分数伪装成模型结果，也不得降低门槛以提高通过率。
 - **REQ-012:** 所有输入只允许来自本地 fixture、已批准静态数据集或已批准 provider，并保留可审计的来源和日期；未经批准不得让模型自行搜索或补齐事实。
@@ -269,7 +269,7 @@ Official-doc constraints recorded for this spec:
 - **REQ-025:** Validator 必须拒绝未知或重复引用的 `evidence_id`，并拒绝任何引用证据不允许目标维度、不是所需 directness 或已 stale 的结果。
 - **REQ-026:** Validator 必须拒绝 `scored + null`、`insufficient_data + integer`、`scored + empty evidence_ids`、维度与 overall status 不一致等语义矛盾。
 - **REQ-027:** Validator 必须检查 `as_of_date` 与输入一致，并按 6.1 registry 重算 taxonomy 与 freshness；不能接受模型或 packet 自行放宽 policy。
-- **REQ-028:** Schema-valid 只表示结构通过。确定性 validator 必须拒绝未满足 REQ-007~009 最低门槛的结果；rationale 是否引入输入外事实、证据是否真实相关等主观语义由同 rubric 的盲审或显式注入的 review outcome 判断，并分类为 evidence/semantic invalid。两类失败都不得变成可信分数。
+- **REQ-028:** Schema-valid 只表示结构通过。确定性 validator 必须拒绝未满足 REQ-007~009 最低门槛的结果——门槛检查对象是**模型该维度输出 `evidence_ids` 实际引用的证据集合**，不是输入证据包中是否存在合格证据；即使证据包内存在合格证据，若模型未将其列入该维度的 `evidence_ids`，也不得判定为 `scored`（详见 REQ-007~009）。rationale 是否引入输入外事实、证据是否真实相关等主观语义由同 rubric 的盲审或显式注入的 review outcome 判断，并分类为 evidence/semantic invalid。两类失败都不得变成可信分数。
 - **REQ-029:** 任一维度 validation 失败时整个新结果为 `invalid`，不得只采用另两个维度；合法的 `insufficient_data` 则使 overall status 为 `insufficient_data`。
 - **REQ-030:** 现有 v1 `_validate()` 与生产路径在 cutover 批准前不得删除或改变；未来兼容适配器必须保留整数范围二次检查。
 
@@ -370,6 +370,7 @@ CREATE TABLE qualitative_score_evaluations (
 | Fixture-first | allowed-dimension mismatch | evidence 不允许目标维度或 registry 组合矛盾时拒绝 |
 | Fixture-first | stale 与边界日期 | age 等于窗口上限为 fresh；多一天为 stale；未来日期拒绝；声明状态不一致拒绝 |
 | Fixture-first | schema-valid 但语义无效 | 状态/overall 矛盾、最低门槛不足由 validator 拒绝；注入盲审判定的 unsupported rationale 时分类 semantic invalid |
+| Fixture-first | 证据包含合格证据但模型未引用 | fixture 输入包含满足 REQ-007~009 门槛的合格证据，但模型输出该维度 `evidence_ids` 未包含它（只引用了不合格或不足的证据）时，仍必须拒绝为 `scored`，不得因证据包本身合格而放行（验证 REQ-007~009/028 检查的是引用集合而非包可用性）|
 | Fixture-first | shape/range failures | extra field、missing field、错误类型及各维度上下界外值拒绝 |
 | Fixture-first | malformed response | 分类为 `MALFORMED_RESPONSE`，不产出 trusted result |
 | Fixture-first | mocked API timeout / 401 / 403 / 429 / 5xx | 分别映射 timeout/auth/rate-limit/server bounded status，reason 脱敏 |
