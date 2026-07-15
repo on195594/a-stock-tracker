@@ -1,6 +1,6 @@
 # a-stock-tracker 进化路线图
 
-**版本：** v1.13
+**版本：** v1.14
 **基线日期：** 2026-07-15
 **文档定位：** 系统演化的顶层规划文档。所有后续 Phase 的修改、补丁、设计决策均以本文档为基线。若实施中发现偏差，先更新本文档，再改代码。
 
@@ -34,10 +34,10 @@
 | Telegram 推送 | ✅ v2 门禁已上线 | 主推条件为 ≥ buy_strong 且 `l3_v2_signal=1`；v2 为 0/NULL 的高分股进入候补 |
 | Outcome 追踪 | ✅ 最近运行正常 | live DB 中 Framework A 30d/60d 结案 953/253；90d 尚无结案 |
 | L3 买点层 | ✅ v2 Phase 2+3 完成；选择性待观察 | QFQ 覆盖 35/35 codes、4585 行；2026-07-13/14 共写入 70 条 v2 记录且全部 pass；cron 工作日 16:00 采集 |
-| 定性评分 v2 | ✅ MILESTONE-002+003 完成 | 本地合同及文件型 shadow seam 已完成；Gemini 合同与 CLI smoke 通过，生产 DB/pipeline/cron/Telegram 未接入；MILESTONE-004~006 待单独批准 |
+| 定性评分 v2 | ✅ MILESTONE-002+003、M4 离线工具链完成 | v1.1 预注册、冻结抽样/corpus、create-only 制品链、双 reviewer/裁决/coverage API 已完成；真实 M4 evidence audit 未执行，MILESTONE-005/006 待单独批准 |
 | 行情数据源 | ✅ `READY_CRON` | `a-stock-lib==0.2.0`；2026-07-15 probe 的 daily/index/calendar/close cross-check 全部 PASS |
 | cron | ✅ 已按门禁重新安装 | weekly/weekly-PM/QFQ/daily/outcome 五项 managed cron 均已确认 |
-| 质量门禁 | ✅ 全绿 | `478 passed`；Ruff lint/format、mypy、`git diff --check` 全部通过 |
+| 质量门禁 | ✅ 全绿 | `554 passed`；Ruff lint/format、mypy、`git diff --check` 与 M4 v1/v1.1 协议 SHA-256 全部通过 |
 
 ### 关键数据规模
 

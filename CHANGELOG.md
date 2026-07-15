@@ -2,6 +2,14 @@
 
 所有重大变更按时间倒序记录。
 
+## 2026-07-15 — MILESTONE-004 v1.1 离线审计工具链
+- 冻结 evidence-feasibility audit v1.1：保留原 sampling seed，新增官方 SW2021 31 行业映射、source-aware URL 归一化和 binary64 Wilson 展示契约。
+- 新增纯 Python frame/sample/corpus、technical-attempt ledger、create-only artifact hash chain、双 reviewer seal/index、disagreement/adjudication 和 coverage report API。
+- Reviewer 默认禁用；执行授权绑定 bundle/prompt/model/backend/command/environment，隔离 HOME/cache/state/tmp，增量限制 stdout/stderr 并在超时或超限时终止整个进程组。
+- 严格审查后补强报告 lineage、company-scoped relationship evidence、原子 no-replace 发布、跨进程 stage 锁、manifest/seal TOCTOU 和完整裁决 schema。
+- 验证基线：76 项 M4 定向测试、554 项全量测试；Ruff lint/format、mypy、协议 v1/v1.1 SHA-256 和 `git diff --check` 全部通过。
+- 本轮未读取真实数据库、未检索真实公司、未运行真实 Reviewer；工具链完成不等同于 M4 coverage audit 完成或 MILESTONE-005 授权。
+
 ## 2026-07-15 — 运维门禁、PM 监控与质量基线修复
 - 刷新当天 Tushare capability probe：daily/index/calendar/close cross-check 全部 PASS，恢复 `READY_CRON` 并重新安装 managed cron。
 - 修复 weekly PM loop 将中文“失败 0 只”和降级 WARNING 误判为 FAIL：零失败忽略，降级 warning 保持 WARN，明确 ERROR/非零失败仍为 FAIL。

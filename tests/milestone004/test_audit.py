@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import qualitative_v2_audit as audit_module
 from qualitative_v2_audit import (
     QUERIES,
     SAMPLING_SEED,
@@ -23,8 +24,8 @@ from qualitative_v2_audit import (
     SampleManifest,
     SearchResult,
     TechnicalAttemptError,
+    UnadjudicatedDisagreementError,
     build_candidate_corpus,
-    build_coverage_report,
     canonical_json_bytes,
     load_preregistration_ref,
     normalize_url,
@@ -114,6 +115,29 @@ def relationship_reports(sample: SampleManifest) -> dict[str, BlobRef]:
         entry.ts_code: BlobRef(f"relationship-{entry.ts_code}.pdf", "f" * 64, 1, "application/pdf")
         for entry in sample.entries
     }
+
+
+def coverage_lineage(
+    sample: SampleManifest,
+    labels: dict[str, bool],
+    scope_dispositions: dict[str, str] | None = None,
+) -> audit_module.ValidatedAuditLineage:
+    corpus = build_candidate_corpus(sample, empty_matrix(sample), {}, relationship_reports(sample), ())
+    review_index_sha256 = "1" * 64
+    adjudication = {
+        "adjudication_version": "1",
+        "parent_review_index_sha256": review_index_sha256,
+        "decisions": [],
+        "scope_dispositions": scope_dispositions or {},
+    }
+    return audit_module._create_validated_audit_lineage(
+        corpus,
+        labels,
+        adjudication,
+        corpus_manifest_sha256="2" * 64,
+        review_index_sha256=review_index_sha256,
+        reviewer_seal_sha256s=("3" * 64, "4" * 64),
+    )
 
 
 def test_frozen_mapping_is_exact_partition() -> None:
@@ -267,6 +291,7 @@ def test_matrix_round_robin_and_three_deduplication_rules() -> None:
     corpus = build_candidate_corpus(sample, matrix, refs, relationship_reports(sample), ())
     assert [item.title for item in corpus.documents] == ["first", "url first", "hash first"]
     assert [item.matching_rule for item in corpus.duplicates] == ["document_number", "canonical_url", "raw_sha256"]
+    assert [(item.ts_code, item.blob.sha256) for item in corpus.relationship_reports] == [("000001.SH", "f" * 64)]
 
 
 def test_matrix_requires_explicit_zero_result_groups_and_contiguous_ranks() -> None:
@@ -277,6 +302,25 @@ def test_matrix_requires_explicit_zero_result_groups_and_contiguous_ranks() -> N
     result = SearchResult("000001.SH", "CNINFO", QUERIES[0], 2, "bad", "https://cninfo.com.cn/a", None, "1" * 64)
     matrix[(result.ts_code, result.source, result.query)] = [result]
     with pytest.raises(AuditBlockedError, match="contiguous"):
+        build_candidate_corpus(sample, matrix, {}, relationship_reports(sample), ())
+
+
+def test_matrix_rejects_nondefault_official_result_order() -> None:
+    sample = tiny_sample()
+    matrix = empty_matrix(sample)
+    result = SearchResult(
+        "000001.SH",
+        "CNINFO",
+        QUERIES[0],
+        1,
+        "reordered",
+        "https://cninfo.com.cn/a",
+        None,
+        "1" * 64,
+        default_order="date_descending",
+    )
+    matrix[(result.ts_code, result.source, result.query)] = [result]
+    with pytest.raises(AuditBlockedError, match="official default order"):
         build_candidate_corpus(sample, matrix, {}, relationship_reports(sample), ())
 
 
@@ -316,11 +360,66 @@ def test_wilson_frozen_binary64_vectors(x: int, n: int, lower: float, upper: flo
 def test_coverage_report_keeps_fail_and_pending_disposition() -> None:
     sample = select_sample(validate_frame(frame_rows(), date(2026, 7, 14), prereg()))
     labels = {entry.ts_code: (index % 2 == 0) for index, entry in enumerate(sample.entries)}
-    report = build_coverage_report(sample, labels, {"scope_dispositions": {}})
+    lineage = coverage_lineage(sample, labels)
+    report = audit_module._build_coverage_report_from_lineage(lineage)
     assert len(report.rows) == 8
     assert any(not row.passed and row.required_action == "exclude_layer_or_reaudit" for row in report.rows)
     assert report.milestone_005_approval_blocked
     assert all(len(row.wilson_lower_display.split(".")[1]) == 6 for row in report.rows)
+    assert report.corpus_manifest_sha256 == lineage.corpus_manifest_sha256 == "2" * 64
+    assert report.review_index_sha256 == lineage.review_index_sha256 == "1" * 64
+    assert report.reviewer_seal_sha256s == lineage.reviewer_seal_sha256s == ("3" * 64, "4" * 64)
+    assert report.adjudication_sha256 == lineage.adjudication_sha256
+
+
+def test_coverage_report_requires_validated_lineage() -> None:
+    sample = select_sample(validate_frame(frame_rows(), date(2026, 7, 14), prereg()))
+    assert "ValidatedAuditLineage" not in audit_module.__all__
+    assert "build_coverage_report" not in audit_module.__all__
+    assert not hasattr(audit_module, "build_coverage_report")
+    with pytest.raises(AuditBlockedError, match="validated audit lineage"):
+        audit_module._build_coverage_report_from_lineage(object())  # type: ignore[arg-type]
+    with pytest.raises(AuditBlockedError, match="review validation factory"):
+        audit_module.ValidatedAuditLineage(
+            build_candidate_corpus(sample, empty_matrix(sample), {}, relationship_reports(sample), ()),
+            "1" * 64,
+            "2" * 64,
+            ("3" * 64, "4" * 64),
+            "5" * 64,
+            b"{}\n",
+            b"{}\n",
+            _token=object(),
+        )
+
+
+def test_failed_coverage_layer_rejects_not_required_disposition() -> None:
+    sample = select_sample(validate_frame(frame_rows(), date(2026, 7, 14), prereg()))
+    labels = {entry.ts_code: False for entry in sample.entries}
+    with pytest.raises(AuditBlockedError, match="invalid scope disposition"):
+        audit_module._build_coverage_report_from_lineage(coverage_lineage(sample, labels, {"金融地产": "not_required"}))
+
+
+@pytest.mark.parametrize("invalid_outcome", [0, 1, "accept", {"outcome": True}])
+def test_validated_lineage_requires_strict_boolean_company_outcomes(invalid_outcome: object) -> None:
+    sample = select_sample(validate_frame(frame_rows(), date(2026, 7, 14), prereg()))
+    corpus = build_candidate_corpus(sample, empty_matrix(sample), {}, relationship_reports(sample), ())
+    labels: dict[str, object] = {entry.ts_code: False for entry in sample.entries}
+    labels[sample.entries[0].ts_code] = invalid_outcome
+    review_index_sha256 = "1" * 64
+    adjudication = {
+        "adjudication_version": "1",
+        "parent_review_index_sha256": review_index_sha256,
+        "decisions": [],
+    }
+    with pytest.raises(UnadjudicatedDisagreementError, match="must be booleans"):
+        audit_module._create_validated_audit_lineage(
+            corpus,
+            labels,  # type: ignore[arg-type]
+            adjudication,
+            corpus_manifest_sha256="2" * 64,
+            review_index_sha256=review_index_sha256,
+            reviewer_seal_sha256s=("3" * 64, "4" * 64),
+        )
 
 
 def test_canonical_json_is_utf8_compact_and_rejects_nan() -> None:

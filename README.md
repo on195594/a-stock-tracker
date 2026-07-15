@@ -7,7 +7,7 @@ A 股选股与方法论验证项目。当前定位是 **Framework A 定量评分
 ## 当前状态
 
 - 主分支：`master`
-- 当前阶段：Phase 5 L3 v2 已接入生产评分与推送；Phase 6 仍处于 report-only 观察期；来源约束的定性评分 v2 已完成 MILESTONE-002 合同和 MILESTONE-003 文件型 shadow seam，真实证据 shadow/cutover 尚未授权
+- 当前阶段：Phase 5 L3 v2 已接入生产评分与推送；Phase 6 仍处于 report-only 观察期；来源约束的定性评分 v2 已完成 MILESTONE-002、MILESTONE-003，以及 MILESTONE-004 v1.1 预注册和离线审计工具链；真实 evidence audit 尚未执行，真实证据 shadow/cutover 尚未授权
 - 生产框架：`SUPPORTED_FRAMEWORKS = {"A"}`；Framework B 历史数据保留，Phase 6 前不得启用生产写入
 - watchlist：35 只，维护在 `config.py`
 - 评分阈值：`buy_strong=44`、`buy_moderate=35`、`buy_light=26`
@@ -21,7 +21,7 @@ A 股选股与方法论验证项目。当前定位是 **Framework A 定量评分
 - Gemini 定性评分：`moat`、`market_pos`、`sentiment`，30 天缓存，失败时 all-or-nothing fallback 到固定值。
 - Outcome 追踪：记录 30/60/90 天收益、沪深 300 benchmark 和 generated `alpha_*d`。
 - L3 买点层：v1 保留用于历史审计；生产 daily 优先读取 QFQ 日线计算 `l3_v2_signal`，Telegram 主推已切换到 v2。
-- 定性评分 v2：MILESTONE-002 合同与 MILESTONE-003 文件型 shadow seam 已完成；独立 CLI 使用 Gemini 原生 JSON Schema、本地语义校验和 git-ignored JSONL artifact，未接生产 DB、pipeline、cron 或 Telegram。
+- 定性评分 v2：MILESTONE-002 合同、MILESTONE-003 文件型 shadow seam，以及 MILESTONE-004 离线审计 API 已完成；审计工具覆盖冻结抽样、候选 corpus、create-only 制品链、默认禁用的双 reviewer、裁决和 coverage report，未读取真实 DB、未检索真实公司、未运行真实 reviewer。
 - Telegram 推送：日报分为主推、候补和雷达；只有强分且 L3 v2 通过的股票进入主推，发送失败不阻断 daily。
 - Google Sheets 同步：展示层能力，失败只记录 warning，不是数据真相来源。
 - 数据治理：`docs/data-source-registry.yaml` 记录字段来源、缓存、刷新、fallback 和失败语义。
@@ -92,6 +92,11 @@ python3 scripts/run_qualitative_v2_shadow.py \
 # 删除某只股票的本地历史数据
 python3 pipeline.py remove 601857
 ```
+
+MILESTONE-004 只提供 `qualitative_v2_audit.py`、`qualitative_v2_audit_artifacts.py` 和
+`qualitative_v2_audit_review.py` 三个纯 Python API，没有业务 CLI。真实抽样框架读取、公司证据检索和
+Reviewer 子进程执行都需要后续单独授权；工具链完成本身不构成 MILESTONE-004 审计完成或
+MILESTONE-005 批准。
 
 `accuracy-report` 默认写入 `config.ACCURACY_REPORT_PATH`，生产路径为项目根目录的 `accuracy_report.txt`。测试会把该路径隔离到临时目录；手动运行报告可能改写 tracked 文件，提交前需要确认是否属于目标变更。
 

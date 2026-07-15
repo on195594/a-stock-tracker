@@ -7,7 +7,7 @@ Phase 1-3.6 历史实施记录，不再作为后续计划来源。
 
 当前工作重心：
 
-1. **P1 定性评分 v2：** 在 MILESTONE-002 授权内继续 task 2.3（Gemini JSON Schema builder + Prompt builder + fixture tests），完成后做里程碑级复核；不得接真实 Gemini、生产 DB 或 pipeline。
+1. **P1 定性评分 v2：** MILESTONE-004 v1.1 预注册与离线工具链已完成，但真实 evidence audit 未执行。下一步先由用户单独批准候选 source/dataset 的“审计授权”，再按冻结协议运行 frame → sample → corpus → 双 reviewer seal/index → adjudication → coverage report；不得把工具链完成视为 MILESTONE-005 授权。
 2. **P2 L3 v2 选择性：** 2026-07-13/14 的 70 条 v2 记录全部为 pass，18/18 strong 每日均未被 L3 过滤；先在 report 中增加 v2 状态/门禁分布并积累 outcome，不据两天样本直接改规则。
 3. **P2 模型验证：** 基于已自然结案的 60d 数据，执行 Framework A 五分位 60d/90d 延伸评估；不据此顺手调权重。
 4. **P3 Phase 6：** Framework B 继续 report-only，等待 B label 30d 自然结案至 20 条；生产化必须另写实施计划并获得明确授权。
@@ -16,25 +16,36 @@ Phase 1-3.6 历史实施记录，不再作为后续计划来源。
 
 - 当天 Tushare probe 的 daily/index/calendar/close cross-check 全部 PASS，readiness 恢复 `READY_CRON`，managed cron 已重新安装并确认五项任务齐全。
 - weekly PM loop 不再把中文“失败 0 只”判为失败；降级 `WARNING ... fallback失败` 归为 WARN，明确 ERROR/非零失败仍为 FAIL。真实 dry-run 从错误的 FAIL 恢复为符合现状的 WARN。
-- mypy 从 24 errors 修复为 47 source files 零错误；Ruff format 已对 31 个历史文件一次性基线化，当前 53 files 均已格式化。
-- 完整质量基线：`373 passed`，Ruff lint/format、mypy、`git diff --check` 全部通过。
+- mypy 从 24 errors 修复后保持零错误；Ruff format 基线持续有效。
+- 当前完整质量基线：`554 passed`，Ruff lint/format、mypy、M4 v1/v1.1 协议 SHA-256、`git diff --check` 全部通过。
 
-## 定性评分 v2 MILESTONE-002（当前 TODO）
+## 定性评分 v2 MILESTONE-002~003（已完成）
 
 **已完成：**
 
 - task 2.1：`qualitative_v2_types.py` + `qualitative_v2_taxonomy.py`，含 dataclass、版本化 input hash、两层 taxonomy；最终提交 `ec5d2e9`。
 - task 2.2：`qualitative_v2_validator.py`，含 shape/evidence/freshness/rubric/all-or-nothing 本地校验；最终提交 `1cbaf0a`。
-- 当前回归基线：`373 passed`，Ruff lint/format 与 mypy 全部通过。
+- task 2.3 及后续 P1/P2 边界加固已完成；MILESTONE-002 最终本地合同测试与独立复核通过。
+- MILESTONE-003 文件型 shadow seam 已完成；受控空 evidence packet Gemini smoke 通过，但不构成真实 evidence shadow。
 
-**Next（task 2.3）：**
+## 定性评分 v2 MILESTONE-004（工具链完成，真实 audit 待授权）
 
-1. 实现与 approved spec REQ-013~022 对齐的原生 JSON Schema builder，保持 `score` 为必填 `integer | null`。
-2. 实现只引用输入 evidence ID、禁止模型训练记忆补事实的 Prompt builder。
-3. 增加 fixture-first 正反例，覆盖 schema 形状、版本字段、nullable score 和 prompt 证据边界。
-4. 运行定向与全量测试、Ruff、mypy，全部通过后再宣布 MILESTONE-002 完成。
+**已完成：**
 
-**边界：** MILESTONE-003~006、真实 Gemini、生产 cache/schema、pipeline、cron、Telegram 和权重仍未授权。
+- 冻结 v1.1 完整协议、31 个 SW2021 一级行业映射、原 sampling seed 和 source-aware URL 归一化。
+- 实现纯 Python frame/sample/corpus、technical ledger、Wilson coverage、create-only artifact hash chain。
+- 实现默认禁用、显式 authorization、独立 HOME/cache/state/tmp、bounded stdout/stderr/timeout 的 Reviewer A/B。
+- 实现 schema-valid seal、review index、逐字段 disagreement、完整 adjudication 和报告时原子 lineage 复验。
+- 严格审查修复全部 P1/P2/P3；当前 76 项 M4 定向、554 项全量测试通过。
+
+**Next：**
+
+1. 用户选择并批准只用于 feasibility audit 的候选 source/provider 或带 provenance 静态 dataset。
+2. 在新版本冻结 frame 输入和真实采样，不读取或改写生产 `tracker.db`。
+3. 按 v1.1 完成证据收集、双 reviewer、用户裁决和 coverage report。
+4. FAIL 层必须由用户选择 `excluded` 或 `re_audit_new_version`；未完成处置不得批准 MILESTONE-005。
+
+**边界：** 当前没有业务 CLI；不得运行真实 Reviewer、检索真实公司或访问真实数据库，除非获得新的明确授权。MILESTONE-005/006、生产 cache/schema、pipeline、cron、Telegram 和权重仍未授权。
 
 ## L3 v2 qfq 覆盖修复（2026-07-12 已完成）
 

@@ -566,6 +566,8 @@ Verification signal:
 
 ### MILESTONE-004: Evidence feasibility audit（07-14 投资视角审查后新增，07-14 第二轮复核后细化）
 
+Status: **v1.1 preregistration and offline TDD toolchain completed 2026-07-15; real audit not executed**.
+
 Maps to: REQ-059~060, REQ-065~066, AC-012
 
 Outcome:
@@ -692,10 +694,10 @@ Spec-only 阶段只允许人工撤销本 Spec 的本次 patch，不得触碰其�
 ## 16. Approval state
 
 - Spec approval: **approved (2026-07-14，含07-14两轮codex方法论复核后的修订)**
-- Implementation approval: **MILESTONE-002 approved 2026-07-14 and completed；MILESTONE-003 file-artifact seam approved and completed 2026-07-15**——不隐含 MILESTONE-004~006 的授权（REQ-058）。
+- Implementation approval: **MILESTONE-002 approved 2026-07-14 and completed；MILESTONE-003 file-artifact seam approved and completed 2026-07-15；MILESTONE-004 v1.1 preregistration/offline toolchain completed 2026-07-15, but real audit execution remains pending separate authorization**——不隐含 MILESTONE-005~006 的授权（REQ-058）。
 - Production DB schema approval: pending
 - Controlled Gemini contract smoke approval: **approved and passed 2026-07-15**（空 evidence packet，Gemini 2.5 Flash，`VALID_INSUFFICIENT_DATA`）；这不是 MILESTONE-005 真实证据 shadow。
-- Real evidence Gemini shadow approval: pending MILESTONE-004/005 provider、样本、调用次数和人工复核协议。
+- Real evidence Gemini shadow approval: pending the frozen MILESTONE-004 coverage report and separate MILESTONE-005 provider、样本、调用次数和人工复核协议。
 - Production cutover approval: pending
 
 本 spec 是开发契约草案，不构成任何生产、数据库、付费调用、cron、Telegram 或权重修改授权。

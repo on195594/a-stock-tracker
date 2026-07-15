@@ -4,7 +4,7 @@
 
 This entrypoint evaluates an already-approved `QualitativeContext` without changing production scoring. It does not import `pipeline.py`, read or write `tracker.db`, update `qualitative_scores` or `predictions`, send Telegram messages, or change cron.
 
-MILESTONE-003 authorizes the file-artifact seam only. Real company evidence remains blocked until MILESTONE-004 completes the preregistered evidence-feasibility audit and MILESTONE-005 separately approves the provider/dataset, sample, call count, output location, and blind human review protocol.
+MILESTONE-003 authorizes the file-artifact seam only. MILESTONE-004 v1.1 preregistration and the offline audit toolchain are implemented, but the real evidence-feasibility audit has not run and no coverage report exists. Real company shadow remains blocked until MILESTONE-004 produces a frozen, adjudicated report and MILESTONE-005 separately approves the provider/dataset, sample, call count, output location, and blind human review protocol.
 
 ## Input contract
 
@@ -62,4 +62,4 @@ Stop and do not rerun with relaxed validation if any of these occurs:
 - local validation reports schema, evidence, or semantic invalidity;
 - the artifact is corrupt or exceeds its size limit;
 - any code path attempts to touch production DB, pipeline, cron, Telegram, weights, or historical predictions;
-- a real-company run has not received the separate MILESTONE-004/005 approvals.
+- the MILESTONE-004 coverage report and user scope disposition are absent, or the real-company run has not received the separate MILESTONE-005 approval.

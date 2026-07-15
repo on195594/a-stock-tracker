@@ -6,7 +6,7 @@ import hashlib
 import json
 import math
 import re
-from dataclasses import asdict, dataclass, fields, is_dataclass
+from dataclasses import dataclass, fields, is_dataclass
 from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_EVEN, Decimal
 from enum import StrEnum
@@ -111,12 +111,6 @@ class UnadjudicatedDisagreementError(AuditBlockedError):
 
 class TechnicalAttemptError(AuditBlockedError):
     """Raised when collection attempts are invalid or unresolved."""
-
-
-# Descriptive compatibility aliases for callers that name the protocol violation.
-FrameError = FrameValidationError
-FreezeViolationError = FrozenArtifactError
-ReviewerIsolationError = IsolationViolationError
 
 
 @dataclass(frozen=True, slots=True)
@@ -252,11 +246,19 @@ class DuplicateRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class RelationshipReport:
+    """Bind one relationship-report blob to the company it evidences."""
+
+    ts_code: str
+    blob: BlobRef
+
+
+@dataclass(frozen=True, slots=True)
 class CandidateCorpus:
     protocol_sha256: str
     sample: SampleManifest
     documents: tuple[CandidateDocument, ...]
-    relationship_reports: tuple[BlobRef, ...]
+    relationship_reports: tuple[RelationshipReport, ...]
     attempts: tuple[AttemptRecord, ...]
     technical_status: str
     duplicates: tuple[DuplicateRecord, ...] = ()
@@ -284,6 +286,64 @@ class CoverageReport:
     rows: tuple[CoverageRow, ...]
     overall_passed: bool
     milestone_005_approval_blocked: bool
+    corpus_manifest_sha256: str
+    review_index_sha256: str
+    reviewer_seal_sha256s: tuple[str, str]
+    adjudication_sha256: str
+
+
+_LINEAGE_TOKEN = object()
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class ValidatedAuditLineage:
+    """Opaque proof that coverage inputs passed the frozen review lineage gates."""
+
+    corpus: CandidateCorpus
+    corpus_manifest_sha256: str
+    review_index_sha256: str
+    reviewer_seal_sha256s: tuple[str, str]
+    adjudication_sha256: str
+    _final_labels_json: bytes
+    _adjudication_json: bytes
+
+    def __init__(
+        self,
+        corpus: CandidateCorpus,
+        corpus_manifest_sha256: str,
+        review_index_sha256: str,
+        reviewer_seal_sha256s: tuple[str, str],
+        adjudication_sha256: str,
+        final_labels_json: bytes,
+        adjudication_json: bytes,
+        *,
+        _token: object,
+    ) -> None:
+        if _token is not _LINEAGE_TOKEN:
+            raise AuditBlockedError("validated audit lineage must be created by the review validation factory")
+        object.__setattr__(self, "corpus", corpus)
+        object.__setattr__(self, "corpus_manifest_sha256", corpus_manifest_sha256)
+        object.__setattr__(self, "review_index_sha256", review_index_sha256)
+        object.__setattr__(self, "reviewer_seal_sha256s", reviewer_seal_sha256s)
+        object.__setattr__(self, "adjudication_sha256", adjudication_sha256)
+        object.__setattr__(self, "_final_labels_json", final_labels_json)
+        object.__setattr__(self, "_adjudication_json", adjudication_json)
+
+    @property
+    def final_labels(self) -> Mapping[str, Any]:
+        """Return a detached copy of the validated company outcomes."""
+        value = json.loads(self._final_labels_json)
+        if not isinstance(value, dict):
+            raise AuditBlockedError("validated final labels are not an object")
+        return value
+
+    @property
+    def adjudication(self) -> Mapping[str, Any]:
+        """Return a detached copy of the validated adjudication artifact."""
+        value = json.loads(self._adjudication_json)
+        if not isinstance(value, dict):
+            raise AuditBlockedError("validated adjudication is not an object")
+        return value
 
 
 def _sha256_bytes(value: bytes) -> str:
@@ -315,6 +375,60 @@ def canonical_json_bytes(value: object) -> bytes:
     return (
         json.dumps(convert(value), ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":")) + "\n"
     ).encode()
+
+
+def _create_validated_audit_lineage(
+    corpus: CandidateCorpus,
+    final_labels: Mapping[str, bool | str | Mapping[str, Any]],
+    adjudication: Mapping[str, Any],
+    *,
+    corpus_manifest_sha256: str,
+    review_index_sha256: str,
+    reviewer_seal_sha256s: tuple[str, str],
+) -> ValidatedAuditLineage:
+    """Create coverage inputs after the review module validates the full lineage."""
+    if corpus.technical_status != "complete" or _attempt_status(corpus.attempts) != "complete":
+        raise TechnicalAttemptError("coverage lineage requires a complete technical ledger")
+    if corpus.protocol_sha256 != corpus.sample.protocol_sha256:
+        raise HashDriftError("corpus and sample protocol hashes differ")
+    sample_codes = {entry.ts_code for entry in corpus.sample.entries}
+    if len(corpus.sample.entries) != 36 or len(sample_codes) != 36:
+        raise AuditBlockedError("coverage lineage requires the complete 36-company sample")
+    relationship_codes = [report.ts_code for report in corpus.relationship_reports]
+    if len(relationship_codes) != len(set(relationship_codes)) or set(relationship_codes) != sample_codes:
+        raise AuditBlockedError("coverage lineage requires one relationship report per sampled company")
+    if any(
+        not re.fullmatch(r"[0-9a-f]{64}", report.blob.sha256) or report.blob.byte_count <= 0
+        for report in corpus.relationship_reports
+    ):
+        raise AuditBlockedError("coverage lineage contains an invalid relationship-report blob")
+    if any(document.ts_code not in sample_codes for document in corpus.documents):
+        raise AuditBlockedError("candidate corpus contains a document outside the frozen sample")
+    if set(final_labels) != sample_codes:
+        raise UnadjudicatedDisagreementError("final labels must cover exactly the frozen sample")
+    if any(type(value) is not bool for value in final_labels.values()):
+        raise UnadjudicatedDisagreementError("validated company outcomes must be booleans")
+    if len(reviewer_seal_sha256s) != 2:
+        raise AuditBlockedError("coverage lineage requires exactly two reviewer seals")
+    hashes = (corpus_manifest_sha256, review_index_sha256, *reviewer_seal_sha256s)
+    if any(not re.fullmatch(r"[0-9a-f]{64}", value) for value in hashes):
+        raise HashDriftError("coverage lineage contains an invalid frozen-artifact hash")
+    if adjudication.get("parent_review_index_sha256") != review_index_sha256:
+        raise UnadjudicatedDisagreementError("adjudication does not reference the validated review index")
+    if not isinstance(adjudication.get("decisions"), list):
+        raise UnadjudicatedDisagreementError("validated adjudication decisions must be an array")
+    final_labels_json = canonical_json_bytes(final_labels)
+    adjudication_json = canonical_json_bytes(adjudication)
+    return ValidatedAuditLineage(
+        corpus,
+        corpus_manifest_sha256,
+        review_index_sha256,
+        reviewer_seal_sha256s,
+        _sha256_bytes(adjudication_json),
+        final_labels_json,
+        adjudication_json,
+        _token=_LINEAGE_TOKEN,
+    )
 
 
 def load_preregistration_ref(protocol_path: str | Path, hash_manifest_path: str | Path) -> PreregistrationRef:
@@ -577,6 +691,8 @@ def build_candidate_corpus(
         expected_sources = {"CNINFO", "SSE", "CNIPA"} if result.ts_code.endswith(".SH") else {"CNINFO", "SZSE", "CNIPA"}
         if result.ts_code not in sample_codes or result.source not in expected_sources or result.query not in QUERIES:
             raise AuditBlockedError("search result lies outside the frozen sample/source/query matrix")
+        if result.default_order != "official_default":
+            raise AuditBlockedError("search result does not preserve the frozen official default order")
         if not 1 <= result.rank <= 20:
             raise AuditBlockedError("search result rank must be in 1..20")
         by_key.setdefault((result.ts_code, result.source, result.query), []).append(result)
@@ -667,7 +783,9 @@ def build_candidate_corpus(
         not re.fullmatch(r"[0-9a-f]{64}", blob.sha256) or blob.byte_count <= 0 for blob in relationship_reports.values()
     ):
         raise AuditBlockedError("invalid relationship-report blob reference")
-    relation_values = tuple(relationship_reports[code] for code in sorted(relationship_reports))
+    relation_values = tuple(
+        RelationshipReport(code, relationship_reports[code]) for code in sorted(relationship_reports)
+    )
     return CandidateCorpus(
         protocol_sha256=sample.protocol_sha256,
         sample=sample,
@@ -697,14 +815,19 @@ def _display_six(value: float) -> str:
     return format(Decimal.from_float(value).quantize(Decimal("0.000001"), rounding=ROUND_HALF_EVEN), "f")
 
 
-def build_coverage_report(
-    sample: SampleManifest,
-    final_labels: Mapping[str, bool | str | Mapping[str, Any]],
-    adjudication: Mapping[str, Any] | None,
-) -> CoverageReport:
-    """Build the eight fixed-denominator coverage rows after all labels are final."""
-    if adjudication is None:
-        raise UnadjudicatedDisagreementError("adjudication artifact is required")
+def _build_coverage_report_from_lineage(lineage: ValidatedAuditLineage) -> CoverageReport:
+    """Build coverage only from inputs sealed by the full review-lineage validator."""
+    if not isinstance(lineage, ValidatedAuditLineage):
+        raise AuditBlockedError("coverage reporting requires validated audit lineage")
+    sample = lineage.corpus.sample
+    final_labels = lineage.final_labels
+    adjudication = lineage.adjudication
+    if lineage.corpus.technical_status != "complete" or _attempt_status(lineage.corpus.attempts) != "complete":
+        raise TechnicalAttemptError("coverage reporting requires a complete technical ledger")
+    if adjudication.get("parent_review_index_sha256") != lineage.review_index_sha256:
+        raise UnadjudicatedDisagreementError("adjudication lineage changed before reporting")
+    if _sha256_bytes(canonical_json_bytes(adjudication)) != lineage.adjudication_sha256:
+        raise HashDriftError("adjudication changed after lineage validation")
     if len(sample.entries) != 36:
         raise AuditBlockedError("coverage requires the complete 36-company sample")
     sample_codes = {entry.ts_code for entry in sample.entries}
@@ -738,7 +861,7 @@ def build_coverage_report(
         )
     for cap in ("low", "high"):
         groups.append(("market_cap", cap, tuple(item for item in sample.entries if item.market_cap_stratum == cap), 12))
-    dispositions = adjudication.get("scope_dispositions", {}) if isinstance(adjudication, Mapping) else {}
+    dispositions = adjudication.get("scope_dispositions", {})
     if not isinstance(dispositions, Mapping):
         raise AuditBlockedError("scope_dispositions must be an object")
     known_layers = set(SUPER_STRATA) | {"low", "high"}
@@ -751,8 +874,11 @@ def build_coverage_report(
         scorable = sum(covered(item.ts_code) for item in entries)
         lower, upper = wilson_interval(scorable, denominator)
         passed = scorable >= threshold
-        disposition = "not_required" if passed else str(dispositions.get(layer, "pending_user_decision"))
-        if disposition not in {"not_required", "pending_user_decision", "excluded", "re_audit_new_version"}:
+        disposition = str(dispositions.get(layer, "not_required" if passed else "pending_user_decision"))
+        allowed_dispositions = (
+            {"not_required"} if passed else {"pending_user_decision", "excluded", "re_audit_new_version"}
+        )
+        if disposition not in allowed_dispositions:
             raise AuditBlockedError(f"invalid scope disposition for {layer}")
         rows.append(
             CoverageRow(
@@ -775,7 +901,15 @@ def build_coverage_report(
     blocked = any(
         row.scope_disposition in {"pending_user_decision", "re_audit_new_version"} for row in rows if not row.passed
     )
-    return CoverageReport(tuple(rows), overall, blocked)
+    return CoverageReport(
+        tuple(rows),
+        overall,
+        blocked,
+        lineage.corpus_manifest_sha256,
+        lineage.review_index_sha256,
+        lineage.reviewer_seal_sha256s,
+        lineage.adjudication_sha256,
+    )
 
 
 __all__ = [
@@ -791,14 +925,11 @@ __all__ = [
     "Decision",
     "DuplicateRecord",
     "FrameRow",
-    "FrameError",
     "FrameValidationError",
     "FrameValidationResult",
     "FrozenArtifactError",
-    "FreezeViolationError",
     "HashDriftError",
     "IsolationViolationError",
-    "ReviewerIsolationError",
     "PassOverRecord",
     "PreregistrationRef",
     "QUERIES",
@@ -809,10 +940,10 @@ __all__ = [
     "SampleEntry",
     "SampleManifest",
     "SearchResult",
+    "RelationshipReport",
     "TechnicalAttemptError",
     "UnadjudicatedDisagreementError",
     "build_candidate_corpus",
-    "build_coverage_report",
     "canonical_json_bytes",
     "load_preregistration_ref",
     "normalize_url",
