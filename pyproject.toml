@@ -28,6 +28,7 @@ files = [
     "tests",
     "qualitative_v2_types.py",
     "qualitative_v2_taxonomy.py",
+    "qualitative_v2_validator.py",
 ]
 ignore_missing_imports = true
 follow_imports = "skip"
