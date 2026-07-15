@@ -27,9 +27,7 @@ def _bars(closes: list[float], volumes: list[float] | None = None) -> pd.DataFra
 
 
 def test_compute_entry_signal_passes_when_price_and_volume_rules_all_pass() -> None:
-    result = compute_entry_signal(
-        _bars([100.0] * 119 + [130.0], [100.0] * 115 + [300.0] * 5)
-    )
+    result = compute_entry_signal(_bars([100.0] * 119 + [130.0], [100.0] * 115 + [300.0] * 5))
 
     assert result.signal == 1
     assert result.version == ENTRY_SIGNAL_VERSION
@@ -37,9 +35,7 @@ def test_compute_entry_signal_passes_when_price_and_volume_rules_all_pass() -> N
 
 
 def test_compute_entry_signal_rejects_when_latest_close_below_ma60() -> None:
-    result = compute_entry_signal(
-        _bars([130.0] * 119 + [90.0], [100.0] * 115 + [300.0] * 5)
-    )
+    result = compute_entry_signal(_bars([130.0] * 119 + [90.0], [100.0] * 115 + [300.0] * 5))
 
     assert result.signal == 0
     assert result.version == ENTRY_SIGNAL_VERSION
@@ -47,9 +43,7 @@ def test_compute_entry_signal_rejects_when_latest_close_below_ma60() -> None:
 
 
 def test_compute_entry_signal_rejects_when_latest_close_passes_ma60_but_not_ma120() -> None:
-    result = compute_entry_signal(
-        _bars([200.0] * 60 + [100.0] * 59 + [120.0], [100.0] * 115 + [300.0] * 5)
-    )
+    result = compute_entry_signal(_bars([200.0] * 60 + [100.0] * 59 + [120.0], [100.0] * 115 + [300.0] * 5))
 
     assert result.signal == 0
     assert result.version == ENTRY_SIGNAL_VERSION
@@ -57,9 +51,7 @@ def test_compute_entry_signal_rejects_when_latest_close_passes_ma60_but_not_ma12
 
 
 def test_compute_entry_signal_rejects_when_volume_5d_average_not_above_20d_average() -> None:
-    result = compute_entry_signal(
-        _bars([100.0] * 119 + [130.0], [300.0] * 115 + [100.0] * 5)
-    )
+    result = compute_entry_signal(_bars([100.0] * 119 + [130.0], [300.0] * 115 + [100.0] * 5))
 
     assert result.signal == 0
     assert result.version == ENTRY_SIGNAL_VERSION

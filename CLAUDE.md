@@ -35,7 +35,7 @@ pytest tests/ -v                  # 修改前必须全通过
 | `pipeline.py` | 主编排器（init / daily / outcome-update / accuracy-report）|
 | `scorer.py` | 评分引擎（breakpoints 线性插值，不调 AKShare）|
 | `gemini_scorer.py` | Phase 3：Gemini 定性评分（30天缓存，退避重试，过期缓存降级，all-or-nothing fallback）|
-| `telegram_push.py` | Phase 3：每日信号推送（≥44 分 AND L3=1 触发）|
+| `telegram_push.py` | 每日分层推送（主推：≥44 分 AND `l3_v2_signal=1`；v2 0/NULL 的高分股进入候补）|
 | `weights.json` | 模型权重（阈值 buy_strong=44/moderate=35/light=26）|
 | `config.py` | watchlist / DB_PATH / LOG_DIR（禁止硬编码股票代码或路径）|
 | `.env` | GEMINI_API_KEY / TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID |
@@ -102,19 +102,22 @@ avg_score 有约 4-5 分系统性偏移，Phase 4 optimizer 训练需按 score_d
 
 ---
 
-## Phase 状态快照（2026-07-12）
+## Phase 状态快照（2026-07-15）
 
 | Phase | 状态 | 说明 |
 |-------|------|------|
-| Phase 3 Gemini/Telegram | ✅ 上线 | 定性评分（30天缓存，退避重试，过期缓存降级）；推送 ≥44 分 AND L3=1 触发 |
-| Phase 4 验证基础 | ✅ 完成，持续观察 | A框架 30d 结案 883 条；hit_rate 待验证 |
-| Phase 5 L3 买点层 v1 | ✅ 完成，持续观察 | L3 v1 接入 daily/推送/report；30d 样本不足 |
+| Phase 3 Gemini/Telegram | ✅ 上线 | v1 定性评分保持生产；主推由 ≥44 分 AND `l3_v2_signal=1` 触发 |
+| Phase 4 验证基础 | ✅ 完成，持续观察 | A框架 30d 结案 953 条，其中 post-fix 735 条；hit_rate 待验证 |
+| Phase 5 L3 买点层 v1 | ✅ 完成，保留审计 | 最新 tracked report 中 v1 pass 的 30d 已结案 71 条、命中率 2.8%；不再作为生产主推门禁 |
 | Phase 5 L3 v2（QFQ）| ✅ Phase 2+3 完成 | Phase 2: QFQ 35/35×130 行回填，pass_strong 激活，cron 16:00；Phase 3: 推送触发切换至 l3_v2_signal=1（commit e080f15） |
+| 定性评分 v2 MILESTONE-002 | 🔶 fixture-first 实施中 | task 2.1 dataclass/taxonomy 与 task 2.2 validator 已完成；schema/prompt builder 尚待实现；未接生产 |
 | Phase 6 多框架激活 | 🔶 report-only | Framework B 仍不写生产；B label 0/20 自然结案 |
 | Phase 7 选股宇宙 | ⏸ 未启动 | 待 Phase 6 完成或明确降级策略 |
 
 optimizer.py 启动门槛：Framework A 30d 结案 ≥ 100（已满足） AND `hit_rate_vs_300 > 55%`（待验证）。  
 Framework B 重启：在 scorer.py 加回 "B"，另写生产化 spec 并经独立审查。
+
+运维门禁是动态状态，不以本快照替代实时检查。恢复或重装 `daily` / `outcome-update` cron 前必须重新运行 `scripts/check_market_data_readiness.py --scope cron`；2026-07-15 当天 probe 的 daily/index/calendar/close cross-check 全部 PASS，当前为 `READY_CRON`，managed cron 已重新安装。
 
 ---
 

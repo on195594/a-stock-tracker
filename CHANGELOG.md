@@ -2,6 +2,23 @@
 
 所有重大变更按时间倒序记录。
 
+## 2026-07-15 — 运维门禁、PM 监控与质量基线修复
+- 刷新当天 Tushare capability probe：daily/index/calendar/close cross-check 全部 PASS，恢复 `READY_CRON` 并重新安装 managed cron。
+- 修复 weekly PM loop 将中文“失败 0 只”和降级 WARNING 误判为 FAIL：零失败忽略，降级 warning 保持 WARN，明确 ERROR/非零失败仍为 FAIL。
+- 修复全库 mypy 24 个错误；对 31 个历史文件执行一次性 Ruff format 基线化。
+- 新基线：`373 passed`，Ruff lint/format、mypy、`git diff --check` 全部通过。
+
+## 2026-07-15 — 定性评分 v2 fixture-first 合同（进行中）
+- 批准 `docs/specs/2026-07-14-source-grounded-structured-qualitative-scoring-spec.md`，授权范围仅限 MILESTONE-002 fixture-first。
+- task 2.1 已实现 `qualitative_v2_types.py` 与 `qualitative_v2_taxonomy.py`：版本化 dataclass、input hash 和 `evidence_type × claim_category` 两层 taxonomy。
+- task 2.2 已实现 `qualitative_v2_validator.py`：shape、版本、引用、freshness、rubric 和 all-or-nothing 的纯本地 fail-closed 校验。
+- 尚未实现 schema/prompt builder，也未接真实 Gemini、生产 DB、pipeline、cron、Telegram 或权重。
+
+## 2026-07-12 — L3 v2 QFQ 生产接入与推送切换
+- QFQ 日线完成 35/35 股票回填并增加工作日 16:00 采集 cron，生产 wrapper 优先使用完整 QFQ 窗口。
+- daily 已写入 L3 v2 审计字段；Telegram 主推条件从 v1 `entry_signal=1` 切换为 `l3_v2_signal=1`。
+- v1 继续保留用于历史审计，L3 v2 不修改 L1/L2 `total_score`。
+
 ## 2026-07-10 — L3 v2 只读离线回测与复盘
 - 新增 `scripts/offline_l3_v2_backtest.py`，以 SQLite `mode=ro` + `PRAGMA query_only=ON` 只读回测 Framework A predictions。
 - 输出 `signals_daily.csv`、`events_raw_daily.csv`、`events_dedup_20d.csv`、`metrics_summary.json` 和 Markdown 报告。

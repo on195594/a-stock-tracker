@@ -87,12 +87,20 @@ def compute_l3_v2_candidate(
 ) -> SignalResult:
     """L3 v2 no-tech-gate: only FREEFALL (close < MA120×0.65) rejects."""
     if price_panel is None:
-        return SignalResult(None, V2_VERSION, "unavailable", data_contract.unavailable_reason or "PRICE_PANEL_UNAVAILABLE", empty_metrics())
+        return SignalResult(
+            None,
+            V2_VERSION,
+            "unavailable",
+            data_contract.unavailable_reason or "PRICE_PANEL_UNAVAILABLE",
+            empty_metrics(),
+        )
     bars = price_panel.bars
     if len(bars) < 120:
         return SignalResult(None, V2_VERSION, "unavailable", "INSUFFICIENT_WINDOW", empty_metrics())
     if data_contract.is_stale:
-        return SignalResult(None, V2_VERSION, "unavailable", data_contract.stale_reason or "SOURCE_STALE", empty_metrics())
+        return SignalResult(
+            None, V2_VERSION, "unavailable", data_contract.stale_reason or "SOURCE_STALE", empty_metrics()
+        )
 
     closes = [bar.close for bar in bars]
     latest_close = closes[-1]
@@ -108,9 +116,7 @@ def compute_l3_v2_candidate(
         return SignalResult(0, V2_VERSION, "reject", "FREEFALL", metrics)
 
     qfq_ok = (
-        data_contract.adjusted == "qfq"
-        and not data_contract.unavailable_reason
-        and not data_contract.alignment_reason
+        data_contract.adjusted == "qfq" and not data_contract.unavailable_reason and not data_contract.alignment_reason
     )
     if qfq_ok:
         return SignalResult(1, V2_VERSION, "pass_strong", "PASS_STRONG", metrics)
@@ -123,12 +129,20 @@ def compute_l3_v2_oversold(
 ) -> SignalResult:
     """Oversold zone filter (方案1): pass only when close in MA120×[0.65, 0.95] and volume shrinking."""
     if price_panel is None:
-        return SignalResult(None, V2_OVERSOLD_VERSION, "unavailable", data_contract.unavailable_reason or "PRICE_PANEL_UNAVAILABLE", empty_metrics())
+        return SignalResult(
+            None,
+            V2_OVERSOLD_VERSION,
+            "unavailable",
+            data_contract.unavailable_reason or "PRICE_PANEL_UNAVAILABLE",
+            empty_metrics(),
+        )
     bars = price_panel.bars
     if len(bars) < 120:
         return SignalResult(None, V2_OVERSOLD_VERSION, "unavailable", "INSUFFICIENT_WINDOW", empty_metrics())
     if data_contract.is_stale:
-        return SignalResult(None, V2_OVERSOLD_VERSION, "unavailable", data_contract.stale_reason or "SOURCE_STALE", empty_metrics())
+        return SignalResult(
+            None, V2_OVERSOLD_VERSION, "unavailable", data_contract.stale_reason or "SOURCE_STALE", empty_metrics()
+        )
     if any(bar.volume is None for bar in bars[-20:]):
         return SignalResult(None, V2_OVERSOLD_VERSION, "unavailable", "MISSING_VOLUME", empty_metrics())
 
@@ -153,9 +167,7 @@ def compute_l3_v2_oversold(
         return SignalResult(0, V2_OVERSOLD_VERSION, "reject", "VOLUME_NOT_SHRINKING", metrics)
 
     qfq_ok = (
-        data_contract.adjusted == "qfq"
-        and not data_contract.unavailable_reason
-        and not data_contract.alignment_reason
+        data_contract.adjusted == "qfq" and not data_contract.unavailable_reason and not data_contract.alignment_reason
     )
     if qfq_ok:
         return SignalResult(1, V2_OVERSOLD_VERSION, "pass_strong", "PASS_STRONG", metrics)

@@ -1,4 +1,5 @@
 """Telegram 每日信号推送。daily cron 完成后调用，推送评分 >= 阈值的股票。"""
+
 import json
 import logging
 import os
@@ -139,7 +140,9 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
     if primary:
         lines = [f"🟢 主推（买点触发，总分>={threshold:.0f}）"]
         for code, name, total, quant, entry_signal, entry_version, moat, market_pos, v2_signal in primary:
-            lines.append(_format_stock_line(code, name, total, quant, entry_signal, entry_version, moat, market_pos, v2_signal))
+            lines.append(
+                _format_stock_line(code, name, total, quant, entry_signal, entry_version, moat, market_pos, v2_signal)
+            )
         sections.append("\n".join(lines))
 
     if backup:
@@ -151,7 +154,9 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
     if radar:
         lines = [f"🔵 雷达（{radar_min:.0f}~{threshold:.0f}分，关注）"]
         for code, name, total, quant, entry_signal, entry_version, moat, market_pos, v2_signal in radar:
-            lines.append(_format_stock_line(code, name, total, quant, entry_signal, entry_version, moat, market_pos, v2_signal))
+            lines.append(
+                _format_stock_line(code, name, total, quant, entry_signal, entry_version, moat, market_pos, v2_signal)
+            )
         sections.append("\n".join(lines))
 
     total_counted = len(primary) + len(backup) + len(radar)

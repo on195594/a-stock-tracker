@@ -1,30 +1,44 @@
 # TODOS
 
-## 当前有效计划来源（2026-07-07）
+## 当前有效计划来源（2026-07-15）
 
 当前阶段、门槛和边界以 `docs/evolution-roadmap.md` 为准。`docs/impl-plan.md` 已归档为
 Phase 1-3.6 历史实施记录，不再作为后续计划来源。
 
 当前工作重心：
 
-1. 继续 daily/outcome-update，等待 post-fix Framework A 30d outcome 自然结案。
-2. Phase 6 weekly PM loop 已自动化为每周一 09:30 cron + Telegram 摘要；下一步等首轮自然运行验证。
-3. 先解决 L3 v2 qfq 覆盖问题，再讨论 v2 TDD 或生产化。
-4. Framework B 只保持 report-only；生产化必须另写实施计划并获得明确授权。
+1. **P1 定性评分 v2：** 在 MILESTONE-002 授权内继续 task 2.3（Gemini JSON Schema builder + Prompt builder + fixture tests），完成后做里程碑级复核；不得接真实 Gemini、生产 DB 或 pipeline。
+2. **P2 L3 v2 选择性：** 2026-07-13/14 的 70 条 v2 记录全部为 pass，18/18 strong 每日均未被 L3 过滤；先在 report 中增加 v2 状态/门禁分布并积累 outcome，不据两天样本直接改规则。
+3. **P2 模型验证：** 基于已自然结案的 60d 数据，执行 Framework A 五分位 60d/90d 延伸评估；不据此顺手调权重。
+4. **P3 Phase 6：** Framework B 继续 report-only，等待 B label 30d 自然结案至 20 条；生产化必须另写实施计划并获得明确授权。
 
-## L3 v2 qfq 覆盖修复（当前 TODO）
+## 2026-07-15 运维与质量基线修复（已完成）
 
-**What:** 为 L3 v2 离线回测设计 qfq 获取方案，避开 Tushare `adj_factor` `1次/分钟` 限频。
+- 当天 Tushare probe 的 daily/index/calendar/close cross-check 全部 PASS，readiness 恢复 `READY_CRON`，managed cron 已重新安装并确认五项任务齐全。
+- weekly PM loop 不再把中文“失败 0 只”判为失败；降级 `WARNING ... fallback失败` 归为 WARN，明确 ERROR/非零失败仍为 FAIL。真实 dry-run 从错误的 FAIL 恢复为符合现状的 WARN。
+- mypy 从 24 errors 修复为 47 source files 零错误；Ruff format 已对 31 个历史文件一次性基线化，当前 53 files 均已格式化。
+- 完整质量基线：`373 passed`，Ruff lint/format、mypy、`git diff --check` 全部通过。
 
-**Why:** `scripts/offline_l3_v2_backtest.py --allow-tushare-fetch` 已能读取项目 `.env` token，但当前 qfq panels 为 `0/38`，buy_strong qfq issue 为 `766`，decision gate 正确保持 `NEED_QFQ`。没有 qfq 覆盖不得进入 `GO_TDD` 或 TDD 实装。
+## 定性评分 v2 MILESTONE-002（当前 TODO）
 
-**Next:**
-1. 写 qfq 限速/缓存/分批方案，明确是否使用项目内文件缓存，默认仍不写 `tracker.db`。
-2. 支持断点续跑，逐步补齐 `daily + adj_factor` qfq panels。
-3. 重跑 `docs/reviews/2026-07-08-l3-v2-backtest-report.md`，目标是 buy_strong qfq issue 降为 0。
-4. 复审报告和 artifacts；只有 qfq 覆盖充分且 AGY/Codex 复审通过后，才讨论 L3 v2 TDD。
+**已完成：**
 
-**Evidence:** `docs/reviews/2026-07-10-l3-v2-backtest-retro.md`。
+- task 2.1：`qualitative_v2_types.py` + `qualitative_v2_taxonomy.py`，含 dataclass、版本化 input hash、两层 taxonomy；最终提交 `ec5d2e9`。
+- task 2.2：`qualitative_v2_validator.py`，含 shape/evidence/freshness/rubric/all-or-nothing 本地校验；最终提交 `1cbaf0a`。
+- 当前回归基线：`373 passed`，Ruff lint/format 与 mypy 全部通过。
+
+**Next（task 2.3）：**
+
+1. 实现与 approved spec REQ-013~022 对齐的原生 JSON Schema builder，保持 `score` 为必填 `integer | null`。
+2. 实现只引用输入 evidence ID、禁止模型训练记忆补事实的 Prompt builder。
+3. 增加 fixture-first 正反例，覆盖 schema 形状、版本字段、nullable score 和 prompt 证据边界。
+4. 运行定向与全量测试、Ruff、mypy，全部通过后再宣布 MILESTONE-002 完成。
+
+**边界：** MILESTONE-003~006、真实 Gemini、生产 cache/schema、pipeline、cron、Telegram 和权重仍未授权。
+
+## L3 v2 qfq 覆盖修复（2026-07-12 已完成）
+
+原 `NEED_QFQ` 已由 BaoStock QFQ 采集与 `daily_bars.adjusted='qfq'` 缓存方案解除。当前 35/35 代码有 QFQ 覆盖，工作日 16:00 cron 已安装，daily 与 Telegram 主推已使用 `l3_v2_signal`。历史离线 gate 和限频问题保留在 `docs/reviews/2026-07-10-l3-v2-backtest-retro.md` 供追溯，不再是当前 TODO。
 
 ## Phase 6 生产化门槛（当前有效）
 
@@ -42,7 +56,7 @@ Phase 1-3.6 历史实施记录，不再作为后续计划来源。
 
 **Status:** 已实现并安装 crontab，commit `f181010`。实现前已写 `docs/specs/2026-07-02-weekly-pm-loop-automation-spec.md`，并经 agy 独立审查 PASS。验证基线：`211 passed, 1 skipped`。
 
-**Next:** 等首轮自然 cron 摘要。若摘要为 WARN/FAIL，先修行情/cron/数据质量链路；不得把自动摘要作为启用 Framework B 生产写入的授权。
+**Status update（2026-07-15）：** failure-marker 已修复并补 5 个中文零失败/正失败/降级 WARNING 回归场景。真实 dry-run 返回 WARN：weekly 的降级 fallback warning 被保留为 WARN，readiness 为 READY，Phase 6 仍因 B label 样本不足保持 WARN。不得把自动摘要作为启用 Framework B 生产写入的授权。
 
 **How to apply:**
 
@@ -63,7 +77,7 @@ cat logs/weekly-pm-loop-summary.txt
 
 **How to apply:** `python3 pipeline.py accuracy-report` 后查看 "Framework B 金融候选 dry-run" / "Framework B 非金融质量候选" 章节，候选行末尾出现 `⚠️ROE趋势预警` 即为触发。
 
-## L3 / market data boundary 后续工作
+## L3 / market data boundary（历史迁移记录）
 
 **What:** 继续执行 `docs/plans/2026-06-05-market-data-boundary-refactor-plan.md` 的小步改造。
 
@@ -73,9 +87,7 @@ cat logs/weekly-pm-loop-summary.txt
 - L3 窗口不足时会优先读取当天 `market_data_audit`，保留真实失败原因，例如 `REMOTE_DISCONNECTED`。
 - 2026-06-08 当日 20 条 L3 metadata 已从笼统 `INSUFFICIENT_WINDOW` 修正为审计中的真实失败原因。
 
-**Next:** 停止继续修补 AKShare/东方财富行情入口，按
-`docs/plans/2026-06-09-market-data-provider-replacement-plan.md` 迁移到新的 provider。
-推荐顺序：Tushare Pro 主源 → BaoStock fallback/历史预热 → 基本面 AKShare 迁移另开计划。
+**Status:** 行情入口已按 `docs/plans/2026-06-09-market-data-provider-replacement-plan.md` 迁移到 Tushare Pro 主源 + BaoStock degraded fallback，AKShare/东方财富行情入口已禁用；本节不再是当前 TODO。基本面 AKShare 迁移仍需另开计划和授权。
 
 ## Phase 4 启动门槛（历史记录）
 

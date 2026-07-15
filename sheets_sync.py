@@ -31,10 +31,11 @@ SCOPES = [
 
 # Tab 名称
 TAB_PREDICTIONS = "predictions_detail"
-TAB_ACCURACY    = "accuracy_report"
+TAB_ACCURACY = "accuracy_report"
 
 
 # ─── 连接 ────────────────────────────────────────────────────────────────────
+
 
 def _get_client() -> gspread.Client:
     creds = Credentials.from_service_account_file(CREDENTIALS_PATH, scopes=SCOPES)
@@ -52,12 +53,25 @@ def _get_or_create_tab(sh: gspread.Spreadsheet, title: str) -> gspread.Worksheet
 
 # schema contract: 列顺序与 accuracy_report 公式中的列字母绑定，加列需同步更新公式
 _PRED_HEADERS = [
-    "code", "name", "framework", "score_date", "total_score", "quant_score",  # A-F
-    "price_at_score",                                                           # G
-    "outcome_30d", "benchmark_30d", "alpha_30d",                               # H-J
-    "outcome_60d", "benchmark_60d", "alpha_60d",                               # K-M
-    "outcome_90d", "benchmark_90d", "alpha_90d",                               # N-P
-    "estimate_flag", "report_period", "weights_hash",                          # Q-S
+    "code",
+    "name",
+    "framework",
+    "score_date",
+    "total_score",
+    "quant_score",  # A-F
+    "price_at_score",  # G
+    "outcome_30d",
+    "benchmark_30d",
+    "alpha_30d",  # H-J
+    "outcome_60d",
+    "benchmark_60d",
+    "alpha_60d",  # K-M
+    "outcome_90d",
+    "benchmark_90d",
+    "alpha_90d",  # N-P
+    "estimate_flag",
+    "report_period",
+    "weights_hash",  # Q-S
 ]
 
 
@@ -94,11 +108,19 @@ def push_predictions(sh: gspread.Spreadsheet) -> int:
 #   E=total_score | H=outcome_30d | J=alpha_30d | K=outcome_60d | M=alpha_60d
 
 _ACC_HEADERS = [
-    "分段", "记录数",
-    "30d命中率(绝对)", "30d命中率(vs沪深300)", "30d平均alpha",
-    "60d命中率(绝对)", "60d命中率(vs沪深300)", "60d平均alpha",
-    "90d命中率(绝对)", "90d命中率(vs沪深300)", "90d平均alpha",
+    "分段",
+    "记录数",
+    "30d命中率(绝对)",
+    "30d命中率(vs沪深300)",
+    "30d平均alpha",
+    "60d命中率(绝对)",
+    "60d命中率(vs沪深300)",
+    "60d平均alpha",
+    "90d命中率(绝对)",
+    "90d命中率(vs沪深300)",
+    "90d平均alpha",
 ]
+
 
 def _load_thresholds() -> dict:
     try:
@@ -107,18 +129,19 @@ def _load_thresholds() -> dict:
     except Exception:
         return {}
 
-_thr      = _load_thresholds()
-_STR      = _thr.get("buy_strong",   44)
-_MOD      = _thr.get("buy_moderate", 35)
-_LGT      = _thr.get("buy_light",    26)
+
+_thr = _load_thresholds()
+_STR = _thr.get("buy_strong", 44)
+_MOD = _thr.get("buy_moderate", 35)
+_LGT = _thr.get("buy_light", 26)
 
 # 分段从 weights.json thresholds 动态读取，hash 自动感知阈值变更
 _ACC_SEGMENTS = [
-    (f"≥{_STR}分",            _STR,  200),
-    (f"{_MOD}-{_STR}分",      _MOD,  _STR),
-    (f"{_LGT}-{_MOD}分",      _LGT,  _MOD),
-    (f"<{_LGT}分",            0,     _LGT),
-    ("全部",                   0,     200),
+    (f"≥{_STR}分", _STR, 200),
+    (f"{_MOD}-{_STR}分", _MOD, _STR),
+    (f"{_LGT}-{_MOD}分", _LGT, _MOD),
+    (f"<{_LGT}分", 0, _LGT),
+    ("全部", 0, 200),
 ]
 
 _P = TAB_PREDICTIONS  # 公式引用的源 tab，与 TAB_PREDICTIONS 保持同步
@@ -141,16 +164,16 @@ def _acc_row(label: str, lo: int, hi: int) -> list:
     P = f"{_P}!P:P"
     sc = f'{E},">="&{lo},{E},"<"&{hi},'  # score range condition
 
-    count   = f'=COUNTIFS({sc}{H},"<>")'
-    h30     = f'=IFERROR(COUNTIFS({sc}{H},">"&0)/COUNTIFS({sc}{H},"<>"),"")'
-    vs30    = f'=IFERROR(COUNTIFS({sc}{J},">"&0)/COUNTIFS({sc}{J},"<>"),"")'
-    avg30   = f'=IFERROR(AVERAGEIFS({J},{sc}{H},"<>"),"")'
-    h60     = f'=IFERROR(COUNTIFS({sc}{K},">"&0)/COUNTIFS({sc}{K},"<>"),"")'
-    vs60    = f'=IFERROR(COUNTIFS({sc}{M},">"&0)/COUNTIFS({sc}{M},"<>"),"")'
-    avg60   = f'=IFERROR(AVERAGEIFS({M},{sc}{K},"<>"),"")'
-    h90     = f'=IFERROR(COUNTIFS({sc}{N},">"&0)/COUNTIFS({sc}{N},"<>"),"")'
-    vs90    = f'=IFERROR(COUNTIFS({sc}{P},">"&0)/COUNTIFS({sc}{P},"<>"),"")'
-    avg90   = f'=IFERROR(AVERAGEIFS({P},{sc}{N},"<>"),"")'
+    count = f'=COUNTIFS({sc}{H},"<>")'
+    h30 = f'=IFERROR(COUNTIFS({sc}{H},">"&0)/COUNTIFS({sc}{H},"<>"),"")'
+    vs30 = f'=IFERROR(COUNTIFS({sc}{J},">"&0)/COUNTIFS({sc}{J},"<>"),"")'
+    avg30 = f'=IFERROR(AVERAGEIFS({J},{sc}{H},"<>"),"")'
+    h60 = f'=IFERROR(COUNTIFS({sc}{K},">"&0)/COUNTIFS({sc}{K},"<>"),"")'
+    vs60 = f'=IFERROR(COUNTIFS({sc}{M},">"&0)/COUNTIFS({sc}{M},"<>"),"")'
+    avg60 = f'=IFERROR(AVERAGEIFS({M},{sc}{K},"<>"),"")'
+    h90 = f'=IFERROR(COUNTIFS({sc}{N},">"&0)/COUNTIFS({sc}{N},"<>"),"")'
+    vs90 = f'=IFERROR(COUNTIFS({sc}{P},">"&0)/COUNTIFS({sc}{P},"<>"),"")'
+    avg90 = f'=IFERROR(AVERAGEIFS({P},{sc}{N},"<>"),"")'
     return [label, count, h30, vs30, avg30, h60, vs60, avg60, h90, vs90, avg90]
 
 
@@ -175,6 +198,7 @@ def _init_accuracy_formula_tab(sh: gspread.Spreadsheet) -> None:
 
 
 # ─── 主入口 ──────────────────────────────────────────────────────────────────
+
 
 def sync_all() -> None:
     """全量同步：写入 predictions_detail，并初始化 accuracy_report 公式。"""

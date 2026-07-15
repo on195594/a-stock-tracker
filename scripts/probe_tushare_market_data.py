@@ -312,21 +312,21 @@ def main() -> int:
             )
         )
     checks.append(
-            _timed(
-                f"index_daily {INDEX_SAMPLE} ({to_tushare_index_code(INDEX_SAMPLE)})",
-                lambda: provider.fetch_index_bars(INDEX_SAMPLE),
-                kind="index_daily",
-                blocking=False,
-            )
+        _timed(
+            f"index_daily {INDEX_SAMPLE} ({to_tushare_index_code(INDEX_SAMPLE)})",
+            lambda: provider.fetch_index_bars(INDEX_SAMPLE),
+            kind="index_daily",
+            blocking=False,
         )
+    )
     checks.append(
-            _timed(
-                "trade_cal SSE",
-                lambda: provider.fetch_trade_calendar(start, end),
-                kind="trade_cal",
-                blocking=False,
-            )
+        _timed(
+            "trade_cal SSE",
+            lambda: provider.fetch_trade_calendar(start, end),
+            kind="trade_cal",
+            blocking=False,
         )
+    )
 
     close_status, close_rows = _close_cross_checks(checks)
     decision = _decide_probe(token, checks, close_status)

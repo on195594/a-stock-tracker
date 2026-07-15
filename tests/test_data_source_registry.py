@@ -7,8 +7,16 @@ REGISTRY_PATH = Path(__file__).resolve().parents[1] / "docs" / "data-source-regi
 WEIGHTS_PATH = Path(__file__).resolve().parents[1] / "weights.json"
 
 REQUIRED_KEYS = {
-    "field", "owner", "requirement", "source_primary", "source_fallback",
-    "cache", "refresh", "affects_scoring", "affects_outcome", "failure_behavior",
+    "field",
+    "owner",
+    "requirement",
+    "source_primary",
+    "source_fallback",
+    "cache",
+    "refresh",
+    "affects_scoring",
+    "affects_outcome",
+    "failure_behavior",
 }
 
 
@@ -48,6 +56,7 @@ def test_registry_blocks_have_required_keys() -> None:
 
 def test_registry_covers_framework_a_scored_fields() -> None:
     import json
+
     weights = json.loads(WEIGHTS_PATH.read_text(encoding="utf-8"))
     framework_a = weights["frameworks"]["A"]
     expected = set(framework_a["fundamental"]) | set(framework_a["valuation"])
@@ -56,9 +65,16 @@ def test_registry_covers_framework_a_scored_fields() -> None:
 
 def test_registry_covers_report_contract_fields() -> None:
     expected = {
-        "framework", "weights_hash", "report_period", "price_at_score",
-        "outcome_30d", "outcome_60d", "outcome_90d",
-        "benchmark_30d", "benchmark_60d", "benchmark_90d",
+        "framework",
+        "weights_hash",
+        "report_period",
+        "price_at_score",
+        "outcome_30d",
+        "outcome_60d",
+        "outcome_90d",
+        "benchmark_30d",
+        "benchmark_60d",
+        "benchmark_90d",
     }
     assert expected <= _fields()
 

@@ -261,8 +261,18 @@ def read_cache(
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise CacheInvalidError("METADATA_UNREADABLE") from exc
     required_meta = {
-        "schema_version", "code", "ts_code", "requested_start", "requested_end",
-        "min_trade_date", "max_trade_date", "row_count", "source", "fetched_at", "status", "sha256",
+        "schema_version",
+        "code",
+        "ts_code",
+        "requested_start",
+        "requested_end",
+        "min_trade_date",
+        "max_trade_date",
+        "row_count",
+        "source",
+        "fetched_at",
+        "status",
+        "sha256",
     }
     if not required_meta.issubset(metadata):
         raise CacheInvalidError("METADATA_FIELDS")
@@ -287,7 +297,10 @@ def read_cache(
     frame = validate_cache_frame(frame, expected_code=code)
     if len(frame) != metadata["row_count"]:
         raise CacheInvalidError("ROW_COUNT_MISMATCH")
-    if str(frame["trade_date"].iloc[0]) != metadata["min_trade_date"] or str(frame["trade_date"].iloc[-1]) != metadata["max_trade_date"]:
+    if (
+        str(frame["trade_date"].iloc[0]) != metadata["min_trade_date"]
+        or str(frame["trade_date"].iloc[-1]) != metadata["max_trade_date"]
+    ):
         raise CacheInvalidError("TRADE_DATE_RANGE_MISMATCH")
     start_s = _compact_date(requested_start)
     end_s = _compact_date(requested_end)
@@ -350,14 +363,10 @@ class FixedIntervalRateLimiter:
                         last_wall = float(previous_state["last_request_started_epoch"])
                     except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
                         raise CacheInvalidError("RATE_STATE_INVALID") from exc
-                    persistent_wait = max(
-                        0.0, self.interval_seconds - max(0.0, now_wall - last_wall)
-                    )
+                    persistent_wait = max(0.0, self.interval_seconds - max(0.0, now_wall - last_wall))
                 process_wait = 0.0
                 if self._last_monotonic is not None:
-                    process_wait = max(
-                        0.0, self.interval_seconds - (now_monotonic - self._last_monotonic)
-                    )
+                    process_wait = max(0.0, self.interval_seconds - (now_monotonic - self._last_monotonic))
                 wait = max(process_wait, persistent_wait)
                 if wait > 0:
                     time.sleep(wait)
@@ -365,9 +374,7 @@ class FixedIntervalRateLimiter:
                 actual_wall = time.time()
                 state = {
                     "last_request_started_epoch": actual_wall,
-                    "last_request_started_utc": datetime.fromtimestamp(
-                        actual_wall, timezone.utc
-                    ).isoformat(),
+                    "last_request_started_utc": datetime.fromtimestamp(actual_wall, timezone.utc).isoformat(),
                 }
                 fh.seek(0)
                 fh.truncate()

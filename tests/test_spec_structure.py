@@ -3,16 +3,12 @@
 These tests keep Phase A acceptance criteria machine-checkable instead of
 self-referential prose checks.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
 
-SPEC_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "docs"
-    / "specs"
-    / "2026-05-29-agent-engineering-governance-spec.md"
-)
+SPEC_PATH = Path(__file__).resolve().parents[1] / "docs" / "specs" / "2026-05-29-agent-engineering-governance-spec.md"
 
 
 def _read_spec() -> str:

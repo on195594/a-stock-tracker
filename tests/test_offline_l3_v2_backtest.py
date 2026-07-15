@@ -169,14 +169,27 @@ def test_v2_pass_strong_ignores_volume_ratio() -> None:
     for i in range(-5, 0):
         b = bars[i]
         bars[i] = DailyBar(
-            date=b.date, open=b.open, high=b.high, low=b.low, close=b.close,
+            date=b.date,
+            open=b.open,
+            high=b.high,
+            low=b.low,
+            close=b.close,
             volume=1.0,
-            source=b.source, adjusted=b.adjusted, volume_unit=b.volume_unit,
-            fetched_at=b.fetched_at, quality_status=b.quality_status,
+            source=b.source,
+            adjusted=b.adjusted,
+            volume_unit=b.volume_unit,
+            fetched_at=b.fetched_at,
+            quality_status=b.quality_status,
         )
     panel = PricePanel(
-        code="000001", adjusted="qfq", bars=tuple(bars), source="baostock",
-        volume_unit="lot", preload_start=date(2025, 1, 1), stale_reason=None, limitation=None,
+        code="000001",
+        adjusted="qfq",
+        bars=tuple(bars),
+        source="baostock",
+        volume_unit="lot",
+        preload_start=date(2025, 1, 1),
+        stale_reason=None,
+        limitation=None,
     )
     result = compute_l3_v2_candidate(panel, _qfq_contract())
 
@@ -239,6 +252,7 @@ def test_v2_freefall_boundary_exact_equal_is_not_freefall() -> None:
 # compute_l3_v2_oversold — basic coverage
 # ---------------------------------------------------------------------------
 
+
 def _make_oversold_panel(
     last_close: float = 85.0,
     vol_early: float = 100.0,
@@ -248,24 +262,45 @@ def _make_oversold_panel(
     early_bars = [_make_bar(100.0) for _ in range(115)]
     for i, b in enumerate(early_bars):
         early_bars[i] = DailyBar(
-            date=b.date, open=b.open, high=b.high, low=b.low, close=b.close,
+            date=b.date,
+            open=b.open,
+            high=b.high,
+            low=b.low,
+            close=b.close,
             volume=vol_early,
-            source=b.source, adjusted=b.adjusted, volume_unit=b.volume_unit,
-            fetched_at=b.fetched_at, quality_status=b.quality_status,
+            source=b.source,
+            adjusted=b.adjusted,
+            volume_unit=b.volume_unit,
+            fetched_at=b.fetched_at,
+            quality_status=b.quality_status,
         )
     last_bars = []
     for _ in range(5):
         b = _make_bar(last_close)
-        last_bars.append(DailyBar(
-            date=b.date, open=b.open, high=b.high, low=b.low, close=last_close,
-            volume=vol_last5,
-            source=b.source, adjusted=b.adjusted, volume_unit=b.volume_unit,
-            fetched_at=b.fetched_at, quality_status=b.quality_status,
-        ))
+        last_bars.append(
+            DailyBar(
+                date=b.date,
+                open=b.open,
+                high=b.high,
+                low=b.low,
+                close=last_close,
+                volume=vol_last5,
+                source=b.source,
+                adjusted=b.adjusted,
+                volume_unit=b.volume_unit,
+                fetched_at=b.fetched_at,
+                quality_status=b.quality_status,
+            )
+        )
     return PricePanel(
-        code="000001", adjusted="qfq", bars=tuple(early_bars + last_bars),
-        source="baostock", volume_unit="lot",
-        preload_start=date(2025, 1, 1), stale_reason=None, limitation=None,
+        code="000001",
+        adjusted="qfq",
+        bars=tuple(early_bars + last_bars),
+        source="baostock",
+        volume_unit="lot",
+        preload_start=date(2025, 1, 1),
+        stale_reason=None,
+        limitation=None,
     )
 
 

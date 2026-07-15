@@ -42,9 +42,19 @@ def _insert_bars(
         db.execute(
             "INSERT INTO daily_bars VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                CODE, trade_date, None, None, None, close, 100.0, source,
-                adjusted, "share" if adjusted == "qfq" else "lot",
-                "2026-01-01T00:00:00+00:00", "ok", None,
+                CODE,
+                trade_date,
+                None,
+                None,
+                None,
+                close,
+                100.0,
+                source,
+                adjusted,
+                "share" if adjusted == "qfq" else "lot",
+                "2026-01-01T00:00:00+00:00",
+                "ok",
+                None,
             ),
         )
     db.commit()

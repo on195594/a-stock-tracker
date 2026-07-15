@@ -165,7 +165,9 @@ def readiness_status(*, require_fresh_report: bool = False, allow_stale_days: in
                 reasons.append(f"Capability Checks is {decision.capability_checks}")
             if decision.dependent_jobs != "ALLOWED":
                 reasons.append(f"Index/Calendar Dependent Jobs is {decision.dependent_jobs}")
-            capability_ready = daily_ready and decision.capability_checks == "PASS" and decision.dependent_jobs == "ALLOWED"
+            capability_ready = (
+                daily_ready and decision.capability_checks == "PASS" and decision.dependent_jobs == "ALLOWED"
+            )
 
     return ReadinessStatus(daily_ready, capability_ready, report, reasons)
 

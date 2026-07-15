@@ -21,13 +21,29 @@ from typing import Any
 
 DB_PATH = os.path.expanduser("~/a-stock-tracker/tracker.db")
 
-_SAFE_IDENTIFIER_RE = _re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
+_SAFE_IDENTIFIER_RE = _re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 # 行业 → TTL 映射（关键词匹配，越靠前优先级越高）
 INDUSTRY_TTL_MAP = [
     # 168h：季报驱动、基本面变化慢（对齐 weekly cron 7 天刷新周期）
-    (["银行", "保险", "券商", "国有大行", "股份制银行", "城商行", "农商行",
-      "水电", "公用事业", "电网", "水务", "燃气", "高速"], 168),
+    (
+        [
+            "银行",
+            "保险",
+            "券商",
+            "国有大行",
+            "股份制银行",
+            "城商行",
+            "农商行",
+            "水电",
+            "公用事业",
+            "电网",
+            "水务",
+            "燃气",
+            "高速",
+        ],
+        168,
+    ),
     # 48h：情绪/渠道敏感，但 daily 最多两天不刷新
     (["白酒", "消费", "食品", "零售", "饮料", "乳制品"], 48),
 ]
@@ -101,19 +117,23 @@ def get_db() -> sqlite3.Connection:
         created_at      TEXT,
         UNIQUE(code, framework, score_date)
     )""")
-    _ensure_columns(conn, "predictions", {
-        "entry_signal": "INTEGER",
-        "entry_signal_version": "TEXT",
-        "entry_signal_status": "TEXT",
-        "entry_signal_reason": "TEXT",
-        "entry_signal_source": "TEXT",
-        "entry_signal_fetched_at": "TEXT",
-        "l3_v2_signal": "INTEGER",
-        "l3_v2_version": "TEXT",
-        "l3_v2_status": "TEXT",
-        "l3_v2_reason": "TEXT",
-        "l3_v2_fetched_at": "TEXT",
-    })
+    _ensure_columns(
+        conn,
+        "predictions",
+        {
+            "entry_signal": "INTEGER",
+            "entry_signal_version": "TEXT",
+            "entry_signal_status": "TEXT",
+            "entry_signal_reason": "TEXT",
+            "entry_signal_source": "TEXT",
+            "entry_signal_fetched_at": "TEXT",
+            "l3_v2_signal": "INTEGER",
+            "l3_v2_version": "TEXT",
+            "l3_v2_status": "TEXT",
+            "l3_v2_reason": "TEXT",
+            "l3_v2_fetched_at": "TEXT",
+        },
+    )
     conn.execute("""CREATE TABLE IF NOT EXISTS daily_bars (
         code TEXT NOT NULL,
         trade_date TEXT NOT NULL,
@@ -130,9 +150,13 @@ def get_db() -> sqlite3.Connection:
         error_code TEXT,
         PRIMARY KEY (code, trade_date, adjusted)
     )""")
-    _ensure_columns(conn, "daily_bars", {
-        "volume_unit": "TEXT NOT NULL DEFAULT 'unknown'",
-    })
+    _ensure_columns(
+        conn,
+        "daily_bars",
+        {
+            "volume_unit": "TEXT NOT NULL DEFAULT 'unknown'",
+        },
+    )
     conn.execute("""CREATE INDEX IF NOT EXISTS idx_daily_bars_code_date
         ON daily_bars(code, trade_date DESC)""")
     conn.execute("""CREATE TABLE IF NOT EXISTS market_data_audit (
@@ -166,9 +190,7 @@ def get_db() -> sqlite3.Connection:
     )""")
 
     # 兼容旧库：qualitative_scores 曾经用 code 单列主键，无法支持漂移检测。
-    pk_cols = conn.execute(
-        "SELECT COUNT(*) FROM pragma_table_info('qualitative_scores') WHERE pk > 0"
-    ).fetchone()[0]
+    pk_cols = conn.execute("SELECT COUNT(*) FROM pragma_table_info('qualitative_scores') WHERE pk > 0").fetchone()[0]
     if pk_cols == 1:
         conn.execute("DROP TABLE qualitative_scores")
         conn.execute("""CREATE TABLE qualitative_scores (
@@ -445,9 +467,7 @@ def set_fundamentals(
 def list_codes() -> list[str]:
     """返回所有基本面缓存中的股票代码（含过期），按更新时间倒序。"""
     conn = get_db()
-    rows = conn.execute(
-        "SELECT code FROM stock_fundamentals ORDER BY updated_at DESC"
-    ).fetchall()
+    rows = conn.execute("SELECT code FROM stock_fundamentals ORDER BY updated_at DESC").fetchall()
     conn.close()
     return [r[0] for r in rows]
 
@@ -455,9 +475,7 @@ def list_codes() -> list[str]:
 def get_spot_em_snapshot(date_str: str) -> list | None:
     """查询当日全量行情快照，不存在返回 None。"""
     conn = get_db()
-    row = conn.execute(
-        "SELECT data FROM spot_em_snapshot WHERE snapshot_date=?", (date_str,)
-    ).fetchone()
+    row = conn.execute("SELECT data FROM spot_em_snapshot WHERE snapshot_date=?", (date_str,)).fetchone()
     conn.close()
     return None if row is None else json.loads(row[0])
 
@@ -534,9 +552,7 @@ def cmd_list() -> None:
 
 def cmd_cleanup() -> None:
     conn = get_db()
-    stocks = conn.execute(
-        "SELECT code, name, updated_at, ttl_hours FROM stock_fundamentals"
-    ).fetchall()
+    stocks = conn.execute("SELECT code, name, updated_at, ttl_hours FROM stock_fundamentals").fetchall()
     expired_names = [f"{s[1]}({s[0]})" for s in stocks if is_expired(s[2], s[3])]
     for code, _, updated_at, ttl_hours in stocks:
         if is_expired(updated_at, ttl_hours):

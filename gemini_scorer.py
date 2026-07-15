@@ -3,6 +3,7 @@ Gemini 定性评分模块。
 对 moat / market_pos / sentiment 三个字段调用 Gemini 2.5 Flash，结果缓存 30 天。
 任何字段缺失/越界/超时/非JSON → all-or-nothing fallback 到 phase1_fixed 值。
 """
+
 import json
 import logging
 import os
@@ -50,8 +51,7 @@ def _check_cache_stale(code: str) -> dict | None:
     """返回最新缓存值，无论是否过期。缓存不存在时返回 None。"""
     db = get_db()
     row = db.execute(
-        "SELECT moat, market_pos, sentiment FROM qualitative_scores"
-        " WHERE code=? ORDER BY scored_date DESC LIMIT 1",
+        "SELECT moat, market_pos, sentiment FROM qualitative_scores WHERE code=? ORDER BY scored_date DESC LIMIT 1",
         (code,),
     ).fetchone()
     db.close()
@@ -95,13 +95,15 @@ def _call_gemini(code: str, name: str) -> dict | None:
         f"- moat（护城河，1-10整数）\n"
         f"- market_pos（市场地位，1-5整数）\n"
         f"- sentiment（市场情绪/近期消息面，1-5整数）\n"
-        f"只返回 JSON，格式：{{\"moat\": 7, \"market_pos\": 4, \"sentiment\": 3}}"
+        f'只返回 JSON，格式：{{"moat": 7, "market_pos": 4, "sentiment": 3}}'
     )
 
-    payload = json.dumps({
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 1, "maxOutputTokens": 256, "thinkingConfig": {"thinkingBudget": 0}},
-    }).encode("utf-8")
+    payload = json.dumps(
+        {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 1, "maxOutputTokens": 256, "thinkingConfig": {"thinkingBudget": 0}},
+        }
+    ).encode("utf-8")
 
     url = GEMINI_API_URL.format(model=GEMINI_MODEL, key=api_key)
     req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})

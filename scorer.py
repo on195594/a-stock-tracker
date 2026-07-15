@@ -94,6 +94,7 @@ def score_stock(
 
     if weights is None:
         import os
+
         weights_path = os.path.join(os.path.dirname(__file__), "weights.json")
         with open(weights_path, encoding="utf-8") as f:
             weights = json.load(f)

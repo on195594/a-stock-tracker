@@ -23,6 +23,7 @@ validate_context_dict) with a fabricated freshness_status="fresh".
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
 
@@ -92,7 +93,7 @@ class EvidenceValidationResult:
     rejection_reason: str | None
 
 
-def validate_evidence_dict(raw: dict[str, object], *, as_of_date_value: date) -> EvidenceValidationResult:
+def validate_evidence_dict(raw: Mapping[str, object], *, as_of_date_value: date) -> EvidenceValidationResult:
     """REQ-003~005/061/064: validate one raw evidence dict, fail closed."""
     keys = set(raw.keys())
 
@@ -292,7 +293,7 @@ class ContextValidationResult:
     rejection_reason: str | None
 
 
-def validate_context_dict(raw: dict[str, object]) -> ContextValidationResult:
+def validate_context_dict(raw: Mapping[str, object]) -> ContextValidationResult:
     """REQ-001~005: validate the full evidence packet, fail closed."""
     keys = set(raw.keys())
     missing = _REQUIRED_CONTEXT_KEYS - keys
@@ -499,7 +500,7 @@ def _validate_dimension_result(
     )
 
 
-def validate_model_output(raw_output: dict[str, object], *, context: QualitativeContext) -> ScoringValidationResult:
+def validate_model_output(raw_output: Mapping[str, object], *, context: QualitativeContext) -> ScoringValidationResult:
     """REQ-015~019/024~029: validate the model's structured output against
     context. All-or-nothing: any per-dimension violation invalidates the
     entire result (REQ-029) -- callers must not adopt individual dimensions

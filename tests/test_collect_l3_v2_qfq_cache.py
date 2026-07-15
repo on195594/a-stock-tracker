@@ -31,9 +31,7 @@ def create_db(path: Path) -> None:
 
 
 def api_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
-    daily = pd.DataFrame(
-        [{"trade_date": "20260709", "open": 10, "high": 11, "low": 9, "close": 10.5, "vol": 100}]
-    )
+    daily = pd.DataFrame([{"trade_date": "20260709", "open": 10, "high": 11, "low": 9, "close": 10.5, "vol": 100}])
     factors = pd.DataFrame([{"trade_date": "20260709", "adj_factor": 1.0}])
     return daily, factors
 
@@ -72,11 +70,15 @@ class FakeLogin:
 
 class FakeBaoStock:
     def __init__(self, rows: list[list[str]] | None = None, login: FakeLogin | None = None) -> None:
-        self.rows = rows if rows is not None else [
-            ["2026-07-09", "10", "11", "9", "10.5", "10000", "1"],
-            ["2026-07-08", "", "10", "8", "9", "50", "1"],
-            ["2026-07-07", "8", "9", "7", "8.5", "75", "0"],
-        ]
+        self.rows = (
+            rows
+            if rows is not None
+            else [
+                ["2026-07-09", "10", "11", "9", "10.5", "10000", "1"],
+                ["2026-07-08", "", "10", "8", "9", "50", "1"],
+                ["2026-07-07", "8", "9", "7", "8.5", "75", "0"],
+            ]
+        )
         self.login_result = login or FakeLogin()
         self.login_count = 0
         self.logout_count = 0

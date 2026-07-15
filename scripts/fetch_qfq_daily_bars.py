@@ -1,4 +1,5 @@
 """Fetch BaoStock QFQ (前复权) daily bars and upsert into daily_bars (adjusted='qfq')."""
+
 from __future__ import annotations
 
 import argparse
@@ -41,17 +42,11 @@ class Args:
 
 
 def parse_args(argv: Sequence[str] | None = None) -> Args:
-    parser = argparse.ArgumentParser(
-        description="Fetch BaoStock QFQ daily bars for watchlist codes."
-    )
+    parser = argparse.ArgumentParser(description="Fetch BaoStock QFQ daily bars for watchlist codes.")
     parser.add_argument(
-        "--backfill-days", type=int, default=200,
-        help="Calendar days to fetch (default: 200 ≈ 134 trading days)"
+        "--backfill-days", type=int, default=200, help="Calendar days to fetch (default: 200 ≈ 134 trading days)"
     )
-    parser.add_argument(
-        "--code", default=None,
-        help="Single 6-digit stock code (omit to fetch full watchlist)"
-    )
+    parser.add_argument("--code", default=None, help="Single 6-digit stock code (omit to fetch full watchlist)")
     ns = parser.parse_args(argv)
     if ns.backfill_days <= 0:
         parser.error("--backfill-days must be positive")
@@ -90,7 +85,9 @@ def _query_qfq(code: str, start_date: str, end_date: str) -> pd.DataFrame:
 def _fetch_one(conn: sqlite3.Connection, code: str, start_date: str, end_date: str) -> int:
     frame = _query_qfq(code, start_date, end_date)
     count = upsert_daily_bars(
-        conn, code, frame,
+        conn,
+        code,
+        frame,
         source="baostock.qfq",
         adjusted="qfq",
         volume_unit="share",

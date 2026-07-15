@@ -178,16 +178,17 @@ def _append_framework_b_deep_dive(
     if not scored:
         return
 
-    field_names = sorted({
-        field
-        for row in scored
-        for field in set(row["score_a"]["component_scores"]) | set(row["score_b"]["component_scores"])
-    })
+    field_names = sorted(
+        {
+            field
+            for row in scored
+            for field in set(row["score_a"]["component_scores"]) | set(row["score_b"]["component_scores"])
+        }
+    )
     lines.append("B-A 分项得分差异均值：")
     for field in field_names:
         avg_delta = sum(
-            row["score_b"]["component_scores"].get(field, 0.0)
-            - row["score_a"]["component_scores"].get(field, 0.0)
+            row["score_b"]["component_scores"].get(field, 0.0) - row["score_a"]["component_scores"].get(field, 0.0)
             for row in scored
         ) / len(scored)
         lines.append(f"  - {field}: {avg_delta:+.2f}")
@@ -372,8 +373,7 @@ def _framework_b_quality_recommendation(summaries: dict[str, dict]) -> str:
         )
     name, summary = max(eligible, key=lambda item: item[1]["avg_delta"])
     return (
-        f"后续积累建议：三组规则均未转正，暂以 {name} 作为观察上限，"
-        f"B-A={summary['avg_delta']:+.2f}，不设计独立阈值。"
+        f"后续积累建议：三组规则均未转正，暂以 {name} 作为观察上限，B-A={summary['avg_delta']:+.2f}，不设计独立阈值。"
     )
 
 
@@ -415,9 +415,11 @@ def _framework_b_provisional_threshold_data(summaries: dict[str, dict]) -> dict 
         "light": sum(1 for score in scores_desc if light <= score < moderate),
         "below": sum(1 for score in scores_desc if score < light),
     }
-    median = scores_desc[len(scores_desc) // 2] if len(scores_desc) % 2 else (
-        scores_desc[len(scores_desc) // 2 - 1] + scores_desc[len(scores_desc) // 2]
-    ) / 2
+    median = (
+        scores_desc[len(scores_desc) // 2]
+        if len(scores_desc) % 2
+        else (scores_desc[len(scores_desc) // 2 - 1] + scores_desc[len(scores_desc) // 2]) / 2
+    )
     return {
         "rule_name": rule_name,
         "summary": summary,
@@ -499,15 +501,9 @@ def _append_framework_b_provisional_thresholds(lines: list[str], summaries: dict
     light = threshold_data["light"]
     label_counts = threshold_data["label_counts"]
     median = threshold_data["median"]
-    lines.append(
-        f"  来源规则：{rule_name}（样本={summary['scored_count']}，B-A={summary['avg_delta']:+.2f}）"
-    )
-    lines.append(
-        f"  B分数分布：min={min(scores_desc):.1f}, median={median:.1f}, max={max(scores_desc):.1f}"
-    )
-    lines.append(
-        f"  草案阈值：strong≥{strong:.1f}, moderate≥{moderate:.1f}, light≥{light:.1f}"
-    )
+    lines.append(f"  来源规则：{rule_name}（样本={summary['scored_count']}，B-A={summary['avg_delta']:+.2f}）")
+    lines.append(f"  B分数分布：min={min(scores_desc):.1f}, median={median:.1f}, max={max(scores_desc):.1f}")
+    lines.append(f"  草案阈值：strong≥{strong:.1f}, moderate≥{moderate:.1f}, light≥{light:.1f}")
     lines.append(
         "  标签分布："
         f"strong={label_counts['strong']}, moderate={label_counts['moderate']}, "
@@ -606,17 +602,14 @@ def _append_framework_b_label_outcome_tracking(
             f"无A记录={group['no_a_record']} A均分={avg_a:.2f} B均分={avg_b:.2f} "
             f"B-A={avg_delta:+.2f} 行业={industries}"
         )
-        lines.append(
-            f"    30d可结案日期：最早={earliest_due} 最近={latest_due} 下一批预计={next_due}"
-        )
+        lines.append(f"    30d可结案日期：最早={earliest_due} 最近={latest_due} 下一批预计={next_due}")
         overdue_risks.extend((label, item) for item in rows if item["status"] == "missing_after_due")
     if overdue_risks:
         lines.append("  到期但 outcome 仍为空风险清单（最多 8 条）：")
         for label, item in sorted(overdue_risks, key=lambda row: (row[1]["due_date"] or date.max, row[1]["code"]))[:8]:
             due_text = _fmt_due_delta(item["due_date"]) if item["due_date"] else "N/A"
             lines.append(
-                f"    - {label}: {item['name']}({item['code']}) "
-                f"score_date={item['score_date']} due={due_text}"
+                f"    - {label}: {item['name']}({item['code']}) score_date={item['score_date']} due={due_text}"
             )
     else:
         lines.append("  到期但 outcome 仍为空风险清单：无")
@@ -649,18 +642,12 @@ def append_framework_b_quality_expansion(lines: list[str], db: sqlite3.Connectio
         summaries[rule_name] = summary
         lines.append(f"{rule_name} 规则：{_framework_b_quality_rule_text(rule)}")
         lines.append(
-            f"  候选={summary['candidate_count']} "
-            f"可评分={summary['scored_count']} "
-            f"跳过={summary['skipped_count']}"
+            f"  候选={summary['candidate_count']} 可评分={summary['scored_count']} 跳过={summary['skipped_count']}"
         )
         if summary["scored_count"] == 0:
             lines.append("  扩展候选为空：当前 watchlist 没有同时满足该组约束的非金融标的。")
             continue
-        lines.append(
-            f"  A均分={summary['avg_a']:.2f} "
-            f"B均分={summary['avg_b']:.2f} "
-            f"B-A={summary['avg_delta']:+.2f}"
-        )
+        lines.append(f"  A均分={summary['avg_a']:.2f} B均分={summary['avg_b']:.2f} B-A={summary['avg_delta']:+.2f}")
         lines.append(
             "  行业覆盖："
             + ", ".join(
@@ -683,7 +670,9 @@ def append_framework_b_quality_expansion(lines: list[str], db: sqlite3.Connectio
                 f"{_roe_trend_warning_suffix(row)}"
             )
 
-    base_summary = summaries.get("base", {"scored": [], "industry_counts": {}, "candidate_count": 0, "scored_count": 0, "skipped_count": 0})
+    base_summary = summaries.get(
+        "base", {"scored": [], "industry_counts": {}, "candidate_count": 0, "scored_count": 0, "skipped_count": 0}
+    )
     if base_summary["scored"]:
         lines.append("base 扩展候选明细：")
         for row in sorted(base_summary["scored"], key=lambda item: item["score_b"]["total_score"], reverse=True)[:10]:
@@ -774,15 +763,9 @@ def append_phase6_readiness(
         f"最早可评估={earliest_due_text}, overdue风险={b_label_overdue_count}）"
     )
     if b_label_closed_count < 20:
-        lines.append(
-            "B label 阈值/命中率解释：禁止"
-            f"（样本未结案，需等待自然结案；最早可评估={earliest_due_text}）"
-        )
+        lines.append(f"B label 阈值/命中率解释：禁止（样本未结案，需等待自然结案；最早可评估={earliest_due_text}）")
     elif b_label_overdue_count:
-        lines.append(
-            "B label 阈值/命中率解释：禁止"
-            f"（存在 {b_label_overdue_count} 条到期但 outcome 为空风险）"
-        )
+        lines.append(f"B label 阈值/命中率解释：禁止（存在 {b_label_overdue_count} 条到期但 outcome 为空风险）")
     else:
         lines.append("B label 阈值/命中率解释：可开始审阅，但仍不得作为交易或生产门槛。")
     report_only_ready = data_ready and b_ready

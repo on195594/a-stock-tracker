@@ -21,7 +21,15 @@ TELEGRAM_TIMEOUT_S = 10
 STATUS_ORDER = {"OK": 0, "WARN": 1, "FAIL": 2}
 DATE_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
 FAILURE_RE = re.compile(
-    r"(Traceback|ERROR|FAILED(?!\s*=\s*0)|失败|崩溃|database is locked)",
+    r"(Traceback|ERROR|FAILED(?!\s*=\s*0(?:\b|$))|"
+    r"失败(?!\s*(?:[:=：]\s*)?0(?:\s*(?:只|个|项|条))?(?:\s|[,，;；.)）]|$))|"
+    r"崩溃|database is locked)",
+    re.IGNORECASE,
+)
+HARD_FAILURE_RE = re.compile(
+    r"(Traceback|ERROR|FAILED(?!\s*=\s*0(?:\b|$))|"
+    r"失败\s*(?:[:=：]\s*)?[1-9]\d*(?:\s*(?:只|个|项|条))?|"
+    r"崩溃|database is locked)",
     re.IGNORECASE,
 )
 RESTRICTIVE_CONCLUSION_MARKERS = (
@@ -71,6 +79,17 @@ def _latest_dated_lines(text: str) -> tuple[list[str], bool]:
     return [line for line in lines if latest in line], True
 
 
+def _failure_severity(line: str) -> str | None:
+    """Classify explicit failures while keeping degraded log warnings non-fatal."""
+    if FAILURE_RE.search(line) is None:
+        return None
+    if HARD_FAILURE_RE.search(line) is not None:
+        return "FAIL"
+    if re.search(r"\bWARNING\b", line, re.IGNORECASE):
+        return "WARN"
+    return "FAIL"
+
+
 def check_log(log_name: str, *, max_age: timedelta, now: datetime, project_root: Path) -> CheckResult:
     path = project_root / "logs" / log_name
     if not path.exists():
@@ -85,10 +104,15 @@ def check_log(log_name: str, *, max_age: timedelta, now: datetime, project_root:
 
     tail = _tail_text(path)
     latest_lines, has_date = _latest_dated_lines(tail)
-    failure_hits = [line.strip() for line in latest_lines if FAILURE_RE.search(line)]
-    if failure_hits:
+    failure_hits = [(severity, line.strip()) for line in latest_lines if (severity := _failure_severity(line))]
+    hard_failures = [line for severity, line in failure_hits if severity == "FAIL"]
+    degraded_warnings = [line for severity, line in failure_hits if severity == "WARN"]
+    if hard_failures:
         statuses.append("FAIL" if has_date else "WARN")
-        details.append(f"failure_marker={failure_hits[-1][:160]}")
+        details.append(f"failure_marker={hard_failures[-1][:160]}")
+    elif degraded_warnings:
+        statuses.append("WARN")
+        details.append(f"warning_marker={degraded_warnings[-1][:160]}")
     elif not has_date and tail.strip():
         statuses.append("WARN")
         details.append("latest_date_unrecognized")

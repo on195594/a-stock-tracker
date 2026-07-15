@@ -2,6 +2,7 @@
 
 所有测试 mock _call_gemini 或 _check_cache/_write_cache，不发起真实网络请求。
 """
+
 import json
 from unittest.mock import patch
 
@@ -13,10 +14,11 @@ def test_normal_path():
     """Gemini 正常返回，应写缓存并返回解析后的 dict。"""
     import gemini_scorer
 
-    with patch.object(gemini_scorer, "_check_cache", return_value=None), \
-         patch.object(gemini_scorer, "_call_gemini",
-                      return_value={"moat": 7, "market_pos": 4, "sentiment": 3}), \
-         patch.object(gemini_scorer, "_write_cache") as mock_write:
+    with (
+        patch.object(gemini_scorer, "_check_cache", return_value=None),
+        patch.object(gemini_scorer, "_call_gemini", return_value={"moat": 7, "market_pos": 4, "sentiment": 3}),
+        patch.object(gemini_scorer, "_write_cache") as mock_write,
+    ):
         result = gemini_scorer.get_qualitative_score("600036", "招商银行")
 
     assert result == {"moat": 7, "market_pos": 4, "sentiment": 3}
@@ -30,9 +32,11 @@ def test_timeout_fallback():
     """_call_gemini 返回 None（超时场景），应返回完整 FALLBACK 值且不写缓存。"""
     import gemini_scorer
 
-    with patch.object(gemini_scorer, "_check_cache", return_value=None), \
-         patch.object(gemini_scorer, "_call_gemini", return_value=None), \
-         patch.object(gemini_scorer, "_write_cache") as mock_write:
+    with (
+        patch.object(gemini_scorer, "_check_cache", return_value=None),
+        patch.object(gemini_scorer, "_call_gemini", return_value=None),
+        patch.object(gemini_scorer, "_write_cache") as mock_write,
+    ):
         result = gemini_scorer.get_qualitative_score("600519", "贵州茅台")
 
     assert result == {"moat": 5, "market_pos": 2, "sentiment": 3}
@@ -48,13 +52,13 @@ def test_invalid_json_response(monkeypatch):
 
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
 
-    fake_body = json.dumps({
-        "candidates": [{"content": {"parts": [{"text": "对不起，我无法完成该请求。"}]}}]
-    }).encode()
+    fake_body = json.dumps({"candidates": [{"content": {"parts": [{"text": "对不起，我无法完成该请求。"}]}}]}).encode()
 
-    with patch("urllib.request.urlopen") as mock_urlopen, \
-         patch.object(gemini_scorer, "_check_cache", return_value=None), \
-         patch.object(gemini_scorer, "_write_cache") as mock_write:
+    with (
+        patch("urllib.request.urlopen") as mock_urlopen,
+        patch.object(gemini_scorer, "_check_cache", return_value=None),
+        patch.object(gemini_scorer, "_write_cache") as mock_write,
+    ):
         mock_urlopen.return_value.__enter__ = lambda s: s
         mock_urlopen.return_value.__exit__ = lambda s, *a: False
         mock_urlopen.return_value.read.return_value = fake_body
@@ -81,8 +85,11 @@ def test_validate_rejects_out_of_range():
     # 非整数类型
     assert gemini_scorer._validate({"moat": 7.5, "market_pos": 4, "sentiment": 3}) is None
     # 合法值应通过
-    assert gemini_scorer._validate({"moat": 7, "market_pos": 4, "sentiment": 3}) == \
-           {"moat": 7, "market_pos": 4, "sentiment": 3}
+    assert gemini_scorer._validate({"moat": 7, "market_pos": 4, "sentiment": 3}) == {
+        "moat": 7,
+        "market_pos": 4,
+        "sentiment": 3,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -93,8 +100,10 @@ def test_cache_hit_skips_api():
     import gemini_scorer
 
     cached = {"moat": 6, "market_pos": 3, "sentiment": 4}
-    with patch.object(gemini_scorer, "_check_cache", return_value=cached), \
-         patch.object(gemini_scorer, "_call_gemini") as mock_api:
+    with (
+        patch.object(gemini_scorer, "_check_cache", return_value=cached),
+        patch.object(gemini_scorer, "_call_gemini") as mock_api,
+    ):
         result = gemini_scorer.get_qualitative_score("601318", "中国平安")
 
     assert result == cached
@@ -112,9 +121,7 @@ def test_markdown_code_block_stripped(monkeypatch):
 
     inner = json.dumps({"moat": 8, "market_pos": 4, "sentiment": 4})
     wrapped = f"```json\n{inner}\n```"
-    fake_body = json.dumps({
-        "candidates": [{"content": {"parts": [{"text": wrapped}]}}]
-    }).encode()
+    fake_body = json.dumps({"candidates": [{"content": {"parts": [{"text": wrapped}]}}]}).encode()
 
     with patch("urllib.request.urlopen") as mock_urlopen:
         mock_urlopen.return_value.__enter__ = lambda s: s
@@ -142,12 +149,12 @@ def test_check_cache_multiple_rows_returns_latest(tmp_path, monkeypatch):
     old_date = (date.today() - timedelta(days=25)).isoformat()
     new_date = (date.today() - timedelta(days=1)).isoformat()
     db.execute(
-        "INSERT INTO qualitative_scores (code, moat, market_pos, sentiment, scored_date)"
-        " VALUES ('600036', 5, 2, 3, ?)", (old_date,)
+        "INSERT INTO qualitative_scores (code, moat, market_pos, sentiment, scored_date) VALUES ('600036', 5, 2, 3, ?)",
+        (old_date,),
     )
     db.execute(
-        "INSERT INTO qualitative_scores (code, moat, market_pos, sentiment, scored_date)"
-        " VALUES ('600036', 8, 4, 4, ?)", (new_date,)
+        "INSERT INTO qualitative_scores (code, moat, market_pos, sentiment, scored_date) VALUES ('600036', 8, 4, 4, ?)",
+        (new_date,),
     )
     db.commit()
     db.close()
@@ -180,9 +187,7 @@ def test_write_cache_insert_ignore_same_date(tmp_path, monkeypatch):
     )
     db.commit()
 
-    rows = db.execute(
-        "SELECT moat FROM qualitative_scores WHERE code='600036'"
-    ).fetchall()
+    rows = db.execute("SELECT moat FROM qualitative_scores WHERE code='600036'").fetchall()
     db.close()
     assert len(rows) == 1
     assert rows[0][0] == 7  # 保留第一次写入的值
@@ -203,8 +208,8 @@ def test_check_cache_expired(tmp_path, monkeypatch):
     db = cache_mod.get_db()
     old_date = (date.today() - timedelta(days=31)).isoformat()
     db.execute(
-        "INSERT INTO qualitative_scores (code, moat, market_pos, sentiment, scored_date)"
-        " VALUES ('600036', 5, 2, 3, ?)", (old_date,)
+        "INSERT INTO qualitative_scores (code, moat, market_pos, sentiment, scored_date) VALUES ('600036', 5, 2, 3, ?)",
+        (old_date,),
     )
     db.commit()
     db.close()
@@ -229,8 +234,8 @@ def test_check_cache_stale(tmp_path, monkeypatch):
     db = cache_mod.get_db()
     old_date = (date.today() - timedelta(days=50)).isoformat()
     db.execute(
-        "INSERT INTO qualitative_scores (code, moat, market_pos, sentiment, scored_date)"
-        " VALUES ('000001', 9, 4, 4, ?)", (old_date,)
+        "INSERT INTO qualitative_scores (code, moat, market_pos, sentiment, scored_date) VALUES ('000001', 9, 4, 4, ?)",
+        (old_date,),
     )
     db.commit()
     db.close()
@@ -245,6 +250,7 @@ def test_check_cache_stale(tmp_path, monkeypatch):
 def test_call_gemini_empty_api_key(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "")
     import gemini_scorer
+
     assert gemini_scorer._call_gemini("000001", "平安银行") is None
 
 
@@ -254,8 +260,9 @@ def test_call_gemini_empty_api_key(monkeypatch):
 def test_call_gemini_http_errors(monkeypatch):
     import gemini_scorer
     import urllib.error
+
     monkeypatch.setenv("GEMINI_API_KEY", "test")
-    monkeypatch.setattr(gemini_scorer, "GEMINI_RETRY_DELAYS", (0, 0)) # Speed up
+    monkeypatch.setattr(gemini_scorer, "GEMINI_RETRY_DELAYS", (0, 0))  # Speed up
 
     # 401 Auth error -> returns None immediately
     with patch("urllib.request.urlopen", side_effect=urllib.error.HTTPError("url", 401, "Auth", {}, None)) as mock_auth:
@@ -263,12 +270,16 @@ def test_call_gemini_http_errors(monkeypatch):
         assert mock_auth.call_count == 1
 
     # 500 Server error -> retries then returns None
-    with patch("urllib.request.urlopen", side_effect=urllib.error.HTTPError("url", 500, "Error", {}, None)) as mock_server_err:
+    with patch(
+        "urllib.request.urlopen", side_effect=urllib.error.HTTPError("url", 500, "Error", {}, None)
+    ) as mock_server_err:
         assert gemini_scorer._call_gemini("000001", "Bank") is None
         assert mock_server_err.call_count == gemini_scorer.MAX_GEMINI_RETRIES
 
     # 400 Bad Request -> No retry, returns None
-    with patch("urllib.request.urlopen", side_effect=urllib.error.HTTPError("url", 400, "Bad Req", {}, None)) as mock_bad_req:
+    with patch(
+        "urllib.request.urlopen", side_effect=urllib.error.HTTPError("url", 400, "Bad Req", {}, None)
+    ) as mock_bad_req:
         assert gemini_scorer._call_gemini("000001", "Bank") is None
         assert mock_bad_req.call_count == 1
 
@@ -278,6 +289,7 @@ def test_call_gemini_http_errors(monkeypatch):
 # ---------------------------------------------------------------------------
 def test_call_gemini_generic_exception(monkeypatch):
     import gemini_scorer
+
     monkeypatch.setenv("GEMINI_API_KEY", "test")
     with patch("urllib.request.urlopen", side_effect=Exception("Unknown Error")):
         assert gemini_scorer._call_gemini("000001", "Bank") is None
@@ -288,11 +300,13 @@ def test_call_gemini_generic_exception(monkeypatch):
 # ---------------------------------------------------------------------------
 def test_get_qualitative_score_stale_fallback():
     import gemini_scorer
-    stale_data = {"moat": 8, "market_pos": 3, "sentiment": 2}
-    with patch.object(gemini_scorer, "_check_cache", return_value=None), \
-         patch.object(gemini_scorer, "_call_gemini", return_value=None), \
-         patch.object(gemini_scorer, "_check_cache_stale", return_value=stale_data):
 
+    stale_data = {"moat": 8, "market_pos": 3, "sentiment": 2}
+    with (
+        patch.object(gemini_scorer, "_check_cache", return_value=None),
+        patch.object(gemini_scorer, "_call_gemini", return_value=None),
+        patch.object(gemini_scorer, "_check_cache_stale", return_value=stale_data),
+    ):
         result = gemini_scorer.get_qualitative_score("000001", "Bank")
         assert result == stale_data
 
@@ -303,6 +317,7 @@ def test_get_qualitative_score_stale_fallback():
 def test_check_cache_empty(tmp_path, monkeypatch):
     import gemini_scorer
     from lib import cache as cache_mod
+
     db_path = str(tmp_path / "tracker.db")
     monkeypatch.setattr(cache_mod, "DB_PATH", db_path)
     assert gemini_scorer._check_cache("999999") is None
@@ -314,6 +329,7 @@ def test_check_cache_empty(tmp_path, monkeypatch):
 def test_write_cache_execution(tmp_path, monkeypatch):
     import gemini_scorer
     from lib import cache as cache_mod
+
     db_path = str(tmp_path / "tracker.db")
     monkeypatch.setattr(cache_mod, "DB_PATH", db_path)
 
@@ -330,6 +346,7 @@ def test_write_cache_execution(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 def test_call_gemini_timeout(monkeypatch):
     import gemini_scorer
+
     monkeypatch.setenv("GEMINI_API_KEY", "test")
     with patch("urllib.request.urlopen", side_effect=TimeoutError):
         assert gemini_scorer._call_gemini("000001", "Bank") is None

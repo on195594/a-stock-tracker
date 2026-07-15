@@ -59,9 +59,7 @@ def test_cache_write_read_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert metadata["status"] == "complete"
 
 
-def test_write_cache_restores_csv_on_metadata_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_write_cache_restores_csv_on_metadata_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     original = sample_frame()
     cache.write_cache(tmp_path, "000001", original, "2026-07-09", "2026-07-10")
     original_csv = (tmp_path / "000001.csv").read_bytes()

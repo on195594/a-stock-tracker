@@ -141,6 +141,100 @@ def test_log_check_does_not_treat_failed_zero_metric_as_failure(project_root: Pa
     assert result.status == "OK"
 
 
+@pytest.mark.parametrize(
+    "metric",
+    (
+        "失败 0 只",
+        "失败：0 只",
+        "失败=0",
+    ),
+)
+def test_log_check_does_not_treat_chinese_zero_failure_metric_as_failure(
+    project_root: Path,
+    metric: str,
+) -> None:
+    now = datetime(2026, 7, 11, 10, 14)
+    _write_log(
+        project_root,
+        "weekly.log",
+        f"2026-07-11 10:13:41 INFO weekly 完成：成功 35 只，{metric}\n",
+        mtime=now,
+    )
+
+    result = weekly_pm_loop.check_log(
+        "weekly.log",
+        max_age=weekly_pm_loop.timedelta(days=8),
+        now=now,
+        project_root=project_root,
+    )
+
+    assert result.status == "OK"
+
+
+def test_log_check_still_treats_positive_chinese_failure_metric_as_failure(project_root: Path) -> None:
+    now = datetime(2026, 7, 11, 10, 14)
+    _write_log(
+        project_root,
+        "weekly.log",
+        "2026-07-11 10:13:41 INFO weekly 完成：成功 34 只，失败 1 只\n",
+        mtime=now,
+    )
+
+    result = weekly_pm_loop.check_log(
+        "weekly.log",
+        max_age=weekly_pm_loop.timedelta(days=8),
+        now=now,
+        project_root=project_root,
+    )
+
+    assert result.status == "FAIL"
+
+
+def test_log_check_treats_degraded_warning_as_warning_not_failure(project_root: Path) -> None:
+    now = datetime(2026, 7, 11, 10, 14)
+    _write_log(
+        project_root,
+        "weekly.log",
+        "\n".join(
+            (
+                "2026-07-11 10:13:41 WARNING fetcher[600785] 最新收盘价fallback失败: remote disconnected",
+                "2026-07-11 10:13:42 INFO weekly 完成：成功 35 只，失败 0 只",
+            )
+        ),
+        mtime=now,
+    )
+
+    result = weekly_pm_loop.check_log(
+        "weekly.log",
+        max_age=weekly_pm_loop.timedelta(days=8),
+        now=now,
+        project_root=project_root,
+    )
+
+    assert result.status == "WARN"
+    assert "warning_marker=" in result.detail
+
+
+def test_log_check_keeps_child_error_relogged_as_warning_at_failure(project_root: Path) -> None:
+    now = datetime(2026, 7, 11, 10, 14)
+    _write_log(
+        project_root,
+        "weekly.log",
+        "2026-07-11 10:13:41 WARNING fetcher[600785] ERROR child process crashed\n",
+        mtime=now,
+    )
+
+    result = weekly_pm_loop.check_log(
+        "weekly.log",
+        max_age=weekly_pm_loop.timedelta(days=8),
+        now=now,
+        project_root=project_root,
+    )
+
+    assert result.status == "FAIL"
+    assert "failure_marker=" in result.detail
+
+
 def test_accuracy_report_warns_when_conclusion_lacks_restrictive_marker() -> None:
     report = """
 ── Phase 6 readiness ──

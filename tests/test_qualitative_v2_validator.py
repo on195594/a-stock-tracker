@@ -389,8 +389,12 @@ def test_nullable_score_reverse_combinations_rejected() -> None:
 
     # insufficient_data + non-null score
     output2 = copy.deepcopy(output)
-    output2["dimensions"]["moat"]["status"] = "insufficient_data"
-    output2["dimensions"]["moat"]["score"] = 5
+    dimensions2 = output2["dimensions"]
+    assert isinstance(dimensions2, dict)
+    moat2 = dimensions2["moat"]
+    assert isinstance(moat2, dict)
+    moat2["status"] = "insufficient_data"
+    moat2["score"] = 5
     assert not validate_model_output(output2, context=context).valid
 
 

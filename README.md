@@ -7,11 +7,11 @@ A 股选股与方法论验证项目。当前定位是 **Framework A 定量评分
 ## 当前状态
 
 - 主分支：`master`
-- 当前阶段：数据治理 Phase A-F 已完成；Phase 5 L3 买点层 v1 已实现；Phase 6 仍处于 report-only 准备期
+- 当前阶段：Phase 5 L3 v2 已接入生产评分与推送；Phase 6 仍处于 report-only 观察期；来源约束的定性评分 v2 正在执行 MILESTONE-002 fixture-first 合同实现
 - 生产框架：`SUPPORTED_FRAMEWORKS = {"A"}`；Framework B 历史数据保留，Phase 6 前不得启用生产写入
 - watchlist：35 只，维护在 `config.py`
 - 评分阈值：`buy_strong=44`、`buy_moderate=35`、`buy_light=26`
-- L3 推送条件：`total_score >= buy_strong AND entry_signal = 1`
+- L3 主推条件：`total_score >= buy_strong AND l3_v2_signal = 1`；v2 为 `0/NULL` 的高分股票进入候补而不是主推
 - 数据库：`tracker.db`，核心表为 `stock_fundamentals`、`predictions`、`index_prices`、`qualitative_scores`
 - 最新顶层路线图：`docs/evolution-roadmap.md`
 
@@ -20,8 +20,9 @@ A 股选股与方法论验证项目。当前定位是 **Framework A 定量评分
 - Framework A：ROE、净利润增速、负债率、毛利率、PB 分位和定性项的 80 分制评分。
 - Gemini 定性评分：`moat`、`market_pos`、`sentiment`，30 天缓存，失败时 all-or-nothing fallback 到固定值。
 - Outcome 追踪：记录 30/60/90 天收益、沪深 300 benchmark 和 generated `alpha_*d`。
-- L3 买点层：`lib/entry_signal.py` 用 MA60、MA120、5/20 日量能计算 `entry_signal`，版本为 `v1`。
-- Telegram 推送：只推送强信号且 L3 通过的股票；失败不阻断 daily。
+- L3 买点层：v1 保留用于历史审计；生产 daily 优先读取 QFQ 日线计算 `l3_v2_signal`，Telegram 主推已切换到 v2。
+- 定性评分 v2 合同：已实现 dataclass、两层 evidence taxonomy 和纯本地 validator；尚未接 Gemini、生产 DB、pipeline、cron 或 Telegram。
+- Telegram 推送：日报分为主推、候补和雷达；只有强分且 L3 v2 通过的股票进入主推，发送失败不阻断 daily。
 - Google Sheets 同步：展示层能力，失败只记录 warning，不是数据真相来源。
 - 数据治理：`docs/data-source-registry.yaml` 记录字段来源、缓存、刷新、fallback 和失败语义。
 - 只读 reviewer schema：`lib/agent_reviewer.py` 限制 reviewer 只能输出 commentary，不能覆盖分数、阈值、交易动作或 DB 写入。
@@ -102,6 +103,9 @@ bash cron-setup.sh
 
 默认规则：
 
+- 每周六 10:00：运行 `weekly`
+- 每周一 09:30：运行 Phase 6 weekly PM loop
+- 工作日 16:00：采集 QFQ 日线
 - 工作日 16:30：运行 `daily`
 - 工作日 17:00：运行 `outcome-update`
 
@@ -139,6 +143,8 @@ python3 pipeline.py init
 - `lib/fetcher.py`：AKShare、腾讯 fallback、百度估值等数据读取。
 - `lib/data_quality.py`：required/degradable/derived 字段质量模型。
 - `lib/entry_signal.py`：L3 v1 买点层纯计算 seam。
+- `lib/l3_v2.py` / `lib/l3_v2_pipeline.py`：L3 v2 纯计算规则与 QFQ 优先的生产包装层。
+- `qualitative_v2_types.py` / `qualitative_v2_taxonomy.py` / `qualitative_v2_validator.py`：定性评分 v2 的 fixture-first 本地合同；当前不属于生产评分读写路径。
 - `lib/agent_reviewer.py`：只读 reviewer schema/fake reviewer。
 - `weights.json`：评分权重与阈值。
 - `docs/data-source-registry.yaml`：字段级数据源 registry。
@@ -152,7 +158,8 @@ python3 pipeline.py init
 - `entry_signal=NULL AND entry_signal_version IS NULL` 表示 pre-L3 历史记录。
 - `entry_signal=NULL AND entry_signal_version='v1'` 表示 L3 v1 已运行但不可计算。
 - `entry_signal=0/1 AND entry_signal_version='v1'` 表示 L3 v1 已判断并拒绝/通过。
-- `daily_bars.adjusted` 第一版统一写 `none`；`daily_bars.volume_unit` 必须有明确单位，unknown 或混合单位窗口会拒绝 L3 计算。
+- `l3_v2_signal=1/0/NULL` 分别表示 v2 通过、拒绝、不可用；生产主推只接受 `1`，`NULL` fail-closed。
+- `daily_bars.adjusted='none'` 是历史未复权数据，`'qfq'` 是 L3 v2 权威输入；`daily_bars.volume_unit` 必须有明确单位，unknown 或混合单位窗口会拒绝 L3 计算。
 - `pb_percentile_10y` 日度可计算性依赖 `price_at_score`、`bps` 和足够的 `pb_hist_monthly`。
 - 2026-05-14 前后存在毛利率和 PB 分位口径修复，跨期评分比较必须按 `score_date` 分层。
 
@@ -171,12 +178,14 @@ pytest tests/test_data_source_registry.py -q
 pytest tests/test_data_quality.py -q
 pytest tests/test_agent_reviewer.py -q
 pytest tests/test_sheets_sync.py -q
+pytest tests/test_qualitative_v2_types.py tests/test_qualitative_v2_taxonomy.py tests/test_qualitative_v2_validator.py -q
 ```
 
 代码质量检查：
 
 ```bash
 ruff check .
+ruff format --check .
 mypy
 git diff --check
 git status --short
@@ -188,6 +197,7 @@ git status --short
 source .venv/bin/activate
 pytest tests/ -q
 ruff check .
+ruff format --check .
 mypy
 git diff --check
 ```
@@ -234,4 +244,4 @@ Gemini 全部 fallback：
 Telegram 无推送：
 
 - 检查 `.env` 中的 token/chat id。
-- 确认当天是否存在 `total_score >= buy_strong AND entry_signal=1` 的记录。
+- 确认当天是否存在 `total_score >= buy_strong AND l3_v2_signal=1` 的记录；v2 为 `0/NULL` 时只进入候补。

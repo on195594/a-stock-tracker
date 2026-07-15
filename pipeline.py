@@ -20,6 +20,7 @@ import sys
 from datetime import date, datetime, timedelta
 import pandas as pd
 
+
 @contextmanager
 def provider_session(provider):
     if provider is not None and hasattr(provider, "__enter__"):
@@ -27,6 +28,7 @@ def provider_session(provider):
             yield p
     else:
         yield provider
+
 
 import config
 from lib.cache import (
@@ -109,15 +111,14 @@ logger = logging.getLogger(__name__)
 # 工具函数
 # ──────────────────────────────────────────────
 
+
 def _load_weights() -> dict:
     with open(config.WEIGHTS_PATH, encoding="utf-8") as f:
         return json.load(f)
 
 
 def _compute_weights_hash(weights: dict) -> str:
-    return hashlib.md5(
-        json.dumps(weights["frameworks"], sort_keys=True).encode()
-    ).hexdigest()[:8]
+    return hashlib.md5(json.dumps(weights["frameworks"], sort_keys=True).encode()).hexdigest()[:8]
 
 
 def _today() -> str:
@@ -179,7 +180,13 @@ def _compute_stock_entry_signal(db: sqlite3.Connection, code: str, today: str) -
         )
     adjusted_values = {row.get("adjusted") for row in rows}
     volume_units = {row.get("volume_unit") for row in rows}
-    if len(adjusted_values) > 1 or len(volume_units) > 1 or not volume_units or None in volume_units or "unknown" in volume_units:
+    if (
+        len(adjusted_values) > 1
+        or len(volume_units) > 1
+        or not volume_units
+        or None in volume_units
+        or "unknown" in volume_units
+    ):
         return EntrySignalResult(
             None,
             ENTRY_SIGNAL_VERSION,
@@ -294,8 +301,9 @@ def _run_fetcher_process(code: str, timeout: int = FETCHER_STOCK_TIMEOUT_SECONDS
                 logger.warning("fetcher[%s] %s", code, line)
     except subprocess.TimeoutExpired as e:
         logger.error("  ✗ %s fetch 超过 %ss，已终止子进程", code, timeout)
-        if e.stderr:
-            for line in e.stderr.strip().splitlines():
+        stderr = e.stderr.decode(errors="replace") if isinstance(e.stderr, bytes) else e.stderr
+        if stderr:
+            for line in stderr.strip().splitlines():
                 logger.warning("fetcher[%s] %s", code, line)
         return "TIMEOUT"
     return completed.returncode
@@ -304,6 +312,7 @@ def _run_fetcher_process(code: str, timeout: int = FETCHER_STOCK_TIMEOUT_SECONDS
 # ──────────────────────────────────────────────
 # init 命令
 # ──────────────────────────────────────────────
+
 
 def cmd_init() -> None:
     """对 WATCHLIST 每只股票执行首次 fetch，填充 stock_fundamentals 表。"""
@@ -315,6 +324,7 @@ def cmd_init() -> None:
 # weekly 命令（每周刷新基本面缓存，取代 daily 内的批量 fetch）
 # ──────────────────────────────────────────────
 
+
 def cmd_weekly() -> None:
     """每周刷新 WATCHLIST 所有股票的基本面缓存（财务/PE/分红），供 daily 评分使用。"""
     logger.info(f"=== pipeline weekly：批量刷新基本面数据（{_today()}）共 {len(config.WATCHLIST)} 只 ===")
@@ -324,6 +334,7 @@ def cmd_weekly() -> None:
 # ──────────────────────────────────────────────
 # daily 命令
 # ──────────────────────────────────────────────
+
 
 def _backfill_null_prices(db: sqlite3.Connection, today: str, provider: MarketDataProvider | None = None) -> int:
     """回填近 15 天内 price_at_score=NULL 的记录（不含今日）。
@@ -495,16 +506,28 @@ def cmd_daily() -> None:
                                 l3_v2_fetched_at, created_at)
                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                             (
-                                code, name, framework, today, price_at_score,
-                                result["quant_score"], result["total_score"],
-                                weights_hash, report_period,
-                                threshold_adjusted, entry_signal_result.signal,
-                                entry_signal_result.version, entry_signal_result.status,
-                                entry_signal_result.reason, entry_signal_result.source,
+                                code,
+                                name,
+                                framework,
+                                today,
+                                price_at_score,
+                                result["quant_score"],
+                                result["total_score"],
+                                weights_hash,
+                                report_period,
+                                threshold_adjusted,
+                                entry_signal_result.signal,
+                                entry_signal_result.version,
+                                entry_signal_result.status,
+                                entry_signal_result.reason,
+                                entry_signal_result.source,
                                 entry_signal_result.fetched_at,
-                                l3_v2_result.signal, l3_v2_result.version,
-                                l3_v2_result.status, l3_v2_result.reason,
-                                l3_v2_fetched_at, datetime.now().isoformat(),
+                                l3_v2_result.signal,
+                                l3_v2_result.version,
+                                l3_v2_result.status,
+                                l3_v2_result.reason,
+                                l3_v2_fetched_at,
+                                datetime.now().isoformat(),
                             ),
                         )
                         if cursor.rowcount == 0:
@@ -553,9 +576,8 @@ def cmd_daily() -> None:
                         db.execute("ROLLBACK TO SAVEPOINT sp_stock")
                         db.execute("RELEASE SAVEPOINT sp_stock")
 
-            log_line = (
-                f"{today} daily 完成：写入 {written} 条，跳过 {len(skipped)} 条"
-                + (f"（{skipped}）" if skipped else "")
+            log_line = f"{today} daily 完成：写入 {written} 条，跳过 {len(skipped)} 条" + (
+                f"（{skipped}）" if skipped else ""
             )
             logger.info(log_line)
             _log_l3_coverage(db, today, weights.get("thresholds", {}).get("buy_strong", 55))
@@ -567,6 +589,7 @@ def cmd_daily() -> None:
     # Telegram 推送（阈值来自 weights.json，失败不阻断）
     try:
         import telegram_push
+
         buy_threshold = weights.get("thresholds", {}).get("buy_strong", 55)
         telegram_push.push_daily_signals(today, buy_threshold)
     except Exception as e:
@@ -575,6 +598,7 @@ def cmd_daily() -> None:
     # Sheets sync（独立后置步骤，失败不影响上方写入结果）
     try:
         import sheets_sync
+
         sheets_sync.sync_all()
     except Exception as e:
         logger.warning(f"Sheets sync 失败（不影响 SQLite 数据）：{e}")
@@ -584,13 +608,12 @@ def cmd_daily() -> None:
 # outcome-update 命令
 # ──────────────────────────────────────────────
 
+
 def _get_index_price(db: sqlite3.Connection, symbol: str, target_date: str) -> float | None:
     """从 index_prices 表查收盘价，向前找最近 10 个自然日（覆盖黄金周 7 天停牌）。"""
     for delta in range(11):
         d = _add_days(target_date, -delta)
-        row = db.execute(
-            "SELECT close FROM index_prices WHERE symbol=? AND date=?", (symbol, d)
-        ).fetchone()
+        row = db.execute("SELECT close FROM index_prices WHERE symbol=? AND date=?", (symbol, d)).fetchone()
         if row:
             return row[0]
     return None
@@ -603,9 +626,7 @@ def _ensure_index_prices(
     provider: MarketDataProvider | None = None,
 ) -> None:
     """确保 index_prices 有从 earliest_score_date 到 today 的完整数据。"""
-    latest_cached = db.execute(
-        "SELECT MAX(date) FROM index_prices WHERE symbol='000300'"
-    ).fetchone()[0]
+    latest_cached = db.execute("SELECT MAX(date) FROM index_prices WHERE symbol='000300'").fetchone()[0]
 
     start_date = earliest_score_date
     if latest_cached and latest_cached >= earliest_score_date:
@@ -720,6 +741,7 @@ def cmd_outcome_update() -> None:
     # Sheets sync（独立后置步骤，失败不影响 SQLite 数据）
     try:
         import sheets_sync
+
         sheets_sync.sync_all()
     except Exception as e:
         logger.warning(f"Sheets sync 失败（不影响 SQLite 数据）：{e}")
@@ -728,6 +750,7 @@ def cmd_outcome_update() -> None:
 # ──────────────────────────────────────────────
 # market-data-backfill 命令
 # ──────────────────────────────────────────────
+
 
 def _validate_l3_bar_windows(db: sqlite3.Connection, start: str) -> list[tuple]:
     return db.execute(
@@ -870,13 +893,12 @@ def cmd_market_data_backfill(start: str, end: str, provider: MarketDataProvider 
 # accuracy-report 命令
 # ──────────────────────────────────────────────
 
+
 def cmd_accuracy_report() -> None:
     db = get_db()
     try:
         # 排除数量
-        null_count = db.execute(
-            "SELECT COUNT(*) FROM predictions WHERE outcome_30d IS NULL"
-        ).fetchone()[0]
+        null_count = db.execute("SELECT COUNT(*) FROM predictions WHERE outcome_30d IS NULL").fetchone()[0]
         framework_a_closed = db.execute(
             "SELECT COUNT(*) FROM predictions WHERE outcome_30d IS NOT NULL AND framework = 'A'"
         ).fetchone()[0]
@@ -894,13 +916,8 @@ def cmd_accuracy_report() -> None:
                 "    建议 Framework A 积累至 100 条以上再解读命中率。"
             )
 
-        lines.append(
-            f"\n已排除 {null_count} 条 NULL outcome 记录（停牌/退市/数据缺失），详见 daily_log.txt"
-        )
-        lines.append(
-            "\n⚠️  选择性偏差声明：watchlist 为手动维护的已知标的，"
-            "命中率不代表框架泛化能力。"
-        )
+        lines.append(f"\n已排除 {null_count} 条 NULL outcome 记录（停牌/退市/数据缺失），详见 daily_log.txt")
+        lines.append("\n⚠️  选择性偏差声明：watchlist 为手动维护的已知标的，命中率不代表框架泛化能力。")
         lines.append("")
 
         # per-framework 记录摘要
@@ -915,9 +932,7 @@ def cmd_accuracy_report() -> None:
             lines.append("── 分 Framework 统计 ──")
             lines.append(f"{'Framework':<12} {'总记录':>6}  {'30d结案':>8}  {'超额命中30d':>12}")
             for fw, total, closed30, hr30 in fw_rows:
-                lines.append(
-                    f"{fw:<12} {total:>6}  {closed30:>8}  {_fmt(hr30):>12}"
-                )
+                lines.append(f"{fw:<12} {total:>6}  {closed30:>8}  {_fmt(hr30):>12}")
             lines.append("")
 
         _w = _load_weights().get("thresholds", {})
@@ -941,10 +956,10 @@ def cmd_accuracy_report() -> None:
         """
         rows = []
         for tier, lo, hi in [
-            ("strong",    _strong,   9999),
-            ("moderate",  _moderate, _strong),
-            ("light",     _light,    _moderate),
-            ("no-action", 0,         _light),
+            ("strong", _strong, 9999),
+            ("moderate", _moderate, _strong),
+            ("light", _light, _moderate),
+            ("no-action", 0, _light),
         ]:
             r = db.execute(_tier_query, (lo, hi)).fetchone()
             if r and r[0] > 0:
@@ -1060,12 +1075,8 @@ def cmd_accuracy_report() -> None:
                  AND q2.scored_date = (SELECT MAX(scored_date) FROM qualitative_scores WHERE code=q1.code)
                  AND q1.scored_date != q2.scored_date"""
         ).fetchall()
-        stock_count = db.execute(
-            "SELECT COUNT(DISTINCT code) FROM qualitative_scores"
-        ).fetchone()[0]
-        first_date_row = db.execute(
-            "SELECT MIN(scored_date) FROM qualitative_scores"
-        ).fetchone()[0]
+        stock_count = db.execute("SELECT COUNT(DISTINCT code) FROM qualitative_scores").fetchone()[0]
+        first_date_row = db.execute("SELECT MIN(scored_date) FROM qualitative_scores").fetchone()[0]
 
         if not drift_rows:
             if first_date_row:
@@ -1081,9 +1092,7 @@ def cmd_accuracy_report() -> None:
                 moat_delta = lm - fm
                 sent_delta = ls - fs
                 flag = " ⚠️ low_confidence" if abs(moat_delta) > 2 or abs(sent_delta) > 2 else ""
-                lines.append(
-                    f"{code:<8} {fd:<12} {ld:<12} {moat_delta:>+8} {sent_delta:>+8}{flag}"
-                )
+                lines.append(f"{code:<8} {fd:<12} {ld:<12} {moat_delta:>+8} {sent_delta:>+8}{flag}")
 
         data_quality_summary = _append_data_quality_audit(lines, db)
         weights = _load_weights()
@@ -1096,7 +1105,9 @@ def cmd_accuracy_report() -> None:
             (current_hash,),
         ).fetchone()[0]
         threshold1_met = closed_a >= 100
-        lines.append(f"门槛 1：A框 30d 结案 ≥ 100（当前权重）：当前 {closed_a} / 100  {'✅' if threshold1_met else '❌'}")
+        lines.append(
+            f"门槛 1：A框 30d 结案 ≥ 100（当前权重）：当前 {closed_a} / 100  {'✅' if threshold1_met else '❌'}"
+        )
 
         threshold2_met = False
         if rows:
@@ -1105,7 +1116,9 @@ def cmd_accuracy_report() -> None:
                 if hb30 is not None and hb30 > 0.55 and cnt >= 20:
                     threshold2_met = True
                     break
-        lines.append(f"门槛 2：任一层级 hit_rate_vs_300 > 55%（≥20条）：{'✅ 已满足' if threshold2_met else '❌ 尚未满足'}")
+        lines.append(
+            f"门槛 2：任一层级 hit_rate_vs_300 > 55%（≥20条）：{'✅ 已满足' if threshold2_met else '❌ 尚未满足'}"
+        )
 
         if threshold1_met and threshold2_met:
             lines.append("→ 两个门槛同时满足，才可讨论 Framework B 生产写入；report-only 不受此门槛阻断。")
@@ -1327,7 +1340,9 @@ def _append_data_quality_audit(lines: list[str], db: sqlite3.Connection) -> dict
             f"无A记录={prediction_report_period_no_a_record}"
         )
         if prediction_report_period_history_locked:
-            lines.append("  - 历史记录不可回填：缓存已有 report_period，但最新 prediction 已写入为空；本报告不改写历史 predictions。")
+            lines.append(
+                "  - 历史记录不可回填：缓存已有 report_period，但最新 prediction 已写入为空；本报告不改写历史 predictions。"
+            )
         if prediction_report_period_new_record_pending:
             lines.append("  - 新记录待补齐：缓存仍缺 report_period，需先运行 weekly/fetch 成功后未来 daily 才能写入。")
         if prediction_report_period_no_a_record:
@@ -1356,12 +1371,11 @@ def _append_data_quality_audit(lines: list[str], db: sqlite3.Connection) -> dict
     }
 
 
-
 # ──────────────────────────────────────────────
 # Phase 4 里程碑检测
 # ──────────────────────────────────────────────
 
-_PHASE4_POST_FIX_DATE = "2026-05-15"   # gross_margin + pb_percentile 修复日
+_PHASE4_POST_FIX_DATE = "2026-05-15"  # gross_margin + pb_percentile 修复日
 _PHASE4_MILESTONES = [25, 50, 75, 100]
 
 
@@ -1381,10 +1395,7 @@ def _check_phase4_milestone() -> None:
         ).fetchone()[0]
 
         notified = {
-            row[0]
-            for row in db.execute(
-                "SELECT milestone FROM phase_milestones WHERE phase='phase4_30d'"
-            ).fetchall()
+            row[0] for row in db.execute("SELECT milestone FROM phase_milestones WHERE phase='phase4_30d'").fetchall()
         }
 
         for milestone in _PHASE4_MILESTONES:
@@ -1471,18 +1482,15 @@ def _send_phase4_notification(db, count: int, milestone: int) -> None:
 # remove 命令
 # ──────────────────────────────────────────────
 
+
 def cmd_remove(code: str) -> None:
     """从 DB 彻底删除一只股票的基本面缓存和所有预测记录。
     调用前请先手动从 config.py WATCHLIST 中删除该条目。
     """
     db = get_db()
     try:
-        pred_rows = db.execute(
-            "SELECT COUNT(*) FROM predictions WHERE code = ?", (code,)
-        ).fetchone()[0]
-        fund_rows = db.execute(
-            "SELECT COUNT(*) FROM stock_fundamentals WHERE code = ?", (code,)
-        ).fetchone()[0]
+        pred_rows = db.execute("SELECT COUNT(*) FROM predictions WHERE code = ?", (code,)).fetchone()[0]
+        fund_rows = db.execute("SELECT COUNT(*) FROM stock_fundamentals WHERE code = ?", (code,)).fetchone()[0]
 
         if pred_rows == 0 and fund_rows == 0:
             logger.warning(f"数据库中未找到 {code}，无需清理")
@@ -1499,6 +1507,7 @@ def cmd_remove(code: str) -> None:
 # ──────────────────────────────────────────────
 # 入口
 # ──────────────────────────────────────────────
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="a-stock-tracker 管道")

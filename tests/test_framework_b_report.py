@@ -3,6 +3,7 @@
 覆盖 _has_roe_trend_warning（纯函数）和 _score_framework_b_candidate（确认打分行为不受影响）。
 不发起任何网络请求。
 """
+
 import os
 import sys
 
@@ -99,6 +100,7 @@ FULL_DATA = {
 # _has_roe_trend_warning
 # ---------------------------------------------------------------------------
 
+
 def test_roe_trend_warning_triggers_when_gap_exceeds_threshold():
     """3年均值15%、最新单年8%，差值7pts > 3.0pts 阈值 → True。"""
     data = {**FULL_DATA, "roe_3y_avg": 15.0, "roe_latest": 8.0}
@@ -126,6 +128,7 @@ def test_roe_trend_warning_false_when_roe_3y_avg_missing():
 # ---------------------------------------------------------------------------
 # _score_framework_b_candidate：确认打分行为不受影响
 # ---------------------------------------------------------------------------
+
 
 def test_score_framework_b_candidate_flags_warning_without_changing_scores():
     """触发预警时 roe_trend_warning=True，但 score_a/score_b 数值跟不加这个判断时完全一致。"""

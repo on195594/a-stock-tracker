@@ -40,7 +40,9 @@ def _make_db(bars: list[dict]) -> sqlite3.Connection:
             (
                 bar.get("code", "000001"),
                 bar.get("date", trade_date),
-                None, None, None,
+                None,
+                None,
+                None,
                 float(bar["close"]),
                 bar.get("volume", 100.0),
                 "baostock",
@@ -68,6 +70,7 @@ def _today_str(n_bars: int) -> str:
 # Zero bars
 # ---------------------------------------------------------------------------
 
+
 def test_pipeline_unavailable_when_no_bars() -> None:
     conn = _make_db([])
     result = compute_l3_v2_from_daily_bars(conn, "000001", "2026-12-31")
@@ -79,6 +82,7 @@ def test_pipeline_unavailable_when_no_bars() -> None:
 # ---------------------------------------------------------------------------
 # Insufficient bars (0 < n < 120)
 # ---------------------------------------------------------------------------
+
 
 def test_pipeline_unavailable_when_50_bars() -> None:
     db = _make_db(_bars(50))
@@ -99,6 +103,7 @@ def test_pipeline_unavailable_when_119_bars() -> None:
 # ---------------------------------------------------------------------------
 # 120 bars — normal case (daily_bars is unadjusted → always pass_weak)
 # ---------------------------------------------------------------------------
+
 
 def test_pipeline_pass_weak_with_exactly_120_bars() -> None:
     db = _make_db(_bars(120))
@@ -124,6 +129,7 @@ def test_pipeline_pass_weak_close_just_above_freefall_threshold() -> None:
 # FREEFALL rejection
 # ---------------------------------------------------------------------------
 
+
 def test_pipeline_rejects_freefall() -> None:
     # close=60 << MA120≈99.67, threshold≈64.78 → FREEFALL
     rows = _bars(119, close=100.0) + [{"close": 60.0}]
@@ -137,6 +143,7 @@ def test_pipeline_rejects_freefall() -> None:
 # ---------------------------------------------------------------------------
 # Exception isolation: DB error must not propagate
 # ---------------------------------------------------------------------------
+
 
 def test_pipeline_returns_unavailable_on_db_error() -> None:
     conn = sqlite3.connect(":memory:")

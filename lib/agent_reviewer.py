@@ -20,8 +20,17 @@ RETRY_DELAYS: tuple[int, ...] = (2, 4)
 
 
 FORBIDDEN_OUTPUT_KEYS = {
-    "score", "total_score", "quant_score", "threshold", "thresholds", "weights",
-    "weights_hash", "db_write", "trade_action", "position", "data_fetch_instruction",
+    "score",
+    "total_score",
+    "quant_score",
+    "threshold",
+    "thresholds",
+    "weights",
+    "weights_hash",
+    "db_write",
+    "trade_action",
+    "position",
+    "data_fetch_instruction",
 }
 
 
@@ -98,10 +107,12 @@ def gemini_review(input_data: ReviewInput) -> ReviewOutput:
         "仅返回JSON，不要其他内容。不要在JSON中包含分数、权重、建仓操作等决策字段。"
     )
 
-    payload = json.dumps({
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 512},
-    }).encode("utf-8")
+    payload = json.dumps(
+        {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.2, "maxOutputTokens": 512},
+        }
+    ).encode("utf-8")
     url = GEMINI_API_URL.format(model=GEMINI_MODEL, key=api_key)
     req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
 
@@ -133,7 +144,14 @@ def gemini_review(input_data: ReviewInput) -> ReviewOutput:
             retryable = e.code == 429 or e.code >= 500
             delay = RETRY_DELAYS[min(attempt, len(RETRY_DELAYS) - 1)]
             if retryable and attempt < MAX_RETRIES - 1:
-                logger.warning("%s gemini_review HTTP %s, retry in %ss (%d/%d)", input_data.code, e.code, delay, attempt + 1, MAX_RETRIES)
+                logger.warning(
+                    "%s gemini_review HTTP %s, retry in %ss (%d/%d)",
+                    input_data.code,
+                    e.code,
+                    delay,
+                    attempt + 1,
+                    MAX_RETRIES,
+                )
                 time.sleep(delay)
             else:
                 logger.warning("%s gemini_review HTTP error %s, using fallback", input_data.code, e.code)

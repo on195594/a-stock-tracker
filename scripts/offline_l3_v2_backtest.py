@@ -128,7 +128,9 @@ def parse_args() -> BacktestConfig:
     parser.add_argument("--output", type=Path, default=None, help="Markdown report path.")
     parser.add_argument("--artifacts-dir", type=Path, default=None, help="Directory for CSV/JSON artifacts.")
     parser.add_argument("--dry-run", action="store_true", help="Print summary only; do not write artifacts/report.")
-    parser.add_argument("--codes", nargs="*", default=None, help="Optional prediction code subset; comma or space separated.")
+    parser.add_argument(
+        "--codes", nargs="*", default=None, help="Optional prediction code subset; comma or space separated."
+    )
     parser.add_argument(
         "--qfq-cache-dir",
         type=Path,
@@ -136,7 +138,9 @@ def parse_args() -> BacktestConfig:
         help="Validated raw qfq cache directory; readable with --no-external-fetch.",
     )
     parser.add_argument("--no-external-fetch", action="store_true", help="Disable external qfq fetch.")
-    parser.add_argument("--allow-tushare-fetch", action="store_true", help="Allow Tushare daily + adj_factor qfq fetch.")
+    parser.add_argument(
+        "--allow-tushare-fetch", action="store_true", help="Allow Tushare daily + adj_factor qfq fetch."
+    )
     parser.add_argument("--preload-trading-days", type=int, default=120, help="Trading days to preload before start.")
     parser.add_argument("--buy-strong-threshold", type=float, default=None, help="Override buy_strong threshold.")
     parser.add_argument("--in-sample-start", type=parse_date, default=parse_date("2025-01-01"))
@@ -145,9 +149,12 @@ def parse_args() -> BacktestConfig:
     parser.add_argument("--commission-bps", type=float, default=2.5)
     parser.add_argument("--slippage-bps", type=float, default=5.0)
     parser.add_argument("--stamp-tax-bps", type=float, default=5.0)
-    parser.add_argument("--algorithm", default="no-tech-gate",
-                        choices=["no-tech-gate", "oversold"],
-                        help="v2 candidate algorithm variant.")
+    parser.add_argument(
+        "--algorithm",
+        default="no-tech-gate",
+        choices=["no-tech-gate", "oversold"],
+        help="v2 candidate algorithm variant.",
+    )
     args = parser.parse_args()
 
     if args.start > args.end:
@@ -246,9 +253,7 @@ def run_backtest(config: BacktestConfig) -> BacktestResult:
     qfq_contracts: dict[str, DataContractState] = {}
 
     if config.qfq_cache_dir is not None and codes:
-        qfq_panels, qfq_contracts = load_cached_qfq_panels(
-            config.qfq_cache_dir, codes, preload_start, config.end
-        )
+        qfq_panels, qfq_contracts = load_cached_qfq_panels(config.qfq_cache_dir, codes, preload_start, config.end)
 
     missing_codes = tuple(code for code in codes if code not in qfq_panels)
     if config.allow_tushare_fetch and missing_codes:
@@ -612,7 +617,9 @@ def to_tushare_code(code: str) -> str:
     return f"{code}.{suffix}"
 
 
-def derive_qfq_bars_from_tushare(code: str, daily: Any, factors: Any, preload_start: date) -> tuple[list[DailyBar], str | None]:
+def derive_qfq_bars_from_tushare(
+    code: str, daily: Any, factors: Any, preload_start: date
+) -> tuple[list[DailyBar], str | None]:
     try:
         raw = build_cache_frame(code, daily, factors)
         derived = derive_qfq_ohlcv(raw)
@@ -1087,7 +1094,17 @@ def render_report(result: BacktestResult) -> str:
         "High-dividend qfq vs none examples (600900):",
         render_table(
             result.coverage["high_dividend_examples"],
-            ["score_date", "code", "v2_adjusted", "v2_status", "v2_reason", "close", "ma60", "ma120", "alignment_reason"],
+            [
+                "score_date",
+                "code",
+                "v2_adjusted",
+                "v2_status",
+                "v2_reason",
+                "close",
+                "ma60",
+                "ma120",
+                "alignment_reason",
+            ],
         ),
         "",
         "## 4. Raw daily metrics",
@@ -1148,7 +1165,22 @@ def render_metrics_block(block: dict[str, Any]) -> str:
                     "maxdd_proxy": fmt(value.get("max_drawdown_proxy")),
                 }
             )
-        parts.append(render_table(rows, ["state", "n", "settled", "avg_alpha", "avg_net_alpha", "hit_rate", "median_alpha", "worst", "maxdd_proxy"]))
+        parts.append(
+            render_table(
+                rows,
+                [
+                    "state",
+                    "n",
+                    "settled",
+                    "avg_alpha",
+                    "avg_net_alpha",
+                    "hit_rate",
+                    "median_alpha",
+                    "worst",
+                    "maxdd_proxy",
+                ],
+            )
+        )
     return "\n".join(parts)
 
 

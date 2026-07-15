@@ -63,7 +63,16 @@ def _bars(days: int = 120) -> pd.DataFrame:
 def test_normalize_tencent_bars_returns_ok_result() -> None:
     result = _normalize_bars_result(
         pd.DataFrame(
-            [{"date": date.today().isoformat(), "open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0, "volume": 100.0}]
+            [
+                {
+                    "date": date.today().isoformat(),
+                    "open": 10.0,
+                    "high": 10.0,
+                    "low": 10.0,
+                    "close": 10.0,
+                    "volume": 100.0,
+                }
+            ]
         ),
         "akshare.stock_zh_a_hist_tx",
         "l3_bars",
@@ -127,16 +136,18 @@ class _FakeProvider:
 def test_refresh_daily_bars_writes_bars_and_audit(tmp_db) -> None:
     service = MarketDataCacheService(
         tmp_db,
-        _FakeProvider({
-            "600036": MarketDataResult(
-                _bars(),
-                "ok",
-                "source",
-                date.today().isoformat(),
-                adjusted="none",
-                volume_unit="share",
-            )
-        }),
+        _FakeProvider(
+            {
+                "600036": MarketDataResult(
+                    _bars(),
+                    "ok",
+                    "source",
+                    date.today().isoformat(),
+                    adjusted="none",
+                    volume_unit="share",
+                )
+            }
+        ),
     )
 
     coverage = service.refresh_daily_bars(["600036"], date.today().isoformat(), 120)
@@ -151,7 +162,9 @@ def test_refresh_daily_bars_writes_bars_and_audit(tmp_db) -> None:
 def test_refresh_daily_bars_failed_provider_only_writes_audit(tmp_db) -> None:
     service = MarketDataCacheService(
         tmp_db,
-        _FakeProvider({"600036": MarketDataResult(None, "failed", "source", date.today().isoformat(), error_code=EMPTY_RESPONSE)}),
+        _FakeProvider(
+            {"600036": MarketDataResult(None, "failed", "source", date.today().isoformat(), error_code=EMPTY_RESPONSE)}
+        ),
     )
 
     coverage = service.refresh_daily_bars(["600036"], date.today().isoformat(), 120)

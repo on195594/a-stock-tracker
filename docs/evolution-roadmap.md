@@ -1,7 +1,7 @@
 # a-stock-tracker 进化路线图
 
-**版本：** v1.8
-**基线日期：** 2026-07-10
+**版本：** v1.10
+**基线日期：** 2026-07-15
 **文档定位：** 系统演化的顶层规划文档。所有后续 Phase 的修改、补丁、设计决策均以本文档为基线。若实施中发现偏差，先更新本文档，再改代码。
 
 ---
@@ -14,36 +14,39 @@
 |------|------|---------|
 | L1 好公司 | 这家公司值不值得持有？ | ✅ 已成型（ROE/增速/负债率/毛利率/Gemini定性） |
 | L2 好价格 | 当前估值有没有安全边际？ | 🔶 部分成型（PB分位日度化，PE分位缺失） |
-| L3 合适买点 | 现在是不是好的入场时机？ | ✅ v1 已实现；v2 已完成只读离线回测，当前 NEED_QFQ |
+| L3 合适买点 | 现在是不是好的入场时机？ | ✅ v1 保留审计；v2 已完成 QFQ 生产接入并成为 Telegram 主推门禁 |
 
 **系统不追踪价格动量**：框架是价值投资逻辑，股价下跌+基本面不变 = 估值改善 = 评分可能上升。这是设计决策，不是缺陷。
 
 ---
 
-## 二、当前系统基线（2026-07-04 快照）
+## 二、当前系统基线（2026-07-15 快照）
 
 ### 能力盘点
 
 | 模块 | 状态 | 说明 |
 |------|------|------|
-| Framework A 评分 | ✅ 正常 | 生产写入框架仍仅 A；2026-06-26 `daily` 真实运行完成，当日已有 A 框记录，幂等写入 0 条 |
-| Framework B 评分 | ⏸ report-only | 73 条历史记录保留，`SUPPORTED_FRAMEWORKS={"A"}`；B label 自然结案样本不足 `0/20`，最早 2026-07-26 后复核，不启用生产写入 |
+| Framework A 评分 | ✅ 正常 | 生产写入框架仍仅 A；2026-07-14 `daily` 写入 35 条，live DB 共 1681 条 A 记录 |
+| Framework B 评分 | ⏸ report-only | 73 条历史记录保留，`SUPPORTED_FRAMEWORKS={"A"}`；B label 自然结案样本不足 `0/20`，最早 2026-08-13 后复核，不启用生产写入 |
 | 每日 PB 分位 | ✅ 正常 | current_pb = 收盘价/bps，ranked in pb_hist_monthly；当前 watchlist PB 日度可计算 35/35 |
 | 毛利率字段 | ✅ 正常 | 基本面缓存 35/35，金融行业 gross_margin 不适用按规则跳过 |
 | Gemini 定性评分 | ✅ 正常 | 30天缓存，退避重试（429/5xx，最多3次），过期缓存降级，all-or-nothing fallback；当前缓存存在 35/35 |
-| Telegram 推送 | ✅ 正常 | ≥ buy_strong 且 L3 entry_signal=1 触发；2026-06-26 daily 推送成功 1 只股票 |
-| Outcome 追踪 | ✅ 正常 | `outcome-update` 已恢复到 cron；accuracy-report 显示 Framework A 30d 结案 533 条，其中 post-fix 315 条 |
-| L3 买点层 | ✅ v1 正常；v2 Phase 2 完成 | L3 v1 已接入 daily/推送/report；L3 v2 QFQ 采集完成（35/35 codes × 130 rows），pass_strong 已激活，cron 每日 16:00 采集 |
-| 行情数据源 | ✅ READY_CRON | `a-stock-lib==0.2.0`：Tushare 主源 + 隔离 BaoStock degraded fallback；`check_market_data_readiness.py --scope cron` 返回 `READY_CRON` |
-| cron | ✅ 已恢复 | managed block 管理 weekly/daily/outcome-update；恢复前真实 probe/backfill/daily 已验证 |
+| Telegram 推送 | ✅ v2 门禁已上线 | 主推条件为 ≥ buy_strong 且 `l3_v2_signal=1`；v2 为 0/NULL 的高分股进入候补 |
+| Outcome 追踪 | ✅ 最近运行正常 | live DB 中 Framework A 30d/60d 结案 953/253；90d 尚无结案 |
+| L3 买点层 | ✅ v2 Phase 2+3 完成；选择性待观察 | QFQ 覆盖 35/35 codes、4585 行；2026-07-13/14 共写入 70 条 v2 记录且全部 pass；cron 工作日 16:00 采集 |
+| 定性评分 v2 | 🔶 fixture-first | approved spec 仅授权 MILESTONE-002；types/taxonomy 与 validator 已完成，schema/prompt builder 待实现；未接生产 |
+| 行情数据源 | ✅ `READY_CRON` | `a-stock-lib==0.2.0`；2026-07-15 probe 的 daily/index/calendar/close cross-check 全部 PASS |
+| cron | ✅ 已按门禁重新安装 | weekly/weekly-PM/QFQ/daily/outcome 五项 managed cron 均已确认 |
+| 质量门禁 | ✅ 全绿 | `373 passed`；Ruff lint/format、mypy、`git diff --check` 全部通过 |
 
 ### 关键数据规模
 
 - watchlist：35只（手动维护，固定池）
-- Framework A 记录：1303 条；30d 结案：533 条
+- Framework A 记录：1681 条；live DB 30d/60d 结案：953/253 条（2026-07-15 只读查询）
 - Framework B 历史记录：73 条；生产写入暂停，仅 report-only 观察
-- L3 v1 记录：700 条；L3 30d 已结案：0 条
-- Phase 6 当前阻塞：B label 已结案样本不足 `0/20`，最早可评估日期 `2026-07-26`
+- L3 v1 记录：1078 条，其中通过 148 条、30d 已结案 350 条；L3 v2 记录 70 条且 70/70 pass，两天 strong 均为 18/18 通过门禁，选择性尚未得到证明
+- 最新 tracked accuracy report 生成于 2026-07-15；其中 post-fix A 30d 结案 735 条，L3 v1 pass 的 30d 已结案 71 条
+- Phase 6 当前阻塞：B label 已结案样本不足 `0/20`，最早可评估日期 `2026-08-13`
 
 ### 已知系统性偏差
 
@@ -62,8 +65,8 @@
 **完成状态：**
 
 *继续开发允许条件：*
-- [x] 30d 结案记录 ≥ 100 条：Framework A 当前 533 条，post-fix 315 条。
-- [x] accuracy-report 各信号层级 post-fix 样本达到可观察规模：strong 165 / moderate 60 / light 81。
+- [x] 30d 结案记录 ≥ 100 条：最新 tracked report 为 Framework A 953 条、post-fix 735 条。
+- [x] accuracy-report 各信号层级 post-fix 样本已达到可观察规模。
 
 *评分有效性结论：*
 - [ ] hit_rate_vs_300 > 55% at strong 层级尚未满足。
@@ -78,7 +81,7 @@
 
 ---
 
-### Phase 5：买点层（L3 补全）[v1 已完成；v2 离线验证中]
+### Phase 5：买点层（L3 补全）[v1 已完成；v2 Phase 2+3 已完成]
 
 **目标：** 在现有评分基础上增加"入场时机确认"信号，解决最大缺口。
 
@@ -89,7 +92,7 @@
 **设计原则：**
 - L3 买点信号是**过滤层**，不修改 L1/L2 的 total_score，不能反向影响公司质量评分
 - L3 使用趋势/动量类信号（均线、成交量、行业指数）作为**入场确认**，这是允许的；但这些信号只在 L3 层生效，不得渗入 L1/L2 评分逻辑（见第四节边界说明）
-- 格式：`entry_signal: int`（0/1/NULL），只有评分 ≥ `buy_strong` AND `entry_signal=1` 时才触发推送
+- v1 历史格式为 `entry_signal: int`（0/1/NULL）；自 2026-07-12 起生产主推权威门禁为评分 ≥ `buy_strong` AND `l3_v2_signal=1`
 - 信号生效不改变 `weights_hash`，不影响 total_score 历史数据可比性
 - **版本化约束**：L3 规则变更时须同步更新 `entry_signal_version`（字符串，格式 `v{N}`，存入 predictions 表），使回测可区分不同版本规则下的信号记录
 - **空值语义**：旧记录为 `entry_signal=NULL AND entry_signal_version IS NULL`；L3 v1 已运行但不可计算为 `entry_signal=NULL AND entry_signal_version='v1'`；二者必须分开统计
@@ -110,6 +113,8 @@
 3. `telegram_push.py` 推送条件从 `score >= buy_strong` 改为 `score >= buy_strong AND entry_signal=1`
 4. `predictions` 表新增 `entry_signal INT` 列和 `entry_signal_version TEXT` 列；旧记录保持 `NULL/NULL`
 5. `accuracy-report` 增加 L3 买点层 section，区分 `NULL/NULL`、`NULL/v1`、`0/v1` 与 `1/v1`，样本不足时提示
+
+以上 1~5 是 v1 历史实施结果。当前生产仍保留 v1 字段用于审计，但 Telegram 主推不再读取 `entry_signal=1`，而读取下文 Phase 3 的 `l3_v2_signal=1`。
 
 **预期观测范围：** L3 过滤后，strong 信号从当前约 6/35 = 17% 降至 3-5%。这是产品/策略观察目标，不是 CI 通过条件；工程验收以字段语义、推送过滤和 accuracy-report 统计正确为准。
 
@@ -148,14 +153,14 @@
 
 **目标：** 为不同行业激活对应框架，解决"白酒用 A 框架不合适"的问题。
 
-**当前状态（2026-06-26）：** Phase 6 仍为 report-only 深化期。`accuracy-report` 已能输出 Phase 6 readiness、生产化阻塞项和下一步行动；`docs/plans/2026-06-26-phase6-report-only-next-steps.md` 是当前执行计划。Framework B 生产写入仍未启用。
+**当前状态（2026-07-15）：** Phase 6 仍为 report-only 深化期。最新 tracked `accuracy-report` 显示 B label `0/20`、最早 2026-08-13 可评估；`docs/plans/2026-06-26-phase6-report-only-next-steps.md` 仍是执行边界。Framework B 生产写入未启用。当日 probe/cron 已恢复 READY，weekly PM 误报和质量基线漂移已修复。
 
 **本轮推进复盘：**
-- 行情链路已恢复：`a-stock-lib==0.1.2` 提供 Tushare 主源 + 隔离 BaoStock degraded fallback；真实 probe/backfill/daily 均已执行。
-- cron 已恢复为 managed block；`READY_CRON` 是 daily/outcome-update 恢复门禁，旧报告、重复字段和 `HOLD_CRON` 场景已 default-deny。
+- 行情链路已恢复并升级到 `a-stock-lib==0.2.0`：Tushare 主源 + 隔离 BaoStock degraded fallback；真实 probe/backfill/daily 均有成功记录。
+- cron 已恢复为 managed block；`READY_CRON` 是 daily/outcome-update 恢复门禁。2026-07-15 probe 全部通过，managed cron 已按 runbook 重新安装。
 - 已把 Phase 6 readiness 从单一结论扩展为可执行检查清单，明确展示 post-fix A 框 30d 结案、数据质量、Framework B 金融候选 dry-run 覆盖、B label 已结案样本和 overdue outcome 风险。
 - 保持生产边界不变：未启用 `SUPPORTED_FRAMEWORKS` 的 B 写入，未新增 B predictions，未修改 `weights.json`，未改写历史 prediction/outcome 数据。
-- 当前阻塞：B label 自然结案样本不足 `0/20`，最早可评估日期 `2026-07-26`；在此之前只做 report-only 观察和 cron 稳定性复核。
+- 当前阻塞：B label 自然结案样本不足 `0/20`，最早可评估日期 `2026-08-13`；在此之前只做 report-only 观察和 cron 稳定性复核。
 
 **Phase 6 生产化前置条件：**
 - post-fix Framework A 30d 结案样本 ≥ 100。
@@ -269,3 +274,5 @@
 | v1.6 | 2026-06-26 | 同步真实恢复状态：`a-stock-lib==0.1.2`、隔离 BaoStock fallback、真实 probe/backfill/daily、`READY_CRON`、managed cron block；Phase 4 标记完成并转持续观察，Phase 6 明确为 report-only 深化，不启用 Framework B 生产写入；新增 `docs/project-status.md` 作为 PM/spec 台账 |
 | v1.7 | 2026-07-04 | agy 工程审查修复（Batch A+B，11 commits）：DB per-stock SAVEPOINT 隔离、spot_em 重试计数器（连续3次才今日锁定）、Gemini 退避重试+过期缓存降级、subprocess stderr 转发、cache._ensure_columns SQL identifier allowlist、_OUTCOME_WINDOWS frozenset、agent_reviewer 接入真实 Gemini REST API（_fake_review_fallback 降级）；新增 cmd_init/cmd_weekly/cmd_outcome_update 测试覆盖；测试基线 225 passed, 1 skipped（含 3 个新测试模块补丁） |
 | v1.8 | 2026-07-12 | Phase 5 L3 v2 Phase 2+3 完成：QFQ 采集（35/35×130行，pass_strong 激活）+ 推送触发切换至 l3_v2_signal=1；Framework A 倒置诊断（Q5 avg_alpha=-9.91%，根因=截面校准偏差+11支伪复制，不调权重）；agy 投资视角审查（持有期错配+价值风格轮出；Priority 1=延伸60d/90d评估）；Tushare probe 刷新（上次 2026-07-02 已过期）；daily+outcome-update cron 正式恢复（market-data-backfill ok=35） |
+| v1.9 | 2026-07-15 | 对齐 L3 v2 已上线事实、live DB/报告样本、B label 日期和 qualitative v2 MILESTONE-002 进度；记录 readiness 因 probe stale 转 HOLD、weekly-PM failure-marker 误报，以及 mypy/Ruff format 基线漂移，明确下一步 P0/P1 顺序。 |
+| v1.10 | 2026-07-15 | 完成 v1.9 识别的 P0/P1：当天 probe 全 PASS 并恢复 READY_CRON/managed cron；修复 weekly-PM 中文零失败与降级 WARNING 分级；mypy 24 errors 清零并完成 Ruff format 全库基线；同步最新 accuracy report 与 B label 日期。 |
