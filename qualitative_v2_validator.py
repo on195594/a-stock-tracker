@@ -10,6 +10,15 @@ only be observed on the raw dict -- a dataclass with a default value cannot
 distinguish "field omitted" from "field explicitly null" once constructed
 (see qualitative_v2_types.Evidence docstring). Typed dataclass instances are
 constructed here only after validation succeeds.
+
+Defense in depth (codex review, round 2): citation-time freshness is always
+*recomputed* from evidence.source_date/state_type/effective_until using the
+*canonical* freshness_policy for the evidence's claim_category -- never
+trusted from evidence.freshness_status or evidence.freshness_policy as
+stored. This closes two related gaps: (1) a caller declaring a mismatched,
+overly-permissive freshness_policy at ingestion, and (2) a caller
+hand-constructing a QualitativeContext/Evidence directly (bypassing
+validate_context_dict) with a fabricated freshness_status="fresh".
 """
 
 from __future__ import annotations
@@ -65,6 +74,17 @@ def _parse_iso_date(value: object, *, field_name: str) -> date:
         raise ValueError(f"{field_name} is not a valid ISO YYYY-MM-DD date: {value!r}") from exc
 
 
+def _is_nonempty_str(value: object) -> bool:
+    return isinstance(value, str) and value != ""
+
+
+def _str_in(value: object, allowed: frozenset[str]) -> bool:
+    """Membership test that is safe against unhashable/non-str inputs (codex
+    review: bare `value in some_frozenset` raises TypeError on unhashable
+    values like list/dict instead of failing closed with a rejection)."""
+    return isinstance(value, str) and value in allowed
+
+
 @dataclass(frozen=True)
 class EvidenceValidationResult:
     valid: bool
@@ -84,6 +104,7 @@ def validate_evidence_dict(raw: dict[str, object], *, as_of_date_value: date) ->
     if unknown:
         return EvidenceValidationResult(False, None, f"unknown evidence fields: {sorted(unknown)}")
 
+    evidence_id = raw["evidence_id"]
     evidence_type = raw["evidence_type"]
     claim_category = raw["claim_category"]
     directness = raw["directness"]
@@ -94,25 +115,43 @@ def validate_evidence_dict(raw: dict[str, object], *, as_of_date_value: date) ->
     source = raw["source"]
     declared_freshness_status = raw["freshness_status"]
 
-    if evidence_type not in taxonomy.EVIDENCE_TYPES:
+    if not _is_nonempty_str(evidence_id):
+        return EvidenceValidationResult(False, None, "evidence_id must be a non-empty string")
+    if not _str_in(evidence_type, taxonomy.EVIDENCE_TYPES):
         return EvidenceValidationResult(False, None, f"unknown evidence_type: {evidence_type!r}")
-    if claim_category not in taxonomy.CLAIM_CATEGORIES:
+    if not _str_in(claim_category, taxonomy.CLAIM_CATEGORIES):
         return EvidenceValidationResult(False, None, f"unknown claim_category: {claim_category!r}")
     if not taxonomy.is_evidence_type_claim_category_combo_valid(str(evidence_type), str(claim_category)):
         return EvidenceValidationResult(
             False, None, f"evidence_type {evidence_type!r} may not carry claim_category {claim_category!r}"
         )
-    if directness not in taxonomy.DIRECTNESS_VALUES:
+    if not _str_in(directness, taxonomy.DIRECTNESS_VALUES):
         return EvidenceValidationResult(False, None, f"unknown directness: {directness!r}")
     if not taxonomy.is_directness_allowed(str(claim_category), str(directness)):
         return EvidenceValidationResult(
             False, None, f"claim_category {claim_category!r} may not use directness {directness!r}"
         )
-    if freshness_policy not in taxonomy.FRESHNESS_POLICIES:
+    if not _str_in(freshness_policy, taxonomy.FRESHNESS_POLICIES):
         return EvidenceValidationResult(False, None, f"unknown freshness_policy: {freshness_policy!r}")
+
+    # Critical fix (codex review round 2): freshness_policy must match the
+    # *canonical* policy for this claim_category, not merely be some known
+    # policy value. Without this, e.g. a market_sentiment item (canonical
+    # max_age_30d) could declare max_age_550d and have a 100-day-old item
+    # pass as "fresh", laundering stale evidence through the sentiment gate.
+    canonical_policy = taxonomy.canonical_freshness_policy(str(claim_category))
+    if freshness_policy != canonical_policy:
+        return EvidenceValidationResult(
+            False,
+            None,
+            f"freshness_policy {freshness_policy!r} does not match canonical {canonical_policy!r} "
+            f"for claim_category {claim_category!r}",
+        )
 
     if not isinstance(allowed_dimensions_raw, (list, tuple)):
         return EvidenceValidationResult(False, None, "allowed_dimensions must be a list")
+    if not all(isinstance(dim, str) for dim in allowed_dimensions_raw):
+        return EvidenceValidationResult(False, None, "allowed_dimensions must contain only strings")
     allowed_dimensions = tuple(allowed_dimensions_raw)
     if len(set(allowed_dimensions)) != len(allowed_dimensions):
         return EvidenceValidationResult(False, None, "allowed_dimensions must not contain duplicates")
@@ -141,9 +180,10 @@ def validate_evidence_dict(raw: dict[str, object], *, as_of_date_value: date) ->
     effective_until_raw: object = None
     has_effective_until_key = "effective_until" in raw
     if has_state_type_key:
-        state_type = raw["state_type"]  # type: ignore[assignment]
-        if state_type not in taxonomy.STATE_TYPES:
-            return EvidenceValidationResult(False, None, f"unknown state_type: {state_type!r}")
+        state_type_candidate = raw["state_type"]
+        if not _str_in(state_type_candidate, taxonomy.STATE_TYPES):
+            return EvidenceValidationResult(False, None, f"unknown state_type: {state_type_candidate!r}")
+        state_type = str(state_type_candidate)
         if state_type == "status" and not has_effective_until_key:
             return EvidenceValidationResult(
                 False, None, "state_type='status' requires an effective_until field (may be null)"
@@ -177,16 +217,20 @@ def validate_evidence_dict(raw: dict[str, object], *, as_of_date_value: date) ->
     persistence_horizon: str | None = None
     materiality: str | None = None
     if requires_persistence:
-        persistence_horizon = raw["persistence_horizon"]  # type: ignore[assignment]
-        materiality = raw["materiality"]  # type: ignore[assignment]
-        if persistence_horizon not in taxonomy.PERSISTENCE_HORIZONS:
-            return EvidenceValidationResult(False, None, f"unknown persistence_horizon: {persistence_horizon!r}")
-        if materiality not in taxonomy.MATERIALITY_LEVELS:
-            return EvidenceValidationResult(False, None, f"unknown materiality: {materiality!r}")
+        persistence_horizon_candidate = raw["persistence_horizon"]
+        materiality_candidate = raw["materiality"]
+        if not _str_in(persistence_horizon_candidate, taxonomy.PERSISTENCE_HORIZONS):
+            return EvidenceValidationResult(
+                False, None, f"unknown persistence_horizon: {persistence_horizon_candidate!r}"
+            )
+        if not _str_in(materiality_candidate, taxonomy.MATERIALITY_LEVELS):
+            return EvidenceValidationResult(False, None, f"unknown materiality: {materiality_candidate!r}")
+        persistence_horizon = str(persistence_horizon_candidate)
+        materiality = str(materiality_candidate)
 
     if not isinstance(value, (str, float, bool, int)):
         return EvidenceValidationResult(False, None, f"value must be a JSON scalar, got {type(value).__name__}")
-    if unit is not None and not isinstance(unit, str):
+    if unit is not None and (not isinstance(unit, str) or unit == ""):
         return EvidenceValidationResult(False, None, "unit must be a non-empty string or null")
     if not isinstance(source, str) or not source:
         return EvidenceValidationResult(False, None, "source must be a non-empty string")
@@ -196,7 +240,7 @@ def validate_evidence_dict(raw: dict[str, object], *, as_of_date_value: date) ->
     except ValueError as exc:
         return EvidenceValidationResult(False, None, str(exc))
 
-    if declared_freshness_status not in ("fresh", "stale"):
+    if not _str_in(declared_freshness_status, frozenset({"fresh", "stale"})):
         return EvidenceValidationResult(False, None, f"unknown freshness_status: {declared_freshness_status!r}")
 
     try:
@@ -222,7 +266,7 @@ def validate_evidence_dict(raw: dict[str, object], *, as_of_date_value: date) ->
         effective_until_str = str(effective_until_raw)
 
     evidence = Evidence(
-        evidence_id=str(raw["evidence_id"]),
+        evidence_id=str(evidence_id),
         evidence_type=str(evidence_type),
         claim_category=str(claim_category),
         allowed_dimensions=allowed_dimensions,
@@ -273,10 +317,11 @@ def validate_context_dict(raw: dict[str, object]) -> ContextValidationResult:
         if not isinstance(item, dict):
             return ContextValidationResult(False, None, f"evidence[{index}] must be an object")
         evidence_id = item.get("evidence_id")
+        if not _is_nonempty_str(evidence_id):
+            return ContextValidationResult(False, None, f"evidence[{index}] evidence_id must be a non-empty string")
         if evidence_id in seen_ids:
             return ContextValidationResult(False, None, f"duplicate evidence_id: {evidence_id!r}")
-        if isinstance(evidence_id, str):
-            seen_ids.add(evidence_id)
+        seen_ids.add(str(evidence_id))
         result = validate_evidence_dict(item, as_of_date_value=as_of_date_value)
         if not result.valid or result.evidence is None:
             return ContextValidationResult(
@@ -305,31 +350,65 @@ def _lookup_evidence_by_id(context: QualitativeContext) -> dict[str, Evidence]:
     return {item.evidence_id: item for item in context.evidence}
 
 
-def _dimension_gate_satisfied(dimension: str, cited: list[Evidence]) -> bool:
+def _recompute_is_fresh(evidence: Evidence, *, as_of_date_value: date) -> bool:
+    """Defense in depth (codex review round 2): never trust
+    evidence.freshness_status directly at citation-check time. Recompute
+    using the *canonical* freshness_policy for the evidence's claim_category
+    (not evidence.freshness_policy as stored), so that even a hand-built
+    QualitativeContext bypassing validate_context_dict, or a stored policy
+    mismatch, cannot launder stale evidence as fresh."""
+    canonical_policy = taxonomy.canonical_freshness_policy(evidence.claim_category)
+    try:
+        source_date = _parse_iso_date(evidence.source_date, field_name="source_date")
+        effective_until_date = (
+            _parse_iso_date(evidence.effective_until, field_name="effective_until")
+            if evidence.effective_until is not None
+            else None
+        )
+        status = taxonomy.compute_freshness_status(
+            as_of_date=as_of_date_value,
+            source_date=source_date,
+            freshness_policy=canonical_policy,
+            state_type=evidence.state_type,
+            effective_until=effective_until_date,
+        )
+    except ValueError:
+        return False
+    return status == "fresh"
+
+
+def _dimension_gate_satisfied(dimension: str, cited: list[Evidence], *, as_of_date_value: date) -> bool:
     """REQ-007~009/062: machine threshold checked against the model's actually
-    cited evidence_ids (not merely what exists in the packet)."""
+    cited evidence_ids (not merely what exists in the packet), with freshness
+    recomputed rather than trusted (see _recompute_is_fresh)."""
     if dimension == "moat":
         has_direct_moat = any(
-            e.claim_category == "competitive_moat" and e.directness == "direct" and e.freshness_status == "fresh"
+            e.claim_category == "competitive_moat"
+            and e.directness == "direct"
+            and _recompute_is_fresh(e, as_of_date_value=as_of_date_value)
             for e in cited
         )
         has_financial_support = any(
             e.claim_category == "financial_performance"
             and e.directness == "supporting"
-            and e.freshness_status == "fresh"
+            and _recompute_is_fresh(e, as_of_date_value=as_of_date_value)
             for e in cited
         )
         return has_direct_moat and has_financial_support
     if dimension == "market_pos":
         return any(
-            e.claim_category == "industry_position" and e.directness == "direct" and e.freshness_status == "fresh"
+            e.claim_category == "industry_position"
+            and e.directness == "direct"
+            and _recompute_is_fresh(e, as_of_date_value=as_of_date_value)
             for e in cited
         )
     if dimension == "sentiment":
         fresh_direct_sentiment = [
             e
             for e in cited
-            if e.claim_category == "market_sentiment" and e.directness == "direct" and e.freshness_status == "fresh"
+            if e.claim_category == "market_sentiment"
+            and e.directness == "direct"
+            and _recompute_is_fresh(e, as_of_date_value=as_of_date_value)
         ]
         if not fresh_direct_sentiment:
             return False
@@ -347,7 +426,11 @@ class ScoringValidationResult:
 
 
 def _validate_dimension_result(
-    dimension: str, raw_dim: object, *, evidence_by_id: dict[str, Evidence]
+    dimension: str,
+    raw_dim: object,
+    *,
+    evidence_by_id: dict[str, Evidence],
+    as_of_date_value: date,
 ) -> tuple[DimensionResult | None, str | None]:
     if not isinstance(raw_dim, dict):
         return None, f"dimension {dimension!r} must be an object"
@@ -361,17 +444,19 @@ def _validate_dimension_result(
     evidence_ids_raw = raw_dim["evidence_ids"]
     rationale = raw_dim["rationale"]
 
-    if status not in _DIMENSION_STATUS_VALUES:
+    if not _str_in(status, _DIMENSION_STATUS_VALUES):
         return None, f"dimension {dimension!r} has unknown/disallowed status: {status!r}"
-    if confidence not in _CONFIDENCE_VALUES:
+    if not _str_in(confidence, _CONFIDENCE_VALUES):
         return None, f"dimension {dimension!r} has unknown confidence: {confidence!r}"
     if not isinstance(evidence_ids_raw, (list, tuple)):
         return None, f"dimension {dimension!r} evidence_ids must be a list"
+    if not all(_is_nonempty_str(item) for item in evidence_ids_raw):
+        return None, f"dimension {dimension!r} evidence_ids must contain only non-empty strings"
     evidence_ids = tuple(evidence_ids_raw)
     if len(set(evidence_ids)) != len(evidence_ids):
         return None, f"dimension {dimension!r} evidence_ids contains duplicates"
-    if not isinstance(rationale, str):
-        return None, f"dimension {dimension!r} rationale must be a string"
+    if not isinstance(rationale, str) or not rationale.strip():
+        return None, f"dimension {dimension!r} rationale must be a non-empty, non-whitespace string"
 
     # REQ-026: scored<->null / insufficient_data<->non-null mismatches.
     if status == "scored":
@@ -387,19 +472,19 @@ def _validate_dimension_result(
     # REQ-025: reject unknown evidence_id references.
     cited: list[Evidence] = []
     for evidence_id in evidence_ids:
-        evidence = evidence_by_id.get(str(evidence_id))
+        evidence = evidence_by_id.get(evidence_id)
         if evidence is None:
             return None, f"dimension {dimension!r} cites unknown evidence_id: {evidence_id!r}"
         if dimension not in evidence.allowed_dimensions:
             return None, f"dimension {dimension!r} cites evidence not allowed for this dimension: {evidence_id!r}"
-        if evidence.freshness_status != "fresh":
+        if not _recompute_is_fresh(evidence, as_of_date_value=as_of_date_value):
             return None, f"dimension {dimension!r} cites stale evidence: {evidence_id!r}"
         cited.append(evidence)
 
     # REQ-028: scored is only valid if the cited set actually satisfies the
     # REQ-007~009/062 machine threshold -- not merely because the packet
     # contained qualifying evidence somewhere.
-    if status == "scored" and not _dimension_gate_satisfied(dimension, cited):
+    if status == "scored" and not _dimension_gate_satisfied(dimension, cited, as_of_date_value=as_of_date_value):
         return None, f"dimension {dimension!r} claims scored but cited evidence does not satisfy REQ-007~009/062"
 
     return (
@@ -418,23 +503,31 @@ def validate_model_output(raw_output: dict[str, object], *, context: Qualitative
     """REQ-015~019/024~029: validate the model's structured output against
     context. All-or-nothing: any per-dimension violation invalidates the
     entire result (REQ-029) -- callers must not adopt individual dimensions
-    from a rejected result."""
+    from a rejected result.
+
+    Callers must pass a context produced by validate_context_dict; this
+    function recomputes evidence freshness independently (see
+    _recompute_is_fresh) rather than trusting stored freshness_status, but it
+    does not re-validate the context's other taxonomy fields (allowed_dimensions,
+    directness, evidence_type/claim_category combination) -- those remain the
+    responsibility of validate_context_dict at ingestion time.
+    """
     keys = set(raw_output.keys())
     if keys != _REQUIRED_SCORING_RESULT_KEYS:
         return ScoringValidationResult(False, None, f"top-level output has wrong field set: {sorted(keys)}")
 
     schema_version = raw_output["schema_version"]
     overall_status_claimed = raw_output["overall_status"]
-    as_of_date_value = raw_output["as_of_date"]
+    as_of_date_raw = raw_output["as_of_date"]
     dimensions_raw = raw_output["dimensions"]
 
     if schema_version != context.schema_version:
         return ScoringValidationResult(
             False, None, f"schema_version mismatch: output={schema_version!r} context={context.schema_version!r}"
         )
-    if as_of_date_value != context.as_of_date:
+    if as_of_date_raw != context.as_of_date:
         return ScoringValidationResult(
-            False, None, f"as_of_date mismatch: output={as_of_date_value!r} context={context.as_of_date!r}"
+            False, None, f"as_of_date mismatch: output={as_of_date_raw!r} context={context.as_of_date!r}"
         )
     if overall_status_claimed not in ("scored", "insufficient_data"):
         return ScoringValidationResult(
@@ -445,11 +538,19 @@ def validate_model_output(raw_output: dict[str, object], *, context: Qualitative
     if not isinstance(dimensions_raw, dict) or set(dimensions_raw.keys()) != taxonomy.DIMENSIONS:
         return ScoringValidationResult(False, None, "dimensions must contain exactly moat/market_pos/sentiment")
 
+    try:
+        as_of_date_value = _parse_iso_date(context.as_of_date, field_name="context.as_of_date")
+    except ValueError as exc:
+        return ScoringValidationResult(False, None, str(exc))
+
     evidence_by_id = _lookup_evidence_by_id(context)
     validated: dict[str, DimensionResult] = {}
     for dimension in ("moat", "market_pos", "sentiment"):
         dim_result, reason = _validate_dimension_result(
-            dimension, dimensions_raw[dimension], evidence_by_id=evidence_by_id
+            dimension,
+            dimensions_raw[dimension],
+            evidence_by_id=evidence_by_id,
+            as_of_date_value=as_of_date_value,
         )
         if dim_result is None:
             return ScoringValidationResult(False, None, reason)
@@ -470,7 +571,7 @@ def validate_model_output(raw_output: dict[str, object], *, context: Qualitative
     result = ScoringResult(
         schema_version=str(schema_version),
         overall_status=str(computed_overall),
-        as_of_date=str(as_of_date_value),
+        as_of_date=str(as_of_date_raw),
         dimensions=Dimensions(
             moat=validated["moat"], market_pos=validated["market_pos"], sentiment=validated["sentiment"]
         ),

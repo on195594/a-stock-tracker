@@ -217,6 +217,55 @@ def test_directness_not_allowed_for_claim_category_rejected() -> None:
     assert not result.valid
 
 
+def test_non_canonical_freshness_policy_rejected_even_though_known_value() -> None:
+    """codex review Critical: a market_sentiment item declaring the
+    financial_performance-length policy (550d instead of canonical 30d)
+    must be rejected outright, not merely accepted and evaluated against
+    the wrong (longer) window."""
+    raw = _sentiment_evidence()
+    raw["freshness_policy"] = "max_age_550d"  # canonical for market_sentiment is max_age_30d
+    result = validate_evidence_dict(raw, as_of_date_value=AS_OF_DATE_OBJ)
+    assert not result.valid
+    assert "canonical" in (result.rejection_reason or "")
+
+
+def test_non_string_evidence_id_rejected() -> None:
+    raw = _financial_evidence()
+    raw["evidence_id"] = 123
+    result = validate_evidence_dict(raw, as_of_date_value=AS_OF_DATE_OBJ)
+    assert not result.valid
+
+
+def test_empty_string_evidence_id_rejected() -> None:
+    raw = _financial_evidence()
+    raw["evidence_id"] = ""
+    result = validate_evidence_dict(raw, as_of_date_value=AS_OF_DATE_OBJ)
+    assert not result.valid
+
+
+def test_empty_unit_string_rejected() -> None:
+    raw = _financial_evidence()
+    raw["unit"] = ""
+    result = validate_evidence_dict(raw, as_of_date_value=AS_OF_DATE_OBJ)
+    assert not result.valid
+
+
+def test_unhashable_evidence_type_fails_closed_not_typeerror() -> None:
+    """codex review Important #2: a list/dict value in a field checked
+    against a frozenset must be rejected cleanly, not raise TypeError."""
+    raw = _financial_evidence()
+    raw["evidence_type"] = ["not", "a", "string"]
+    result = validate_evidence_dict(raw, as_of_date_value=AS_OF_DATE_OBJ)
+    assert not result.valid
+
+
+def test_unhashable_allowed_dimensions_element_fails_closed() -> None:
+    raw = _financial_evidence()
+    raw["allowed_dimensions"] = [{"nested": "dict"}]
+    result = validate_evidence_dict(raw, as_of_date_value=AS_OF_DATE_OBJ)
+    assert not result.valid
+
+
 # ---------------------------------------------------------------------------
 # Context-level validation (REQ-001~005)
 # ---------------------------------------------------------------------------
@@ -592,3 +641,123 @@ def test_claim_category_registry_still_internally_consistent() -> None:
     test_qualitative_v2_taxonomy.py."""
     assert "competitive_moat" in CLAIM_CATEGORY_REGISTRY
     assert "context" in CLAIM_CATEGORY_REGISTRY["competitive_moat"].directness_values
+
+
+def test_empty_rationale_rejected() -> None:
+    context = _build_context([_financial_evidence()])
+    output = {
+        "schema_version": "qualitative-score-v2",
+        "overall_status": "insufficient_data",
+        "as_of_date": AS_OF_DATE,
+        "dimensions": {
+            "moat": {
+                "status": "insufficient_data",
+                "score": None,
+                "confidence": "low",
+                "evidence_ids": [],
+                "rationale": "",
+            },
+            "market_pos": _insufficient_dim(),
+            "sentiment": _insufficient_dim(),
+        },
+    }
+    result = validate_model_output(output, context=context)
+    assert not result.valid
+
+
+def test_whitespace_only_rationale_rejected() -> None:
+    context = _build_context([_financial_evidence()])
+    output = {
+        "schema_version": "qualitative-score-v2",
+        "overall_status": "insufficient_data",
+        "as_of_date": AS_OF_DATE,
+        "dimensions": {
+            "moat": {
+                "status": "insufficient_data",
+                "score": None,
+                "confidence": "low",
+                "evidence_ids": [],
+                "rationale": "   ",
+            },
+            "market_pos": _insufficient_dim(),
+            "sentiment": _insufficient_dim(),
+        },
+    }
+    result = validate_model_output(output, context=context)
+    assert not result.valid
+
+
+def test_non_string_evidence_id_reference_in_output_rejected() -> None:
+    """codex review Important #1: a bare int evidence_id reference must be
+    rejected, not coerced via str() and treated as equal to its string twin."""
+    context = _build_context([_financial_evidence(), _moat_evidence()])
+    output = {
+        "schema_version": "qualitative-score-v2",
+        "overall_status": "scored",
+        "as_of_date": AS_OF_DATE,
+        "dimensions": {
+            "moat": {
+                "status": "scored",
+                "score": 8,
+                "confidence": "medium",
+                "evidence_ids": [123, "competitive_advantage.patent_grant"],
+                "rationale": "x",
+            },
+            "market_pos": _insufficient_dim(),
+            "sentiment": _insufficient_dim(),
+        },
+    }
+    result = validate_model_output(output, context=context)
+    assert not result.valid
+
+
+def test_hand_built_context_with_fabricated_fresh_status_does_not_bypass_recomputed_freshness() -> None:
+    """codex review Important #3 (defense in depth): validate_model_output
+    must not trust a QualitativeContext/Evidence's stored freshness_status
+    if it bypasses validate_context_dict -- freshness is recomputed from
+    source_date/canonical policy at citation-check time."""
+    from qualitative_v2_types import Evidence, QualitativeContext
+
+    stale_but_claims_fresh = Evidence(
+        evidence_id="competitive_advantage.old_patent",
+        evidence_type="ip_record",
+        claim_category="competitive_moat",
+        allowed_dimensions=("moat",),
+        directness="direct",
+        freshness_policy="max_age_365d",
+        value="granted",
+        unit=None,
+        source="cninfo_filing",
+        source_date="2020-01-01",  # far more than 365 days before AS_OF_DATE
+        freshness_status="fresh",  # fabricated -- should not be trusted
+        state_type="event",
+    )
+    financial = Evidence(**_financial_evidence())  # type: ignore[arg-type]
+    context = QualitativeContext(
+        code="601899",
+        name="紫金矿业",
+        industry="铜",
+        as_of_date=AS_OF_DATE,
+        schema_version="qualitative-score-v2",
+        rubric_version="rubric-v1",
+        taxonomy_version="taxonomy-v1",
+        evidence=(financial, stale_but_claims_fresh),
+    )
+    output = {
+        "schema_version": "qualitative-score-v2",
+        "overall_status": "scored",
+        "as_of_date": AS_OF_DATE,
+        "dimensions": {
+            "moat": {
+                "status": "scored",
+                "score": 8,
+                "confidence": "medium",
+                "evidence_ids": ["fundamentals.roe_3y_avg", "competitive_advantage.old_patent"],
+                "rationale": "x",
+            },
+            "market_pos": _insufficient_dim(),
+            "sentiment": _insufficient_dim(),
+        },
+    }
+    result = validate_model_output(output, context=context)
+    assert not result.valid
