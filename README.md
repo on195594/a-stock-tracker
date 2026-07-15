@@ -7,7 +7,7 @@ A 股选股与方法论验证项目。当前定位是 **Framework A 定量评分
 ## 当前状态
 
 - 主分支：`master`
-- 当前阶段：Phase 5 L3 v2 已接入生产评分与推送；Phase 6 仍处于 report-only 观察期；来源约束的定性评分 v2 已完成 MILESTONE-002 fixture-first 合同，后续 shadow/cutover 尚未授权
+- 当前阶段：Phase 5 L3 v2 已接入生产评分与推送；Phase 6 仍处于 report-only 观察期；来源约束的定性评分 v2 已完成 MILESTONE-002 合同和 MILESTONE-003 文件型 shadow seam，真实证据 shadow/cutover 尚未授权
 - 生产框架：`SUPPORTED_FRAMEWORKS = {"A"}`；Framework B 历史数据保留，Phase 6 前不得启用生产写入
 - watchlist：35 只，维护在 `config.py`
 - 评分阈值：`buy_strong=44`、`buy_moderate=35`、`buy_light=26`
@@ -21,7 +21,7 @@ A 股选股与方法论验证项目。当前定位是 **Framework A 定量评分
 - Gemini 定性评分：`moat`、`market_pos`、`sentiment`，30 天缓存，失败时 all-or-nothing fallback 到固定值。
 - Outcome 追踪：记录 30/60/90 天收益、沪深 300 benchmark 和 generated `alpha_*d`。
 - L3 买点层：v1 保留用于历史审计；生产 daily 优先读取 QFQ 日线计算 `l3_v2_signal`，Telegram 主推已切换到 v2。
-- 定性评分 v2 合同：MILESTONE-002 已完成，包含 dataclass、两层 evidence taxonomy、静态 response schema、版本化 prompt 和纯本地 validator；尚未接 Gemini、生产 DB、pipeline、cron 或 Telegram。
+- 定性评分 v2：MILESTONE-002 合同与 MILESTONE-003 文件型 shadow seam 已完成；独立 CLI 使用 Gemini 原生 JSON Schema、本地语义校验和 git-ignored JSONL artifact，未接生产 DB、pipeline、cron 或 Telegram。
 - Telegram 推送：日报分为主推、候补和雷达；只有强分且 L3 v2 通过的股票进入主推，发送失败不阻断 daily。
 - Google Sheets 同步：展示层能力，失败只记录 warning，不是数据真相来源。
 - 数据治理：`docs/data-source-registry.yaml` 记录字段来源、缓存、刷新、fallback 和失败语义。
@@ -77,6 +77,17 @@ python3 pipeline.py market-data-backfill --start 2025-01-01 --end 2026-06-09
 
 # 生成准确率报告
 python3 pipeline.py accuracy-report
+
+# 仅验证定性评分 v2 context，不发网络请求、不创建 artifact
+python3 scripts/run_qualitative_v2_shadow.py \
+  --context tests/fixtures/qualitative_v2_empty_context.json
+
+# 显式执行一次隔离 shadow；需要 GEMINI_API_KEY，输出仅写 JSONL artifact
+python3 scripts/run_qualitative_v2_shadow.py \
+  --context path/to/approved-context.json \
+  --legacy-scores path/to/legacy-scores.json \
+  --output artifacts/qualitative_v2_shadow.jsonl \
+  --execute
 
 # 删除某只股票的本地历史数据
 python3 pipeline.py remove 601857
@@ -144,7 +155,9 @@ python3 pipeline.py init
 - `lib/data_quality.py`：required/degradable/derived 字段质量模型。
 - `lib/entry_signal.py`：L3 v1 买点层纯计算 seam。
 - `lib/l3_v2.py` / `lib/l3_v2_pipeline.py`：L3 v2 纯计算规则与 QFQ 优先的生产包装层。
-- `qualitative_v2_contract.py` / `qualitative_v2_types.py` / `qualitative_v2_taxonomy.py` / `qualitative_v2_schema.py` / `qualitative_v2_prompt.py` / `qualitative_v2_validator.py`：定性评分 v2 的 fixture-first 本地合同；当前不属于生产评分读写路径。
+- `qualitative_v2_contract.py` / `qualitative_v2_types.py` / `qualitative_v2_taxonomy.py` / `qualitative_v2_schema.py` / `qualitative_v2_prompt.py` / `qualitative_v2_validator.py`：定性评分 v2 的本地合同和 fail-closed 语义边界。
+- `qualitative_v2_client.py` / `qualitative_v2_shadow.py` / `scripts/run_qualitative_v2_shadow.py`：物理隔离的 Gemini shadow transport、JSONL persistence 和显式 CLI；不被生产 pipeline 导入。
+- `docs/runbooks/qualitative-v2-shadow.md`：shadow 输入、执行、artifact、去重和停止条件。
 - `lib/agent_reviewer.py`：只读 reviewer schema/fake reviewer。
 - `weights.json`：评分权重与阈值。
 - `docs/data-source-registry.yaml`：字段级数据源 registry。
@@ -179,6 +192,7 @@ pytest tests/test_data_quality.py -q
 pytest tests/test_agent_reviewer.py -q
 pytest tests/test_sheets_sync.py -q
 pytest tests/test_qualitative_v2_types.py tests/test_qualitative_v2_taxonomy.py tests/test_qualitative_v2_validator.py tests/test_qualitative_v2_schema.py tests/test_qualitative_v2_prompt.py -q
+pytest tests/test_qualitative_v2_client.py tests/test_qualitative_v2_shadow.py -q
 ```
 
 代码质量检查：

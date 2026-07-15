@@ -27,6 +27,7 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
+from typing import Literal
 
 import qualitative_v2_taxonomy as taxonomy
 from qualitative_v2_contract import (
@@ -523,11 +524,15 @@ def _dimension_gate_satisfied(dimension: str, cited: list[Evidence], *, as_of_da
     raise ValueError(f"unknown dimension: {dimension!r}")
 
 
+ModelOutputFailureKind = Literal["schema", "evidence", "semantic"]
+
+
 @dataclass(frozen=True)
 class ScoringValidationResult:
     valid: bool
     result: ScoringResult | None
     rejection_reason: str | None
+    rejection_kind: ModelOutputFailureKind | None = None
 
 
 def _validate_dimension_result(
@@ -536,12 +541,12 @@ def _validate_dimension_result(
     *,
     evidence_by_id: dict[str, Evidence],
     as_of_date_value: date,
-) -> tuple[DimensionResult | None, str | None]:
+) -> tuple[DimensionResult | None, ModelOutputFailureKind | None, str | None]:
     if not isinstance(raw_dim, dict):
-        return None, f"dimension {dimension!r} must be an object"
+        return None, "schema", f"dimension {dimension!r} must be an object"
     keys = set(raw_dim.keys())
     if keys != _REQUIRED_DIMENSION_RESULT_KEYS:
-        return None, f"dimension {dimension!r} has wrong field set: {sorted(keys)}"
+        return None, "schema", f"dimension {dimension!r} has wrong field set: {sorted(keys)}"
 
     status = raw_dim["status"]
     score = raw_dim["score"]
@@ -550,51 +555,67 @@ def _validate_dimension_result(
     rationale = raw_dim["rationale"]
 
     if not _str_in(status, _DIMENSION_STATUS_VALUE_SET):
-        return None, f"dimension {dimension!r} has unknown/disallowed status: {status!r}"
+        return None, "schema", f"dimension {dimension!r} has unknown/disallowed status: {status!r}"
     if not _str_in(confidence, _CONFIDENCE_VALUE_SET):
-        return None, f"dimension {dimension!r} has unknown confidence: {confidence!r}"
+        return None, "schema", f"dimension {dimension!r} has unknown confidence: {confidence!r}"
     if not isinstance(evidence_ids_raw, (list, tuple)):
-        return None, f"dimension {dimension!r} evidence_ids must be a list"
+        return None, "schema", f"dimension {dimension!r} evidence_ids must be a list"
     if not all(_is_nonempty_str(item) for item in evidence_ids_raw):
-        return None, f"dimension {dimension!r} evidence_ids must contain only non-empty strings"
+        return None, "schema", f"dimension {dimension!r} evidence_ids must contain only non-empty strings"
     if len(evidence_ids_raw) > EVIDENCE_IDS_MAX_ITEMS:
-        return None, (f"dimension {dimension!r} evidence_ids exceeds maximum item count {EVIDENCE_IDS_MAX_ITEMS}")
+        return (
+            None,
+            "schema",
+            f"dimension {dimension!r} evidence_ids exceeds maximum item count {EVIDENCE_IDS_MAX_ITEMS}",
+        )
     evidence_ids = tuple(evidence_ids_raw)
     if len(set(evidence_ids)) != len(evidence_ids):
-        return None, f"dimension {dimension!r} evidence_ids contains duplicates"
+        return None, "schema", f"dimension {dimension!r} evidence_ids contains duplicates"
     if not isinstance(rationale, str) or not rationale.strip():
-        return None, f"dimension {dimension!r} rationale must be a non-empty, non-whitespace string"
+        return None, "schema", f"dimension {dimension!r} rationale must be a non-empty, non-whitespace string"
     if len(rationale) > RATIONALE_MAX_CHARS:
-        return None, f"dimension {dimension!r} rationale exceeds {RATIONALE_MAX_CHARS} characters"
+        return None, "schema", f"dimension {dimension!r} rationale exceeds {RATIONALE_MAX_CHARS} characters"
 
     # REQ-026: scored<->null / insufficient_data<->non-null mismatches.
     if status == "scored":
         min_score, max_score = SCORE_RANGES[dimension]
         if not isinstance(score, int) or isinstance(score, bool) or not (min_score <= score <= max_score):
-            return None, f"dimension {dimension!r} status=scored requires integer score in [{min_score},{max_score}]"
+            return (
+                None,
+                "schema",
+                f"dimension {dimension!r} status=scored requires integer score in [{min_score},{max_score}]",
+            )
         if not evidence_ids:
-            return None, f"dimension {dimension!r} status=scored requires non-empty evidence_ids"
+            return None, "semantic", f"dimension {dimension!r} status=scored requires non-empty evidence_ids"
     else:  # insufficient_data
         if score is not None:
-            return None, f"dimension {dimension!r} status=insufficient_data requires score=null"
+            return None, "semantic", f"dimension {dimension!r} status=insufficient_data requires score=null"
 
     # REQ-025: reject unknown evidence_id references.
     cited: list[Evidence] = []
     for evidence_id in evidence_ids:
         evidence = evidence_by_id.get(evidence_id)
         if evidence is None:
-            return None, f"dimension {dimension!r} cites unknown evidence_id: {evidence_id!r}"
+            return None, "evidence", f"dimension {dimension!r} cites unknown evidence_id: {evidence_id!r}"
         if dimension not in evidence.allowed_dimensions:
-            return None, f"dimension {dimension!r} cites evidence not allowed for this dimension: {evidence_id!r}"
+            return (
+                None,
+                "evidence",
+                f"dimension {dimension!r} cites evidence not allowed for this dimension: {evidence_id!r}",
+            )
         if not _recompute_is_fresh(evidence, as_of_date_value=as_of_date_value):
-            return None, f"dimension {dimension!r} cites stale evidence: {evidence_id!r}"
+            return None, "evidence", f"dimension {dimension!r} cites stale evidence: {evidence_id!r}"
         cited.append(evidence)
 
     # REQ-028: scored is only valid if the cited set actually satisfies the
     # REQ-007~009/062 machine threshold -- not merely because the packet
     # contained qualifying evidence somewhere.
     if status == "scored" and not _dimension_gate_satisfied(dimension, cited, as_of_date_value=as_of_date_value):
-        return None, f"dimension {dimension!r} claims scored but cited evidence does not satisfy REQ-007~009/062"
+        return (
+            None,
+            "evidence",
+            f"dimension {dimension!r} claims scored but cited evidence does not satisfy REQ-007~009/062",
+        )
     if dimension == "sentiment" and status == "scored" and score in (1, 5):
         has_major_persistent_direct = any(
             evidence.claim_category == "market_sentiment"
@@ -605,7 +626,11 @@ def _validate_dimension_result(
             for evidence in cited
         )
         if not has_major_persistent_direct:
-            return None, f"dimension {dimension!r} score={score} requires major persistent direct evidence"
+            return (
+                None,
+                "evidence",
+                f"dimension {dimension!r} score={score} requires major persistent direct evidence",
+            )
 
     return (
         DimensionResult(
@@ -615,6 +640,7 @@ def _validate_dimension_result(
             evidence_ids=evidence_ids,
             rationale=rationale,
         ),
+        None,
         None,
     )
 
@@ -634,12 +660,13 @@ def validate_model_output(raw_output: Mapping[str, object], *, context: Qualitat
             False,
             None,
             f"invalid context: {context_validation.rejection_reason}",
+            "evidence",
         )
     context = context_validation.context
 
     keys = set(raw_output.keys())
     if keys != _REQUIRED_SCORING_RESULT_KEYS:
-        return ScoringValidationResult(False, None, f"top-level output has wrong field set: {sorted(keys)}")
+        return ScoringValidationResult(False, None, f"top-level output has wrong field set: {sorted(keys)}", "schema")
 
     schema_version = raw_output["schema_version"]
     overall_status_claimed = raw_output["overall_status"]
@@ -648,37 +675,49 @@ def validate_model_output(raw_output: Mapping[str, object], *, context: Qualitat
 
     if schema_version != context.schema_version:
         return ScoringValidationResult(
-            False, None, f"schema_version mismatch: output={schema_version!r} context={context.schema_version!r}"
+            False,
+            None,
+            f"schema_version mismatch: output={schema_version!r} context={context.schema_version!r}",
+            "semantic",
         )
     if as_of_date_raw != context.as_of_date:
         return ScoringValidationResult(
-            False, None, f"as_of_date mismatch: output={as_of_date_raw!r} context={context.as_of_date!r}"
+            False,
+            None,
+            f"as_of_date mismatch: output={as_of_date_raw!r} context={context.as_of_date!r}",
+            "semantic",
         )
     if overall_status_claimed not in OVERALL_STATUS_VALUES:
         return ScoringValidationResult(
             False,
             None,
             f"overall_status must be scored or insufficient_data, model may not claim: {overall_status_claimed!r}",
+            "schema",
         )
     if not isinstance(dimensions_raw, dict) or set(dimensions_raw.keys()) != set(DIMENSION_NAMES):
-        return ScoringValidationResult(False, None, "dimensions must contain exactly moat/market_pos/sentiment")
+        return ScoringValidationResult(
+            False,
+            None,
+            "dimensions must contain exactly moat/market_pos/sentiment",
+            "schema",
+        )
 
     try:
         as_of_date_value = _parse_iso_date(context.as_of_date, field_name="context.as_of_date")
     except ValueError as exc:
-        return ScoringValidationResult(False, None, str(exc))
+        return ScoringValidationResult(False, None, str(exc), "semantic")
 
     evidence_by_id = _lookup_evidence_by_id(context)
     validated: dict[str, DimensionResult] = {}
     for dimension in DIMENSION_NAMES:
-        dim_result, reason = _validate_dimension_result(
+        dim_result, rejection_kind, reason = _validate_dimension_result(
             dimension,
             dimensions_raw[dimension],
             evidence_by_id=evidence_by_id,
             as_of_date_value=as_of_date_value,
         )
         if dim_result is None:
-            return ScoringValidationResult(False, None, reason)
+            return ScoringValidationResult(False, None, reason, rejection_kind)
         validated[dimension] = dim_result
 
     # REQ-029/6.3: overall status is derived from validated per-dimension
@@ -691,6 +730,7 @@ def validate_model_output(raw_output: Mapping[str, object], *, context: Qualitat
             None,
             f"overall_status {overall_status_claimed!r} inconsistent with dimension statuses "
             f"(computed {computed_overall!r})",
+            "semantic",
         )
 
     result = ScoringResult(
@@ -701,7 +741,7 @@ def validate_model_output(raw_output: Mapping[str, object], *, context: Qualitat
             moat=validated["moat"], market_pos=validated["market_pos"], sentiment=validated["sentiment"]
         ),
     )
-    return ScoringValidationResult(True, result, None)
+    return ScoringValidationResult(True, result, None, None)
 
 
 __all__ = [
@@ -711,5 +751,6 @@ __all__ = [
     "validate_context_dict",
     "validate_context",
     "ScoringValidationResult",
+    "ModelOutputFailureKind",
     "validate_model_output",
 ]

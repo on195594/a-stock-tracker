@@ -552,6 +552,8 @@ Verification signal:
 
 ### MILESTONE-003: Shadow persistence
 
+Status: **completed 2026-07-15** for the approved file-artifact seam.
+
 Maps to: REQ-036~039, REQ-045~046, AC-005~006, AC-008
 
 Outcome:
@@ -560,6 +562,7 @@ Outcome:
 
 Verification signal:
 - `tmp_path` migration/CRUD 测试通过；真实 `tracker.db` 未改动。
+- 独立 CLI 默认只预检，只有显式 `--execute` 才调用 Gemini；同一版本化 input hash 在同一 artifact 中幂等，不产生重复付费调用。
 
 ### MILESTONE-004: Evidence feasibility audit（07-14 投资视角审查后新增，07-14 第二轮复核后细化）
 
@@ -681,7 +684,7 @@ Spec-only 阶段只允许人工撤销本 Spec 的本次 patch，不得触碰其�
 
 1. **真实 evidence source**：直接竞争优势、行业地位和 sentiment 后续使用可审计 provider，还是批准带 provenance 的静态 dataset？Fixture-first 不需要此决定。按 REQ-065，本问题分两步拍板：先只批准候选 provider/dataset 进入 MILESTONE-004 的"审计授权"（allowed to be probed），据此产出分层覆盖率数据；再基于覆盖率数据决定是否将其升级为 REQ-012/047 所需的最终"生产/real-shadow 数据授权"。这避免了"先定来源才能审计，又靠审计决定来源"的循环——审计授权门槛低于生产授权，可以先给一个或多个候选来源发放审计授权。
 2. **sentiment 数据边界**：项目路线图当前不建设独立舆情层；real shadow 是否批准静态 evidence dataset，或继续让真实 sentiment unavailable？REQ-061 的 `persistence_horizon` 字段假设未来证据来源能标注事件影响持续期，若批准的来源无法可靠提供该字段，需要重新评估本问题。
-3. **Shadow 存储**：先用 JSONL/Markdown artifact，还是经确认新增独立 SQLite evaluation 表？
+3. **Shadow 存储**：已决定 MILESTONE-003 先使用 git-ignored JSONL artifact；未批准 SQLite evaluation 表或任何生产 DB schema 变更。
 4. **真实 shadow 计划**：6 只股票 × 单次调用是否只作 provisional 首轮，以及升级 gate 的每维度样本数、人工复核比例和行业覆盖是多少？
 5. **生产 cache 策略**：未来 cutover plan 是否采用优先候选的新版本表，还是提出充分理由 ALTER legacy 表？
 6. **生产适用范围**：若 sentiment 长期 unavailable，是否继续 all-or-nothing，还是另写 spec 将其移出 LLM 职责？本 spec 不允许静默放宽。
@@ -689,9 +692,10 @@ Spec-only 阶段只允许人工撤销本 Spec 的本次 patch，不得触碰其�
 ## 16. Approval state
 
 - Spec approval: **approved (2026-07-14，含07-14两轮codex方法论复核后的修订)**
-- Implementation approval: **approved for MILESTONE-002 (Fixture-first) only, 2026-07-14**——不隐含 MILESTONE-003~006 的授权，各自仍需单独批准（REQ-058）。
+- Implementation approval: **MILESTONE-002 approved 2026-07-14 and completed；MILESTONE-003 file-artifact seam approved and completed 2026-07-15**——不隐含 MILESTONE-004~006 的授权（REQ-058）。
 - Production DB schema approval: pending
-- Real Gemini shadow approval: pending
+- Controlled Gemini contract smoke approval: **approved and passed 2026-07-15**（空 evidence packet，Gemini 2.5 Flash，`VALID_INSUFFICIENT_DATA`）；这不是 MILESTONE-005 真实证据 shadow。
+- Real evidence Gemini shadow approval: pending MILESTONE-004/005 provider、样本、调用次数和人工复核协议。
 - Production cutover approval: pending
 
 本 spec 是开发契约草案，不构成任何生产、数据库、付费调用、cron、Telegram 或权重修改授权。

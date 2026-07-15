@@ -1,6 +1,6 @@
 # a-stock-tracker 进化路线图
 
-**版本：** v1.12
+**版本：** v1.13
 **基线日期：** 2026-07-15
 **文档定位：** 系统演化的顶层规划文档。所有后续 Phase 的修改、补丁、设计决策均以本文档为基线。若实施中发现偏差，先更新本文档，再改代码。
 
@@ -34,10 +34,10 @@
 | Telegram 推送 | ✅ v2 门禁已上线 | 主推条件为 ≥ buy_strong 且 `l3_v2_signal=1`；v2 为 0/NULL 的高分股进入候补 |
 | Outcome 追踪 | ✅ 最近运行正常 | live DB 中 Framework A 30d/60d 结案 953/253；90d 尚无结案 |
 | L3 买点层 | ✅ v2 Phase 2+3 完成；选择性待观察 | QFQ 覆盖 35/35 codes、4585 行；2026-07-13/14 共写入 70 条 v2 记录且全部 pass；cron 工作日 16:00 采集 |
-| 定性评分 v2 | ✅ MILESTONE-002 完成 | fixture-first contract/types/taxonomy/schema/prompt/validator 与边界加固测试已完成，AGY 复审 PASS；未接生产，后续 shadow/cutover 待单独批准 |
+| 定性评分 v2 | ✅ MILESTONE-002+003 完成 | 本地合同及文件型 shadow seam 已完成；Gemini 合同与 CLI smoke 通过，生产 DB/pipeline/cron/Telegram 未接入；MILESTONE-004~006 待单独批准 |
 | 行情数据源 | ✅ `READY_CRON` | `a-stock-lib==0.2.0`；2026-07-15 probe 的 daily/index/calendar/close cross-check 全部 PASS |
 | cron | ✅ 已按门禁重新安装 | weekly/weekly-PM/QFQ/daily/outcome 五项 managed cron 均已确认 |
-| 质量门禁 | ✅ 全绿 | `450 passed`；Ruff lint/format、mypy、`git diff --check` 全部通过 |
+| 质量门禁 | ✅ 全绿 | `478 passed`；Ruff lint/format、mypy、`git diff --check` 全部通过 |
 
 ### 关键数据规模
 
@@ -278,3 +278,4 @@
 | v1.10 | 2026-07-15 | 完成 v1.9 识别的 P0/P1：当天 probe 全 PASS 并恢复 READY_CRON/managed cron；修复 weekly-PM 中文零失败与降级 WARNING 分级；mypy 24 errors 清零并完成 Ruff format 全库基线；同步最新 accuracy report 与 B label 日期。 |
 | v1.11 | 2026-07-15 | 完成定性评分 v2 MILESTONE-002 fixture-first 合同：新增静态 response schema、版本化 prompt、namespace/hash/rationale/sentiment 合同修复与回归测试；AGY 只读审查 PASS，保持 Gemini/DB/pipeline/cron/Telegram 生产路径不变。 |
 | v1.12 | 2026-07-15 | 修复 MILESTONE-002 生产就绪审查的全部 P1/P2：集中合同常量，typed context 双边界复验，拒绝 NaN/Infinity 与非 canonical 日期，统一 64 项及字符串/JSON/prompt 资源上限；145 项定向、450 项全量测试和 AGY 严格复审 PASS，生产路径仍不变。 |
+| v1.13 | 2026-07-15 | 完成 MILESTONE-003 文件型 shadow seam：新增隔离 Gemini client、显式 CLI、0600 JSONL artifact、并发锁/同 hash 去重、bounded retry/响应/错误分类和可选 legacy comparison；两次空 packet 受控 Gemini smoke 通过，重复 CLI 运行未发起第三次调用；478 项全量门禁与 AGY 最终只读审查 PASS，生产 DB/pipeline/cron/Telegram 保持不变。 |

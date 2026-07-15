@@ -32,6 +32,9 @@ files = [
     "qualitative_v2_schema.py",
     "qualitative_v2_prompt.py",
     "qualitative_v2_contract.py",
+    "qualitative_v2_client.py",
+    "qualitative_v2_shadow.py",
+    "scripts/run_qualitative_v2_shadow.py",
 ]
 ignore_missing_imports = true
 follow_imports = "skip"

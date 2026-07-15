@@ -1,0 +1,10 @@
+{
+  "code": "000000",
+  "name": "合同烟雾测试",
+  "industry": "synthetic",
+  "as_of_date": "2026-07-15",
+  "schema_version": "qualitative-score-v2",
+  "rubric_version": "rubric-v1",
+  "taxonomy_version": "taxonomy-v1",
+  "evidence": []
+}

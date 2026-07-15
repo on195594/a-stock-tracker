@@ -15,3 +15,4 @@ accuracy_report.txt
 .codex/
 .claude/
 data/
+artifacts/
