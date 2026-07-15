@@ -19,6 +19,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
+from qualitative_v2_contract import DIMENSION_NAMES
+
 EvidenceType = str
 ClaimCategory = str
 Dimension = str
@@ -41,6 +43,20 @@ EVIDENCE_TYPES: frozenset[EvidenceType] = frozenset(
     }
 )
 
+# Section 6.1.1 / REQ-004: evidence IDs retain a human-readable namespace
+# that must agree with their source/carrier type. Business authorization still
+# comes from claim_category and the compatibility matrix below, not the prefix.
+EVIDENCE_TYPE_ID_PREFIXES: dict[EvidenceType, str] = {
+    "financial_metric": "fundamentals.",
+    "valuation_metric": "valuation.",
+    "company_disclosure": "disclosure.",
+    "regulatory_filing": "regulatory.",
+    "ip_record": "ip.",
+    "counterparty_disclosure": "counterparty.",
+    "news_report": "news.",
+    "analyst_consensus": "consensus.",
+}
+
 CLAIM_CATEGORIES: frozenset[ClaimCategory] = frozenset(
     {
         "financial_performance",
@@ -51,7 +67,7 @@ CLAIM_CATEGORIES: frozenset[ClaimCategory] = frozenset(
     }
 )
 
-DIMENSIONS: frozenset[Dimension] = frozenset({"moat", "market_pos", "sentiment"})
+DIMENSIONS: frozenset[Dimension] = frozenset(DIMENSION_NAMES)
 
 DIRECTNESS_VALUES: frozenset[Directness] = frozenset({"direct", "supporting", "context"})
 
@@ -138,6 +154,12 @@ def is_evidence_type_claim_category_combo_valid(evidence_type: EvidenceType, cla
     return allowed is not None and claim_category in allowed
 
 
+def is_evidence_id_namespace_valid(evidence_type: EvidenceType, evidence_id: str) -> bool:
+    """Return whether evidence_id uses the registry prefix for evidence_type."""
+    prefix = EVIDENCE_TYPE_ID_PREFIXES.get(evidence_type)
+    return prefix is not None and evidence_id.startswith(prefix) and len(evidence_id) > len(prefix)
+
+
 def canonical_allowed_dimensions(claim_category: ClaimCategory) -> frozenset[Dimension]:
     """Canonical allowed_dimensions for a claim_category (section 6.1.2)."""
     spec = CLAIM_CATEGORY_REGISTRY.get(claim_category)
@@ -217,6 +239,7 @@ def requires_persistence_fields(claim_category: ClaimCategory) -> bool:
 
 __all__ = [
     "EVIDENCE_TYPES",
+    "EVIDENCE_TYPE_ID_PREFIXES",
     "CLAIM_CATEGORIES",
     "DIMENSIONS",
     "DIRECTNESS_VALUES",
@@ -229,6 +252,7 @@ __all__ = [
     "CLAIM_CATEGORY_REGISTRY",
     "EVIDENCE_TYPE_CLAIM_CATEGORY_MATRIX",
     "is_evidence_type_claim_category_combo_valid",
+    "is_evidence_id_namespace_valid",
     "canonical_allowed_dimensions",
     "canonical_freshness_policy",
     "is_directness_allowed",

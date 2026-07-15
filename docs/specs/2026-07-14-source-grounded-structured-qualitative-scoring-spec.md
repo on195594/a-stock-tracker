@@ -2,7 +2,7 @@
 title: Source-Grounded Structured Qualitative Scoring Spec
 status: approved
 created: 2026-07-14
-updated: 2026-07-14
+updated: 2026-07-15
 owner: lin / Hermes
 risk_tier: spec-first
 source_article: https://www.kdnuggets.com/structured-language-model-generation-with-outlines
@@ -198,7 +198,8 @@ freshness_policy 由 `claim_category` 决定，不再由 `evidence_type` 决定�
 - `directness`: `direct | supporting | context`。`direct` 直接测量或明确陈述待评分事实；`supporting` 只增强已有直接证据；`context` 不得单独或联合触发 `scored`；`financial_performance` 和 `valuation` 两个 claim_category 不得使用 `direct`（财务/估值指标本身不能直接证明护城河或估值以外的论点）。
 - `freshness_policy`: `max_age_30d | max_age_90d | max_age_365d | max_age_550d`，由 `claim_category` 决定（见 6.1.2），不得由输入自行声明覆盖。
 - `freshness_status`: `fresh | stale`，由本地验证器计算并与输入声明比对，不能由来源任意决定。
-- `value` 只能是 JSON string/number/boolean scalar；`unit` 是非空 string 或显式 `null`，`source` 是非空 bounded string，`source_date` 是 ISO `YYYY-MM-DD`。
+- `value` 只能是有限、可编码的 JSON string/number/boolean scalar，UTF-8 JSON 编码后不得超过 4096 bytes；不得接受 `NaN` 或正负 Infinity。`unit` 是最多 64 字符的非空 string 或显式 `null`，`source` 是最多 512 字符的非空 string，`source_date` 必须使用 canonical ISO `YYYY-MM-DD`（不接受 compact/week-date 等 `date.fromisoformat()` 扩展形式）。
+- 资源上限：`QualitativeContext` 的 `code/name/industry/schema_version/rubric_version/taxonomy_version` 各最多 256 字符；`evidence[]` 最多 64 项；`evidence_id` 最多 128 字符且不得包含空白或控制字符；canonical evidence packet 的 UTF-8 JSON 编码最多 131072 bytes。超过任一上限必须在 HTTP 调用前 fail closed。
 
 验证器主要依据 `evidence_type`、`claim_category`、`allowed_dimensions`、`directness` 和 `freshness_policy`；命名空间只做 registry 一致性校验和可读性检查，不得用字符串前缀替代 taxonomy。日期按 `as_of_date - source_date` 的自然日差确定：未来日期拒绝，`age <= max_age_days`（含边界日）为 `fresh`，超过为 `stale`。`evidence_type`、`claim_category`、`allowed_dimensions`、`directness`、`freshness_policy` 之间任何不符合 6.1.2/6.1.3 兼容矩阵的组合，或类型/维度/directness/policy/registry 未知/矛盾，均拒绝整个输入。
 
@@ -225,10 +226,10 @@ freshness_policy 由 `claim_category` 决定，不再由 `evidence_type` 决定�
 
 ### 7.1 输入证据契约
 
-- **REQ-001:** 新评分入口必须接收显式 `QualitativeContext`；它必须至少包含 `code`、`name`、`industry`、`as_of_date`、`schema_version`、`rubric_version`、`taxonomy_version` 和 `evidence[]`。Evidence packet 是唯一事实来源，Prompt 必须禁止使用输入外知识。
-- **REQ-002:** 输入构建器必须规范化证据顺序和 `allowed_dimensions` 顺序并计算 `input_hash`；相同版本和内容必须得到相同 hash，日期、版本或证据变化必须改变 hash。
-- **REQ-003:** 每条 evidence 必须包含 6.1 定义的 `evidence_id`、`evidence_type`、`claim_category`、`allowed_dimensions`、`directness`、`freshness_policy`、value/unit/source/source_date/freshness_status；缺失不适用的 unit 时必须显式使用 `null`，不得省略稳定字段。`allowed_dimensions` 和 `freshness_policy` 必须与该证据 `claim_category` 在 6.1.2 中的规范值一致，不得由输入自行声明覆盖。
-- **REQ-004:** `evidence_id` 必须唯一并符合 6.1 命名空间；业务授权主要由 `claim_category`（而非 `evidence_type` 或字符串前缀）决定，字符串前缀只验证 registry 一致性。
+- **REQ-001:** 新评分入口必须接收显式 `QualitativeContext`；它必须至少包含 `code`、`name`、`industry`、`as_of_date`、`schema_version`、`rubric_version`、`taxonomy_version` 和 `evidence[]`。上述 context string 各最多 256 字符，`evidence[]` 最多 64 项，canonical packet 的 UTF-8 JSON 编码最多 131072 bytes。Evidence packet 是唯一事实来源，Prompt 必须禁止使用输入外知识；任何手工构造的 dataclass context 在进入 Prompt 或 model-output validator 前必须重新通过同一本地 validator。
+- **REQ-002:** 输入构建器必须规范化证据顺序和 `allowed_dimensions` 顺序并计算 `input_hash`；相同版本和内容必须得到相同 hash，日期、版本或证据变化必须改变 hash。Hash canonicalization 必须拒绝非 JSON 值，不得用 `default=str` 静默转换未知对象或允许非有限浮点数。
+- **REQ-003:** 每条 evidence 必须包含 6.1 定义的 `evidence_id`、`evidence_type`、`claim_category`、`allowed_dimensions`、`directness`、`freshness_policy`、value/unit/source/source_date/freshness_status；缺失不适用的 unit 时必须显式使用 `null`，不得省略稳定字段。`allowed_dimensions` 和 `freshness_policy` 必须与该证据 `claim_category` 在 6.1.2 中的规范值一致，不得由输入自行声明覆盖。`value`、`unit`、`source` 和日期必须遵守 6.1 的有限 JSON、长度与 canonical date 上限。
+- **REQ-004:** `evidence_id` 必须唯一、最多 128 字符、不含空白/控制字符并符合 6.1 命名空间；业务授权主要由 `claim_category`（而非 `evidence_type` 或字符串前缀）决定，字符串前缀只验证 registry 一致性。
 - **REQ-005:** Validator 必须拒绝重复 evidence ID，未知 evidence_type/claim_category/dimension/directness/policy，`evidence_type` 与 `claim_category` 不在 6.1.3 兼容矩阵内的组合，未来日期，声明 freshness 与计算结果不一致，以及 claim_category、allowed dimensions、directness、policy 之间不符合 6.1.2 的矛盾组合。
 - **REQ-006:** 现有基本面缓存可提供候选 `evidence_type=financial_metric`、`claim_category=financial_performance` 证据：`roe_3y_avg`、`roe_latest`、`net_profit_growth`、`debt_ratio`、`gross_margin`、`report_period`。`pb_percentile_10y` 的 `claim_category` 是 `valuation`，只能作 context，不能证明 moat 或 market_pos。**当前未确定任何 `competitive_moat`（direct）候选证据来源**——这是 REQ-059 证据可得性摸底要解决的问题，不由本条假设其存在。
 - **REQ-007:** `moat=scored` 的机械最低门槛是模型该维度输出 `evidence_ids` 中**实际引用**至少一条 fresh、`direct`、`claim_category=competitive_moat` 的证据，并**实际引用**至少一条 fresh、`claim_category=financial_performance` 的 supporting evidence；缺任一类必须为 `insufficient_data`。证据包中存在合格证据但模型未在 `evidence_ids` 中引用，不满足本门槛。`competitive_moat` 证据的合法 `evidence_type` 以 6.1.3 兼容矩阵为唯一权威来源（当前含 `company_disclosure`、`regulatory_filing`、`ip_record`、`counterparty_disclosure`、`news_report`），不再局限于单一来源载体；本条不得重复列举具体清单，以免与 6.1.3 未来变更后不同步。
@@ -248,7 +249,7 @@ freshness_policy 由 `claim_category` 决定，不再由 `evidence_type` 决定�
 - **REQ-018:** `score` 的 JSON Schema 类型必须为 `{"type": ["integer", "null"]}`；`moat` 的整数范围为 1-10，`market_pos` 和 `sentiment` 为 1-5，本地 validator 必须再次执行范围检查。
 - **REQ-019:** `status=scored` 时 `score` 必须为整数且 `evidence_ids` 非空；`status=insufficient_data` 时 `score` 必须为 `null`，`evidence_ids` 可为空，`rationale` 必须说明缺少的证据。
 - **REQ-020:** `rationale` 只允许解释输入证据与评分锚点之间的关系，不得引入输入外事实，并设置固定字符上限。
-- **REQ-021:** Schema 应使用官方当前支持的 `required`、`additionalProperties=false`、`enum`、`minimum`、`maximum` 和数组数量限制；API 未执行的约束由本地 validator 补齐。
+- **REQ-021:** Schema 应使用官方当前支持的 `required`、`additionalProperties=false`、`enum`、`minimum`、`maximum` 和数组数量限制；每个维度的 `evidence_ids` 最多 64 项，且本地 validator 必须执行同一上限。API 未执行的约束由本地 validator 补齐。
 - **REQ-022:** JSON key 顺序、空白或换行不得成为业务逻辑；只能按解析后的对象判断。
 
 参考输出：

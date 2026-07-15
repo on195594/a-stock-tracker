@@ -85,23 +85,37 @@ class QualitativeContext:
     def compute_input_hash(self) -> str:
         """REQ-002: normalize evidence order, then hash version + evidence content.
 
-        Same version + same evidence content -> same hash. Any change to
-        as_of_date, schema_version, rubric_version, taxonomy_version, or any
+        Same company identity, version, and evidence content -> same hash.
+        Any change to code, name, industry, as_of_date, a version, or any
         evidence field must change the hash.
         """
         normalized_evidence = sorted(
             (item.canonical_dict() for item in self.evidence),
-            key=lambda item: str(item["evidence_id"]),
+            key=lambda item: json.dumps(
+                item,
+                allow_nan=False,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
         )
         payload = {
             "code": self.code,
+            "name": self.name,
+            "industry": self.industry,
             "as_of_date": self.as_of_date,
             "schema_version": self.schema_version,
             "rubric_version": self.rubric_version,
             "taxonomy_version": self.taxonomy_version,
             "evidence": normalized_evidence,
         }
-        canonical_json = json.dumps(payload, sort_keys=True, ensure_ascii=True, default=str)
+        canonical_json = json.dumps(
+            payload,
+            allow_nan=False,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
         return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
 
 

@@ -6,7 +6,20 @@ from __future__ import annotations
 import copy
 from datetime import date
 
+import pytest
+
+from qualitative_v2_contract import (
+    CONTEXT_TEXT_MAX_CHARS,
+    EVIDENCE_ID_MAX_CHARS,
+    EVIDENCE_IDS_MAX_ITEMS,
+    EVIDENCE_PACKET_MAX_ITEMS,
+    EVIDENCE_VALUE_MAX_JSON_BYTES,
+    SOURCE_MAX_CHARS,
+    UNIT_MAX_CHARS,
+)
+from qualitative_v2_types import Evidence, QualitativeContext
 from qualitative_v2_validator import (
+    validate_context,
     validate_context_dict,
     validate_evidence_dict,
     validate_model_output,
@@ -33,7 +46,7 @@ def _financial_evidence(evidence_id: str = "fundamentals.roe_3y_avg") -> dict[st
     }
 
 
-def _moat_evidence(evidence_id: str = "competitive_advantage.patent_grant") -> dict[str, object]:
+def _moat_evidence(evidence_id: str = "ip.patent_grant") -> dict[str, object]:
     return {
         "evidence_id": evidence_id,
         "evidence_type": "ip_record",
@@ -51,7 +64,7 @@ def _moat_evidence(evidence_id: str = "competitive_advantage.patent_grant") -> d
     }
 
 
-def _industry_position_evidence(evidence_id: str = "industry.market_share") -> dict[str, object]:
+def _industry_position_evidence(evidence_id: str = "disclosure.market_share") -> dict[str, object]:
     return {
         "evidence_id": evidence_id,
         "evidence_type": "company_disclosure",
@@ -68,14 +81,17 @@ def _industry_position_evidence(evidence_id: str = "industry.market_share") -> d
 
 
 def _sentiment_evidence(
-    evidence_id: str = "news.major_contract", persistence_horizon: str = "multi_quarter"
+    evidence_id: str = "news.major_contract",
+    persistence_horizon: str = "multi_quarter",
+    materiality: str = "major",
+    directness: str = "direct",
 ) -> dict[str, object]:
     return {
         "evidence_id": evidence_id,
         "evidence_type": "news_report",
         "claim_category": "market_sentiment",
         "allowed_dimensions": ["sentiment"],
-        "directness": "direct",
+        "directness": directness,
         "freshness_policy": "max_age_30d",
         "value": "positive",
         "unit": None,
@@ -83,7 +99,7 @@ def _sentiment_evidence(
         "source_date": "2026-07-01",
         "freshness_status": "fresh",
         "persistence_horizon": persistence_horizon,
-        "materiality": "major",
+        "materiality": materiality,
     }
 
 
@@ -127,6 +143,73 @@ def test_unknown_evidence_type_rejected() -> None:
     raw["evidence_type"] = "not_a_real_type"
     result = validate_evidence_dict(raw, as_of_date_value=AS_OF_DATE_OBJ)
     assert not result.valid
+
+
+@pytest.mark.parametrize(
+    ("evidence_type", "evidence_id", "claim_category", "allowed_dimensions", "directness", "extras"),
+    [
+        ("financial_metric", "fundamentals.roe", "financial_performance", ["moat"], "supporting", {}),
+        ("valuation_metric", "valuation.pb", "valuation", [], "context", {}),
+        ("company_disclosure", "disclosure.moat", "competitive_moat", ["moat"], "direct", {}),
+        ("regulatory_filing", "regulatory.license", "competitive_moat", ["moat"], "direct", {"state_type": "event"}),
+        ("ip_record", "ip.patent", "competitive_moat", ["moat"], "direct", {"state_type": "event"}),
+        (
+            "counterparty_disclosure",
+            "counterparty.market_position",
+            "industry_position",
+            ["market_pos"],
+            "direct",
+            {"state_type": "event"},
+        ),
+        (
+            "news_report",
+            "news.sentiment",
+            "market_sentiment",
+            ["sentiment"],
+            "direct",
+            {"persistence_horizon": "structural", "materiality": "major"},
+        ),
+        ("analyst_consensus", "consensus.rank", "industry_position", ["market_pos"], "direct", {}),
+    ],
+)
+def test_all_evidence_type_namespaces_accepted(
+    evidence_type: str,
+    evidence_id: str,
+    claim_category: str,
+    allowed_dimensions: list[str],
+    directness: str,
+    extras: dict[str, object],
+) -> None:
+    freshness_policy_by_category = {
+        "financial_performance": "max_age_550d",
+        "valuation": "max_age_30d",
+        "competitive_moat": "max_age_365d",
+        "industry_position": "max_age_365d",
+        "market_sentiment": "max_age_30d",
+    }
+    raw: dict[str, object] = {
+        "evidence_id": evidence_id,
+        "evidence_type": evidence_type,
+        "claim_category": claim_category,
+        "allowed_dimensions": allowed_dimensions,
+        "directness": directness,
+        "freshness_policy": freshness_policy_by_category[claim_category],
+        "value": "fixture",
+        "unit": None,
+        "source": "fixture",
+        "source_date": "2026-07-01",
+        "freshness_status": "fresh",
+        **extras,
+    }
+    result = validate_evidence_dict(raw, as_of_date_value=AS_OF_DATE_OBJ)
+    assert result.valid, result.rejection_reason
+
+
+def test_evidence_type_namespace_mismatch_rejected() -> None:
+    raw = _financial_evidence("news.roe_3y_avg")
+    result = validate_evidence_dict(raw, as_of_date_value=AS_OF_DATE_OBJ)
+    assert not result.valid
+    assert "namespace" in (result.rejection_reason or "")
 
 
 def test_evidence_type_claim_category_mismatch_rejected() -> None:
@@ -196,6 +279,36 @@ def test_future_source_date_rejected() -> None:
     assert not result.valid
 
 
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_numeric_evidence_rejected(value: float) -> None:
+    raw = _financial_evidence()
+    raw["value"] = value
+    result = validate_evidence_dict(raw, as_of_date_value=AS_OF_DATE_OBJ)
+    assert not result.valid
+    assert "finite JSON" in (result.rejection_reason or "")
+
+
+@pytest.mark.parametrize("value", ["20260714", "2026-W29-2"])
+def test_noncanonical_source_dates_rejected(value: str) -> None:
+    raw = _financial_evidence()
+    raw["source_date"] = value
+    result = validate_evidence_dict(raw, as_of_date_value=AS_OF_DATE_OBJ)
+    assert not result.valid
+    assert "YYYY-MM-DD" in (result.rejection_reason or "")
+
+
+def test_evidence_value_encoded_size_boundary() -> None:
+    accepted = _financial_evidence()
+    accepted["value"] = "x" * (EVIDENCE_VALUE_MAX_JSON_BYTES - 2)
+    rejected = _financial_evidence()
+    rejected["value"] = "x" * (EVIDENCE_VALUE_MAX_JSON_BYTES - 1)
+
+    assert validate_evidence_dict(accepted, as_of_date_value=AS_OF_DATE_OBJ).valid
+    result = validate_evidence_dict(rejected, as_of_date_value=AS_OF_DATE_OBJ)
+    assert not result.valid
+    assert "encoded size" in (result.rejection_reason or "")
+
+
 def test_missing_required_field_rejected() -> None:
     raw = _financial_evidence()
     del raw["source"]
@@ -243,11 +356,45 @@ def test_empty_string_evidence_id_rejected() -> None:
     assert not result.valid
 
 
+@pytest.mark.parametrize("evidence_id", ["fundamentals.roe bad", "fundamentals.roe\n"])
+def test_evidence_id_whitespace_or_control_rejected(evidence_id: str) -> None:
+    raw = _financial_evidence(evidence_id)
+    result = validate_evidence_dict(raw, as_of_date_value=AS_OF_DATE_OBJ)
+    assert not result.valid
+    assert "whitespace or control" in (result.rejection_reason or "")
+
+
+def test_evidence_id_length_limit_enforced() -> None:
+    prefix = "fundamentals."
+    raw = _financial_evidence(prefix + "x" * (EVIDENCE_ID_MAX_CHARS - len(prefix) + 1))
+    result = validate_evidence_dict(raw, as_of_date_value=AS_OF_DATE_OBJ)
+    assert not result.valid
+    assert "maximum length" in (result.rejection_reason or "")
+
+
 def test_empty_unit_string_rejected() -> None:
     raw = _financial_evidence()
     raw["unit"] = ""
     result = validate_evidence_dict(raw, as_of_date_value=AS_OF_DATE_OBJ)
     assert not result.valid
+
+
+@pytest.mark.parametrize("unit", ["   ", "x" * (UNIT_MAX_CHARS + 1)])
+def test_unit_must_be_nonblank_and_bounded(unit: str) -> None:
+    raw = _financial_evidence()
+    raw["unit"] = unit
+    result = validate_evidence_dict(raw, as_of_date_value=AS_OF_DATE_OBJ)
+    assert not result.valid
+    assert "bounded" in (result.rejection_reason or "")
+
+
+@pytest.mark.parametrize("source", ["   ", "x" * (SOURCE_MAX_CHARS + 1)])
+def test_source_must_be_nonblank_and_bounded(source: str) -> None:
+    raw = _financial_evidence()
+    raw["source"] = source
+    result = validate_evidence_dict(raw, as_of_date_value=AS_OF_DATE_OBJ)
+    assert not result.valid
+    assert "bounded" in (result.rejection_reason or "")
 
 
 def test_unhashable_evidence_type_fails_closed_not_typeerror() -> None:
@@ -279,7 +426,10 @@ def test_valid_context_accepted() -> None:
 
 
 def test_duplicate_evidence_id_rejected() -> None:
-    result = validate_context_dict(_full_context_dict([_financial_evidence("dup.id"), _moat_evidence("dup.id")]))
+    duplicate_id = "fundamentals.duplicate"
+    result = validate_context_dict(
+        _full_context_dict([_financial_evidence(duplicate_id), _financial_evidence(duplicate_id)])
+    )
     assert not result.valid
     assert "duplicate" in (result.rejection_reason or "")
 
@@ -296,6 +446,61 @@ def test_one_invalid_evidence_rejects_whole_context() -> None:
     bad_evidence["evidence_type"] = "not_real"
     result = validate_context_dict(_full_context_dict([_financial_evidence(), bad_evidence]))
     assert not result.valid
+
+
+@pytest.mark.parametrize("value", ["20260714", "2026-W29-2"])
+def test_noncanonical_context_dates_rejected(value: str) -> None:
+    raw = _full_context_dict([])
+    raw["as_of_date"] = value
+    result = validate_context_dict(raw)
+    assert not result.valid
+    assert "YYYY-MM-DD" in (result.rejection_reason or "")
+
+
+def test_context_evidence_item_limit_enforced() -> None:
+    evidence = [_financial_evidence(f"fundamentals.metric_{index}") for index in range(EVIDENCE_PACKET_MAX_ITEMS + 1)]
+    result = validate_context_dict(_full_context_dict(evidence))
+    assert not result.valid
+    assert f"maximum item count {EVIDENCE_PACKET_MAX_ITEMS}" in (result.rejection_reason or "")
+
+
+@pytest.mark.parametrize(
+    "field_name", ["code", "name", "industry", "schema_version", "rubric_version", "taxonomy_version"]
+)
+@pytest.mark.parametrize("value", ["   ", "x" * (CONTEXT_TEXT_MAX_CHARS + 1)])
+def test_context_text_fields_must_be_nonblank_and_bounded(field_name: str, value: str) -> None:
+    raw = _full_context_dict([])
+    raw[field_name] = value
+    result = validate_context_dict(raw)
+    assert not result.valid
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("schema_version", "qualitative-score-v3"),
+        ("rubric_version", "rubric-v2"),
+        ("taxonomy_version", "taxonomy-v2"),
+    ],
+)
+def test_unknown_context_versions_rejected(field_name: str, value: str) -> None:
+    raw = _full_context_dict([])
+    raw[field_name] = value
+    result = validate_context_dict(raw)
+    assert not result.valid
+    assert f"unsupported {field_name}" in (result.rejection_reason or "")
+
+
+def test_validate_context_preserves_status_effective_until_null() -> None:
+    raw = _full_context_dict([_moat_evidence()])
+    evidence_raw = raw["evidence"]
+    assert isinstance(evidence_raw, list)
+    evidence_raw[0]["effective_until"] = None
+    validated = validate_context_dict(raw)
+    assert validated.valid and validated.context is not None
+
+    revalidated = validate_context(validated.context)
+    assert revalidated.valid, revalidated.rejection_reason
 
 
 # ---------------------------------------------------------------------------
@@ -322,14 +527,14 @@ def test_full_scorable_output_accepted() -> None:
                 "status": "scored",
                 "score": 8,
                 "confidence": "medium",
-                "evidence_ids": ["fundamentals.roe_3y_avg", "competitive_advantage.patent_grant"],
+                "evidence_ids": ["fundamentals.roe_3y_avg", "ip.patent_grant"],
                 "rationale": "patent + supporting financials",
             },
             "market_pos": {
                 "status": "scored",
                 "score": 4,
                 "confidence": "medium",
-                "evidence_ids": ["industry.market_share"],
+                "evidence_ids": ["disclosure.market_share"],
                 "rationale": "top3 market share",
             },
             "sentiment": {
@@ -378,7 +583,7 @@ def test_nullable_score_reverse_combinations_rejected() -> None:
                 "status": "scored",
                 "score": None,
                 "confidence": "medium",
-                "evidence_ids": ["fundamentals.roe_3y_avg", "competitive_advantage.patent_grant"],
+                "evidence_ids": ["fundamentals.roe_3y_avg", "ip.patent_grant"],
                 "rationale": "x",
             },
             "market_pos": _insufficient_dim(),
@@ -412,6 +617,26 @@ def test_scored_with_empty_evidence_ids_rejected() -> None:
     }
     result = validate_model_output(output, context=context)
     assert not result.valid
+
+
+def test_model_output_evidence_id_limit_enforced_locally() -> None:
+    context = _build_context([_financial_evidence()])
+    output = {
+        "schema_version": "qualitative-score-v2",
+        "overall_status": "insufficient_data",
+        "as_of_date": AS_OF_DATE,
+        "dimensions": {
+            "moat": {
+                **_insufficient_dim(),
+                "evidence_ids": ["fundamentals.roe_3y_avg"] * (EVIDENCE_IDS_MAX_ITEMS + 1),
+            },
+            "market_pos": _insufficient_dim(),
+            "sentiment": _insufficient_dim(),
+        },
+    }
+    result = validate_model_output(output, context=context)
+    assert not result.valid
+    assert f"maximum item count {EVIDENCE_IDS_MAX_ITEMS}" in (result.rejection_reason or "")
 
 
 def test_unknown_evidence_id_reference_rejected() -> None:
@@ -449,7 +674,7 @@ def test_moat_scored_requires_both_direct_moat_and_financial_support() -> None:
                 "status": "scored",
                 "score": 8,
                 "confidence": "medium",
-                "evidence_ids": ["competitive_advantage.patent_grant"],  # missing financial support
+                "evidence_ids": ["ip.patent_grant"],  # missing financial support
                 "rationale": "x",
             },
             "market_pos": _insufficient_dim(),
@@ -537,6 +762,62 @@ def test_sentiment_multi_quarter_satisfies_scored_gate() -> None:
     assert result.result.dimensions.sentiment.status == "scored"
 
 
+@pytest.mark.parametrize("score", [1, 5])
+def test_sentiment_extreme_score_accepts_major_persistent_direct_evidence(score: int) -> None:
+    context = _build_context([_sentiment_evidence()])
+    output = {
+        "schema_version": "qualitative-score-v2",
+        "overall_status": "insufficient_data",
+        "as_of_date": AS_OF_DATE,
+        "dimensions": {
+            "moat": _insufficient_dim(),
+            "market_pos": _insufficient_dim(),
+            "sentiment": {
+                "status": "scored",
+                "score": score,
+                "confidence": "medium",
+                "evidence_ids": ["news.major_contract"],
+                "rationale": "major persistent direct evidence",
+            },
+        },
+    }
+    result = validate_model_output(output, context=context)
+    assert result.valid, result.rejection_reason
+
+
+@pytest.mark.parametrize(
+    ("evidence", "reason_fragment"),
+    [
+        (_sentiment_evidence(materiality="moderate"), "major persistent direct"),
+        (_sentiment_evidence(persistence_horizon="one_time"), "REQ-007~009/062"),
+        (_sentiment_evidence(directness="supporting"), "REQ-007~009/062"),
+    ],
+)
+def test_sentiment_extreme_score_rejects_missing_major_persistent_direct_requirement(
+    evidence: dict[str, object], reason_fragment: str
+) -> None:
+    context = _build_context([evidence])
+    output = {
+        "schema_version": "qualitative-score-v2",
+        "overall_status": "insufficient_data",
+        "as_of_date": AS_OF_DATE,
+        "dimensions": {
+            "moat": _insufficient_dim(),
+            "market_pos": _insufficient_dim(),
+            "sentiment": {
+                "status": "scored",
+                "score": 5,
+                "confidence": "medium",
+                "evidence_ids": ["news.major_contract"],
+                "rationale": "unsupported extreme",
+            },
+        },
+    }
+    result = validate_model_output(output, context=context)
+    assert not result.valid
+    assert reason_fragment in (result.rejection_reason or "")
+
+
 def test_all_or_nothing_one_invalid_dimension_invalidates_whole_result() -> None:
     """REQ-029: even though market_pos/sentiment are fine, an invalid moat
     dimension must invalidate the entire result -- not be adopted partially."""
@@ -550,14 +831,14 @@ def test_all_or_nothing_one_invalid_dimension_invalidates_whole_result() -> None
                 "status": "scored",
                 "score": 99,  # out of range 1-10
                 "confidence": "medium",
-                "evidence_ids": ["fundamentals.roe_3y_avg", "competitive_advantage.patent_grant"],
+                "evidence_ids": ["fundamentals.roe_3y_avg", "ip.patent_grant"],
                 "rationale": "x",
             },
             "market_pos": {
                 "status": "scored",
                 "score": 4,
                 "confidence": "medium",
-                "evidence_ids": ["industry.market_share"],
+                "evidence_ids": ["disclosure.market_share"],
                 "rationale": "valid",
             },
             "sentiment": _insufficient_dim(),
@@ -611,7 +892,7 @@ def test_overall_status_inconsistent_with_dimensions_rejected() -> None:
                 "status": "scored",
                 "score": 8,
                 "confidence": "medium",
-                "evidence_ids": ["fundamentals.roe_3y_avg", "competitive_advantage.patent_grant"],
+                "evidence_ids": ["fundamentals.roe_3y_avg", "ip.patent_grant"],
                 "rationale": "x",
             },
             "market_pos": _insufficient_dim(),
@@ -691,6 +972,23 @@ def test_whitespace_only_rationale_rejected() -> None:
     assert not result.valid
 
 
+@pytest.mark.parametrize(("length", "expected_valid"), [(500, True), (501, False)])
+def test_rationale_character_limit_boundary(length: int, expected_valid: bool) -> None:
+    context = _build_context([])
+    output = {
+        "schema_version": "qualitative-score-v2",
+        "overall_status": "insufficient_data",
+        "as_of_date": AS_OF_DATE,
+        "dimensions": {
+            "moat": {**_insufficient_dim(), "rationale": "理" * length},
+            "market_pos": _insufficient_dim(),
+            "sentiment": _insufficient_dim(),
+        },
+    }
+    result = validate_model_output(output, context=context)
+    assert result.valid is expected_valid
+
+
 def test_non_string_evidence_id_reference_in_output_rejected() -> None:
     """codex review Important #1: a bare int evidence_id reference must be
     rejected, not coerced via str() and treated as equal to its string twin."""
@@ -704,7 +1002,7 @@ def test_non_string_evidence_id_reference_in_output_rejected() -> None:
                 "status": "scored",
                 "score": 8,
                 "confidence": "medium",
-                "evidence_ids": [123, "competitive_advantage.patent_grant"],
+                "evidence_ids": [123, "ip.patent_grant"],
                 "rationale": "x",
             },
             "market_pos": _insufficient_dim(),
@@ -720,10 +1018,8 @@ def test_hand_built_context_with_fabricated_fresh_status_does_not_bypass_recompu
     must not trust a QualitativeContext/Evidence's stored freshness_status
     if it bypasses validate_context_dict -- freshness is recomputed from
     source_date/canonical policy at citation-check time."""
-    from qualitative_v2_types import Evidence, QualitativeContext
-
     stale_but_claims_fresh = Evidence(
-        evidence_id="competitive_advantage.old_patent",
+        evidence_id="ip.old_patent",
         evidence_type="ip_record",
         claim_category="competitive_moat",
         allowed_dimensions=("moat",),
@@ -756,7 +1052,7 @@ def test_hand_built_context_with_fabricated_fresh_status_does_not_bypass_recompu
                 "status": "scored",
                 "score": 8,
                 "confidence": "medium",
-                "evidence_ids": ["fundamentals.roe_3y_avg", "competitive_advantage.old_patent"],
+                "evidence_ids": ["fundamentals.roe_3y_avg", "ip.old_patent"],
                 "rationale": "x",
             },
             "market_pos": _insufficient_dim(),
@@ -765,3 +1061,82 @@ def test_hand_built_context_with_fabricated_fresh_status_does_not_bypass_recompu
     }
     result = validate_model_output(output, context=context)
     assert not result.valid
+
+
+def test_hand_built_context_with_invalid_namespace_is_rejected() -> None:
+    invalid = Evidence(
+        evidence_id="news.wrong_namespace",
+        evidence_type="financial_metric",
+        claim_category="financial_performance",
+        allowed_dimensions=("moat",),
+        directness="supporting",
+        freshness_policy="max_age_550d",
+        value=14.2,
+        unit="percent",
+        source="local_fundamentals_cache",
+        source_date="2026-03-31",
+        freshness_status="fresh",
+    )
+    context = QualitativeContext(
+        code="601899",
+        name="紫金矿业",
+        industry="铜",
+        as_of_date=AS_OF_DATE,
+        schema_version="qualitative-score-v2",
+        rubric_version="rubric-v1",
+        taxonomy_version="taxonomy-v1",
+        evidence=(invalid,),
+    )
+    output = {
+        "schema_version": "qualitative-score-v2",
+        "overall_status": "insufficient_data",
+        "as_of_date": AS_OF_DATE,
+        "dimensions": {
+            "moat": _insufficient_dim(),
+            "market_pos": _insufficient_dim(),
+            "sentiment": _insufficient_dim(),
+        },
+    }
+    result = validate_model_output(output, context=context)
+    assert not result.valid
+    assert "invalid context" in (result.rejection_reason or "")
+    assert "namespace" in (result.rejection_reason or "")
+
+
+def test_hand_built_context_with_unknown_taxonomy_fails_closed_without_throwing() -> None:
+    invalid = Evidence(
+        evidence_id="fundamentals.unknown",
+        evidence_type="financial_metric",
+        claim_category="unknown_category",
+        allowed_dimensions=("moat",),
+        directness="supporting",
+        freshness_policy="max_age_550d",
+        value=1.0,
+        unit=None,
+        source="fixture",
+        source_date="2026-07-01",
+        freshness_status="fresh",
+    )
+    context = QualitativeContext(
+        code="601899",
+        name="紫金矿业",
+        industry="铜",
+        as_of_date=AS_OF_DATE,
+        schema_version="qualitative-score-v2",
+        rubric_version="rubric-v1",
+        taxonomy_version="taxonomy-v1",
+        evidence=(invalid,),
+    )
+    output = {
+        "schema_version": "qualitative-score-v2",
+        "overall_status": "insufficient_data",
+        "as_of_date": AS_OF_DATE,
+        "dimensions": {
+            "moat": _insufficient_dim(),
+            "market_pos": _insufficient_dim(),
+            "sentiment": _insufficient_dim(),
+        },
+    }
+    result = validate_model_output(output, context=context)
+    assert not result.valid
+    assert "unknown claim_category" in (result.rejection_reason or "")

@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
+import pytest
+
 from qualitative_v2_types import DimensionResult, Dimensions, Evidence, QualitativeContext, ScoringResult
 
 
@@ -48,6 +52,24 @@ def test_input_hash_stable_regardless_of_evidence_order() -> None:
     assert ctx_forward.compute_input_hash() == ctx_reversed.compute_input_hash()
 
 
+def test_input_hash_stable_for_duplicate_ids_with_different_content_regardless_of_order() -> None:
+    first = _make_evidence("fundamentals.duplicate")
+    second = replace(first, value=99.9, source="alternate_source")
+
+    ctx_forward = _make_context((first, second))
+    ctx_reversed = _make_context((second, first))
+
+    assert ctx_forward.compute_input_hash() == ctx_reversed.compute_input_hash()
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_input_hash_rejects_non_finite_numeric_evidence(value: float) -> None:
+    context = _make_context((replace(_make_evidence(), value=value),))
+
+    with pytest.raises(ValueError, match="Out of range float values are not JSON compliant"):
+        context.compute_input_hash()
+
+
 def test_input_hash_changes_when_evidence_content_changes() -> None:
     ctx_a = _make_context((_make_evidence(),))
     changed_evidence = Evidence(
@@ -74,6 +96,36 @@ def test_input_hash_changes_when_as_of_date_changes() -> None:
         name=ctx_a.name,
         industry=ctx_a.industry,
         as_of_date="2026-07-15",
+        schema_version=ctx_a.schema_version,
+        rubric_version=ctx_a.rubric_version,
+        taxonomy_version=ctx_a.taxonomy_version,
+        evidence=ctx_a.evidence,
+    )
+    assert ctx_a.compute_input_hash() != ctx_b.compute_input_hash()
+
+
+def test_input_hash_changes_when_name_changes() -> None:
+    ctx_a = _make_context((_make_evidence(),))
+    ctx_b = QualitativeContext(
+        code=ctx_a.code,
+        name="紫金矿业股份有限公司",
+        industry=ctx_a.industry,
+        as_of_date=ctx_a.as_of_date,
+        schema_version=ctx_a.schema_version,
+        rubric_version=ctx_a.rubric_version,
+        taxonomy_version=ctx_a.taxonomy_version,
+        evidence=ctx_a.evidence,
+    )
+    assert ctx_a.compute_input_hash() != ctx_b.compute_input_hash()
+
+
+def test_input_hash_changes_when_industry_changes() -> None:
+    ctx_a = _make_context((_make_evidence(),))
+    ctx_b = QualitativeContext(
+        code=ctx_a.code,
+        name=ctx_a.name,
+        industry="有色金属",
+        as_of_date=ctx_a.as_of_date,
         schema_version=ctx_a.schema_version,
         rubric_version=ctx_a.rubric_version,
         taxonomy_version=ctx_a.taxonomy_version,
@@ -129,7 +181,7 @@ def test_input_hash_changes_when_taxonomy_version_changes() -> None:
 
 def test_evidence_canonical_dict_sorts_allowed_dimensions() -> None:
     evidence = Evidence(
-        evidence_id="industry.market_share",
+        evidence_id="disclosure.market_share",
         evidence_type="company_disclosure",
         claim_category="industry_position",
         allowed_dimensions=("market_pos",),

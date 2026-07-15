@@ -5,9 +5,9 @@
 
 ## 当前结论
 
-主业务仍处于 **Phase 6 report-only 观察**，Framework B 不得生产写入；Phase 5 L3 v2 已完成 QFQ 生产接入和 Telegram 主推切换。并行工程主线是来源约束的定性评分 v2：approved spec 仅授权 MILESTONE-002 fixture-first，task 2.1（types/taxonomy）和 task 2.2（validator）已完成，schema/prompt builder 尚待实现，真实 Gemini、生产 DB、pipeline 与 cutover 均未授权。
+主业务仍处于 **Phase 6 report-only 观察**，Framework B 不得生产写入；Phase 5 L3 v2 已完成 QFQ 生产接入和 Telegram 主推切换。来源约束的定性评分 v2 已完成获批的 MILESTONE-002 fixture-first 合同（types/taxonomy/schema/prompt/validator），AGY 只读审查 PASS；真实 Gemini、生产 DB、pipeline、shadow 与 cutover 均未授权。
 
-2026-07-15 控制面修复已完成：当天 Tushare probe 的 daily/index/calendar/close cross-check 全部 PASS，readiness 恢复 `READY_CRON`，五项 managed cron 已重新安装；weekly PM loop 已修复中文“失败 0 只”和降级 WARNING 的错误分级，真实 dry-run 从误报 FAIL 恢复为符合当前降级事实的 WARN；mypy 24 errors 已清零，31 个历史文件完成 Ruff format 基线化，完整质量门禁为 `373 passed` 且 lint/format/type/diff 全绿。
+2026-07-15 控制面修复已完成：当天 Tushare probe 的 daily/index/calendar/close cross-check 全部 PASS，readiness 恢复 `READY_CRON`，五项 managed cron 已重新安装；weekly PM loop 已修复中文“失败 0 只”和降级 WARNING 的错误分级，真实 dry-run 从误报 FAIL 恢复为符合当前降级事实的 WARN；mypy 24 errors 已清零，31 个历史文件完成 Ruff format 基线化；MILESTONE-002 边界加固后的完整质量门禁为 `450 passed` 且 lint/format/type/diff 全绿。
 
 2026-07-10 的 `NEED_QFQ` 是历史离线 gate。2026-07-12 已通过 BaoStock QFQ 采集解除：当前 `daily_bars` 中 QFQ 覆盖 35/35 代码，生产 daily 在 2026-07-13/14 写入 70 条 v2 记录，Telegram 主推使用 `l3_v2_signal=1`。
 
@@ -27,7 +27,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 |---|---|---|---|---|
 | Phase 4 验证基础 | 已完成，持续观察 | weekly PM loop 自动检查 accuracy-report；不在此阶段顺手调权重 | 每周一自动摘要 | 若要调权重，另开 spec |
 | Phase 5 L3 买点层 | v1 保留审计；v2 Phase 2+3 已完成 | 观察 v2 信号分布与自然 outcome；不改 L1/L2 分数 | readiness 已恢复，继续自然运行 | 足量 v2 30/60d 样本和独立复核后再讨论规则变化 |
-| 定性评分 v2 MILESTONE-002 | fixture-first 实施中 | task 2.1/2.2 已完成；下一步 schema/prompt builder 与里程碑级 fixture 验证 | task 2.3 完成并修复质量门禁漂移 | REQ-001~035 对应本地合同齐全；仍不进入 MILESTONE-003 |
+| 定性评分 v2 MILESTONE-002 | 已完成 | 保持 fixture-first 合同与生产路径隔离；不启动未授权 shadow | 后续里程碑另行立项、批准 | REQ-001~035 对应本地合同齐全；不自动进入 MILESTONE-003 |
 | Phase 6 多框架激活 | report-only 观察 | 自动化 weekly PM loop 只读观察 B label / dry-run / cron 日志 | 2026-08-13 后首次 B label 自然结案复核 | B label 已结案 ≥20、overdue=0、数据质量门槛 OK、独立审查通过、另写生产化 spec |
 | Phase 7 选股宇宙扩展 | 未启动 | 等 Phase 6 或明确降级策略 | 暂无 | 单独设计动态池和 API 压测 |
 
@@ -47,14 +47,14 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | L3 v2 QFQ / 生产写入 | 已完成，选择性待观察 | `daily_bars.adjusted='qfq'` 覆盖 35 个代码、4585 行（至 2026-07-13）；v2 记录 70 条且 70/70 pass，两天 strong 均为 18/18 通过门禁 |
 | L3 v2 Phase 3 push trigger | 已完成，生产推送已切换 | `telegram_push.py` 触发条件 `entry_signal=1` → `l3_v2_signal=1`；commit `e080f15`；298/298 tests passed |
 | Framework A 倒置诊断 | 已完成，结论：不调权重 | Q5 avg_alpha_30d=-9.91%；根因=截面校准偏差+11支伪复制；agy投资审查：Priority 1=延伸60d/90d；60d首批到期 2026-07-14 |
-| 定性评分 v2 | MILESTONE-002 进行中 | task 2.1 最终 `ec5d2e9`；task 2.2 最终 `1cbaf0a`；未接生产 |
-| 质量门禁 | 全部通过 | 373 passed；Ruff lint/format、mypy、`git diff --check` PASS |
+| 定性评分 v2 | MILESTONE-002 已完成 | contract/types/taxonomy/schema/prompt/validator 齐全；P1/P2 边界加固完成，AGY 严格复审 PASS；未接生产 |
+| 质量门禁 | 全部通过 | 450 passed；Ruff lint/format、mypy、`git diff --check` PASS |
 
 ## Spec Ledger
 
 | Spec / Plan | 状态 | Owner | 下一动作 | Exit criteria |
 |---|---|---|---|---|
-| `docs/evolution-roadmap.md` | v1.10 当前基线 | Hermes PM | 随 Phase 状态变化更新 | 和真实系统状态一致 |
+| `docs/evolution-roadmap.md` | v1.12 当前基线 | Hermes PM | 随 Phase 状态变化更新 | 和真实系统状态一致 |
 | `docs/plans/2026-06-26-phase6-report-only-next-steps.md` | active | Hermes PM | 继续 P3-B 周度复核 | B label review 前 report-only 流程稳定 |
 | `docs/specs/2026-07-02-weekly-pm-loop-automation-spec.md` | implemented；2026-07-15 parser 误报已修复 | Hermes PM + agy review | 观察下一次自然摘要 | 每周一自动 Telegram 摘要可信，不重复告警，不越权启用生产化 |
 | `/home/lin/a-stock-lib/docs/plans/2026-07-01-three-project-next-work-plan.md` | active cross-project plan | Hermes PM | 按 P0/P1/P2 顺序推进共享包、tracker、research 联动事项 | 三项目版本/文档/任务边界一致 |
@@ -62,7 +62,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | `docs/reviews/2026-07-15-tushare-capability-probe.md` | latest probe evidence，全部 PASS | 系统探测 | 按 freshness 门禁定期刷新 | `check_market_data_readiness.py --scope cron` 当前 READY |
 | `accuracy_report.txt` | latest tracked report（生成于 2026-07-15） | pipeline | 按周更新 | Phase 6 仍明确 report-only |
 | `docs/specs/2026-07-08-l3-v2-entry-signal-spec.md` | draft 历史父 spec；其 Phase 2/3 子 spec 已实施 | Hermes PM + agy review | 观察 v2 生产数据，不再执行旧 NEED_QFQ 下一步 | 规则变更需另开审查，不回写历史分数 |
-| `docs/specs/2026-07-14-source-grounded-structured-qualitative-scoring-spec.md` | approved；仅 MILESTONE-002 获批 | Hermes PM + codex review | task 2.3 schema/prompt builder；完成后里程碑复核 | fixture-first 全部通过；MILESTONE-003~006 仍分别待批 |
+| `docs/specs/2026-07-14-source-grounded-structured-qualitative-scoring-spec.md` | approved；MILESTONE-002 已完成 | Hermes PM + codex + AGY review | 保持生产隔离；MILESTONE-003~006 分别待批 | fixture-first 全部通过；不得自动进入 shadow/cutover |
 | `docs/plans/2026-07-08-l3-v2-offline-backtest-plan.md` | implemented，历史 | Hermes PM + agy review | 保留追溯；生产已采用后续 BaoStock QFQ 方案 | 脚本只读 `tracker.db`，独立 review gate 通过 |
 | `docs/reviews/2026-07-08-l3-v2-backtest-report.md` | 历史 L3 v2 offline evidence | offline script | 不再把其中 NEED_QFQ 当当前 gate | 后续生产 QFQ 事实以 DB、Phase 2/3 spec 和运行日志为准 |
 | `docs/reviews/2026-07-10-l3-v2-backtest-retro.md` | task retrospective | Hermes PM | 规则或采集链路变更前阅读 | 防止重复踩 token/限频/去重/qfq volume 问题 |
@@ -74,7 +74,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | Blocker | Impact | Unblock condition | ETA |
 |---|---|---|---|
 | B label 已结案样本不足 `0/20` | 阻止 Framework B 生产化 | 已结案 ≥20 且 overdue=0 | 最早 2026-08-13 后 |
-| qualitative v2 MILESTONE-002 未完成 | 缺 schema/prompt builder，不能进入后续 shadow | 完成 task 2.3 与里程碑级 fixture 复核 | P1 |
+| qualitative v2 后续里程碑未授权 | MILESTONE-002 只能保持本地 fixture-first，不进入真实 shadow/cutover | 另行批准 evidence source、shadow persistence 与生产边界 | 待用户决策 |
 | Framework A strong 层级尚未证明优于基准 | 不宜调权重或宣称模型有效 | 另开权重复核 spec | 待更多样本与独立审查 |
 | L3 v2 当前未体现过滤选择性 | 2026-07-13/14 共 70/70 pass，strong 18/18 每日全部通过 | 先增加 v2 状态/门禁分布报告并积累 30/60d outcome；不据两天样本改规则 | P2 |
 | Framework A 60d/90d 延伸评估未执行 | “持有期错配”假说尚未复核 | 当前已有 A 60d 结案 253 条；先做只读五分位对比，90d 继续等待 | P2 |
@@ -95,6 +95,8 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | 2026-07-10 | L3 v2 offline backtest | 只读脚本、报告、artifacts、AGY 复审完成；脚本自动读取 `.env` token；修复 20 交易日冷却口径和 qfq volume 复权；`py_compile`、`ruff`、`git diff --check` 通过；AGY APPROVE | 当前决策 NEED_QFQ；阻塞为 Tushare `adj_factor` 限频，不是 token 缺失；下一步单独设计 qfq 分批/缓存方案 |
 | 2026-07-12 | Phase 5 L3 v2 Phase 2+3 对齐；Framework A 倒置诊断；Tushare probe 刷新；cron 恢复 | Phase 3 推送触发已切换（commit `e080f15`，298/298 passed）；Framework A 倒置 4 假设诊断完成（Q5 avg_alpha=-9.91%，11只伪复制，不调权重）；agy 投资视角审查完成（Priority 1=60d/90d延伸）；probe 刷新 `READY_CRON`；market-data-backfill ok=35；cron-setup.sh 恢复 daily+outcome-update | 等 2026-07-14 首批 60d 入库后跑延伸评估；Phase 3.1（accuracy-report 增加 l3_v2 信号分布）可选 |
 | 2026-07-15 | 项目状态对齐与 P0/P1 修复 | 当天 probe 全 PASS，恢复 READY_CRON 并重装五项 cron；weekly-PM 零失败/降级 warning 分级已修复，真实 dry-run WARN；mypy 24 errors 清零、31 files format 基线化；完整测试与所有质量 gate 通过 | 下一步 task 2.3；L3 v2/Framework A 做只读观察；Framework B 继续 report-only |
+| 2026-07-15 | 定性评分 v2 MILESTONE-002 fixture-first 合同 | types/taxonomy/schema/prompt/validator 齐全；99 项定向测试、404 项全量测试与全部质量门禁通过；AGY 只读审查 PASS、无 Critical/Important | 宣布 MILESTONE-002 完成；保持生产隔离，后续 shadow/cutover 需单独批准 |
+| 2026-07-15 | 定性评分 v2 P1/P2 边界加固 | 中央 contract、typed-context 复验、有限 JSON/canonical date、64 项及字节/字符上限全部落地；原四个 fail-open 探针均转为拒绝；145 项定向、450 项全量测试和 AGY 严格复审 PASS | 关闭生产就绪审查全部 P1/P2；继续保持 fixture-first 与生产隔离 |
 | 2026-08-13 后 | B label 30d 结案、overdue、行业覆盖、B-A delta | 待执行 | 满足门槛后写 `phase6-b-label-review.md`，不直接上线 |
 
 ## 每周自动复核

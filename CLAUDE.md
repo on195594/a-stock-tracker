@@ -110,7 +110,7 @@ avg_score 有约 4-5 分系统性偏移，Phase 4 optimizer 训练需按 score_d
 | Phase 4 验证基础 | ✅ 完成，持续观察 | A框架 30d 结案 953 条，其中 post-fix 735 条；hit_rate 待验证 |
 | Phase 5 L3 买点层 v1 | ✅ 完成，保留审计 | 最新 tracked report 中 v1 pass 的 30d 已结案 71 条、命中率 2.8%；不再作为生产主推门禁 |
 | Phase 5 L3 v2（QFQ）| ✅ Phase 2+3 完成 | Phase 2: QFQ 35/35×130 行回填，pass_strong 激活，cron 16:00；Phase 3: 推送触发切换至 l3_v2_signal=1（commit e080f15） |
-| 定性评分 v2 MILESTONE-002 | 🔶 fixture-first 实施中 | task 2.1 dataclass/taxonomy 与 task 2.2 validator 已完成；schema/prompt builder 尚待实现；未接生产 |
+| 定性评分 v2 MILESTONE-002 | ✅ fixture-first 完成 | contract/types/taxonomy/schema/prompt/validator 与 145 项本地合同测试已完成，AGY 边界加固复审 PASS；未接生产，后续里程碑待单独批准 |
 | Phase 6 多框架激活 | 🔶 report-only | Framework B 仍不写生产；B label 0/20 自然结案 |
 | Phase 7 选股宇宙 | ⏸ 未启动 | 待 Phase 6 完成或明确降级策略 |
 

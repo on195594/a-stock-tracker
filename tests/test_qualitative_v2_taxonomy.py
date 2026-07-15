@@ -7,6 +7,11 @@ from datetime import date
 import pytest
 
 import qualitative_v2_taxonomy as taxonomy
+from qualitative_v2_contract import DIMENSION_NAMES
+
+
+def test_taxonomy_dimensions_are_aligned_with_central_contract() -> None:
+    assert taxonomy.DIMENSIONS == frozenset(DIMENSION_NAMES)
 
 
 def test_claim_category_registry_covers_all_claim_categories() -> None:
@@ -15,6 +20,27 @@ def test_claim_category_registry_covers_all_claim_categories() -> None:
 
 def test_evidence_type_matrix_covers_all_evidence_types() -> None:
     assert set(taxonomy.EVIDENCE_TYPE_CLAIM_CATEGORY_MATRIX.keys()) == taxonomy.EVIDENCE_TYPES
+
+
+def test_evidence_type_namespace_registry_covers_all_types_exactly() -> None:
+    assert taxonomy.EVIDENCE_TYPE_ID_PREFIXES == {
+        "financial_metric": "fundamentals.",
+        "valuation_metric": "valuation.",
+        "company_disclosure": "disclosure.",
+        "regulatory_filing": "regulatory.",
+        "ip_record": "ip.",
+        "counterparty_disclosure": "counterparty.",
+        "news_report": "news.",
+        "analyst_consensus": "consensus.",
+    }
+    assert set(taxonomy.EVIDENCE_TYPE_ID_PREFIXES) == taxonomy.EVIDENCE_TYPES
+
+
+def test_evidence_id_namespace_requires_matching_nonempty_suffix() -> None:
+    assert taxonomy.is_evidence_id_namespace_valid("news_report", "news.major_contract")
+    assert not taxonomy.is_evidence_id_namespace_valid("news_report", "disclosure.major_contract")
+    assert not taxonomy.is_evidence_id_namespace_valid("news_report", "news.")
+    assert not taxonomy.is_evidence_id_namespace_valid("unknown", "news.major_contract")
 
 
 def test_financial_performance_and_valuation_cannot_be_direct() -> None:

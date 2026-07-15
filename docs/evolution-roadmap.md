@@ -1,6 +1,6 @@
 # a-stock-tracker 进化路线图
 
-**版本：** v1.10
+**版本：** v1.12
 **基线日期：** 2026-07-15
 **文档定位：** 系统演化的顶层规划文档。所有后续 Phase 的修改、补丁、设计决策均以本文档为基线。若实施中发现偏差，先更新本文档，再改代码。
 
@@ -34,10 +34,10 @@
 | Telegram 推送 | ✅ v2 门禁已上线 | 主推条件为 ≥ buy_strong 且 `l3_v2_signal=1`；v2 为 0/NULL 的高分股进入候补 |
 | Outcome 追踪 | ✅ 最近运行正常 | live DB 中 Framework A 30d/60d 结案 953/253；90d 尚无结案 |
 | L3 买点层 | ✅ v2 Phase 2+3 完成；选择性待观察 | QFQ 覆盖 35/35 codes、4585 行；2026-07-13/14 共写入 70 条 v2 记录且全部 pass；cron 工作日 16:00 采集 |
-| 定性评分 v2 | 🔶 fixture-first | approved spec 仅授权 MILESTONE-002；types/taxonomy 与 validator 已完成，schema/prompt builder 待实现；未接生产 |
+| 定性评分 v2 | ✅ MILESTONE-002 完成 | fixture-first contract/types/taxonomy/schema/prompt/validator 与边界加固测试已完成，AGY 复审 PASS；未接生产，后续 shadow/cutover 待单独批准 |
 | 行情数据源 | ✅ `READY_CRON` | `a-stock-lib==0.2.0`；2026-07-15 probe 的 daily/index/calendar/close cross-check 全部 PASS |
 | cron | ✅ 已按门禁重新安装 | weekly/weekly-PM/QFQ/daily/outcome 五项 managed cron 均已确认 |
-| 质量门禁 | ✅ 全绿 | `373 passed`；Ruff lint/format、mypy、`git diff --check` 全部通过 |
+| 质量门禁 | ✅ 全绿 | `450 passed`；Ruff lint/format、mypy、`git diff --check` 全部通过 |
 
 ### 关键数据规模
 
@@ -276,3 +276,5 @@
 | v1.8 | 2026-07-12 | Phase 5 L3 v2 Phase 2+3 完成：QFQ 采集（35/35×130行，pass_strong 激活）+ 推送触发切换至 l3_v2_signal=1；Framework A 倒置诊断（Q5 avg_alpha=-9.91%，根因=截面校准偏差+11支伪复制，不调权重）；agy 投资视角审查（持有期错配+价值风格轮出；Priority 1=延伸60d/90d评估）；Tushare probe 刷新（上次 2026-07-02 已过期）；daily+outcome-update cron 正式恢复（market-data-backfill ok=35） |
 | v1.9 | 2026-07-15 | 对齐 L3 v2 已上线事实、live DB/报告样本、B label 日期和 qualitative v2 MILESTONE-002 进度；记录 readiness 因 probe stale 转 HOLD、weekly-PM failure-marker 误报，以及 mypy/Ruff format 基线漂移，明确下一步 P0/P1 顺序。 |
 | v1.10 | 2026-07-15 | 完成 v1.9 识别的 P0/P1：当天 probe 全 PASS 并恢复 READY_CRON/managed cron；修复 weekly-PM 中文零失败与降级 WARNING 分级；mypy 24 errors 清零并完成 Ruff format 全库基线；同步最新 accuracy report 与 B label 日期。 |
+| v1.11 | 2026-07-15 | 完成定性评分 v2 MILESTONE-002 fixture-first 合同：新增静态 response schema、版本化 prompt、namespace/hash/rationale/sentiment 合同修复与回归测试；AGY 只读审查 PASS，保持 Gemini/DB/pipeline/cron/Telegram 生产路径不变。 |
+| v1.12 | 2026-07-15 | 修复 MILESTONE-002 生产就绪审查的全部 P1/P2：集中合同常量，typed context 双边界复验，拒绝 NaN/Infinity 与非 canonical 日期，统一 64 项及字符串/JSON/prompt 资源上限；145 项定向、450 项全量测试和 AGY 严格复审 PASS，生产路径仍不变。 |
