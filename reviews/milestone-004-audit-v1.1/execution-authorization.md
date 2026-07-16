@@ -183,3 +183,15 @@ offline frame/sample assembly; an incomplete result requires a new authorization
 The authorized attempt captured a rate-limited `daily_basic` response and a valid SSE summary, then stopped on strict
 TLS `SSLError` before the first SWS response. It was sealed incomplete and was not retried or assembled. Details are in
 `capture-attempt-m4-capture-20260716-01.md`.
+
+## SWS strict-TLS diagnostic authorization
+
+Authorization ID: `qualitative-v2-m4-sws-tls-diagnostic-2026-07-16-01`
+Diagnostic ID: `m4-sws-tls-diagnostic-20260716-01`
+Window: `2026-07-16T17:30:00+08:00` through `2026-07-16T19:00:00+08:00`
+Status: **one handshake executed at 17:44; verification failed; authorization consumed**
+
+The user approved one strict TLS handshake to `www.swsresearch.com:443` with matching SNI and Certifi verification,
+without HTTP application data or retry. The diagnostic found that the server supplied only the leaf certificate and
+omitted its GeoTrust/DigiCert intermediate, producing verification code 20. No capture, Tushare call, Reviewer/model,
+database, or production path was authorized or used. Details are in `sws-tls-diagnostic-20260716-01.md`.

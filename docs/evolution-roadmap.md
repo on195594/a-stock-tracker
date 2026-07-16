@@ -290,3 +290,4 @@
 | v1.22 | 2026-07-16 | 13:34 historical-hybrid 请求返回 5,525 行及 `count=0`，确认零为未知总数哨兵；离线校验允许零或不小于当前页的 count，继续强制 `has_more=false`，未触达 SWS。 |
 | v1.23 | 2026-07-16 | 完成 M4 capture-first exporter：拆分 capture/recover/assemble，新增机器授权、即时 raw/receipt、complete/incomplete 隔离、resume/TOCTOU/并发锁和纯离线确定性组装；13:34 旧响应不可恢复，新 live capture 仍待单独授权。 |
 | v1.24 | 2026-07-16 | 执行首次机器授权 capture-first attempt：保留 Tushare raw-only 限频响应和有效 SSE receipt，首个 SWS 请求严格 TLS `SSLError`；manifest 封存 31 项 missing 并通过离线重验，未重试或组装。 |
+| v1.25 | 2026-07-16 | 单次 strict-TLS 诊断确认 SWS 服务端只发送有效叶证书、缺 GeoTrust/DigiCert 中间证书，验证 code 20；不接受 AKShare `verify=False`，下一步等待服务端修复或单独授权官方中间证书/静态包路径。 |

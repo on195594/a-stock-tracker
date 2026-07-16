@@ -36,4 +36,9 @@ response and a valid SSE response, then sealed incomplete when strict TLS verifi
 response. The attempt has 31 missing calls and cannot be assembled. Its authorization is consumed; any diagnostic,
 retry, or resume requires a new explicit authorization. Reviewer execution remains separately unauthorized.
 
+A separately authorized one-handshake diagnostic confirmed that `www.swsresearch.com` served only its currently valid
+leaf certificate and omitted the GeoTrust/DigiCert intermediate, causing strict verification code 20. Do not accept
+AKShare's upstream `verify=False` workaround. Wait for a complete server chain or separately authorize and validate a
+provenance-bearing official intermediate/static package before another capture attempt.
+
 Authorization validity is checked against a live timezone-aware clock before every provider call and again at raw-first publication. Receipts use the actual response-capture timestamp. `KeyboardInterrupt`, `SystemExit`, and `GeneratorExit` seal any already published bytes as incomplete and are then re-raised; they never authorize continuing to another provider call.

@@ -83,7 +83,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | Blocker | Impact | Unblock condition | ETA |
 |---|---|---|---|
 | B label 已结案样本不足 `0/20` | 阻止 Framework B 生产化 | 已结案 ≥20 且 overdue=0 | 最早 2026-08-13 后 |
-| qualitative v2 frame 尚无完整静态包 | 17:15 attempt 已封存 Tushare raw-only + SSE parsed，31 项 SWS missing；不可组装 | 先解除 SWS 严格 TLS `SSLError` 并等待 Tushare 日配额重置，再单独授权新 attempt；或提供 provenance-bearing 静态快照 | 待用户/数据条件 |
+| qualitative v2 frame 尚无完整静态包 | 17:15 attempt 已封存 Tushare raw-only + SSE parsed，31 项 SWS missing；TLS 诊断确认服务端缺中间证书 | 等待 SWS 修复完整链，或单独授权 provenance-bearing 官方中间证书/静态包；同时等待 Tushare 日配额重置 | 待外部数据条件 |
 | Framework A strong 层级尚未证明优于基准 | 不宜调权重或宣称模型有效 | 另开权重复核 spec | 待更多样本与独立审查 |
 | L3 v2 当前未体现过滤选择性 | 2026-07-13/14 共 70/70 pass，strong 18/18 每日全部通过 | 先增加 v2 状态/门禁分布报告并积累 30/60d outcome；不据两天样本改规则 | P2 |
 | Framework A 60d/90d 延伸评估未执行 | “持有期错配”假说尚未复核 | 当前已有 A 60d 结案 253 条；先做只读五分位对比，90d 继续等待 | P2 |

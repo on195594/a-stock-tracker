@@ -11,6 +11,7 @@
 - 合成验收和全仓质量门禁通过：审查加固后 M4 定向 `115 passed`、全仓 `593 passed`，Ruff lint/format/F401、mypy、协议 hashes 和 diff check 全绿。
 - 审查加固：永久禁用绕过 canonical authorization 的四组 legacy API/CLI/直连 SZSE 入口；逐 live call 与 raw-first 发布点重验授权时间，receipt 改记实际捕获时间；进程控制异常会将已发布 receipt/blob 纳入 incomplete manifest、封存后原样抛出；删除未使用的 `CaptureManifest` 和导入。
 - 17:15 的首次 capture-first 实执按授权只运行一次：`daily_basic` 原始回应命中账户 `5次/天` 限频，SSE summary 有效，首个 SWS 请求严格 TLS 验证发生 `SSLError`；两份已收响应和 31 项 missing matrix 已封存为 incomplete，未重试、未组装。
+- 17:44 的单次 strict-TLS 诊断确认 SWS 只发送有效叶证书，未发送 GeoTrust/DigiCert 中间证书，验证返回 code 20；未发送 HTTP 数据或重试，不降级 `verify=False`。
 
 ## 2026-07-15 — MILESTONE-004 静态输入执行授权
 
