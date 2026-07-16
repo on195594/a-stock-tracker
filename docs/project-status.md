@@ -9,6 +9,8 @@
 
 2026-07-16 M4 v1.2 离线实现已完成：协议 hash 以 v1.1 hash 为 `supersedes`，保持 SW2021、seed、36 股分层、coverage/Reviewer/evidence 规则不变；新增 canonical authorization 逐调用复验、HTTPS/POST/禁重定向、raw-first create-only、有限脱敏错误、`complete`/`capability_pass` 分离和全离线复验。固定授权窗口为 2026-07-17 00:00 至 2026-07-18 00:00（Asia/Shanghai），窗口外不得联网。
 
+2026-07-16 19:34 +08:00 的 preflight 返回 `authorization_not_yet_valid`（exit 2），且 capability output root 不存在；真实 probe/Tushare 调用计数仍为 0，authorization/attempt 未消费。来源终态尚未判定，不得提前声明 PASS 或 `NO_QUALIFIED_FRAME_SOURCE`。
+
 2026-07-15 控制面修复已完成：当天 Tushare probe 的 daily/index/calendar/close cross-check 全部 PASS，readiness 恢复 `READY_CRON`，五项 managed cron 已重新安装；weekly PM loop 已修复中文“失败 0 只”和降级 WARNING 的错误分级，真实 dry-run 从误报 FAIL 恢复为符合当前降级事实的 WARN；mypy 24 errors 已清零，31 个历史文件完成 Ruff format 基线化；MILESTONE-003 当时的完整质量门禁为 `478 passed` 且 lint/format/type/diff 全绿。
 
 2026-07-16 MILESTONE-004 capture-first 加固已完成：在既有 v1.1 离线工具链上新增机器授权、raw-first receipt/blob、complete/incomplete attempt 隔离、resume/recover 和纯离线 assemble，并关闭 legacy 授权绕过、补齐逐调用授权时钟与取消传播。当前全仓门禁为 `593 passed`，Ruff lint/format/F401、mypy、协议 v1/v1.1 SHA-256 和 `git diff --check` 全绿；加固实现阶段未读取真实数据库、未检索真实公司、未访问真实数据源、未运行真实 Reviewer。

@@ -1,6 +1,6 @@
 # MILESTONE-004 v1.2 frame-source capability runbook
 
-Status: offline implementation ready; live execution is controlled only by the external authorization window.
+Status: offline implementation ready; pre-window guard verified at 2026-07-16 19:34 +08:00; live probe not executed.
 
 ## Boundary
 
