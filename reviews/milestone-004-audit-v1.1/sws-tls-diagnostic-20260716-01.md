@@ -46,3 +46,10 @@ same capture configuration. Safe unblocking requires one of:
 3. the required SWS response snapshots are supplied as a provenance-bearing static package.
 
 No HTTP request, provider-data request, token access, production database access, or Reviewer/model execution occurred.
+
+## Derived HTTPS certificate fetch
+
+The user separately permitted exactly one HTTPS GET to the scheme-substituted AIA address
+`https://cacerts.digicert.cn/GeoTrustG2TLSCNRSA4096SHA2562022CA1.crt`, with redirects disabled. At
+`2026-07-16T17:48:59+08:00`, curl returned TLS alert `handshake failure` (exit code 35). No certificate bytes were
+written, no alternate URL was attempted, and no retry occurred.

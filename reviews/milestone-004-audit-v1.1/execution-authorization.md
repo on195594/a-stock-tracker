@@ -195,3 +195,7 @@ The user approved one strict TLS handshake to `www.swsresearch.com:443` with mat
 without HTTP application data or retry. The diagnostic found that the server supplied only the leaf certificate and
 omitted its GeoTrust/DigiCert intermediate, producing verification code 20. No capture, Tushare call, Reviewer/model,
 database, or production path was authorized or used. Details are in `sws-tls-diagnostic-20260716-01.md`.
+
+The user then permitted exactly one HTTPS GET to the scheme-substituted DigiCert AIA address with redirects disabled.
+The request failed during TLS negotiation with curl exit code 35; no certificate was downloaded and no alternate URL or
+retry was attempted.

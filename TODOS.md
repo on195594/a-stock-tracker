@@ -41,6 +41,7 @@ Phase 1-3.6 历史实施记录，不再作为后续计划来源。
 **Next：**
 
 1. SWS strict-TLS 诊断已确认服务端缺 GeoTrust/DigiCert 中间证书。等待服务端修复，或另行授权获取、固定并离线验证 provenance-bearing 官方中间证书/静态 SWS 包；不得使用 `verify=False` 或未授权 HTTP AIA。同时等待 Tushare `daily_basic` 日配额重置，之后才能单独授权新 capture attempt。
+   补充：AIA 派生 DigiCert HTTPS 地址的唯一次 GET 又以 curl 35 TLS handshake failure 结束，未获取证书。
 2. 验证 dataset SHA-256、完整 frame、字段映射和采样日期后，冻结 frame 与 36 股 sample。
 3. 对 sample 提供完整静态 corpus package 并冻结 corpus；真实 Reviewer 运行前再次单独申请授权。
 4. Reviewer 获批后再完成双 seal、用户裁决和 coverage report；FAIL 层必须由用户选择 `excluded` 或 `re_audit_new_version`。
