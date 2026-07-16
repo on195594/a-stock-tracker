@@ -7,7 +7,7 @@ A 股选股与方法论验证项目。当前定位是 **Framework A 定量评分
 ## 当前状态
 
 - 主分支：`master`
-- 当前阶段：Phase 5 L3 v2 已接入生产评分与推送；Phase 6 仍处于 report-only 观察期；来源约束的定性评分 v2 已完成 MILESTONE-002、MILESTONE-003，以及 MILESTONE-004 v1.1 预注册、离线审计工具链和 capture-first exporter；七次旧 frame 导出均 fail closed，13:34 的 5,525 行响应因旧实现未即时落盘而不可恢复，下一次真实 capture、Reviewer 与 evidence shadow/cutover 均未授权
+- 当前阶段：Phase 5 L3 v2 已接入生产评分与推送；Phase 6 仍处于 report-only 观察期；来源约束的定性评分 v2 已完成 MILESTONE-002、MILESTONE-003 和 M4 capture-first 工具链；17:15 实执封存为 incomplete（Tushare 日限频 + SWS 严格 TLS `SSLError`），不可组装，下一次 live attempt、Reviewer 与 evidence shadow/cutover 均需新授权
 - 生产框架：`SUPPORTED_FRAMEWORKS = {"A"}`；Framework B 历史数据保留，Phase 6 前不得启用生产写入
 - watchlist：35 只，维护在 `config.py`
 - 评分阈值：`buy_strong=44`、`buy_moderate=35`、`buy_light=26`

@@ -34,7 +34,7 @@
 | Telegram 推送 | ✅ v2 门禁已上线 | 主推条件为 ≥ buy_strong 且 `l3_v2_signal=1`；v2 为 0/NULL 的高分股进入候补 |
 | Outcome 追踪 | ✅ 最近运行正常 | live DB 中 Framework A 30d/60d 结案 953/253；90d 尚无结案 |
 | L3 买点层 | ✅ v2 Phase 2+3 完成；选择性待观察 | QFQ 覆盖 35/35 codes、4585 行；2026-07-13/14 共写入 70 条 v2 记录且全部 pass；cron 工作日 16:00 采集 |
-| 定性评分 v2 | 🔶 M4 capture-first 已就绪 | v1.1 工具链与 capture/recover/assemble 已完成；七次旧 frame 导出均在发布前 fail closed，13:34 的响应不可恢复；新 capture 与 Reviewer 均未授权，MILESTONE-005/006 待单独批准 |
+| 定性评分 v2 | 🔶 M4 capture-first 已验证 | 17:15 attempt 封存 2 份响应后 incomplete：Tushare 日限频、SWS 严格 TLS `SSLError`、31 项 missing；未重试/组装，新 capture 与 Reviewer 均待单独批准 |
 | 行情数据源 | ✅ `READY_CRON` | `a-stock-lib==0.2.0`；2026-07-15 probe 的 daily/index/calendar/close cross-check 全部 PASS |
 | cron | ✅ 已按门禁重新安装 | weekly/weekly-PM/QFQ/daily/outcome 五项 managed cron 均已确认 |
 | 质量门禁 | ✅ 全绿 | `593 passed`；Ruff lint/format、mypy、`git diff --check` 与 M4 v1/v1.1 协议 SHA-256 全部通过 |
@@ -289,3 +289,4 @@
 | v1.21 | 2026-07-16 | 12:05 historical-hybrid 请求通过小时频控后因 `count` 与当前页行数不同而 fail closed；离线修正为严格验证非负 count、`has_more=false` 并记录 provenance，仍未触达 SWS 或发布 frame/sample。 |
 | v1.22 | 2026-07-16 | 13:34 historical-hybrid 请求返回 5,525 行及 `count=0`，确认零为未知总数哨兵；离线校验允许零或不小于当前页的 count，继续强制 `has_more=false`，未触达 SWS。 |
 | v1.23 | 2026-07-16 | 完成 M4 capture-first exporter：拆分 capture/recover/assemble，新增机器授权、即时 raw/receipt、complete/incomplete 隔离、resume/TOCTOU/并发锁和纯离线确定性组装；13:34 旧响应不可恢复，新 live capture 仍待单独授权。 |
+| v1.24 | 2026-07-16 | 执行首次机器授权 capture-first attempt：保留 Tushare raw-only 限频响应和有效 SSE receipt，首个 SWS 请求严格 TLS `SSLError`；manifest 封存 31 项 missing 并通过离线重验，未重试或组装。 |

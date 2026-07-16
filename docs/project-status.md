@@ -5,13 +5,13 @@
 
 ## 当前结论
 
-主业务仍处于 **Phase 6 report-only 观察**，Framework B 不得生产写入；Phase 5 L3 v2 已完成 QFQ 生产接入和 Telegram 主推切换。来源约束的定性评分 v2 已完成 MILESTONE-002 本地合同、MILESTONE-003 文件型 shadow seam，以及 MILESTONE-004 v1.1 预注册和离线审计工具链；两次空 evidence packet 的受控 Gemini smoke 均通过，生产 DB、pipeline、cron、Telegram 与 cutover 未接入。M4 incoming 只有带 provenance 的 2026-07-15 SZSE 局部静态包，历史混合导出受 Tushare 频控阻断且 Reviewer 未授权；MILESTONE-005 继续由冻结覆盖率报告和用户处置阻断。
+主业务仍处于 **Phase 6 report-only 观察**，Framework B 不得生产写入；Phase 5 L3 v2 已完成 QFQ 生产接入和 Telegram 主推切换。定性评分 v2 M4 capture-first 工具链已就绪，17:15 机器授权 attempt 按设计封存 incomplete：Tushare `daily_basic` 命中 `5次/天` 限频，SSE summary 有效，首个 SWS 请求严格 TLS `SSLError`，31 项 missing。未重试、未组装；Reviewer 未授权，MILESTONE-005 继续由冻结 coverage report 和用户处置阻断。
 
 2026-07-15 控制面修复已完成：当天 Tushare probe 的 daily/index/calendar/close cross-check 全部 PASS，readiness 恢复 `READY_CRON`，五项 managed cron 已重新安装；weekly PM loop 已修复中文“失败 0 只”和降级 WARNING 的错误分级，真实 dry-run 从误报 FAIL 恢复为符合当前降级事实的 WARN；mypy 24 errors 已清零，31 个历史文件完成 Ruff format 基线化；MILESTONE-003 当时的完整质量门禁为 `478 passed` 且 lint/format/type/diff 全绿。
 
-2026-07-16 MILESTONE-004 capture-first 加固已完成：在既有 v1.1 离线工具链上新增机器授权、raw-first receipt/blob、complete/incomplete attempt 隔离、resume/recover 和纯离线 assemble，并关闭 legacy 授权绕过、补齐逐调用授权时钟与取消传播。当前全仓门禁为 `593 passed`，Ruff lint/format/F401、mypy、协议 v1/v1.1 SHA-256 和 `git diff --check` 全绿；未读取真实数据库、未检索真实公司、未访问真实数据源、未运行真实 Reviewer。
+2026-07-16 MILESTONE-004 capture-first 加固已完成：在既有 v1.1 离线工具链上新增机器授权、raw-first receipt/blob、complete/incomplete attempt 隔离、resume/recover 和纯离线 assemble，并关闭 legacy 授权绕过、补齐逐调用授权时钟与取消传播。当前全仓门禁为 `593 passed`，Ruff lint/format/F401、mypy、协议 v1/v1.1 SHA-256 和 `git diff --check` 全绿；加固实现阶段未读取真实数据库、未检索真实公司、未访问真实数据源、未运行真实 Reviewer。
 
-2026-07-15 至 2026-07-16 的七次获批 frame 导出均在 package publication 前 fail closed。隔离 Playwright MCP 已只读封存两份语义一致的 2026-07-15 SZSE XLSX；13:34 历史混合请求取得 5,525 行，但旧导出器在 schema failure 前没有即时持久化 raw，故该响应不可恢复。capture-first exporter 现已拆分 capture/recover/assemble 并完成合成验证，但未执行新 live capture；frame/sample 尚未冻结，任何新 capture、真实 Reviewer 和 MILESTONE-005 均需满足各自授权门禁。
+2026-07-15 至 2026-07-16 的七次旧 frame 导出均在 publication 前 fail closed；13:34 的 5,525 行旧响应不可恢复。17:15 的 capture-first attempt 首次将已收的 Tushare/SSE 原始响应即时落盘，manifest SHA-256 为 `905fda74cae7a3b916e430e2554c1bce69aee7538cf638cea9d3415b62eb535d`；但因 Tushare 响应 raw-only 且 31 项 SWS missing，该 attempt 只能保持 incomplete，frame/sample 尚未冻结。
 
 2026-07-10 的 `NEED_QFQ` 是历史离线 gate。2026-07-12 已通过 BaoStock QFQ 采集解除：当前 `daily_bars` 中 QFQ 覆盖 35/35 代码，生产 daily 在 2026-07-13/14 写入 70 条 v2 记录，Telegram 主推使用 `l3_v2_signal=1`。
 
@@ -33,7 +33,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | Phase 5 L3 买点层 | v1 保留审计；v2 Phase 2+3 已完成 | 观察 v2 信号分布与自然 outcome；不改 L1/L2 分数 | readiness 已恢复，继续自然运行 | 足量 v2 30/60d 样本和独立复核后再讨论规则变化 |
 | 定性评分 v2 MILESTONE-002 | 已完成 | 保持合同稳定和本地 validator fail-closed | MILESTONE-003 已独立完成 | REQ-001~035 对应本地合同齐全 |
 | 定性评分 v2 MILESTONE-003 | 已完成 | 使用独立 CLI/JSONL artifact；不接 pipeline 或生产 DB | M4 静态输入阶段已获授权，等待 dataset provenance | REQ-036~039 文件持久化、错误分类、脱敏、去重和隔离测试及 AGY 最终只读审查通过 |
-| 定性评分 v2 MILESTONE-004 | v1.1 工具链完成；静态输入阶段已授权 | 只接受带 provenance 的只读静态 dataset；Reviewer 默认禁用，不读取真实 DB/公司 | 补齐并验证 2026-07-15 frame package 后冻结 frame/sample/corpus；Reviewer 另行授权 | 只有 SZSE 局部包，真实 frame/corpus 与 coverage report 均未产出，MILESTONE-005 继续阻断 |
+| 定性评分 v2 MILESTONE-004 | v1.1/capture-first 工具链完成 | 保留 sealed incomplete；不降低 TLS，不无授权重试；Reviewer 默认禁用 | 解除 SWS TLS 阻塞 + 等待 Tushare 配额重置，或提供静态包 | 完整 frame/corpus/coverage 未产出，MILESTONE-005 继续阻断 |
 | Phase 6 多框架激活 | report-only 观察 | 自动化 weekly PM loop 只读观察 B label / dry-run / cron 日志 | 2026-08-13 后首次 B label 自然结案复核 | B label 已结案 ≥20、overdue=0、数据质量门槛 OK、独立审查通过、另写生产化 spec |
 | Phase 7 选股宇宙扩展 | 未启动 | 等 Phase 6 或明确降级策略 | 暂无 | 单独设计动态池和 API 压测 |
 
@@ -83,7 +83,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | Blocker | Impact | Unblock condition | ETA |
 |---|---|---|---|
 | B label 已结案样本不足 `0/20` | 阻止 Framework B 生产化 | 已结案 ≥20 且 overdue=0 | 最早 2026-08-13 后 |
-| qualitative v2 frame 尚无完整静态包 | 已有 2026-07-15 SZSE 快照和 capture-first exporter；13:34 的旧响应不可恢复，且既往一次性 live 授权均已结束 | 提供绑定新 attempt/time window/exact 33-call matrix 的机器授权，或提供其余带 provenance 静态快照；之后冻结 frame/sample/corpus 再申请 Reviewer 授权 | 待用户/数据条件 |
+| qualitative v2 frame 尚无完整静态包 | 17:15 attempt 已封存 Tushare raw-only + SSE parsed，31 项 SWS missing；不可组装 | 先解除 SWS 严格 TLS `SSLError` 并等待 Tushare 日配额重置，再单独授权新 attempt；或提供 provenance-bearing 静态快照 | 待用户/数据条件 |
 | Framework A strong 层级尚未证明优于基准 | 不宜调权重或宣称模型有效 | 另开权重复核 spec | 待更多样本与独立审查 |
 | L3 v2 当前未体现过滤选择性 | 2026-07-13/14 共 70/70 pass，strong 18/18 每日全部通过 | 先增加 v2 状态/门禁分布报告并积累 30/60d outcome；不据两天样本改规则 | P2 |
 | Framework A 60d/90d 延伸评估未执行 | “持有期错配”假说尚未复核 | 当前已有 A 60d 结案 253 条；先做只读五分位对比，90d 继续等待 | P2 |

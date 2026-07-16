@@ -158,3 +158,28 @@ as an unknown-count sentinel.
 Offline validation now accepts `count=0` or a nonzero count no smaller than the returned page, continues to require
 `has_more=false`, and records both values in provenance. No retry occurred under this authorization. Details are
 preserved in `frame-export-attempt-historical-hybrid-count-sentinel-2026-07-16.md`.
+
+## Capture-first authorization
+
+Authorization ID: `qualitative-v2-m4-capture-authorization-2026-07-16-01`
+Attempt ID: `m4-capture-20260716-01`
+Sampling date: `2026-07-15`
+Window: `2026-07-16T17:15:00+08:00` through `2026-07-16T19:15:00+08:00`
+Status: **attempted once at 17:15; sealed incomplete; authorization consumed**
+
+The user approved the exact proposal in the controlling conversation on 2026-07-16:
+
+> 批准上述 capture 授权提案。
+
+This permits one capture-first attempt using the existing `TUSHARE_TOKEN`, restricted to the frozen ordered 33-call
+matrix recorded in `capture-authorization-2026-07-16-01.json`: one `daily_basic` call for `20260715`, one
+`stock_sse_summary` call, and the 31 frozen SW2021 `index_component_sw` calls. It does not permit automatic retry or
+resume after failure. Token material, request bodies, cookies, and authorization headers must not be persisted.
+
+Reviewer/model execution, production database access, production pipeline/cron/Telegram changes, company evidence
+retrieval, and MILESTONE-005 remain unauthorized. A complete sealed attempt may proceed to the already-authorized
+offline frame/sample assembly; an incomplete result requires a new authorization before any missing live call.
+
+The authorized attempt captured a rate-limited `daily_basic` response and a valid SSE summary, then stopped on strict
+TLS `SSLError` before the first SWS response. It was sealed incomplete and was not retried or assembled. Details are in
+`capture-attempt-m4-capture-20260716-01.md`.

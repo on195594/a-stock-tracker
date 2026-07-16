@@ -31,6 +31,9 @@ python3 scripts/export_m4_sampling_frame_historical_hybrid.py assemble \
 
 The 2026-07-16 13:34 response cannot be recovered: the previous exporter retained its raw response only in memory and removed the temporary directory after schema failure. No raw bytes, receipt, or content hash from that response exist in the repository. It must not be reconstructed from logs or adopted into a future attempt.
 
-No new real capture has been run as part of the capture-first implementation. A future capture still needs a new authorization whose attempt ID, validity window, sampling date, and exact call matrix pass the machine checks. Reviewer execution remains separately unauthorized.
+The first authorized real capture-first attempt ran once at 2026-07-16 17:15. It retained a rate-limited Tushare
+response and a valid SSE response, then sealed incomplete when strict TLS verification failed before the first SWS
+response. The attempt has 31 missing calls and cannot be assembled. Its authorization is consumed; any diagnostic,
+retry, or resume requires a new explicit authorization. Reviewer execution remains separately unauthorized.
 
 Authorization validity is checked against a live timezone-aware clock before every provider call and again at raw-first publication. Receipts use the actual response-capture timestamp. `KeyboardInterrupt`, `SystemExit`, and `GeneratorExit` seal any already published bytes as incomplete and are then re-raised; they never authorize continuing to another provider call.

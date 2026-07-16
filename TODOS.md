@@ -7,7 +7,7 @@ Phase 1-3.6 历史实施记录，不再作为后续计划来源。
 
 当前工作重心：
 
-1. **P1 定性评分 v2：** MILESTONE-004 v1.1 工具链和 capture-first exporter 已完成；七次旧 frame 导出均未发布 package。2026-07-16 已封存 SZSE XLSX；13:34 的 5,525 行响应因旧实现未即时落盘而不可恢复。下一次真实 capture 必须提供新的 canonical JSON + SHA-256 机器授权；也可提供带 provenance 的静态包。Reviewer 仍须单独授权。
+1. **P1 定性评分 v2：** M4 capture-first 首次授权执行已封存 incomplete：`daily_basic` 命中 `5次/天` 限频，SSE 响应有效，首个 SWS 请求严格 TLS `SSLError`，31 项 missing。未重试、未组装。下次 live attempt 需新 canonical JSON + SHA-256 授权，且应先解除 SWS TLS 阻塞并等待 Tushare 日配额重置；也可提供带 provenance 静态包。Reviewer 仍须单独授权。
 2. **P2 L3 v2 选择性：** 2026-07-13/14 的 70 条 v2 记录全部为 pass，18/18 strong 每日均未被 L3 过滤；先在 report 中增加 v2 状态/门禁分布并积累 outcome，不据两天样本直接改规则。
 3. **P2 模型验证：** 基于已自然结案的 60d 数据，执行 Framework A 五分位 60d/90d 延伸评估；不据此顺手调权重。
 4. **P3 Phase 6：** Framework B 继续 report-only，等待 B label 30d 自然结案至 20 条；生产化必须另写实施计划并获得明确授权。
@@ -40,12 +40,12 @@ Phase 1-3.6 历史实施记录，不再作为后续计划来源。
 
 **Next：**
 
-1. 为新的 capture attempt 提供绑定 attempt/date/time window/exact 33-call matrix 的 canonical authorization JSON 及 SHA-256 manifest，或提供 2026-07-15 `daily_basic` 和 31 个申万成分的原始静态快照；13:34 的旧响应不可恢复，不得用 watchlist、合成数据或生产 DB 替代。现有 SZSE XLSX 只可绑定 2026-07-15。
+1. 先在不降低 TLS 验证的前提下解除 SWS `SSLError`，并等待 Tushare `daily_basic` 日配额重置；之后为新 attempt 提供绑定 date/time window/exact 33-call matrix 的 canonical authorization JSON 及 SHA-256 manifest。另一路径是提供 2026-07-15 `daily_basic` 和 31 个申万成分的 provenance-bearing 原始静态快照。
 2. 验证 dataset SHA-256、完整 frame、字段映射和采样日期后，冻结 frame 与 36 股 sample。
 3. 对 sample 提供完整静态 corpus package 并冻结 corpus；真实 Reviewer 运行前再次单独申请授权。
 4. Reviewer 获批后再完成双 seal、用户裁决和 coverage report；FAIL 层必须由用户选择 `excluded` 或 `re_audit_new_version`。
 
-**边界：** 当前没有业务 CLI；静态输入授权只覆盖带 provenance 的 frame/sample/corpus。七次一次性 live frame 导出授权均已结束；除非获得新的明确授权，不得再次调用 live provider、运行真实 Reviewer、检索真实公司或访问真实数据库。MILESTONE-005/006、生产 cache/schema、pipeline、cron、Telegram 和权重仍未授权。
+**边界：** 当前没有业务 CLI；静态输入授权只覆盖带 provenance 的 frame/sample/corpus。旧导出与本次 capture-first 一次性 live 授权均已结束；除非获得新的明确授权，不得再次调用 live provider、运行真实 Reviewer、检索真实公司或访问真实数据库。MILESTONE-005/006、生产 cache/schema、pipeline、cron、Telegram 和权重仍未授权。
 
 ## L3 v2 qfq 覆盖修复（2026-07-12 已完成）
 

@@ -112,7 +112,7 @@ avg_score 有约 4-5 分系统性偏移，Phase 4 optimizer 训练需按 score_d
 | Phase 5 L3 v2（QFQ）| ✅ Phase 2+3 完成 | Phase 2: QFQ 35/35×130 行回填，pass_strong 激活，cron 16:00；Phase 3: 推送触发切换至 l3_v2_signal=1（commit e080f15） |
 | 定性评分 v2 MILESTONE-002 | ✅ fixture-first 完成 | contract/types/taxonomy/schema/prompt/validator 与 145 项本地合同测试已完成，AGY 边界加固复审 PASS |
 | 定性评分 v2 MILESTONE-003 | ✅ 文件 shadow seam 完成 | 独立 client/CLI、JSONL artifact、错误分类、重试和同 hash 去重已完成，AGY 最终只读审查 PASS；真实证据 shadow、生产 DB/pipeline/cutover 仍待后续里程碑批准 |
-| 定性评分 v2 MILESTONE-004 | 🔶 capture-first 已就绪；等待完整 2026-07-15 dataset | v1.1 工具链及 capture/recover/assemble 已完成；七次旧 frame 导出均 fail closed，13:34 的 5,525 行响应因旧实现未即时落盘而不可恢复；incoming 只有已封存 SZSE 快照，下一次真实 capture 和 reviewer 均未授权，MILESTONE-005 继续阻断 |
+| 定性评分 v2 MILESTONE-004 | 🔶 capture-first 已验证；等待完整 2026-07-15 dataset | 17:15 授权 attempt 封存 2 份 raw-first 响应后 incomplete：Tushare `5次/天` 限频，SWS 严格 TLS `SSLError`，31 项 missing；未重试/组装，下次 live attempt 和 Reviewer 均需新授权，MILESTONE-005 继续阻断 |
 | Phase 6 多框架激活 | 🔶 report-only | Framework B 仍不写生产；B label 0/20 自然结案 |
 | Phase 7 选股宇宙 | ⏸ 未启动 | 待 Phase 6 完成或明确降级策略 |
 
