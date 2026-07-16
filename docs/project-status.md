@@ -5,11 +5,13 @@
 
 ## 当前结论
 
-主业务仍处于 **Phase 6 report-only 观察**，Framework B 不得生产写入；Phase 5 L3 v2 已完成 QFQ 生产接入和 Telegram 主推切换。来源约束的定性评分 v2 已完成 MILESTONE-002 本地合同、MILESTONE-003 文件型 shadow seam，以及 MILESTONE-004 v1.1 预注册和离线审计工具链；两次空 evidence packet 的受控 Gemini smoke 均通过，生产 DB、pipeline、cron、Telegram 与 cutover 未接入。真实公司 evidence audit 尚未执行，MILESTONE-005 仍由冻结覆盖率报告和用户处置阻断。
+主业务仍处于 **Phase 6 report-only 观察**，Framework B 不得生产写入；Phase 5 L3 v2 已完成 QFQ 生产接入和 Telegram 主推切换。来源约束的定性评分 v2 已完成 MILESTONE-002 本地合同、MILESTONE-003 文件型 shadow seam，以及 MILESTONE-004 v1.1 预注册和离线审计工具链；两次空 evidence packet 的受控 Gemini smoke 均通过，生产 DB、pipeline、cron、Telegram 与 cutover 未接入。M4 incoming 只有带 provenance 的 2026-07-15 SZSE 局部静态包，历史混合导出受 Tushare 频控阻断且 Reviewer 未授权；MILESTONE-005 继续由冻结覆盖率报告和用户处置阻断。
 
 2026-07-15 控制面修复已完成：当天 Tushare probe 的 daily/index/calendar/close cross-check 全部 PASS，readiness 恢复 `READY_CRON`，五项 managed cron 已重新安装；weekly PM loop 已修复中文“失败 0 只”和降级 WARNING 的错误分级，真实 dry-run 从误报 FAIL 恢复为符合当前降级事实的 WARN；mypy 24 errors 已清零，31 个历史文件完成 Ruff format 基线化；MILESTONE-003 当时的完整质量门禁为 `478 passed` 且 lint/format/type/diff 全绿。
 
-2026-07-15 MILESTONE-004 离线 TDD 工具链及严格审查修复已完成：冻结 v1.1 预注册协议和原 seed，新增 31 行业映射、Decimal 分层抽样、source-aware URL/corpus、technical ledger、create-only hash chain、隔离双 reviewer、完整裁决与原子 coverage report。当前全仓门禁为 `554 passed`，Ruff lint/format、mypy、协议 v1/v1.1 SHA-256 和 `git diff --check` 全绿；本轮未读取真实数据库、未检索真实公司、未运行真实 Reviewer。
+2026-07-16 MILESTONE-004 capture-first 加固已完成：在既有 v1.1 离线工具链上新增机器授权、raw-first receipt/blob、complete/incomplete attempt 隔离、resume/recover 和纯离线 assemble，并关闭 legacy 授权绕过、补齐逐调用授权时钟与取消传播。当前全仓门禁为 `593 passed`，Ruff lint/format/F401、mypy、协议 v1/v1.1 SHA-256 和 `git diff --check` 全绿；未读取真实数据库、未检索真实公司、未访问真实数据源、未运行真实 Reviewer。
+
+2026-07-15 至 2026-07-16 的七次获批 frame 导出均在 package publication 前 fail closed。隔离 Playwright MCP 已只读封存两份语义一致的 2026-07-15 SZSE XLSX；13:34 历史混合请求取得 5,525 行，但旧导出器在 schema failure 前没有即时持久化 raw，故该响应不可恢复。capture-first exporter 现已拆分 capture/recover/assemble 并完成合成验证，但未执行新 live capture；frame/sample 尚未冻结，任何新 capture、真实 Reviewer 和 MILESTONE-005 均需满足各自授权门禁。
 
 2026-07-10 的 `NEED_QFQ` 是历史离线 gate。2026-07-12 已通过 BaoStock QFQ 采集解除：当前 `daily_bars` 中 QFQ 覆盖 35/35 代码，生产 daily 在 2026-07-13/14 写入 70 条 v2 记录，Telegram 主推使用 `l3_v2_signal=1`。
 
@@ -30,8 +32,8 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | Phase 4 验证基础 | 已完成，持续观察 | weekly PM loop 自动检查 accuracy-report；不在此阶段顺手调权重 | 每周一自动摘要 | 若要调权重，另开 spec |
 | Phase 5 L3 买点层 | v1 保留审计；v2 Phase 2+3 已完成 | 观察 v2 信号分布与自然 outcome；不改 L1/L2 分数 | readiness 已恢复，继续自然运行 | 足量 v2 30/60d 样本和独立复核后再讨论规则变化 |
 | 定性评分 v2 MILESTONE-002 | 已完成 | 保持合同稳定和本地 validator fail-closed | MILESTONE-003 已独立完成 | REQ-001~035 对应本地合同齐全 |
-| 定性评分 v2 MILESTONE-003 | 已完成 | 使用独立 CLI/JSONL artifact；不接 pipeline 或生产 DB | M4 离线工具链已完成；等待真实 audit 单独授权 | REQ-036~039 文件持久化、错误分类、脱敏、去重和隔离测试及 AGY 最终只读审查通过 |
-| 定性评分 v2 MILESTONE-004 | v1.1 预注册与离线工具链已完成；真实 audit 未执行 | 保持 Reviewer 默认禁用，不读取真实 DB/公司；只接受冻结输入和显式授权 | 批准候选 source/dataset 的审计授权后，按 v1.1 生成冻结 coverage report 并由用户处置 FAIL 层 | REQ-059/065 的预注册和工具链门槛已满足；coverage report 尚未产出，MILESTONE-005 继续阻断 |
+| 定性评分 v2 MILESTONE-003 | 已完成 | 使用独立 CLI/JSONL artifact；不接 pipeline 或生产 DB | M4 静态输入阶段已获授权，等待 dataset provenance | REQ-036~039 文件持久化、错误分类、脱敏、去重和隔离测试及 AGY 最终只读审查通过 |
+| 定性评分 v2 MILESTONE-004 | v1.1 工具链完成；静态输入阶段已授权 | 只接受带 provenance 的只读静态 dataset；Reviewer 默认禁用，不读取真实 DB/公司 | 补齐并验证 2026-07-15 frame package 后冻结 frame/sample/corpus；Reviewer 另行授权 | 只有 SZSE 局部包，真实 frame/corpus 与 coverage report 均未产出，MILESTONE-005 继续阻断 |
 | Phase 6 多框架激活 | report-only 观察 | 自动化 weekly PM loop 只读观察 B label / dry-run / cron 日志 | 2026-08-13 后首次 B label 自然结案复核 | B label 已结案 ≥20、overdue=0、数据质量门槛 OK、独立审查通过、另写生产化 spec |
 | Phase 7 选股宇宙扩展 | 未启动 | 等 Phase 6 或明确降级策略 | 暂无 | 单独设计动态池和 API 压测 |
 
@@ -51,8 +53,8 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | L3 v2 QFQ / 生产写入 | 已完成，选择性待观察 | `daily_bars.adjusted='qfq'` 覆盖 35 个代码、4585 行（至 2026-07-13）；v2 记录 70 条且 70/70 pass，两天 strong 均为 18/18 通过门禁 |
 | L3 v2 Phase 3 push trigger | 已完成，生产推送已切换 | `telegram_push.py` 触发条件 `entry_signal=1` → `l3_v2_signal=1`；commit `e080f15`；298/298 tests passed |
 | Framework A 倒置诊断 | 已完成，结论：不调权重 | Q5 avg_alpha_30d=-9.91%；根因=截面校准偏差+11支伪复制；agy投资审查：Priority 1=延伸60d/90d；60d首批到期 2026-07-14 |
-| 定性评分 v2 | MILESTONE-002+003、M4 离线工具链已完成 | contract/types/taxonomy/schema/prompt/validator/client/shadow/CLI 与 audit/artifact/reviewer API 齐全；真实 M4 audit 未执行，未接生产路径 |
-| 质量门禁 | 全部通过 | 554 passed；Ruff lint/format、mypy、M4 v1/v1.1 SHA-256、`git diff --check` PASS |
+| 定性评分 v2 | MILESTONE-002+003、M4 离线工具链已完成；静态输入已授权 | contract/types/taxonomy/schema/prompt/validator/client/shadow/CLI 与 audit/artifact/reviewer API 齐全；等待 dataset provenance，真实 Reviewer 未授权，未接生产路径 |
+| 质量门禁 | 全部通过 | 593 passed；Ruff lint/format、mypy、M4 v1/v1.1 SHA-256、`git diff --check` PASS |
 
 ## Spec Ledger
 
@@ -66,8 +68,9 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | `docs/reviews/2026-07-15-tushare-capability-probe.md` | latest probe evidence，全部 PASS | 系统探测 | 按 freshness 门禁定期刷新 | `check_market_data_readiness.py --scope cron` 当前 READY |
 | `accuracy_report.txt` | latest tracked report（生成于 2026-07-15） | pipeline | 按周更新 | Phase 6 仍明确 report-only |
 | `docs/specs/2026-07-08-l3-v2-entry-signal-spec.md` | draft 历史父 spec；其 Phase 2/3 子 spec 已实施 | Hermes PM + agy review | 观察 v2 生产数据，不再执行旧 NEED_QFQ 下一步 | 规则变更需另开审查，不回写历史分数 |
-| `docs/specs/2026-07-14-source-grounded-structured-qualitative-scoring-spec.md` | approved；MILESTONE-002+003、M4 v1.1 预注册/离线工具链已完成 | Hermes PM + codex + AGY review | 另行批准并执行真实 M4 evidence audit；MILESTONE-005/006 分别待批 | 不得把工具链完成冒充 coverage audit 完成，不得跳过报告进入真实公司 shadow/cutover |
-| `docs/plans/2026-07-15-milestone-004-evidence-feasibility-preregistration-v1.1.md` | frozen；离线工具链已实现，真实 audit 未执行 | codex + AGY review | 保持协议/hash 不变；真实输入或 Reviewer 执行需新授权 | seed、URL、Reviewer、Wilson 与 scope disposition 契约均由测试覆盖 |
+| `docs/specs/2026-07-14-source-grounded-structured-qualitative-scoring-spec.md` | approved；MILESTONE-002+003、M4 v1.1 工具链已完成；静态输入已授权 | Hermes PM + codex + AGY review | 提供并验证 dataset 后冻结 frame/sample/corpus；Reviewer 与 MILESTONE-005/006 分别待批 | 不得把输入授权冒充 coverage audit 完成，不得跳过报告进入真实公司 shadow/cutover |
+| `docs/plans/2026-07-15-milestone-004-evidence-feasibility-preregistration-v1.1.md` | frozen；离线工具链已实现，静态输入阶段已授权 | codex + AGY review | 保持协议/hash 不变；等待 dataset provenance，Reviewer 执行需新授权 | seed、URL、Reviewer、Wilson 与 scope disposition 契约均由测试覆盖 |
+| `reviews/milestone-004-audit-v1.1/execution-authorization.md` | active；只读静态输入授权 | user + codex | 取得 dataset 字节、来源和字段映射后冻结 frame/sample/corpus | 不访问生产 DB/live provider，不运行 Reviewer，不接生产 pipeline |
 | `docs/runbooks/qualitative-v2-shadow.md` | active | codex | 仅对获批 context 使用显式 `--execute` | JSONL 隔离、同 hash 幂等、无生产副作用 |
 | `docs/plans/2026-07-08-l3-v2-offline-backtest-plan.md` | implemented，历史 | Hermes PM + agy review | 保留追溯；生产已采用后续 BaoStock QFQ 方案 | 脚本只读 `tracker.db`，独立 review gate 通过 |
 | `docs/reviews/2026-07-08-l3-v2-backtest-report.md` | 历史 L3 v2 offline evidence | offline script | 不再把其中 NEED_QFQ 当当前 gate | 后续生产 QFQ 事实以 DB、Phase 2/3 spec 和运行日志为准 |
@@ -80,7 +83,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | Blocker | Impact | Unblock condition | ETA |
 |---|---|---|---|
 | B label 已结案样本不足 `0/20` | 阻止 Framework B 生产化 | 已结案 ≥20 且 overdue=0 | 最早 2026-08-13 后 |
-| qualitative v2 真实证据来源未审计 | M4 离线工具链可用，但没有真实分层 coverage 数据，不能进入真实公司 shadow/cutover | 单独批准候选 source/dataset 的审计授权，按冻结 v1.1 运行 MILESTONE-004，并完成双 seal、裁决、coverage report 和 FAIL 层用户处置；之后再单独批准 MILESTONE-005 | 待用户决策 |
+| qualitative v2 frame 尚无完整静态包 | 已有 2026-07-15 SZSE 快照和 capture-first exporter；13:34 的旧响应不可恢复，且既往一次性 live 授权均已结束 | 提供绑定新 attempt/time window/exact 33-call matrix 的机器授权，或提供其余带 provenance 静态快照；之后冻结 frame/sample/corpus 再申请 Reviewer 授权 | 待用户/数据条件 |
 | Framework A strong 层级尚未证明优于基准 | 不宜调权重或宣称模型有效 | 另开权重复核 spec | 待更多样本与独立审查 |
 | L3 v2 当前未体现过滤选择性 | 2026-07-13/14 共 70/70 pass，strong 18/18 每日全部通过 | 先增加 v2 状态/门禁分布报告并积累 30/60d outcome；不据两天样本改规则 | P2 |
 | Framework A 60d/90d 延伸评估未执行 | “持有期错配”假说尚未复核 | 当前已有 A 60d 结案 253 条；先做只读五分位对比，90d 继续等待 | P2 |
@@ -105,6 +108,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | 2026-07-15 | 定性评分 v2 P1/P2 边界加固 | 中央 contract、typed-context 复验、有限 JSON/canonical date、64 项及字节/字符上限全部落地；原四个 fail-open 探针均转为拒绝；145 项定向、450 项全量测试和 AGY 严格复审 PASS | 关闭生产就绪审查全部 P1/P2；继续保持 fixture-first 与生产隔离 |
 | 2026-07-15 | 定性评分 v2 MILESTONE-003 文件 shadow seam | 独立 Gemini client/CLI、0600 JSONL、并发锁与同 hash 去重、bounded retry/response/error、可选 legacy comparison 已完成；122 项定向、478 项全量测试和 AGY 最终只读审查 PASS；两次空 packet Gemini 调用均为 `VALID_INSUFFICIENT_DATA`，重复 CLI 运行 `api_called=false` | MILESTONE-003 完成；生产 DB/pipeline/cron/Telegram 保持不变；下一步必须先做 MILESTONE-004 evidence feasibility audit |
 | 2026-07-15 | 定性评分 v2 MILESTONE-004 v1.1 离线工具链 | 预注册/hash、确定性 frame/sample、URL/corpus、technical ledger、并发安全 create-only chain、默认禁用且隔离的双 reviewer、裁决和原子 coverage report 已完成；76 项 M4 定向、554 项全量测试与全部质量门禁通过 | 工具链完成但真实 audit 未执行；不读取真实 DB、不检索公司、不运行 Reviewer；下一步需用户单独批准候选 source/dataset 审计授权 |
+| 2026-07-15 | M4 静态输入执行授权 | 用户批准仅用带 provenance 的只读静态 dataset 完成 frame/sample/corpus；授权留档 SHA-256 为 `37aee66f8a3dc1a9f4aea61fe53f75cd4556ad2d9316b51b6d4c8b340c16f903` | dataset 尚未提供，不创建空 manifest；Reviewer、生产 DB/live provider/pipeline 继续禁止 |
 | 2026-08-13 后 | B label 30d 结案、overdue、行业覆盖、B-A delta | 待执行 | 满足门槛后写 `phase6-b-label-review.md`，不直接上线 |
 
 ## 每周自动复核

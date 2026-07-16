@@ -4,7 +4,7 @@
 
 This entrypoint evaluates an already-approved `QualitativeContext` without changing production scoring. It does not import `pipeline.py`, read or write `tracker.db`, update `qualitative_scores` or `predictions`, send Telegram messages, or change cron.
 
-MILESTONE-003 authorizes the file-artifact seam only. MILESTONE-004 v1.1 preregistration and the offline audit toolchain are implemented, but the real evidence-feasibility audit has not run and no coverage report exists. Real company shadow remains blocked until MILESTONE-004 produces a frozen, adjudicated report and MILESTONE-005 separately approves the provider/dataset, sample, call count, output location, and blind human review protocol.
+MILESTONE-003 authorizes the file-artifact seam only. MILESTONE-004 v1.1 preregistration and the offline audit toolchain are implemented. Seven one-time frame exports stopped fail-closed before publication. A 2026-07-15 SZSE snapshot is sealed with provenance and a historical hybrid exporter is ready; its 13:34 request returned 5,525 Tushare rows but exposed `count=0` as an unknown-count sentinel before SWS collection. The compatible fail-closed parser is now covered offline. Reviewer execution remains unauthorized, and no coverage report exists. Real company shadow remains blocked until MILESTONE-004 produces a frozen, adjudicated report and MILESTONE-005 separately approves the provider/dataset, sample, call count, output location, and blind human review protocol.
 
 ## Input contract
 

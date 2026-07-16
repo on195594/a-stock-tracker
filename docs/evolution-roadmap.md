@@ -34,10 +34,10 @@
 | Telegram 推送 | ✅ v2 门禁已上线 | 主推条件为 ≥ buy_strong 且 `l3_v2_signal=1`；v2 为 0/NULL 的高分股进入候补 |
 | Outcome 追踪 | ✅ 最近运行正常 | live DB 中 Framework A 30d/60d 结案 953/253；90d 尚无结案 |
 | L3 买点层 | ✅ v2 Phase 2+3 完成；选择性待观察 | QFQ 覆盖 35/35 codes、4585 行；2026-07-13/14 共写入 70 条 v2 记录且全部 pass；cron 工作日 16:00 采集 |
-| 定性评分 v2 | ✅ MILESTONE-002+003、M4 离线工具链完成 | v1.1 预注册、冻结抽样/corpus、create-only 制品链、双 reviewer/裁决/coverage API 已完成；真实 M4 evidence audit 未执行，MILESTONE-005/006 待单独批准 |
+| 定性评分 v2 | 🔶 M4 capture-first 已就绪 | v1.1 工具链与 capture/recover/assemble 已完成；七次旧 frame 导出均在发布前 fail closed，13:34 的响应不可恢复；新 capture 与 Reviewer 均未授权，MILESTONE-005/006 待单独批准 |
 | 行情数据源 | ✅ `READY_CRON` | `a-stock-lib==0.2.0`；2026-07-15 probe 的 daily/index/calendar/close cross-check 全部 PASS |
 | cron | ✅ 已按门禁重新安装 | weekly/weekly-PM/QFQ/daily/outcome 五项 managed cron 均已确认 |
-| 质量门禁 | ✅ 全绿 | `554 passed`；Ruff lint/format、mypy、`git diff --check` 与 M4 v1/v1.1 协议 SHA-256 全部通过 |
+| 质量门禁 | ✅ 全绿 | `593 passed`；Ruff lint/format、mypy、`git diff --check` 与 M4 v1/v1.1 协议 SHA-256 全部通过 |
 
 ### 关键数据规模
 
@@ -279,3 +279,13 @@
 | v1.11 | 2026-07-15 | 完成定性评分 v2 MILESTONE-002 fixture-first 合同：新增静态 response schema、版本化 prompt、namespace/hash/rationale/sentiment 合同修复与回归测试；AGY 只读审查 PASS，保持 Gemini/DB/pipeline/cron/Telegram 生产路径不变。 |
 | v1.12 | 2026-07-15 | 修复 MILESTONE-002 生产就绪审查的全部 P1/P2：集中合同常量，typed context 双边界复验，拒绝 NaN/Infinity 与非 canonical 日期，统一 64 项及字符串/JSON/prompt 资源上限；145 项定向、450 项全量测试和 AGY 严格复审 PASS，生产路径仍不变。 |
 | v1.13 | 2026-07-15 | 完成 MILESTONE-003 文件型 shadow seam：新增隔离 Gemini client、显式 CLI、0600 JSONL artifact、并发锁/同 hash 去重、bounded retry/响应/错误分类和可选 legacy comparison；两次空 packet 受控 Gemini smoke 通过，重复 CLI 运行未发起第三次调用；478 项全量门禁与 AGY 最终只读审查 PASS，生产 DB/pipeline/cron/Telegram 保持不变。 |
+| v1.14 | 2026-07-15 | 完成 MILESTONE-004 v1.1 预注册与离线审计工具链：冻结抽样、source-aware corpus、create-only hash chain、隔离双 reviewer、裁决和 coverage API；严格审查修复后 554 项全量门禁通过，真实审计与 Reviewer 尚未执行。 |
+| v1.15 | 2026-07-15 | 记录 MILESTONE-004 静态输入执行授权：仅允许带 provenance 的只读 dataset 冻结 frame/sample/corpus；当前阻塞改为 dataset 未提供，Reviewer、生产 DB/live provider/pipeline 和 MILESTONE-005/006 仍未授权。 |
+| v1.16 | 2026-07-15 | 记录 M4 两次一次性 audit-only frame 导出结果：Tushare 受账户频率阻断，AKShare 受 SZSE 强制 HTTPS transport 阻断；均未发布 package，incoming 为空，Reviewer 仍未授权。 |
+| v1.17 | 2026-07-15 | 记录第三次获批 audit-only 导出：AKShare 限定三函数，SZSE 改直连官方 HTTPS 接口；当前环境仍发生 SZSE `ConnectionError`，未降级 HTTP、未发布 package。 |
+| v1.18 | 2026-07-16 | 通过隔离 Microsoft Playwright MCP/Chromium 下载并只读封存两份语义一致的 2026-07-15 SZSE XLSX、provenance 和 SHA-256；仍缺同日东方财富总市值及申万成分，不冻结 frame/sample。 |
+| v1.19 | 2026-07-16 | 新增并离线验证 2026-07-15 历史混合导出器，复用只读 SZSE 包并限定 Tushare `daily_basic`、SSE 与 31 个申万查询；真实执行在 SWS 前受 Tushare 分钟频控阻断，未发布 frame/sample。 |
+| v1.20 | 2026-07-16 | 10:42 获批重试 historical-hybrid 导出；Tushare 明确返回 `daily_basic` 每小时一次账户频控，执行在 SWS 前 fail closed，临时目录清理且无 frame/sample 发布。 |
+| v1.21 | 2026-07-16 | 12:05 historical-hybrid 请求通过小时频控后因 `count` 与当前页行数不同而 fail closed；离线修正为严格验证非负 count、`has_more=false` 并记录 provenance，仍未触达 SWS 或发布 frame/sample。 |
+| v1.22 | 2026-07-16 | 13:34 historical-hybrid 请求返回 5,525 行及 `count=0`，确认零为未知总数哨兵；离线校验允许零或不小于当前页的 count，继续强制 `has_more=false`，未触达 SWS。 |
+| v1.23 | 2026-07-16 | 完成 M4 capture-first exporter：拆分 capture/recover/assemble，新增机器授权、即时 raw/receipt、complete/incomplete 隔离、resume/TOCTOU/并发锁和纯离线确定性组装；13:34 旧响应不可恢复，新 live capture 仍待单独授权。 |

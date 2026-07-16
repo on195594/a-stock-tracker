@@ -694,7 +694,7 @@ Spec-only 阶段只允许人工撤销本 Spec 的本次 patch，不得触碰其�
 ## 16. Approval state
 
 - Spec approval: **approved (2026-07-14，含07-14两轮codex方法论复核后的修订)**
-- Implementation approval: **MILESTONE-002 approved 2026-07-14 and completed；MILESTONE-003 file-artifact seam approved and completed 2026-07-15；MILESTONE-004 v1.1 preregistration/offline toolchain completed 2026-07-15, but real audit execution remains pending separate authorization**——不隐含 MILESTONE-005~006 的授权（REQ-058）。
+- Implementation approval: **MILESTONE-002 approved 2026-07-14 and completed；MILESTONE-003 file-artifact seam approved and completed 2026-07-15；MILESTONE-004 v1.1 preregistration/offline toolchain completed 2026-07-15；M4 static-input frame/sample/corpus execution authorized 2026-07-15；Tushare、AKShare、AKShare+direct SZSE HTTPS one-time exports all failed closed before publication, so dataset provenance remains blocked；real Reviewer execution remains pending separate authorization**——不隐含 MILESTONE-005~006 的授权（REQ-058）。
 - Production DB schema approval: pending
 - Controlled Gemini contract smoke approval: **approved and passed 2026-07-15**（空 evidence packet，Gemini 2.5 Flash，`VALID_INSUFFICIENT_DATA`）；这不是 MILESTONE-005 真实证据 shadow。
 - Real evidence Gemini shadow approval: pending the frozen MILESTONE-004 coverage report and separate MILESTONE-005 provider、样本、调用次数和人工复核协议。

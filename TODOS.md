@@ -7,7 +7,7 @@ Phase 1-3.6 历史实施记录，不再作为后续计划来源。
 
 当前工作重心：
 
-1. **P1 定性评分 v2：** MILESTONE-004 v1.1 预注册与离线工具链已完成，但真实 evidence audit 未执行。下一步先由用户单独批准候选 source/dataset 的“审计授权”，再按冻结协议运行 frame → sample → corpus → 双 reviewer seal/index → adjudication → coverage report；不得把工具链完成视为 MILESTONE-005 授权。
+1. **P1 定性评分 v2：** MILESTONE-004 v1.1 工具链和 capture-first exporter 已完成；七次旧 frame 导出均未发布 package。2026-07-16 已封存 SZSE XLSX；13:34 的 5,525 行响应因旧实现未即时落盘而不可恢复。下一次真实 capture 必须提供新的 canonical JSON + SHA-256 机器授权；也可提供带 provenance 的静态包。Reviewer 仍须单独授权。
 2. **P2 L3 v2 选择性：** 2026-07-13/14 的 70 条 v2 记录全部为 pass，18/18 strong 每日均未被 L3 过滤；先在 report 中增加 v2 状态/门禁分布并积累 outcome，不据两天样本直接改规则。
 3. **P2 模型验证：** 基于已自然结案的 60d 数据，执行 Framework A 五分位 60d/90d 延伸评估；不据此顺手调权重。
 4. **P3 Phase 6：** Framework B 继续 report-only，等待 B label 30d 自然结案至 20 条；生产化必须另写实施计划并获得明确授权。
@@ -17,7 +17,7 @@ Phase 1-3.6 历史实施记录，不再作为后续计划来源。
 - 当天 Tushare probe 的 daily/index/calendar/close cross-check 全部 PASS，readiness 恢复 `READY_CRON`，managed cron 已重新安装并确认五项任务齐全。
 - weekly PM loop 不再把中文“失败 0 只”判为失败；降级 `WARNING ... fallback失败` 归为 WARN，明确 ERROR/非零失败仍为 FAIL。真实 dry-run 从错误的 FAIL 恢复为符合现状的 WARN。
 - mypy 从 24 errors 修复后保持零错误；Ruff format 基线持续有效。
-- 当前完整质量基线：`554 passed`，Ruff lint/format、mypy、M4 v1/v1.1 协议 SHA-256、`git diff --check` 全部通过。
+- 当前完整质量基线：`593 passed`，Ruff lint/format、mypy、M4 v1/v1.1 协议 SHA-256、`git diff --check` 全部通过。
 
 ## 定性评分 v2 MILESTONE-002~003（已完成）
 
@@ -28,7 +28,7 @@ Phase 1-3.6 历史实施记录，不再作为后续计划来源。
 - task 2.3 及后续 P1/P2 边界加固已完成；MILESTONE-002 最终本地合同测试与独立复核通过。
 - MILESTONE-003 文件型 shadow seam 已完成；受控空 evidence packet Gemini smoke 通过，但不构成真实 evidence shadow。
 
-## 定性评分 v2 MILESTONE-004（工具链完成，真实 audit 待授权）
+## 定性评分 v2 MILESTONE-004（静态输入阶段已授权，等待 dataset）
 
 **已完成：**
 
@@ -36,16 +36,16 @@ Phase 1-3.6 历史实施记录，不再作为后续计划来源。
 - 实现纯 Python frame/sample/corpus、technical ledger、Wilson coverage、create-only artifact hash chain。
 - 实现默认禁用、显式 authorization、独立 HOME/cache/state/tmp、bounded stdout/stderr/timeout 的 Reviewer A/B。
 - 实现 schema-valid seal、review index、逐字段 disagreement、完整 adjudication 和报告时原子 lineage 复验。
-- 严格审查修复全部 P1/P2/P3；当前 76 项 M4 定向、554 项全量测试通过。
+- 严格审查修复全部 P1/P2/P3，并完成 capture-first 合成验收；当前 115 项 M4 定向、593 项全量测试通过。
 
 **Next：**
 
-1. 用户选择并批准只用于 feasibility audit 的候选 source/provider 或带 provenance 静态 dataset。
-2. 在新版本冻结 frame 输入和真实采样，不读取或改写生产 `tracker.db`。
-3. 按 v1.1 完成证据收集、双 reviewer、用户裁决和 coverage report。
-4. FAIL 层必须由用户选择 `excluded` 或 `re_audit_new_version`；未完成处置不得批准 MILESTONE-005。
+1. 为新的 capture attempt 提供绑定 attempt/date/time window/exact 33-call matrix 的 canonical authorization JSON 及 SHA-256 manifest，或提供 2026-07-15 `daily_basic` 和 31 个申万成分的原始静态快照；13:34 的旧响应不可恢复，不得用 watchlist、合成数据或生产 DB 替代。现有 SZSE XLSX 只可绑定 2026-07-15。
+2. 验证 dataset SHA-256、完整 frame、字段映射和采样日期后，冻结 frame 与 36 股 sample。
+3. 对 sample 提供完整静态 corpus package 并冻结 corpus；真实 Reviewer 运行前再次单独申请授权。
+4. Reviewer 获批后再完成双 seal、用户裁决和 coverage report；FAIL 层必须由用户选择 `excluded` 或 `re_audit_new_version`。
 
-**边界：** 当前没有业务 CLI；不得运行真实 Reviewer、检索真实公司或访问真实数据库，除非获得新的明确授权。MILESTONE-005/006、生产 cache/schema、pipeline、cron、Telegram 和权重仍未授权。
+**边界：** 当前没有业务 CLI；静态输入授权只覆盖带 provenance 的 frame/sample/corpus。七次一次性 live frame 导出授权均已结束；除非获得新的明确授权，不得再次调用 live provider、运行真实 Reviewer、检索真实公司或访问真实数据库。MILESTONE-005/006、生产 cache/schema、pipeline、cron、Telegram 和权重仍未授权。
 
 ## L3 v2 qfq 覆盖修复（2026-07-12 已完成）
 

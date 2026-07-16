@@ -2,6 +2,25 @@
 
 所有重大变更按时间倒序记录。
 
+## 2026-07-16 — MILESTONE-004 capture-first exporter
+
+- 将历史混合导出拆为 `capture`、`recover`、`assemble`：原始响应内容寻址即时落盘、canonical receipt、complete/incomplete attempt 隔离、resume 离线重验、stale staging 只封存不采用。
+- 新增 canonical authorization + SHA-256 绑定、固定 33-call matrix、HTTPS/host/method/参数/重定向门禁、token 回显写前阻断、非阻塞 capture-root 锁和 sealed-attempt TOCTOU 校验。
+- `assemble` 完全离线重验 authorization/resume lineage、receipt/blob/code/SZSE hashes，再原子发布 frame、excluded、36 股 sample、provenance 和 checksums；未访问真实数据源、生产 DB 或 Reviewer。
+- 13:34 的旧 5,525 行响应在旧导出器 schema failure 后未即时落盘，现已明确为不可恢复；下一次真实 capture 仍需新的机器可验证授权。
+- 合成验收和全仓质量门禁通过：审查加固后 M4 定向 `115 passed`、全仓 `593 passed`，Ruff lint/format/F401、mypy、协议 hashes 和 diff check 全绿。
+- 审查加固：永久禁用绕过 canonical authorization 的四组 legacy API/CLI/直连 SZSE 入口；逐 live call 与 raw-first 发布点重验授权时间，receipt 改记实际捕获时间；进程控制异常会将已发布 receipt/blob 纳入 incomplete manifest、封存后原样抛出；删除未使用的 `CaptureManifest` 和导入。
+
+## 2026-07-15 — MILESTONE-004 静态输入执行授权
+
+- 已记录用户授权：仅使用带 provenance 的只读静态 dataset 冻结 frame/sample/corpus。
+- 当前仓库尚无合格 dataset 字节或 provenance manifest，因此未创建真实 frame/sample/corpus stage。
+- 新增 Tushare、AKShare 及 AKShare+直连官方 SZSE HTTPS 的 audit-only frame 导出器和离线测试；三次获批真实执行分别因账户频率和 SZSE HTTPS transport fail closed，未发布半成品。
+- 2026-07-16 通过隔离 Microsoft Playwright MCP/Chromium 补获两份 2026-07-15 SZSE 市场总貌 XLSX；原始字节、provenance 和 SHA-256 已只读封存，但因缺同日市值/行业数据仍未冻结 frame/sample。
+- 新增 2026-07-15 历史混合导出器：严格复用 SZSE 静态包，只允许 Tushare `daily_basic`、SSE 总貌和 31 个申万成分查询，并输出确定性 sample manifest；13:34 请求取得 5,525 行但发现 `count=0` 哨兵，仍未触达申万或发布半成品。
+- 分页校验现以 `has_more=false` 为截断门槛，允许 `count=0` 未知哨兵或不小于当前页的非负总数并写入 provenance；全仓测试增至 `577 passed`，其余质量门槛保持全绿。
+- Reviewer、生产 `tracker.db`、live provider 和生产 pipeline 仍未授权。
+
 ## 2026-07-15 — MILESTONE-004 v1.1 离线审计工具链
 - 冻结 evidence-feasibility audit v1.1：保留原 sampling seed，新增官方 SW2021 31 行业映射、source-aware URL 归一化和 binary64 Wilson 展示契约。
 - 新增纯 Python frame/sample/corpus、technical-attempt ledger、create-only artifact hash chain、双 reviewer seal/index、disagreement/adjudication 和 coverage report API。
