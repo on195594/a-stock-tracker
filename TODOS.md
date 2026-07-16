@@ -40,7 +40,7 @@ Phase 1-3.6 历史实施记录，不再作为后续计划来源。
 
 **Next：**
 
-1. 先在不降低 TLS 验证的前提下解除 SWS `SSLError`，并等待 Tushare `daily_basic` 日配额重置；之后为新 attempt 提供绑定 date/time window/exact 33-call matrix 的 canonical authorization JSON 及 SHA-256 manifest。另一路径是提供 2026-07-15 `daily_basic` 和 31 个申万成分的 provenance-bearing 原始静态快照。
+1. 先通过单独授权的 strict-TLS 诊断或 provenance-bearing 官方静态包解除 SWS `SSLError`；不得接受 AKShare 上游硬编码的 `verify=False`。同时等待 Tushare `daily_basic` 日配额重置；之后才能为新 attempt 提供绑定 date/time window/exact 33-call matrix 的 canonical authorization JSON 及 SHA-256 manifest。
 2. 验证 dataset SHA-256、完整 frame、字段映射和采样日期后，冻结 frame 与 36 股 sample。
 3. 对 sample 提供完整静态 corpus package 并冻结 corpus；真实 Reviewer 运行前再次单独申请授权。
 4. Reviewer 获批后再完成双 seal、用户裁决和 coverage report；FAIL 层必须由用户选择 `excluded` 或 `re_audit_new_version`。

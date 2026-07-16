@@ -30,3 +30,14 @@ production pipeline, cron, Telegram, or company evidence path was accessed. The 
 
 A future live attempt needs a new canonical authorization and should not be attempted until the Tushare daily quota has
 reset and the SWS TLS failure has been separately resolved or replaced by a provenance-bearing static source package.
+
+## Offline TLS diagnosis
+
+The installed AKShare `index_component_sw` implementation hardcodes `requests.get(..., verify=False)`. The capture
+transport intentionally overrides that unsafe setting with `verify=True`, as required by the frozen authorization
+boundary. The local environment uses Requests 2.33.1, Certifi 2026.02.25, and OpenSSL 3.5.6, with no HTTPS proxy,
+`REQUESTS_CA_BUNDLE`, or `SSL_CERT_FILE` override detected.
+
+No certificate validation was disabled and no diagnostic network request was made. Repeating the same adapter without
+new evidence is not justified. The next safe path is a separately authorized strict-TLS diagnostic or a
+provenance-bearing official static package; accepting AKShare's `verify=False` behavior is prohibited.
