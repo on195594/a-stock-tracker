@@ -8,8 +8,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from typing import Any
-
 
 V2_VERSION = "v2.1-no-tech-gate"
 V2_OVERSOLD_VERSION = "v2.2-oversold"

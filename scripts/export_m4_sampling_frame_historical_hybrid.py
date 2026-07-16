@@ -1140,6 +1140,8 @@ def _verify_attempt(
     require_complete: bool,
     szse_package: Path | None = None,
 ) -> tuple[Mapping[str, object], str, list[Mapping[str, object]]]:
+    if (attempt_dir / "capability-probe-manifest.json").exists():
+        raise ExportError("non-adoptable capability probe cannot be assembled or resumed")
     if attempt_dir.name.startswith(".in-progress-") or attempt_dir.is_symlink() or not attempt_dir.is_dir():
         raise ExportError("only a sealed attempt directory is accepted")
     directory_before = attempt_dir.stat(follow_symlinks=False)

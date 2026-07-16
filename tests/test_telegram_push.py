@@ -309,7 +309,6 @@ def test_interpret_timing_good(monkeypatch, tmp_db, telegram_env):
 
 def test_send_real_execution(monkeypatch):
     """Test _send executes urlopen correctly."""
-    import urllib.request
     from unittest.mock import patch
 
     with patch("urllib.request.urlopen") as mock_urlopen:

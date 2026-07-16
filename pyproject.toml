@@ -37,11 +37,13 @@ files = [
     "qualitative_v2_audit.py",
     "qualitative_v2_audit_artifacts.py",
     "qualitative_v2_audit_review.py",
+    "qualitative_v2_m4_capability.py",
     "scripts/run_qualitative_v2_shadow.py",
     "scripts/export_m4_sampling_frame.py",
     "scripts/export_m4_sampling_frame_akshare.py",
     "scripts/export_m4_sampling_frame_akshare_szse_https.py",
     "scripts/export_m4_sampling_frame_historical_hybrid.py",
+    "scripts/probe_m4_frame_source.py",
 ]
 ignore_missing_imports = true
 follow_imports = "skip"

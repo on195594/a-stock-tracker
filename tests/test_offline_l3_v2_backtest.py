@@ -12,8 +12,6 @@ if PROJECT_ROOT not in sys.path:
 
 from scripts.offline_l3_v2_backtest import (  # noqa: E402
     FREEFALL_THRESHOLD,
-    OVERSOLD_UPPER_THRESHOLD,
-    OVERSOLD_VOLUME_RATIO,
     V2_OVERSOLD_VERSION,
     V2_VERSION,
     DataContractState,

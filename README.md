@@ -7,7 +7,7 @@ A 股选股与方法论验证项目。当前定位是 **Framework A 定量评分
 ## 当前状态
 
 - 主分支：`master`
-- 当前阶段：Phase 5 L3 v2 已接入生产评分与推送；Phase 6 仍处于 report-only 观察期；来源约束的定性评分 v2 已完成 MILESTONE-002、MILESTONE-003 和 M4 capture-first 工具链；17:15 实执封存为 incomplete（Tushare 日限频 + SWS 严格 TLS `SSLError`），不可组装，下一次 live attempt、Reviewer 与 evidence shadow/cutover 均需新授权
+- 当前阶段：Phase 5 L3 v2 已接入生产评分与推送；Phase 6 仍处于 report-only 观察期；来源约束的定性评分 v2 已完成 MILESTONE-002、MILESTONE-003；M4 v1.1 采集路线已按技术不可行关闭，v1.2 三调用 source-capability gate 已离线实现，正式 frame、Reviewer 与 evidence shadow/cutover 继续阻断
 - 生产框架：`SUPPORTED_FRAMEWORKS = {"A"}`；Framework B 历史数据保留，Phase 6 前不得启用生产写入
 - watchlist：35 只，维护在 `config.py`
 - 评分阈值：`buy_strong=44`、`buy_moderate=35`、`buy_light=26`
@@ -21,7 +21,7 @@ A 股选股与方法论验证项目。当前定位是 **Framework A 定量评分
 - Gemini 定性评分：`moat`、`market_pos`、`sentiment`，30 天缓存，失败时 all-or-nothing fallback 到固定值。
 - Outcome 追踪：记录 30/60/90 天收益、沪深 300 benchmark 和 generated `alpha_*d`。
 - L3 买点层：v1 保留用于历史审计；生产 daily 优先读取 QFQ 日线计算 `l3_v2_signal`，Telegram 主推已切换到 v2。
-- 定性评分 v2：MILESTONE-002 合同、MILESTONE-003 文件型 shadow seam，以及 MILESTONE-004 离线审计 API/capture-first exporter 已完成；incoming 现有经 Playwright MCP 封存的 2026-07-15 SZSE XLSX、provenance 和哈希；2026-07-15 Tushare 总市值及申万成分尚未成功封存，下一次真实 capture 和 Reviewer 仍须分别授权。
+- 定性评分 v2：MILESTONE-002 合同、MILESTONE-003 文件型 shadow seam，以及 M4 v1.2 capability gate 已完成离线实现；v1.1 incomplete 与旧 artifacts 保持冻结、不可组装。v1.2 probe 仅验证 Tushare 来源能力，全部 bytes 均为 `non-adoptable`；完整 capture 和 Reviewer 必须分别使用新授权。
 - Telegram 推送：日报分为主推、候补和雷达；只有强分且 L3 v2 通过的股票进入主推，发送失败不阻断 daily。
 - Google Sheets 同步：展示层能力，失败只记录 warning，不是数据真相来源。
 - 数据治理：`docs/data-source-registry.yaml` 记录字段来源、缓存、刷新、fallback 和失败语义。
@@ -93,11 +93,11 @@ python3 scripts/run_qualitative_v2_shadow.py \
 python3 pipeline.py remove 601857
 ```
 
-MILESTONE-004 的审计 API 仍保持离线；历史 frame 输入另提供独立的 `capture`、`recover`、`assemble` CLI。
-其中只有 `capture` 可能联网，并且必须先读取机器可验证、绑定 exact 33-call matrix 的新授权；`assemble` 不读取 token
-或实例化网络客户端。当前只有 SZSE 局部静态包，尚未创建真实 frame stage。13:34 的旧响应不可恢复，详见
-[`docs/runbooks/milestone-004-capture-first.md`](docs/runbooks/milestone-004-capture-first.md)。Reviewer 子进程仍需后续单独授权；
-工具链或既往输入阶段授权都不构成 MILESTONE-004 审计完成或 MILESTONE-005 批准。
+MILESTONE-004 的审计 API 仍保持离线；v1.1 历史 `capture`、`recover`、`assemble` 保留用于验证旧 artifacts，
+但 acquisition route 已关闭。v1.2 提供独立 `probe`/`verify` CLI；只有 `probe` 可能联网，且必须匹配固定授权窗口与
+exact three-call matrix，输出永久 `non-adoptable`。详见
+[`docs/runbooks/milestone-004-frame-source-capability.md`](docs/runbooks/milestone-004-frame-source-capability.md)。
+Reviewer、完整 capture 与 MILESTONE-005 仍需后续分别授权；capability PASS 也不构成 frame 或 coverage 完成。
 
 `accuracy-report` 默认写入 `config.ACCURACY_REPORT_PATH`，生产路径为项目根目录的 `accuracy_report.txt`。测试会把该路径隔离到临时目录；手动运行报告可能改写 tracked 文件，提交前需要确认是否属于目标变更。
 

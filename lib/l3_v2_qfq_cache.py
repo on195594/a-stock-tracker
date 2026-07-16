@@ -13,7 +13,7 @@ import tempfile
 import time
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import pandas as pd
 
