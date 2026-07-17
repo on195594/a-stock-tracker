@@ -9,6 +9,16 @@
 
 2026-07-17 M4 v1.3.1 工程实现：v1.3 `0ad8c6…a12df` 历史字节不变；v2 authorization/artifact schemas、36/2 精确矩阵、父 supervisor deadline、attempt 外 phase journal、raw-first publication、exact-number gates/ledger、date failure nullable evidence、candidate/post-publication 双复验、五文件 generator closure 和 legacy rejection guard 已落地。当前仅有无 token/无 socket 合成执行证据，没有真实 authorization 或 Tushare attempt。
 
+2026-07-17 M4 v1.3.1 capability 外部审批包已准备：审批请求列明精确 36-call 上限、既往 `40203` 风险、固定协议/hash、单次无重试边界、数据暴露和结果处置；另提供未签署 decision template。材料本身不构成授权，仍待外部审批者确定 approver/publisher/operator、唯一 IDs、probe trade date、`+08:00` 窗口和发布路径后签署；当前仍不得生成 canonical authorization、读取 token 或执行请求。
+
+2026-07-17 15:19:56 +08:00 Claude 只读外部审批结论为 `DEFER`：冻结协议、generator closure、commit 与 36-call 边界核对通过，无新增实现缺陷；但责任身份、唯一 IDs、trade date、执行窗口、发布路径、五类 API entitlement 及 quota/cost/terms 证据均未提供，且审批材料尚未固定到 Git/hash。解除前禁止生成 canonical authorization、读取 token、provider preflight 或真实 attempt。
+
+2026-07-17 15:38:35 +08:00 `lin` 已补充责任角色、publisher/operator、唯一 IDs、2026-07-17 probe date、2026-07-18 09:00–11:00 +08:00 窗口、规范化发布路径、2000 积分购买/条款声明及 token 安全供应声明；本地目标/lock/journal 均不存在。官方公开资料支持 `index_classify`、`index_member_all`、`stock_basic`、`daily_basic` 的 2000 积分门槛和总体频率，但未列出新 `stock_st` 权限；另有 evidence acquisition time 被填为未来的 2027-07-17。两项澄清前继续维持 `DEFER`，未生成授权或联网。
+
+2026-07-17 15:52:50 +08:00 已只读解析 `lin` 指定的公开腾讯 `积分权限表`：积分列依次为 120/2000/3000/5000/6000/8000/10000/15000，`ST股票列表` 从 3000 档开始、2000 档不含。冻结矩阵 ordinal 35 正是 `stock_st`，故当前 2000 积分不满足五类 API 前置资格；为避免可预见地先消耗至多 34 次调用后失败，不发起 Claude 复审、不发布 authorization、不读取 token、不执行真实 attempt。升级至至少 3000 档或提供更强账户侧权限证据后需重新选未来窗口。
+
+2026-07-17 项目所有者随后决定“修改方案，不做st股票列表分析”。v1.3.1 capability 请求已在授权发布和执行前撤回，候选 IDs/路径/窗口永久退役；冻结 v1.3.1 字节与实现保持不变。新建非授权性的 v1.3.2 repair plan：独立模块/schema/root，删除 `stock_st` 请求、gate 和 ledger source，frame matrix 从 36 降为 35；仅保留 `stock_basic.name` 的本地 NFKC/trim/casefold `ST|*ST` 前缀安全排除，并明确接受无法发现名称未标记风险警示股的较低保障。下一步先审查/冻结新协议，再实现，当前仍不生成授权、不读取 token、不联网。
+
 2026-07-16 M4 v1.2 离线实现已完成：协议 hash 以 v1.1 hash 为 `supersedes`，保持 SW2021、seed、36 股分层、coverage/Reviewer/evidence 规则不变；新增 canonical authorization 逐调用复验、HTTPS/POST/禁重定向、raw-first create-only、有限脱敏错误、`complete`/`capability_pass` 分离和全离线复验。固定授权窗口为 2026-07-17 00:00 至 2026-07-18 00:00（Asia/Shanghai），窗口外不得联网。
 
 2026-07-16 19:34 +08:00 的 preflight 返回 `authorization_not_yet_valid`（exit 2），且 capability output root 不存在；真实 probe/Tushare 调用计数仍为 0，authorization/attempt 未消费。来源终态尚未判定，不得提前声明 PASS 或 `NO_QUALIFIED_FRAME_SOURCE`。

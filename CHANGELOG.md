@@ -10,6 +10,11 @@
 - 离线 verifier 从 raw bytes 重建 ordinal、数据 gates、exact-number exclusion ledger、calendar/date derivation、closed set、权限/link/path、authorization/protocol/五文件 generator provenance；date 失败态不发布 evidence。
 - retained v1.1 assembler 增加统一 v1.3.1 拒绝 guard；未创建真实授权、未执行 Tushare、未读取生产 DB、未实现 frame/sample assembler。
 - 合成、禁 socket 验收通过：v1.3.1 定向 133 项、MILESTONE-004 300 项、全仓 778 项；Ruff、F401、format、mypy、冻结 hash/golden checksum 与 `git diff --check` 通过；后续审查发现并修复 provider `count: 0` 与非空 rows 的矛盾接收，同时清理未使用的私有符号和参数。
+- 准备 capability 外部审批请求与未签署 decision template，明确最大 36 次只读请求、既往 `40203` 风险、待审批字段、单次无重试/失败封存边界和批准后机械发布流程；材料不创建 canonical authorization，也不授权 token 或网络访问。
+- 归档 Claude 首次只读外部审批：协议、实现基线和 36-call 边界通过，但因身份、IDs、日期/窗口、路径及 provider entitlement/quota 证据缺失而 `DEFER`；阻断解除前不得发布授权或执行请求。
+- 归档 `lin` 补充的 capability 候选决策输入并完成无 token 核验：IDs/目标路径无冲突，官方资料支持四类 API 的 2000 积分门槛；因未来证据时间戳与 `stock_st` entitlement 尚未澄清，外部复审和授权发布继续阻断。
+- 只读核对用户指定的公开 `积分权限表`，确认 `ST股票列表` 从 3000 积分档开始而当前账户为 2000 积分；因此冻结矩阵 ordinal 35 `stock_st` 的 entitlement 不满足，维持 DEFER 并避免执行可预见失败的真实 36-call attempt。
+- 按项目所有者决定撤回未执行的 v1.3.1 capability 请求并起草 v1.3.2 no-stock-ST repair plan：冻结历史不变，新候选矩阵删除 `stock_st` 后为 35 calls，移除对应 gate/ledger source，仅保留 `stock_basic.name` 的本地风险前缀排除；尚未冻结协议、实现或授权执行。
 
 ## 2026-07-16 — MILESTONE-004 capture-first exporter
 

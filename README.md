@@ -7,7 +7,7 @@ A 股选股与方法论验证项目。当前定位是 **Framework A 定量评分
 ## 当前状态
 
 - 主分支：`master`
-- 当前阶段：Phase 5 L3 v2 已接入生产评分与推送；Phase 6 仍处于 report-only 观察期；来源约束的定性评分 v2 已完成 MILESTONE-002、MILESTONE-003；M4 v1.1 采集路线技术关闭，v1.2 Tushare capability probe 完整执行但 FAIL；v1.3.1 三模式 segmented REST 仅完成离线工程门禁，尚无授权或真实 attempt，正式 frame、Reviewer 与 evidence shadow/cutover 继续阻断
+- 当前阶段：Phase 5 L3 v2 已接入生产评分与推送；Phase 6 仍处于 report-only 观察期；来源约束的定性评分 v2 已完成 MILESTONE-002、MILESTONE-003；M4 v1.1 采集路线技术关闭，v1.2 Tushare capability probe 完整执行但 FAIL；v1.3.1 三模式 segmented REST 仅完成离线工程门禁，其 capability 请求已在执行前撤回；v1.3.2 no-stock-ST 仍是未冻结、未实现、未授权的 repair plan，正式 frame、Reviewer 与 evidence shadow/cutover 继续阻断
 - 生产框架：`SUPPORTED_FRAMEWORKS = {"A"}`；Framework B 历史数据保留，Phase 6 前不得启用生产写入
 - watchlist：35 只，维护在 `config.py`
 - 评分阈值：`buy_strong=44`、`buy_moderate=35`、`buy_light=26`
@@ -21,7 +21,7 @@ A 股选股与方法论验证项目。当前定位是 **Framework A 定量评分
 - Gemini 定性评分：`moat`、`market_pos`、`sentiment`，30 天缓存，失败时 all-or-nothing fallback 到固定值。
 - Outcome 追踪：记录 30/60/90 天收益、沪深 300 benchmark 和 generated `alpha_*d`。
 - L3 买点层：v1 保留用于历史审计；生产 daily 优先读取 QFQ 日线计算 `l3_v2_signal`，Telegram 主推已切换到 v2。
-- 定性评分 v2：MILESTONE-002 合同、MILESTONE-003 文件型 shadow seam 已完成；M4 v1.1/v1.2/v1.3 历史字节保持冻结。v1.3.1 新增 capability/date-evidence/capture 三模式、父进程 deadline、raw-first 封存和 token-free verifier；本阶段未创建真实授权、未调用 Tushare、未组装 frame/sample。
+- 定性评分 v2：MILESTONE-002 合同、MILESTONE-003 文件型 shadow seam 已完成；M4 v1.1/v1.2/v1.3/v1.3.1 历史字节保持冻结。v1.3.1 新增 capability/date-evidence/capture 三模式、父进程 deadline、raw-first 封存和 token-free verifier，但其未执行授权请求已撤回；v1.3.2 候选方案拟删除独立 `stock_st` 调用并保留 `stock_basic.name` 本地风险前缀排除，尚未实现、授权或组装 frame/sample。
 - Telegram 推送：日报分为主推、候补和雷达；只有强分且 L3 v2 通过的股票进入主推，发送失败不阻断 daily。
 - Google Sheets 同步：展示层能力，失败只记录 warning，不是数据真相来源。
 - 数据治理：`docs/data-source-registry.yaml` 记录字段来源、缓存、刷新、fallback 和失败语义。
@@ -94,7 +94,7 @@ python3 pipeline.py remove 601857
 ```
 
 MILESTONE-004 的 v1.1 legacy acquisition route 已关闭，v1.2 失败 attempt 保持永久 `non-adoptable`。
-v1.3.1 CLI 只接受外部 authorization/checksum 或 sealed attempt 路径；当前没有可执行授权。详见
+v1.3.1 CLI 只接受外部 authorization/checksum 或 sealed attempt 路径；其 capability 请求已撤回且没有可执行授权。v1.3.2 当前仅有 repair plan，没有 CLI 或授权。详见
 [`docs/runbooks/milestone-004-segmented-rest-v1.3.1.md`](docs/runbooks/milestone-004-segmented-rest-v1.3.1.md)。
 Reviewer、真实 attempt、frame/sample assembly 与 MILESTONE-005 仍需后续分别授权；任何 capability/date PASS
 都不构成 frame 或 coverage 完成。
