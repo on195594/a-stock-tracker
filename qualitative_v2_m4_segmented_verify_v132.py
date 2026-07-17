@@ -1184,7 +1184,7 @@ def _verify_attempt(
             "authorization_id": authorization.authorization_id,
             "execution_deadline": manifest.get("execution_deadline"),
             "nonce": nonce,
-            "outcome": "pass" if overall_pass else "fail",
+            "outcome": "PASS" if overall_pass else "FAIL",
             "schema_version": SUPERVISOR_COMMIT_SCHEMA,
         }
         commit_raw = canonical_json_bytes(commit_value)

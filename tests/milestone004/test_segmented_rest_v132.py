@@ -1066,6 +1066,13 @@ def test_positive_supervisor_commit_is_required_after_controls_are_gone(sealed_f
         verify_segmented_rest_attempt(result.attempt_dir)
 
 
+def test_supervisor_commit_uses_normative_uppercase_outcome(sealed_failure_attempt) -> None:  # type: ignore[no-untyped-def]
+    result, _path, _checksum = sealed_failure_attempt
+    commit = json.loads((result.attempt_dir / "supervisor-commit.json").read_bytes())
+    assert commit["schema_version"] == core.SUPERVISOR_COMMIT_SCHEMA
+    assert commit["outcome"] == "FAIL"
+
+
 def test_closed_set_rejects_extra_empty_directory(sealed_failure_attempt) -> None:  # type: ignore[no-untyped-def]
     result, _authorization, _checksum = sealed_failure_attempt
     result.attempt_dir.chmod(0o755)

@@ -619,7 +619,7 @@ def _manifest(
         "authorization_id": authorization.authorization_id,
         "execution_deadline": time_text(authorization.not_after),
         "nonce": commit_nonce,
-        "outcome": "pass" if overall_pass else "fail",
+        "outcome": "PASS" if overall_pass else "FAIL",
         "schema_version": SUPERVISOR_COMMIT_SCHEMA,
     }
     commit_raw = canonical_json_bytes(commit_value)
@@ -1148,7 +1148,7 @@ def _finalize_supervised(
         "authorization_id": authorization.authorization_id,
         "execution_deadline": time_text(authorization.not_after),
         "nonce": commit_ref["nonce"],
-        "outcome": "pass" if overall_pass else "fail",
+        "outcome": "PASS" if overall_pass else "FAIL",
         "schema_version": SUPERVISOR_COMMIT_SCHEMA,
     }
     commit_raw = canonical_json_bytes(commit_value)
