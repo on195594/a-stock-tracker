@@ -113,6 +113,17 @@ class TechnicalAttemptError(AuditBlockedError):
     """Raised when collection attempts are invalid or unresolved."""
 
 
+def reject_v131_segmented_attempt(attempt_dir: str | Path) -> None:
+    """Keep every legacy assembler/resume path closed to v1.3.1 attempts."""
+    path = Path(attempt_dir)
+    manifest = path / "attempt-manifest.json"
+    version_root = ("artifacts", "milestone-004", "v1.3.1")
+    parts = path.parts
+    under_version_root = any(tuple(parts[index : index + 3]) == version_root for index in range(max(0, len(parts) - 2)))
+    if manifest.exists() or manifest.is_symlink() or under_version_root:
+        raise AuditBlockedError("v1.3.1 segmented attempt requires require_capture_input_eligible()")
+
+
 @dataclass(frozen=True, slots=True)
 class PreregistrationRef:
     protocol_id: str
@@ -947,6 +958,7 @@ __all__ = [
     "canonical_json_bytes",
     "load_preregistration_ref",
     "normalize_url",
+    "reject_v131_segmented_attempt",
     "select_sample",
     "validate_frame",
     "wilson_interval",

@@ -32,6 +32,7 @@ from qualitative_v2_audit import (  # noqa: E402
     FrameRow,
     canonical_json_bytes,
     load_preregistration_ref,
+    reject_v131_segmented_attempt,
     select_sample,
     validate_frame,
 )
@@ -1140,6 +1141,7 @@ def _verify_attempt(
     require_complete: bool,
     szse_package: Path | None = None,
 ) -> tuple[Mapping[str, object], str, list[Mapping[str, object]]]:
+    reject_v131_segmented_attempt(attempt_dir)
     if (attempt_dir / "capability-probe-manifest.json").exists():
         raise ExportError("non-adoptable capability probe cannot be assembled or resumed")
     if attempt_dir.name.startswith(".in-progress-") or attempt_dir.is_symlink() or not attempt_dir.is_dir():

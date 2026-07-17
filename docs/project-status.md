@@ -5,7 +5,9 @@
 
 ## 当前结论
 
-主业务仍处于 **Phase 6 report-only 观察**，Framework B 不得生产写入；Phase 5 L3 v2 已完成 QFQ 生产接入和 Telegram 主推切换。定性评分 v2 M4 v1.1 acquisition route 已按技术不可行关闭，不构成 evidence coverage `FAIL`；v1.2 Tushare capability probe 已完整执行但 FAIL。当前终态为 `NO_QUALIFIED_FRAME_SOURCE`，历史 artifacts 与验证能力保留，probe bytes 永久 `non_adoptable`，正式 frame、Reviewer 和 MILESTONE-005 继续阻断。
+主业务仍处于 **Phase 6 report-only 观察**，Framework B 不得生产写入；Phase 5 L3 v2 已完成 QFQ 生产接入和 Telegram 主推切换。定性评分 v2 M4 v1.1 acquisition route 已关闭，v1.2 Tushare capability probe 已完整执行但 FAIL。v1.3.1 三模式 segmented REST 协议与离线实现已新增，但本阶段未创建授权、未执行真实请求、未组装 frame/sample；因此仍无合格 frame，正式 Reviewer 和 MILESTONE-005 继续阻断。
+
+2026-07-17 M4 v1.3.1 工程实现：v1.3 `0ad8c6…a12df` 历史字节不变；v2 authorization/artifact schemas、36/2 精确矩阵、父 supervisor deadline、attempt 外 phase journal、raw-first publication、exact-number gates/ledger、date failure nullable evidence、candidate/post-publication 双复验、五文件 generator closure 和 legacy rejection guard 已落地。当前仅有无 token/无 socket 合成执行证据，没有真实 authorization 或 Tushare attempt。
 
 2026-07-16 M4 v1.2 离线实现已完成：协议 hash 以 v1.1 hash 为 `supersedes`，保持 SW2021、seed、36 股分层、coverage/Reviewer/evidence 规则不变；新增 canonical authorization 逐调用复验、HTTPS/POST/禁重定向、raw-first create-only、有限脱敏错误、`complete`/`capability_pass` 分离和全离线复验。固定授权窗口为 2026-07-17 00:00 至 2026-07-18 00:00（Asia/Shanghai），窗口外不得联网。
 
@@ -39,7 +41,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | Phase 5 L3 买点层 | v1 保留审计；v2 Phase 2+3 已完成 | 观察 v2 信号分布与自然 outcome；不改 L1/L2 分数 | readiness 已恢复，继续自然运行 | 足量 v2 30/60d 样本和独立复核后再讨论规则变化 |
 | 定性评分 v2 MILESTONE-002 | 已完成 | 保持合同稳定和本地 validator fail-closed | MILESTONE-003 已独立完成 | REQ-001~035 对应本地合同齐全 |
 | 定性评分 v2 MILESTONE-003 | 已完成 | 使用独立 CLI/JSONL artifact；不接 pipeline 或生产 DB | M4 已阻断；若继续须另开 v1.3 | REQ-036~039 文件持久化、错误分类、脱敏、去重和隔离测试及 AGY 最终只读审查通过 |
-| 定性评分 v2 MILESTONE-004 | `NO_QUALIFIED_FRAME_SOURCE` | 保留 v1.1/v1.2 sealed artifacts；不重试、不回退；保持 research-only | 若继续须另开 v1.3 候选协议 | v1.2 complete=true/capability_pass=false；MILESTONE-005 继续阻断 |
+| 定性评分 v2 MILESTONE-004 | v1.3.1 implemented，仍无 frame | 保留历史 sealed artifacts；v1.3.1 仅离线验证，无授权不执行 | 后续须单独外部授权 capability | 真实 request/frame/Reviewer/MILESTONE-005 均阻断 |
 | Phase 6 多框架激活 | report-only 观察 | 自动化 weekly PM loop 只读观察 B label / dry-run / cron 日志 | 2026-08-13 后首次 B label 自然结案复核 | B label 已结案 ≥20、overdue=0、数据质量门槛 OK、独立审查通过、另写生产化 spec |
 | Phase 7 选股宇宙扩展 | 未启动 | 等 Phase 6 或明确降级策略 | 暂无 | 单独设计动态池和 API 压测 |
 
@@ -59,8 +61,8 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | L3 v2 QFQ / 生产写入 | 已完成，选择性待观察 | `daily_bars.adjusted='qfq'` 覆盖 35 个代码、4585 行（至 2026-07-13）；v2 记录 70 条且 70/70 pass，两天 strong 均为 18/18 通过门禁 |
 | L3 v2 Phase 3 push trigger | 已完成，生产推送已切换 | `telegram_push.py` 触发条件 `entry_signal=1` → `l3_v2_signal=1`；commit `e080f15`；298/298 tests passed |
 | Framework A 倒置诊断 | 已完成，结论：不调权重 | Q5 avg_alpha_30d=-9.91%；根因=截面校准偏差+11支伪复制；agy投资审查：Priority 1=延伸60d/90d；60d首批到期 2026-07-14 |
-| 定性评分 v2 | MILESTONE-002+003 完成；M4 无合格 frame source | v1.1 技术关闭；v1.2 capability FAIL；真实 Reviewer 未授权，未接生产路径 |
-| 质量门禁 | 全部通过 | 645 passed；M4 定向 167 passed；Ruff lint/format/F401、mypy、M4 v1/v1.1/v1.2 SHA-256、SZSE checksums、`git diff --check` PASS |
+| 定性评分 v2 | MILESTONE-002+003 完成；M4 v1.3.1 工程完成但无合格 frame | v1.1 技术关闭；v1.2 FAIL；v1.3.1 无授权/真实 attempt；Reviewer 未授权，未接生产路径 |
+| 质量门禁 | 全部通过 | 778 passed；M4 300 passed（v1.3.1 定向 133）；Ruff lint/format/F401、mypy、历史/v1.3.1 SHA-256、golden vectors、`git diff --check` PASS |
 
 ## Spec Ledger
 
@@ -77,6 +79,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | `docs/specs/2026-07-14-source-grounded-structured-qualitative-scoring-spec.md` | approved；MILESTONE-002+003 完成；M4 无合格来源 | Hermes PM + codex + AGY review | 保持 research-only；如继续先审查 v1.3 候选协议 | 不得把 capability 冒充 frame/coverage 完成，不得跳过报告进入真实公司 shadow/cutover |
 | `docs/plans/2026-07-15-milestone-004-evidence-feasibility-preregistration-v1.1.md` | frozen historical；acquisition route 技术关闭 | codex + AGY review | 保持协议/hash/artifacts 不变；不得 retry/resume/assemble incomplete | seed、URL、Reviewer、Wilson 与 scope disposition 契约均由测试覆盖 |
 | `docs/plans/2026-07-16-milestone-004-frame-source-capability-preregistration-v1.2.md` | frozen；执行完成；capability FAIL | codex + Claude review PASS | 无；attempt 已消费 | `NO_QUALIFIED_FRAME_SOURCE`；继续需另开 v1.3 |
+| `docs/plans/2026-07-17-milestone-004-segmented-rest-preregistration-v1.3.1.md` | frozen implementation contract；无真实授权 | codex | 保持 hash/provenance；仅在新外部授权后可执行 | capability/date/capture 分别授权；本阶段不联网、不组装 |
 | `reviews/milestone-004-audit-v1.2/capability-probe-2026-07-17.md` | final；complete=true/capability_pass=false | codex | 保留 hash 与 non-adoptable package；不得重试 | manifest 离线复验通过；终态已收敛 |
 | `reviews/milestone-004-audit-v1.1/execution-authorization.md` | historical；相关 live attempts 已消费 | user + codex | 无；以 v1.1 closeout 和 v1.2 gate 为当前控制面 | 不访问生产 DB，不复用旧授权，不运行 Reviewer，不接生产 pipeline |
 | `docs/runbooks/qualitative-v2-shadow.md` | active | codex | 仅对获批 context 使用显式 `--execute` | JSONL 隔离、同 hash 幂等、无生产副作用 |
@@ -91,7 +94,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | Blocker | Impact | Unblock condition | ETA |
 |---|---|---|---|
 | B label 已结案样本不足 `0/20` | 阻止 Framework B 生产化 | 已结案 ≥20 且 overdue=0 | 最早 2026-08-13 后 |
-| qualitative v2 frame 无合格来源 | v1.1 路线技术关闭；v1.2 Tushare capability FAIL | 保持 research-only；若要继续须先审查并冻结 v1.3 候选协议 | 无已授权下一步 |
+| qualitative v2 frame 无合格来源 | v1.1 关闭；v1.2 FAIL；v1.3.1 尚无真实授权/attempt | 保持 research-only；后续须单独发布 capability authorization | 无已授权下一步 |
 | Framework A strong 层级尚未证明优于基准 | 不宜调权重或宣称模型有效 | 另开权重复核 spec | 待更多样本与独立审查 |
 | L3 v2 当前未体现过滤选择性 | 2026-07-13/14 共 70/70 pass，strong 18/18 每日全部通过 | 先增加 v2 状态/门禁分布报告并积累 30/60d outcome；不据两天样本改规则 | P2 |
 | Framework A 60d/90d 延伸评估未执行 | “持有期错配”假说尚未复核 | 当前已有 A 60d 结案 253 条；先做只读五分位对比，90d 继续等待 | P2 |

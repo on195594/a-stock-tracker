@@ -2,6 +2,15 @@
 
 所有重大变更按时间倒序记录。
 
+## 2026-07-17 — MILESTONE-004 segmented REST v1.3.1
+
+- 保留 v1.3 冻结字节及 `0ad8c6…a12df` hash，新增直接链接该前驱的 v1.3.1 协议/checksum 和隔离 artifact roots；全部 authorization、receipt、stop、ledger、date-evidence、manifest schema 升级为 v2。
+- 新增 capability/capture 精确 36 调用与 date-evidence 精确 SSE/SZSE 两调用矩阵；公共 API 仅暴露不可变边界类型、授权加载、执行、离线验证和 capture eligibility guard。
+- 新增父 supervisor/worker hard deadline、attempt 外 phase journal、raw-first create-only blob/receipt/supporting artifact、candidate self-verify、manifest 预绑定的 parent-only positive commit 与发布后复验；token 只从环境读取精确 64 位小写十六进制，不读取 `.env`。
+- 离线 verifier 从 raw bytes 重建 ordinal、数据 gates、exact-number exclusion ledger、calendar/date derivation、closed set、权限/link/path、authorization/protocol/五文件 generator provenance；date 失败态不发布 evidence。
+- retained v1.1 assembler 增加统一 v1.3.1 拒绝 guard；未创建真实授权、未执行 Tushare、未读取生产 DB、未实现 frame/sample assembler。
+- 合成、禁 socket 验收通过：v1.3.1 定向 133 项、MILESTONE-004 300 项、全仓 778 项；Ruff、F401、format、mypy、冻结 hash/golden checksum 与 `git diff --check` 通过；后续审查发现并修复 provider `count: 0` 与非空 rows 的矛盾接收，同时清理未使用的私有符号和参数。
+
 ## 2026-07-16 — MILESTONE-004 capture-first exporter
 
 - 将历史混合导出拆为 `capture`、`recover`、`assemble`：原始响应内容寻址即时落盘、canonical receipt、complete/incomplete attempt 隔离、resume 离线重验、stale staging 只封存不采用。
