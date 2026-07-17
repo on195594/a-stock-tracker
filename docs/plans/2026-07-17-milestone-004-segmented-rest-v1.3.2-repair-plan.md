@@ -2,7 +2,7 @@
 
 Plan date: `2026-07-17` (`Asia/Shanghai`)
 
-Status: **DRAFT REPAIR PLAN — NOT FROZEN — NOT AN AUTHORIZATION**
+Status: **COMPLETED — v1.3.2 FROZEN BY EXTERNAL ATTESTATION — NOT AN AUTHORIZATION**
 
 Planned protocol ID/version: `qualitative-v2-m4-prereg-v1.3.2` / `1.3.2`
 
@@ -139,3 +139,12 @@ existing mypy with explicit new module files, all historical and v1.3.2 checksum
 
 This plan creates no protocol approval, authorization, credential access, network attempt, frame/sample assembly,
 Reviewer execution, database access, production integration, or MILESTONE-005 authority.
+
+## 8. Completion record
+
+The exact-byte candidate was committed at `a133f2df23b51b0e4aa9c97da38d7f4cd53329cc` with candidate-manifest
+SHA-256 `7c79a2106cec0b2253ac56db443571a4f163fa04814f33332811f3e3d0bceecb`. A fresh read-only reviewer returned
+P0–P3 all `NONE`, `VERDICT: PASS`, and `FREEZE: APPROVE_EXACT_BYTES`. The external attestation at
+`reviews/milestone-004-preregistration-v1.3.2/freeze-attestation.json` validates the candidate, review, and reviewed
+commit chain. Protocol implementation is frozen; capability authorization, real execution, assembler/frame/sample,
+production integration, and MILESTONE-005 remain pending or blocked.

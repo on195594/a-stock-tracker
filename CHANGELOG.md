@@ -2,6 +2,15 @@
 
 所有重大变更按时间倒序记录。
 
+## 2026-07-17 — MILESTONE-004 segmented REST v1.3.2 frozen
+
+- 以 `f494c1…88042` v1.3.1 为直接前驱冻结完整 v1.3.2 协议，frame/date 矩阵为 35/2；删除独立 `stock_st` 请求、parser、gate 和 ledger source，daily 固定为 ordinal 35。
+- authorization/artifact/supervisor schema 升为 v3；`stock_basic.name` 仅做 NFKC、outer trim、casefold 后的 `ST|*ST` 前缀排除，并明确无法识别名称未标记风险警示股的剩余风险；provider `count` 与 rows 必须精确相等，包括零。
+- 新增五个独立 `_v132.py` generator 文件、canonical schema contract、30 个逐文件 golden vectors、两个不导入项目实现的标准库 oracle、历史 v1.3.1 inventory 和 candidate/review/attestation 无环冻结链。
+- fresh read-only 首审发现 supervisor outcome 大小写 P1；修复 runtime/recovery/verifier 为规范大写 `PASS|FAIL` 后，新的 fresh reviewer 以 P0–P3 全 NONE、strict PASS 批准 exact bytes。
+- 最终审查门禁：v1.3.2 定向 148 项、历史 v1.3.1 定向 133 项、M4 448 项、全仓 926 项；Ruff lint/F401/format、mypy、双 oracle、checksum/inventory/import closure、diff/status 全部 PASS。
+- 本轮未创建 capability authorization，未读取 token、联网或执行 Tushare，未实现 assembler、组装 frame/sample、访问生产 DB 或接入 pipeline/cron/Telegram/Gemini。
+
 ## 2026-07-17 — MILESTONE-004 segmented REST v1.3.1
 
 - 保留 v1.3 冻结字节及 `0ad8c6…a12df` hash，新增直接链接该前驱的 v1.3.1 协议/checksum 和隔离 artifact roots；全部 authorization、receipt、stop、ledger、date-evidence、manifest schema 升级为 v2。
