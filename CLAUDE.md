@@ -112,7 +112,7 @@ avg_score 有约 4-5 分系统性偏移，Phase 4 optimizer 训练需按 score_d
 | Phase 5 L3 v2（QFQ）| ✅ Phase 2+3 完成 | Phase 2: QFQ 35/35×130 行回填，pass_strong 激活，cron 16:00；Phase 3: 推送触发切换至 l3_v2_signal=1（commit e080f15） |
 | 定性评分 v2 MILESTONE-002 | ✅ fixture-first 完成 | contract/types/taxonomy/schema/prompt/validator 与 145 项本地合同测试已完成，AGY 边界加固复审 PASS |
 | 定性评分 v2 MILESTONE-003 | ✅ 文件 shadow seam 完成 | 独立 client/CLI、JSONL artifact、错误分类、重试和同 hash 去重已完成，AGY 最终只读审查 PASS；真实证据 shadow、生产 DB/pipeline/cutover 仍待后续里程碑批准 |
-| 定性评分 v2 MILESTONE-004 | 🔶 v1.1 路线关闭；v1.2 capability gate 就绪 | v1.1 因 Tushare 限额与 SWS 证书链技术不可行关闭（非 coverage FAIL）；v1.2 只允许授权窗口内一次三调用 Tushare probe，bytes `non-adoptable`，完整 capture/Reviewer 仍需新授权 |
+| 定性评分 v2 MILESTONE-004 | ⛔ `NO_QUALIFIED_FRAME_SOURCE` | v1.1 技术关闭；v1.2 三调用完整执行但均为 Tushare `40203`，capability FAIL；attempt 已消费，禁止重试/回退，继续须另开 v1.3 |
 | Phase 6 多框架激活 | 🔶 report-only | Framework B 仍不写生产；B label 0/20 自然结案 |
 | Phase 7 选股宇宙 | ⏸ 未启动 | 待 Phase 6 完成或明确降级策略 |
 

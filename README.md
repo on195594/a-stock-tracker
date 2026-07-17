@@ -7,7 +7,7 @@ A 股选股与方法论验证项目。当前定位是 **Framework A 定量评分
 ## 当前状态
 
 - 主分支：`master`
-- 当前阶段：Phase 5 L3 v2 已接入生产评分与推送；Phase 6 仍处于 report-only 观察期；来源约束的定性评分 v2 已完成 MILESTONE-002、MILESTONE-003；M4 v1.1 采集路线已按技术不可行关闭，v1.2 三调用 source-capability gate 已离线实现，正式 frame、Reviewer 与 evidence shadow/cutover 继续阻断
+- 当前阶段：Phase 5 L3 v2 已接入生产评分与推送；Phase 6 仍处于 report-only 观察期；来源约束的定性评分 v2 已完成 MILESTONE-002、MILESTONE-003；M4 v1.1 采集路线技术关闭，v1.2 Tushare capability probe 完整执行但 FAIL，终态 `NO_QUALIFIED_FRAME_SOURCE`，正式 frame、Reviewer 与 evidence shadow/cutover 继续阻断
 - 生产框架：`SUPPORTED_FRAMEWORKS = {"A"}`；Framework B 历史数据保留，Phase 6 前不得启用生产写入
 - watchlist：35 只，维护在 `config.py`
 - 评分阈值：`buy_strong=44`、`buy_moderate=35`、`buy_light=26`
@@ -21,7 +21,7 @@ A 股选股与方法论验证项目。当前定位是 **Framework A 定量评分
 - Gemini 定性评分：`moat`、`market_pos`、`sentiment`，30 天缓存，失败时 all-or-nothing fallback 到固定值。
 - Outcome 追踪：记录 30/60/90 天收益、沪深 300 benchmark 和 generated `alpha_*d`。
 - L3 买点层：v1 保留用于历史审计；生产 daily 优先读取 QFQ 日线计算 `l3_v2_signal`，Telegram 主推已切换到 v2。
-- 定性评分 v2：MILESTONE-002 合同、MILESTONE-003 文件型 shadow seam，以及 M4 v1.2 capability gate 已完成离线实现；v1.1 incomplete 与旧 artifacts 保持冻结、不可组装。v1.2 probe 仅验证 Tushare 来源能力，全部 bytes 均为 `non-adoptable`；完整 capture 和 Reviewer 必须分别使用新授权。
+- 定性评分 v2：MILESTONE-002 合同、MILESTONE-003 文件型 shadow seam 已完成；M4 v1.1/v1.2 artifacts 保持冻结、不可组装。v1.2 三调用均返回 provider `40203`，`complete=true`、`capability_pass=false`；全部 probe bytes 均为 `non-adoptable`，继续须另开 v1.3 候选协议。
 - Telegram 推送：日报分为主推、候补和雷达；只有强分且 L3 v2 通过的股票进入主推，发送失败不阻断 daily。
 - Google Sheets 同步：展示层能力，失败只记录 warning，不是数据真相来源。
 - 数据治理：`docs/data-source-registry.yaml` 记录字段来源、缓存、刷新、fallback 和失败语义。

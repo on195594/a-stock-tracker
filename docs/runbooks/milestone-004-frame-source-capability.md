@@ -1,6 +1,6 @@
 # MILESTONE-004 v1.2 frame-source capability runbook
 
-Status: offline implementation ready; pre-window guard verified at 2026-07-16 19:34 +08:00; live probe not executed.
+Status: live probe completed 2026-07-17; capability failed; terminal state `NO_QUALIFIED_FRAME_SOURCE`.
 
 ## Boundary
 
@@ -58,3 +58,14 @@ the raw blobs.
   forbidden as capture input.
 - FAIL terminates this candidate at `NO_QUALIFIED_FRAME_SOURCE`. Do not fall back to SWS, prior responses, production
   data, or another source. Continuing requires a v1.3 candidate-source protocol.
+
+## Final execution
+
+The single authorized attempt completed all three calls on 2026-07-17. Both industry APIs returned provider code
+`40203` for missing account access, and `daily_basic` returned `40203` for its five-requests-per-day limit. Offline
+verification reproduced manifest SHA-256
+`70f6d73a4b62f9725b3fe983cbdcf212ded5d84cbdedbe777088793b0c33957a` with `complete=true` and
+`capability_pass=false`.
+
+The command must not be run again. There is no qualified v1.2 frame source and no authorized next command in this
+runbook.
