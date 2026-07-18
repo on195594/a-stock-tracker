@@ -29,7 +29,7 @@ gates.
 | Frame | 4,694 eligible rows | M4 lightweight Run 4 |
 | Coverage report | not generated | blocking |
 | Real bundle SHA-256 | not generated | blocking |
-| M5 implementation | synthetic fixture-first complete | commit `b320bcd`; 843-test baseline |
+| M5 implementation | fixture-first orchestration and offline real-bundle builder complete | local implementation; 849-test baseline |
 
 The sample hash identifies sample/frame metadata only. It is not a coverage, corpus, context, or bundle hash.
 

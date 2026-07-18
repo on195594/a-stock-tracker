@@ -10,7 +10,7 @@ b278a7b00b71fd54e34519dead098602a8748635f1350414e1b78538a3d7635d
 
 That hash identifies only the M4 sample/frame metadata. Every context and the bundle manifest have independent SHA-256 values; no real bundle hash exists until a real static bundle is separately approved and built.
 
-This implementation executes synthetic bundles only, through deterministic fake Claude/Gemini transports. A structurally complete real bundle can be previewed, but every execution command rejects it before a model call. Enabling real Claude/Gemini transports requires a separate approval covering the exact sample SHA, final bundle SHA, full Claude model ID, fixed `gemini-2.5-flash`, call limits, credentials, and cost.
+This implementation's model commands execute synthetic bundles only, through deterministic fake Claude/Gemini transports. A structurally complete real bundle can be built and previewed offline, but every model execution command rejects it before a call. Enabling real Claude/Gemini transports requires a separate approval covering the exact sample SHA, final bundle SHA, full Claude model ID, fixed `gemini-2.5-flash`, call limits, credentials, and cost.
 
 ## Commands
 
@@ -35,6 +35,29 @@ This implementation executes synthetic bundles only, through deterministic fake 
 ```
 
 `preview` validates and prints aggregate JSON only. It never reads credentials and never creates a run root. The execution flags currently select local deterministic fakes; their help text states that they do not authorize or perform real external calls.
+
+## Offline real-bundle builder
+
+After source approval, all eight M4 coverage rows pass, and the 36 contexts/documents have been staged, build the final
+static bundle without network or credentials:
+
+```bash
+.venv/bin/python scripts/build_qualitative_v2_m5_bundle.py \
+  --sample artifacts/milestone-004/lite/20260718T151349602626+0800-8e319618/derived/sample.csv \
+  --input artifacts/milestone-005/data/<data-run-id>/bundle-input.json \
+  --output artifacts/milestone-005/bundles/<new-bundle-id>
+```
+
+The input manifest version is `m5-real-bundle-input-v1`. Its top level is exactly `input_version`, `as_of_date`,
+`source_approval_id`, `source_scopes`, `coverage_report_path`, and `companies`. Each company contains exactly `code`,
+`context_path`, and `evidence_provenance`; provenance uses the same fields as the final bundle and points to documents
+relative to the input manifest.
+
+The builder validates the fixed sample and actual coverage-report semantics, rejects unsafe/symlinked inputs and hash
+drift, deduplicates copied documents by SHA-256, computes every context hash, and self-validates the complete real
+manifest before an atomic publish. The output root is create-only mode `0700`, with directories `0700` and files
+`0600`; a failed build removes only its unpublished temporary root. It does not retrieve evidence, inspect `.env`, read
+`tracker.db`, or enable the real-model execution commands.
 
 ## Bundle contract
 

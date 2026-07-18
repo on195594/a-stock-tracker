@@ -37,7 +37,7 @@
 | 定性评分 v2 | 🔶 两 Sprint 推进中 | M4 已生成 4,694 frame/36 sample；M5 synthetic fixture-first 完成。当前先做数据 Sprint 的 corpus/coverage/source approval/real bundle，再以 exact bundle SHA 申请模型 Sprint |
 | 行情数据源 | ✅ `READY_CRON` | `a-stock-lib==0.2.0`；2026-07-15 probe 的 daily/index/calendar/close cross-check 全部 PASS |
 | cron | ✅ 已按门禁重新安装 | weekly/weekly-PM/QFQ/daily/outcome 五项 managed cron 均已确认 |
-| 质量门禁 | ✅ 全绿 | `843 passed`；Ruff lint/format、mypy、CLI help、`git diff --check` 与固定 sample SHA-256 复验全部通过 |
+| 质量门禁 | ✅ 全绿 | `849 passed`；Ruff lint/format、mypy、CLI help、`git diff --check` 与固定 sample SHA-256 复验全部通过 |
 
 ### 关键数据规模
 
