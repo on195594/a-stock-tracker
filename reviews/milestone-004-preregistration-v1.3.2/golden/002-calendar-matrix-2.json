@@ -1,1 +1,0 @@
-[{"api_name":"trade_cal","fields":["exchange","cal_date","is_open","pretrade_date"],"ordinal":1,"params":{"end_date":"20260915","exchange":"SSE","start_date":"20260514"}},{"api_name":"trade_cal","fields":["exchange","cal_date","is_open","pretrade_date"],"ordinal":2,"params":{"end_date":"20260915","exchange":"SZSE","start_date":"20260514"}}]

@@ -1,1 +1,0 @@
-775df35b5d944b2aa90261888ed20ca0b68770e0a33efd0ad8433449e89fc858  golden-authorizations/frame-capability.json

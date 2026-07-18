@@ -2,21 +2,11 @@
 
 所有重大变更按时间倒序记录。
 
-## 2026-07-18 — MILESTONE-004 v1.3.2 capability approval draft
+## 2026-07-18 — MILESTONE-004 轻量化清理
 
-- 起草未签署、不可执行的外部审批请求、历史/用户事实输入记录和 fresh external decision template；以独立 packet checksum 绑定三份草案字节，不生成 capability authorization JSON 或 authorization sidecar。
-- 提出 fresh IDs、`2026-07-17` probe trade date、`2026-07-20 18:00–20:00 +08:00` 执行窗口及规范化目标路径；固定 v3 schema、35-call 上限、四类 API entitlement/quota/cost/terms 门禁、单次无重试和 PASS/FAIL 后续处置。
-- 明确 v1.3.1 的 `stock_st`/3000-point blocker 不再属于 v1.3.2 矩阵，同时要求外部 approver 显式接受 name-only `ST|*ST` 无法识别名称未标记风险警示股的残余风险。
-- 草案验收通过：packet checksum、freeze attestation、双 golden oracle、proposed matrix/window/path 检查及 v1.3.2 directed 148 项测试。外部 approver、当前账户侧 entitlement/剩余额度证据仍 pending；未读取 token、联网、执行 provider 或创建 attempt/control artifacts。
-
-## 2026-07-17 — MILESTONE-004 segmented REST v1.3.2 frozen
-
-- 以 `f494c1…88042` v1.3.1 为直接前驱冻结完整 v1.3.2 协议，frame/date 矩阵为 35/2；删除独立 `stock_st` 请求、parser、gate 和 ledger source，daily 固定为 ordinal 35。
-- authorization/artifact/supervisor schema 升为 v3；`stock_basic.name` 仅做 NFKC、outer trim、casefold 后的 `ST|*ST` 前缀排除，并明确无法识别名称未标记风险警示股的剩余风险；provider `count` 与 rows 必须精确相等，包括零。
-- 新增五个独立 `_v132.py` generator 文件、canonical schema contract、30 个逐文件 golden vectors、两个不导入项目实现的标准库 oracle、历史 v1.3.1 inventory 和 candidate/review/attestation 无环冻结链。
-- fresh read-only 首审发现 supervisor outcome 大小写 P1；修复 runtime/recovery/verifier 为规范大写 `PASS|FAIL` 后，新的 fresh reviewer 以 P0–P3 全 NONE、strict PASS 批准 exact bytes。
-- 最终审查门禁：v1.3.2 定向 148 项、历史 v1.3.1 定向 133 项、M4 448 项、全仓 926 项；Ruff lint/F401/format、mypy、双 oracle、checksum/inventory/import closure、diff/status 全部 PASS。
-- 本轮未创建 capability authorization，未读取 token、联网或执行 Tushare，未实现 assembler、组装 frame/sample、访问生产 DB 或接入 pipeline/cron/Telegram/Gemini。
+- 从当前树退役 v1.3.2 的 authorization、freeze、golden、oracle、attestation 和多角色审批实现；更早的 v1.3.1 实现与全部 Git 历史保持可恢复。
+- 记录一次非 v1.3.2-compliant 的 `index_classify` 直连探测：HTTP 200、provider code 0、31 rows，未持久化原始响应，不能作为 frame 或治理证据。
+- M4 改走隔离的轻量 frame/sample 路径；本次退役不代表进入 MILESTONE-005 或生产采用。
 
 ## 2026-07-17 — MILESTONE-004 segmented REST v1.3.1
 
@@ -26,11 +16,6 @@
 - 离线 verifier 从 raw bytes 重建 ordinal、数据 gates、exact-number exclusion ledger、calendar/date derivation、closed set、权限/link/path、authorization/protocol/五文件 generator provenance；date 失败态不发布 evidence。
 - retained v1.1 assembler 增加统一 v1.3.1 拒绝 guard；未创建真实授权、未执行 Tushare、未读取生产 DB、未实现 frame/sample assembler。
 - 合成、禁 socket 验收通过：v1.3.1 定向 133 项、MILESTONE-004 300 项、全仓 778 项；Ruff、F401、format、mypy、冻结 hash/golden checksum 与 `git diff --check` 通过；后续审查发现并修复 provider `count: 0` 与非空 rows 的矛盾接收，同时清理未使用的私有符号和参数。
-- 准备 capability 外部审批请求与未签署 decision template，明确最大 36 次只读请求、既往 `40203` 风险、待审批字段、单次无重试/失败封存边界和批准后机械发布流程；材料不创建 canonical authorization，也不授权 token 或网络访问。
-- 归档 Claude 首次只读外部审批：协议、实现基线和 36-call 边界通过，但因身份、IDs、日期/窗口、路径及 provider entitlement/quota 证据缺失而 `DEFER`；阻断解除前不得发布授权或执行请求。
-- 归档 `lin` 补充的 capability 候选决策输入并完成无 token 核验：IDs/目标路径无冲突，官方资料支持四类 API 的 2000 积分门槛；因未来证据时间戳与 `stock_st` entitlement 尚未澄清，外部复审和授权发布继续阻断。
-- 只读核对用户指定的公开 `积分权限表`，确认 `ST股票列表` 从 3000 积分档开始而当前账户为 2000 积分；因此冻结矩阵 ordinal 35 `stock_st` 的 entitlement 不满足，维持 DEFER 并避免执行可预见失败的真实 36-call attempt。
-- 按项目所有者决定撤回未执行的 v1.3.1 capability 请求并起草 v1.3.2 no-stock-ST repair plan：冻结历史不变，新候选矩阵删除 `stock_st` 后为 35 calls，移除对应 gate/ledger source，仅保留 `stock_basic.name` 的本地风险前缀排除；尚未冻结协议、实现或授权执行。
 
 ## 2026-07-16 — MILESTONE-004 capture-first exporter
 

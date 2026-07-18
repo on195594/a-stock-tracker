@@ -3,28 +3,6 @@
 Status: implementation and offline verification available; **no v1.3.1 authorization exists and no real attempt is
 authorized**.
 
-The v1.3.1 capability request was withdrawn by the project owner on 2026-07-17 before authorization publication or
-execution. Its IDs, paths, and window are retired. The replacement direction is the non-authorizing
-[`v1.3.2 no-stock-ST repair plan`](../plans/2026-07-17-milestone-004-segmented-rest-v1.3.2-repair-plan.md); this v1.3.1
-runbook remains historical and must not be used to execute that candidate.
-
-The withdrawn external capability decision packet is preserved at
-[`reviews/milestone-004-preregistration-v1.3.1/capability-authorization-approval-request.md`](../../reviews/milestone-004-preregistration-v1.3.1/capability-authorization-approval-request.md),
-with an unsigned
-[`decision template`](../../reviews/milestone-004-preregistration-v1.3.1/capability-authorization-decision-template.md).
-Both are closed historical drafts and must not be completed, published, or reused for v1.3.2.
-Claude's first independent external review is archived as
-[`capability-authorization-external-review-2026-07-17.md`](../../reviews/milestone-004-preregistration-v1.3.1/capability-authorization-external-review-2026-07-17.md)
-with decision **DEFER**: the protocol/implementation boundary passed, but identities, IDs, dates, window, paths, and
-provider entitlement/quota evidence remain unresolved. No authorization may be published or executed yet.
-Before withdrawal, `lin` supplied candidate identities, IDs, dates, window, paths, a 2000-point account attestation, and a
-credential-supply attestation. The normalized input and official-document check are recorded in
-[`capability-authorization-input-2026-07-17-01.md`](../../reviews/milestone-004-preregistration-v1.3.1/capability-authorization-input-2026-07-17-01.md).
-The prior DEFER remains the final external outcome for this closed request.
-The user-supplied public `积分权限表` was then checked read-only. It places `ST股票列表` at 3000 points and above, not
-the user's current 2000-point tier. Because ordinal 35 is exactly `stock_st`, the five-family v1.3.1 matrix entitlement
-was insufficient. The later withdrawal replaced any renewal path with the separate v1.3.2 repair proposal.
-
 ## Boundary
 
 v1.3.1 supports three separately authorized attempt kinds:

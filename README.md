@@ -7,7 +7,7 @@ A 股选股与方法论验证项目。当前定位是 **Framework A 定量评分
 ## 当前状态
 
 - 主分支：`master`
-- 当前阶段：Phase 5 L3 v2 已接入生产评分与推送；Phase 6 仍处于 report-only 观察期；来源约束的定性评分 v2 已完成 MILESTONE-002、MILESTONE-003；M4 v1.1 采集路线技术关闭，v1.2 Tushare capability probe 完整执行但 FAIL；v1.3.1 capability 请求已在执行前撤回；v1.3.2 no-stock-ST 协议与隔离离线实现已由外部 attestation 冻结，但仍未创建 capability authorization、未执行真实请求、未组装 frame/sample，正式 evidence shadow/cutover 继续阻断
+- 当前阶段：Phase 5 L3 v2 已接入生产评分与推送；Phase 6 仍处于 report-only 观察期；来源约束的定性评分 v2 已完成 MILESTONE-002、MILESTONE-003；M4 v1.1/v1.2/v1.3.1 保留为历史实现，v1.3.2 治理实现已从当前树退役，frame/sample 改走不接生产路径的轻量流程
 - 生产框架：`SUPPORTED_FRAMEWORKS = {"A"}`；Framework B 历史数据保留，Phase 6 前不得启用生产写入
 - watchlist：35 只，维护在 `config.py`
 - 评分阈值：`buy_strong=44`、`buy_moderate=35`、`buy_light=26`
@@ -21,7 +21,7 @@ A 股选股与方法论验证项目。当前定位是 **Framework A 定量评分
 - Gemini 定性评分：`moat`、`market_pos`、`sentiment`，30 天缓存，失败时 all-or-nothing fallback 到固定值。
 - Outcome 追踪：记录 30/60/90 天收益、沪深 300 benchmark 和 generated `alpha_*d`。
 - L3 买点层：v1 保留用于历史审计；生产 daily 优先读取 QFQ 日线计算 `l3_v2_signal`，Telegram 主推已切换到 v2。
-- 定性评分 v2：MILESTONE-002 合同、MILESTONE-003 文件型 shadow seam 已完成；M4 v1.1/v1.2/v1.3/v1.3.1 历史字节保持冻结。v1.3.2 以 35/2 矩阵删除独立 `stock_st` 调用，仅保留 `stock_basic.name` 的 NFKC/trim/casefold 风险前缀排除；协议、v3 schema、30 个 golden vectors、双 oracle、五文件隔离实现和 attestation chain 已冻结，真实授权与 frame/sample 仍不存在。
+- 定性评分 v2：MILESTONE-002 合同、MILESTONE-003 文件型 shadow seam 已完成；M4 v1.3.2 的 authorization、freeze、golden、oracle、attestation 和多角色审批实现已退役，仍可从 Git 历史恢复；当前仅推进隔离的轻量 frame/sample，不接 Reviewer、生产 DB、pipeline、cron、Telegram 或 Gemini。
 - Telegram 推送：日报分为主推、候补和雷达；只有强分且 L3 v2 通过的股票进入主推，发送失败不阻断 daily。
 - Google Sheets 同步：展示层能力，失败只记录 warning，不是数据真相来源。
 - 数据治理：`docs/data-source-registry.yaml` 记录字段来源、缓存、刷新、fallback 和失败语义。
@@ -93,12 +93,11 @@ python3 scripts/run_qualitative_v2_shadow.py \
 python3 pipeline.py remove 601857
 ```
 
-MILESTONE-004 的 v1.1 legacy acquisition route 已关闭，v1.2 失败 attempt 保持永久 `non-adoptable`。
-v1.3.1 capability 请求已撤回且没有可执行授权。v1.3.2 CLI/离线 verifier 已实现，但同样没有 authorization；冻结不授予 token 或 provider 执行权。详见
-[`v1.3.2 protocol`](docs/plans/2026-07-17-milestone-004-segmented-rest-preregistration-v1.3.2.md) 和
-[`freeze attestation`](reviews/milestone-004-preregistration-v1.3.2/freeze-attestation.json)。
-Reviewer、真实 attempt、frame/sample assembly 与 MILESTONE-005 仍需后续分别授权；任何 capability/date PASS
-都不构成 frame 或 coverage 完成。
+MILESTONE-004 的 v1.1 legacy acquisition route 已关闭，v1.2 失败 attempt 保持永久 `non-adoptable`，
+v1.3.1 capability 请求已撤回。2026-07-18 曾执行一次不符合 v1.3.2 协议的 `index_classify`
+直连探测：HTTP 200、provider code 0、31 rows，未持久化原始响应；它只证明当时接口可读，不能作为
+frame 或治理证据。v1.3.2 治理实现已从当前树退役但可从 Git 历史恢复，M4 后续改走轻量 frame/sample
+路径，且不代表进入 MILESTONE-005 或生产采用。
 
 `accuracy-report` 默认写入 `config.ACCURACY_REPORT_PATH`，生产路径为项目根目录的 `accuracy_report.txt`。测试会把该路径隔离到临时目录；手动运行报告可能改写 tracked 文件，提交前需要确认是否属于目标变更。
 

@@ -1,1 +1,0 @@
-{"api_name":"daily_basic","fields":["ts_code","trade_date","total_mv"],"method":"POST","origin":"https://api.tushare.pro","params":{"trade_date":"20260715"}}
