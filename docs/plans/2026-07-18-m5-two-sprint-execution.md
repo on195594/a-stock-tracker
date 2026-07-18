@@ -1,6 +1,6 @@
 # M5 two-sprint execution control
 
-Status: **D1 stopped on source-capability drift; revised protocol/authorization required**
+Status: **v1.2 capability route identified; evidence-quality pilot and collection protocol pending**
 
 Owner: user + codex
 
@@ -29,7 +29,7 @@ gates.
 | Frame | 4,694 eligible rows | M4 lightweight Run 4 |
 | Coverage report | not generated | blocking |
 | Real bundle SHA-256 | not generated | blocking |
-| M5 implementation | orchestration, offline bundle builder, D1 preflight, read-only fundamentals snapshot, and official-front-door capture complete | local implementation; D1 execution record below |
+| M5 implementation | orchestration, offline bundle builder, D1 preflight, read-only fundamentals snapshot, official-front-door capture, and v1.2 offline capability probe complete | capability report SHA `79274389…ca6fc` |
 
 The sample hash identifies sample/frame metadata only. It is not a coverage, corpus, context, or bundle hash.
 
@@ -121,8 +121,8 @@ not resumed. PASS or PROVISIONAL remains research-only and does not authorize M6
 
 ## Current next action
 
-Do not retry or relax the stopped run in place. Revise the evidence-feasibility protocol so each exchange source has a
-machine-verifiable, current official full-text capability or explicitly preregister a narrower title-only estimand and
-recalculate the coverage interpretation. The revision must also decide whether an HTTP-412 CNIPA UI can be accessed by
-an approved browser transport without exceeding the request/credential boundary. Freeze the new protocol, prepare a
-new authorization/data-run ID and SHA-256, and obtain user approval before any further source call.
+Do not retry or relax the stopped run in place. The offline v1.2 capability report now identifies CNINFO as one viable
+official full-text route while keeping SSE, SZSE, and CNIPA as visible source-local degradations; evidence quality is
+correctly `not_evaluated`. Next, obtain a separate authorization for the six-company/one-query/at-most-18-document
+quality pilot in `2026-07-19-m5-source-capability-first-v1.2.md`. Freeze a new 36-company collection protocol and
+authorization only after that pilot and explicit source-scope approval.

@@ -72,3 +72,10 @@ first D-date attempts, but D+1/D+2 transport retries cannot cure the SSE contrac
 No 756-group result matrix, candidate document set, relationship-report set, corpus manifest, coverage report, real M5
 bundle, reviewer call, Claude call, or Gemini call was produced. Continuing requires a revised protocol and new exact
 authorization, not an in-place relaxation of this run.
+
+## v1.2 follow-up
+
+The later offline capability probe did not resume this run or make an external call. It separated the three axes and
+identified CNINFO as a viable full-text candidate route while leaving evidence quality unevaluated. Its report SHA-256
+is `792743898f6805599f17b99061588eb1dab5d08d02d765b317a676be0ebca6fc`; see
+`reviews/milestone-005/v1.2-capability-report-2026-07-19.md`.

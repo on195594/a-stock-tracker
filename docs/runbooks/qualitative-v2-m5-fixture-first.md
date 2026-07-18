@@ -103,6 +103,30 @@ parent page before making a request. A missing full-text control, changed source
 is a protocol stop condition; the operator must not substitute a title-only endpoint, search engine, or alternate
 source.
 
+For v1.2, derive the three-axis capability report offline before proposing a new collection protocol:
+
+```bash
+.venv/bin/python scripts/probe_qualitative_v2_m5_source_capability.py preview \
+  --sample artifacts/milestone-004/lite/20260718T151349602626+0800-8e319618/derived/sample.csv \
+  --authorization reviews/milestone-005/<authorization>.json \
+  --checksum reviews/milestone-005/<authorization>.sha256 \
+  --frontdoors artifacts/milestone-005/data/<data-run-id>/source-frontdoors/<date>/manifest.json \
+  --ui-assets artifacts/milestone-005/data/<data-run-id>/source-ui-assets/<date>/manifest.json
+
+.venv/bin/python scripts/probe_qualitative_v2_m5_source_capability.py seal \
+  --sample artifacts/milestone-004/lite/20260718T151349602626+0800-8e319618/derived/sample.csv \
+  --authorization reviews/milestone-005/<authorization>.json \
+  --checksum reviews/milestone-005/<authorization>.sha256 \
+  --frontdoors artifacts/milestone-005/data/<data-run-id>/source-frontdoors/<date>/manifest.json \
+  --ui-assets artifacts/milestone-005/data/<data-run-id>/source-ui-assets/<date>/manifest.json \
+  --output artifacts/milestone-005/data/<data-run-id>/capability-probe-v1.2/report.json
+```
+
+`preview` creates nothing. `seal` writes one `0600` report beneath a `0700` create-only directory. Both modes perform
+zero external calls. The report never promotes transport success into full-text or evidence-quality success. A single
+source failure is source-local when another official full-text route exists; collection still requires a bounded
+quality pilot and a new user-approved protocol.
+
 ## Offline real-bundle builder
 
 After source approval, all eight M4 coverage rows pass, and the 36 contexts/documents have been staged, build the final
