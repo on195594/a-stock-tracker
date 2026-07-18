@@ -42,3 +42,22 @@ mismatches and zero sentinels without explicit single-page evidence still fail.
 - Safety check: no token in raw/summary; no `derived/` or `derived.tmp/`
 
 All three failed ignored runs remain local diagnostic records. The repository records only these aggregate facts.
+
+## Run 4 — successful frame build
+
+- Acquisition time: `2026-07-18T15:13:49+08:00`; completed `2026-07-18T15:16:02+08:00`
+- Result: **PASS**, 35/35 captured and validated responses; no retry
+- API rows: `index_classify=31`, `index_member_all=5864`, `stock_basic=5200`, `daily_basic=5522`
+- Count semantics: all 35 nonempty responses recorded `unknown_zero_sentinel`
+- Exclusions: 1,170 total — `missing_stock=340`, `bj_exchange=325`, `listed_less_than_3_years=291`,
+  `excluded_name=208`, `missing_daily=3`, `unsupported_board=2`, `invalid_member_code=1`
+- Frame/sample: 4,694 frame rows; 36 unique sampled stocks; all 12 cells contain exactly 3 stocks
+- `invalid_member_code`: `T00018.SH` appears only in `excluded.csv`
+- Derived SHA-256:
+  - `frame.csv`: `2480b8db24b098723b4252839bb4095bfdad2220e6dd21f52a1420886168b062`
+  - `sample.csv`: `b278a7b00b71fd54e34519dead098602a8748635f1350414e1b78538a3d7635d`
+  - `excluded.csv`: `3612b5bbd803c173f4acaa73eff343a61388afc7a4953820f51afe85df6695ab`
+- Safety check: no token in raw, summary, or derived files; run/raw/derived directories are mode `0700`
+
+This success produces a local research frame/sample only. It does not authorize MILESTONE-005, Reviewer, production DB,
+pipeline, cron, Telegram, Gemini, or production adoption.

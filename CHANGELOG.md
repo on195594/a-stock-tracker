@@ -11,6 +11,8 @@
 - 修复 Tushare 非空单页 `count=0` 未知总数哨兵语义：仅在 `has_more=false` 时接受并记录；正数 mismatch 和缺少显式单页证据仍失败。轻量定向 `35 passed`、全仓 `813 passed`，其余质量门禁全绿。
 - 14:59 的全新 probe 5/5 通过；同 run build 在 ordinal 6 的首个补采 `index_member_all` 因 transport failure 停止。无重试、剩余调用、frame/sample 或生产副作用。
 - 15:05 的第三个全新 probe 5/5 通过；build 在 ordinal 16 的交通运输成员响应发现非六位代码 `T00018.SH`，按结构漂移门禁停止。未把异常伪装成单股 exclusion，无重试、剩余 19 次调用或派生文件。
+- 经用户明确授权，将具有受支持市场后缀且名称含退市标识的非六位成员代码记录为 `invalid_member_code` exclusion；active 非标准代码和未知后缀继续整批失败。轻量定向 `37 passed`、全仓 `815 passed`。
+- 15:13 的第四个全新 run 35/35 调用通过：frame 4,694 行、exclusions 1,170 行、sample 36 股，12 cells 各 3 股；三个派生 hash 复验一致且 artifacts 无 token。结果仅用于本地研究，不构成 MILESTONE-005 或生产采用。
 
 ## 2026-07-17 — MILESTONE-004 segmented REST v1.3.1
 

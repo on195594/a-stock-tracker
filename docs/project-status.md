@@ -5,7 +5,7 @@
 
 ## 当前结论
 
-主业务仍处于 **Phase 6 report-only 观察**，Framework B 不得生产写入；Phase 5 L3 v2 已完成 QFQ 生产接入和 Telegram 主推切换。定性评分 v2 M4 的 v1.3.2 治理实现已退役但可从 Git 历史恢复；轻量 builder 的 probe 可通过，但最新 build 因 provider 成员代码结构漂移 fail-closed，仍无 frame/sample，不接 Reviewer、生产 DB 或 MILESTONE-005。
+主业务仍处于 **Phase 6 report-only 观察**，Framework B 不得生产写入；Phase 5 L3 v2 已完成 QFQ 生产接入和 Telegram 主推切换。定性评分 v2 M4 的 v1.3.2 治理实现已退役但可从 Git 历史恢复；轻量 builder 已生成 4,694 行本地 frame 和 36 股 sample，但不接 Reviewer、生产 DB 或 MILESTONE-005。
 
 2026-07-18 曾执行一次非 v1.3.2-compliant 的 `index_classify` 直连探测：HTTP 200、provider code 0、31 rows，未持久化原始响应。该探测不构成 frame、authorization、freeze、attestation 或生产采用证据。
 
@@ -14,6 +14,8 @@
 随后修复非空单页 `count=0` 未知总数哨兵：仅当 `has_more=false` 时接受并记录，其他 mismatch 继续失败。14:59 +08:00 的全新 probe 5/5 通过，聚合行数为 classification 31、首行业成员 126、stock 5,200、daily 5,522；同 run build 在 ordinal 6 的首个补采 `index_member_all` 因 transport failure、未捕获响应而停止。无重试或剩余 29 次补采，仍无 exclusions、frame/sample 或派生 hash；raw/summary 无 token。
 
 15:05 +08:00 的第三个全新 probe 同样 5/5 通过；build 捕获到 ordinal 16 的交通运输行业响应后发现一行 provider 成员代码 `T00018.SH`（`上港集箱(退市)`），不符合六位数字加 `.SH/.SZ/.BJ` 的成员结构规则。按既定门禁整批停止，未改写为单股 exclusion；共捕获 16 个响应，其中 15 个完全验证，无重试或剩余 19 次调用，仍无 frame/sample、派生 hash 或 token 泄漏。
+
+经用户明确授权推翻该单点规则后，退市名称且具有 `.SH/.SZ/.BJ` 后缀的非六位成员代码只进入 `invalid_member_code` exclusion；active 非标准代码和未知后缀仍整批失败。15:13 +08:00 的第四个全新 run 35/35 调用通过：classification 31 行、members 5,864 行、stock 5,200 行、daily 5,522 行；输出 frame 4,694 行、exclusions 1,170 行、sample 36 股，12 cells 均为 3 股。`T00018.SH` 是唯一 `invalid_member_code`；三个派生 hash 复验一致，artifacts 无 token。本结果仅为本地研究 frame/sample，不授权 Reviewer、MILESTONE-005 或生产采用。
 
 2026-07-17 M4 v1.3.1 工程实现：v1.3 `0ad8c6…a12df` 历史字节不变；v2 authorization/artifact schemas、36/2 精确矩阵、父 supervisor deadline、attempt 外 phase journal、raw-first publication、exact-number gates/ledger、date failure nullable evidence、candidate/post-publication 双复验、五文件 generator closure 和 legacy rejection guard 已落地。当前仅有无 token/无 socket 合成执行证据，没有真实 authorization 或 Tushare attempt。
 
@@ -49,7 +51,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | Phase 5 L3 买点层 | v1 保留审计；v2 Phase 2+3 已完成 | 观察 v2 信号分布与自然 outcome；不改 L1/L2 分数 | readiness 已恢复，继续自然运行 | 足量 v2 30/60d 样本和独立复核后再讨论规则变化 |
 | 定性评分 v2 MILESTONE-002 | 已完成 | 保持合同稳定和本地 validator fail-closed | MILESTONE-003 已独立完成 | REQ-001~035 对应本地合同齐全 |
 | 定性评分 v2 MILESTONE-003 | 已完成 | 使用独立 CLI/JSONL artifact；不接 pipeline 或生产 DB | M4 已阻断；若继续须另开 v1.3 | REQ-036~039 文件持久化、错误分类、脱敏、去重和隔离测试及 AGY 最终只读审查通过 |
-| 定性评分 v2 MILESTONE-004 | 轻量 probe PASS；build FAIL；无 frame | ordinal 16 成员代码结构漂移；无重试 | 明确异常代码处置规则后才能新开 run | 不接 Reviewer、生产 DB、pipeline 或 MILESTONE-005 |
+| 定性评分 v2 MILESTONE-004 | 轻量 frame/sample 完成 | 35/35 调用、4,694 frame、36 sample、12 cells 完整 | 保留本地研究产物与聚合简报 | 不接 Reviewer、生产 DB、pipeline 或 MILESTONE-005 |
 | Phase 6 多框架激活 | report-only 观察 | 自动化 weekly PM loop 只读观察 B label / dry-run / cron 日志 | 2026-08-13 后首次 B label 自然结案复核 | B label 已结案 ≥20、overdue=0、数据质量门槛 OK、独立审查通过、另写生产化 spec |
 | Phase 7 选股宇宙扩展 | 未启动 | 等 Phase 6 或明确降级策略 | 暂无 | 单独设计动态池和 API 压测 |
 
@@ -69,8 +71,8 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | L3 v2 QFQ / 生产写入 | 已完成，选择性待观察 | `daily_bars.adjusted='qfq'` 覆盖 35 个代码、4585 行（至 2026-07-13）；v2 记录 70 条且 70/70 pass，两天 strong 均为 18/18 通过门禁 |
 | L3 v2 Phase 3 push trigger | 已完成，生产推送已切换 | `telegram_push.py` 触发条件 `entry_signal=1` → `l3_v2_signal=1`；commit `e080f15`；298/298 tests passed |
 | Framework A 倒置诊断 | 已完成，结论：不调权重 | Q5 avg_alpha_30d=-9.91%；根因=截面校准偏差+11支伪复制；agy投资审查：Priority 1=延伸60d/90d；60d首批到期 2026-07-14 |
-| 定性评分 v2 | MILESTONE-002+003 完成；M4 probe PASS、build FAIL 且无 frame | 最新 run ordinal 16 成员代码结构漂移；Reviewer 未授权，未接生产路径 |
-| 质量门禁 | 全部通过 | 轻量定向 35 passed；全仓 813 passed；Ruff lint/format、mypy、CLI help、`git diff --check` PASS |
+| 定性评分 v2 | MILESTONE-002+003 完成；M4 本地 frame/sample 完成 | 4,694 frame、1,170 exclusions、36 sample；Reviewer 未授权，未接生产路径 |
+| 质量门禁 | 全部通过 | 轻量定向 37 passed；全仓 815 passed；Ruff lint/format、mypy、CLI help、`git diff --check` PASS |
 
 ## Spec Ledger
 
