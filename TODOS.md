@@ -1,13 +1,13 @@
 # TODOS
 
-## 当前有效计划来源（2026-07-15）
+## 当前有效计划来源（2026-07-18）
 
 当前阶段、门槛和边界以 `docs/evolution-roadmap.md` 为准。`docs/impl-plan.md` 已归档为
 Phase 1-3.6 历史实施记录，不再作为后续计划来源。
 
 当前工作重心：
 
-1. **P1 定性评分 v2：** M4 capture-first 首次授权执行已封存 incomplete：`daily_basic` 命中 `5次/天` 限频，SSE 响应有效，首个 SWS 请求严格 TLS `SSLError`，31 项 missing。未重试、未组装。下次 live attempt 需新 canonical JSON + SHA-256 授权，且应先解除 SWS TLS 阻塞并等待 Tushare 日配额重置；也可提供带 provenance 静态包。Reviewer 仍须单独授权。
+1. **P1 定性评分 v2：** 按 `docs/plans/2026-07-18-m5-two-sprint-execution.md` 推进“数据就绪 Sprint + 模型执行 Sprint”。M4 轻量 builder 已冻结 4,694 行 frame 和 36 股 sample；当前只缺真实 corpus/coverage、source approval 和 real bundle。下一动作是批准该计划 D1 的固定 36 股官方来源采集；coverage 全层通过并冻结 bundle SHA 后，才申请一次精确模型执行授权。
 2. **P2 L3 v2 选择性：** 2026-07-13/14 的 70 条 v2 记录全部为 pass，18/18 strong 每日均未被 L3 过滤；先在 report 中增加 v2 状态/门禁分布并积累 outcome，不据两天样本直接改规则。
 3. **P2 模型验证：** 基于已自然结案的 60d 数据，执行 Framework A 五分位 60d/90d 延伸评估；不据此顺手调权重。
 4. **P3 Phase 6：** Framework B 继续 report-only，等待 B label 30d 自然结案至 20 条；生产化必须另写实施计划并获得明确授权。
@@ -17,7 +17,7 @@ Phase 1-3.6 历史实施记录，不再作为后续计划来源。
 - 当天 Tushare probe 的 daily/index/calendar/close cross-check 全部 PASS，readiness 恢复 `READY_CRON`，managed cron 已重新安装并确认五项任务齐全。
 - weekly PM loop 不再把中文“失败 0 只”判为失败；降级 `WARNING ... fallback失败` 归为 WARN，明确 ERROR/非零失败仍为 FAIL。真实 dry-run 从错误的 FAIL 恢复为符合现状的 WARN。
 - mypy 从 24 errors 修复后保持零错误；Ruff format 基线持续有效。
-- 当前完整质量基线：`593 passed`，Ruff lint/format、mypy、M4 v1/v1.1 协议 SHA-256、`git diff --check` 全部通过。
+- 当前完整质量基线：`843 passed`，Ruff lint/format、mypy、CLI help、`git diff --check` 全部通过。
 
 ## 定性评分 v2 MILESTONE-002~003（已完成）
 
@@ -28,7 +28,7 @@ Phase 1-3.6 历史实施记录，不再作为后续计划来源。
 - task 2.3 及后续 P1/P2 边界加固已完成；MILESTONE-002 最终本地合同测试与独立复核通过。
 - MILESTONE-003 文件型 shadow seam 已完成；受控空 evidence packet Gemini smoke 通过，但不构成真实 evidence shadow。
 
-## 定性评分 v2 MILESTONE-004（静态输入阶段已授权，等待 dataset）
+## 定性评分 v2 MILESTONE-004~005（两 Sprint 推进中）
 
 **已完成：**
 
@@ -36,17 +36,17 @@ Phase 1-3.6 历史实施记录，不再作为后续计划来源。
 - 实现纯 Python frame/sample/corpus、technical ledger、Wilson coverage、create-only artifact hash chain。
 - 实现默认禁用、显式 authorization、独立 HOME/cache/state/tmp、bounded stdout/stderr/timeout 的 Reviewer A/B。
 - 实现 schema-valid seal、review index、逐字段 disagreement、完整 adjudication 和报告时原子 lineage 复验。
-- 严格审查修复全部 P1/P2/P3，并完成 capture-first 合成验收；当前 115 项 M4 定向、593 项全量测试通过。
+- 轻量 builder 已生成 4,694 行 frame、1,170 行 exclusions 和固定 36 股 sample；sample SHA-256 为 `b278a7b00b71fd54e34519dead098602a8748635f1350414e1b78538a3d7635d`。
+- M5 fixture-first 批处理、artifact seal、聚合 gate 和 review finding 修复已完成；当前实现只执行 synthetic fake transport。
 
 **Next：**
 
-1. SWS strict-TLS 诊断已确认服务端缺 GeoTrust/DigiCert 中间证书。等待服务端修复，或另行授权获取、固定并离线验证 provenance-bearing 官方中间证书/静态 SWS 包；不得使用 `verify=False` 或未授权 HTTP AIA。同时等待 Tushare `daily_basic` 日配额重置，之后才能单独授权新 capture attempt。
-   补充：AIA 派生 DigiCert HTTPS 地址的唯一次 GET 又以 curl 35 TLS handshake failure 结束，未获取证书。
-2. 验证 dataset SHA-256、完整 frame、字段映射和采样日期后，冻结 frame 与 36 股 sample。
-3. 对 sample 提供完整静态 corpus package 并冻结 corpus；真实 Reviewer 运行前再次单独申请授权。
-4. Reviewer 获批后再完成双 seal、用户裁决和 coverage report；FAIL 层必须由用户选择 `excluded` 或 `re_audit_new_version`。
+1. 获批 `m5-data-readiness-20260718-01` 后，仅对固定 36 股构建 CNINFO、SSE/SZSE、CNIPA 官方静态 corpus，并按批准范围生成本地基本面只读快照。
+2. corpus 冻结后，以精确 corpus/bundle/prompt/command hash 申请一次 Reviewer A/B 执行授权，完成裁决和 coverage report。
+3. 八个 coverage layer 全部通过后构建 36 份真实 context，运行零凭证 `preview` 并冻结 real bundle SHA-256。
+4. 再以 exact sample/bundle/model/call/cost/credential/run-root 申请模型 Sprint 授权，依次执行 Claude blind reference、Gemini shadow 和 Claude support audit。
 
-**边界：** 当前没有业务 CLI；静态输入授权只覆盖带 provenance 的 frame/sample/corpus。旧导出与本次 capture-first 一次性 live 授权均已结束；除非获得新的明确授权，不得再次调用 live provider、运行真实 Reviewer、检索真实公司或访问真实数据库。MILESTONE-005/006、生产 cache/schema、pipeline、cron、Telegram 和权重仍未授权。
+**边界：** 当前 M5 CLI 只能执行 synthetic transport。D1 尚未批准，旧 live 授权均已消费；不得据本 TODO 调用来源、Reviewer、Claude 或 Gemini。生产 cache/schema、pipeline、cron、Telegram、权重、M6 和 cutover 始终不在两 Sprint 授权内。
 
 ## L3 v2 qfq 覆盖修复（2026-07-12 已完成）
 

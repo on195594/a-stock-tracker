@@ -34,10 +34,10 @@
 | Telegram 推送 | ✅ v2 门禁已上线 | 主推条件为 ≥ buy_strong 且 `l3_v2_signal=1`；v2 为 0/NULL 的高分股进入候补 |
 | Outcome 追踪 | ✅ 最近运行正常 | live DB 中 Framework A 30d/60d 结案 953/253；90d 尚无结案 |
 | L3 买点层 | ✅ v2 Phase 2+3 完成；选择性待观察 | QFQ 覆盖 35/35 codes、4585 行；2026-07-13/14 共写入 70 条 v2 记录且全部 pass；cron 工作日 16:00 采集 |
-| 定性评分 v2 | 🔶 M4 capture-first 已验证 | 17:15 attempt 封存 2 份响应后 incomplete：Tushare 日限频、SWS 严格 TLS `SSLError`、31 项 missing；未重试/组装，新 capture 与 Reviewer 均待单独批准 |
+| 定性评分 v2 | 🔶 两 Sprint 推进中 | M4 已生成 4,694 frame/36 sample；M5 synthetic fixture-first 完成。当前先做数据 Sprint 的 corpus/coverage/source approval/real bundle，再以 exact bundle SHA 申请模型 Sprint |
 | 行情数据源 | ✅ `READY_CRON` | `a-stock-lib==0.2.0`；2026-07-15 probe 的 daily/index/calendar/close cross-check 全部 PASS |
 | cron | ✅ 已按门禁重新安装 | weekly/weekly-PM/QFQ/daily/outcome 五项 managed cron 均已确认 |
-| 质量门禁 | ✅ 全绿 | `593 passed`；Ruff lint/format、mypy、`git diff --check` 与 M4 v1/v1.1 协议 SHA-256 全部通过 |
+| 质量门禁 | ✅ 全绿 | `843 passed`；Ruff lint/format、mypy、CLI help、`git diff --check` 与固定 sample SHA-256 复验全部通过 |
 
 ### 关键数据规模
 
@@ -291,3 +291,5 @@
 | v1.23 | 2026-07-16 | 完成 M4 capture-first exporter：拆分 capture/recover/assemble，新增机器授权、即时 raw/receipt、complete/incomplete 隔离、resume/TOCTOU/并发锁和纯离线确定性组装；13:34 旧响应不可恢复，新 live capture 仍待单独授权。 |
 | v1.24 | 2026-07-16 | 执行首次机器授权 capture-first attempt：保留 Tushare raw-only 限频响应和有效 SSE receipt，首个 SWS 请求严格 TLS `SSLError`；manifest 封存 31 项 missing 并通过离线重验，未重试或组装。 |
 | v1.25 | 2026-07-16 | 单次 strict-TLS 诊断确认 SWS 服务端只发送有效叶证书、缺 GeoTrust/DigiCert 中间证书，验证 code 20；不接受 AKShare `verify=False`，下一步等待服务端修复或单独授权官方中间证书/静态包路径。 |
+| v1.26 | 2026-07-18 | M4 轻量 builder 35/35 请求完成，冻结 4,694 行 frame、1,170 行 exclusions 和 36 股 12-cell sample；sample SHA-256 为 `b278a7…d7635d`，不等同 coverage 或 bundle。 |
+| v1.27 | 2026-07-18 | M5 synthetic fixture-first 编排、blind-reference seal、Gemini early-stop、support audit 和可复验 aggregate report 完成；路线压缩为数据就绪 Sprint + 模型执行 Sprint，D1 来源授权待批准。 |
