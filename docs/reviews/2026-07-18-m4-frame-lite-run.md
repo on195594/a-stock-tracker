@@ -26,4 +26,19 @@ mismatches and zero sentinels without explicit single-page evidence still fail.
 - Derived SHA-256: `frame.csv=N/A`, `sample.csv=N/A`, `excluded.csv=N/A`
 - Safety check: no token in raw/summary; no `derived/` or `derived.tmp/`
 
-Both failed ignored runs remain local diagnostic records. The repository records only these aggregate facts.
+## Run 3 — member code drift
+
+- Acquisition time: `2026-07-18T15:05:49+08:00`
+- Probe result: **PASS**, 5/5 captured responses with the same aggregate row counts as run 2
+- Build result: **FAIL** at ordinal 16, `index_member_all(l1_code=801170.SI)`
+- Captures: 16 responses total; 15 fully validated, ordinal 16 retained as the failed captured response
+- Failed response: provider code 0, 144 rows, `count=0`, `has_more=false`; one row used non-six-digit code `T00018.SH`
+  for `上港集箱(退市)`
+- Failure gate: member codes are limited to six digits plus `.SH`, `.SZ`, or `.BJ`; structural drift cannot become a
+  single-stock exclusion
+- Requests: no retry and no remaining 19 calls
+- Exclusions/frame/sample: not produced
+- Derived SHA-256: `frame.csv=N/A`, `sample.csv=N/A`, `excluded.csv=N/A`
+- Safety check: no token in raw/summary; no `derived/` or `derived.tmp/`
+
+All three failed ignored runs remain local diagnostic records. The repository records only these aggregate facts.

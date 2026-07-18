@@ -10,6 +10,7 @@
 - 13:31 的首次真实轻量 probe 在第 1 次 `index_classify` 因 provider `count=0` 与 31 rows 不一致而 fail-closed；仅发出 1 次请求，无重试、build、frame/sample 或生产副作用。
 - 修复 Tushare 非空单页 `count=0` 未知总数哨兵语义：仅在 `has_more=false` 时接受并记录；正数 mismatch 和缺少显式单页证据仍失败。轻量定向 `35 passed`、全仓 `813 passed`，其余质量门禁全绿。
 - 14:59 的全新 probe 5/5 通过；同 run build 在 ordinal 6 的首个补采 `index_member_all` 因 transport failure 停止。无重试、剩余调用、frame/sample 或生产副作用。
+- 15:05 的第三个全新 probe 5/5 通过；build 在 ordinal 16 的交通运输成员响应发现非六位代码 `T00018.SH`，按结构漂移门禁停止。未把异常伪装成单股 exclusion，无重试、剩余 19 次调用或派生文件。
 
 ## 2026-07-17 — MILESTONE-004 segmented REST v1.3.1
 

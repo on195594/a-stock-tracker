@@ -7,7 +7,7 @@ A 股选股与方法论验证项目。当前定位是 **Framework A 定量评分
 ## 当前状态
 
 - 主分支：`master`
-- 当前阶段：Phase 5 L3 v2 已接入生产评分与推送；Phase 6 仍处于 report-only 观察期；来源约束的定性评分 v2 已完成 MILESTONE-002、MILESTONE-003；M4 v1.3.2 治理实现已退役，修复后的轻量 probe 5/5 通过，但 build 在首次补采请求发生 transport failure，仍无 frame/sample
+- 当前阶段：Phase 5 L3 v2 已接入生产评分与推送；Phase 6 仍处于 report-only 观察期；来源约束的定性评分 v2 已完成 MILESTONE-002、MILESTONE-003；M4 v1.3.2 治理实现已退役，轻量 probe 可通过，但最新 build 因成员代码结构漂移 fail-closed，仍无 frame/sample
 - 生产框架：`SUPPORTED_FRAMEWORKS = {"A"}`；Framework B 历史数据保留，Phase 6 前不得启用生产写入
 - watchlist：35 只，维护在 `config.py`
 - 评分阈值：`buy_strong=44`、`buy_moderate=35`、`buy_light=26`
@@ -102,9 +102,9 @@ MILESTONE-004 的 v1.1 legacy acquisition route 已关闭，v1.2 失败 attempt 
 v1.3.1 capability 请求已撤回。2026-07-18 曾执行一次不符合 v1.3.2 协议的 `index_classify`
 直连探测：HTTP 200、provider code 0、31 rows，未持久化原始响应；它只证明当时接口可读，不能作为
 frame 或治理证据。v1.3.2 治理实现已从当前树退役但可从 Git 历史恢复，M4 后续改走轻量 frame/sample
-路径。13:31 的首次轻量 probe 因 `count=0`/31 rows 停止；修复后 14:59 的全新 probe 5/5 通过，
-但同 run build 在 ordinal 6 的首个补采 `index_member_all` 遇到 transport failure，再次无重试停止。
-两次运行均未生成派生文件；详见
+路径。13:31 的首次轻量 probe 因 `count=0`/31 rows 停止；修复后的第二次 probe 通过，但 build 遇到
+transport failure；第三次 probe 也通过，build 在 ordinal 16 发现 provider 成员代码 `T00018.SH`，
+因不符合六位 `.SH/.SZ/.BJ` 规则而停止。三次运行均无重试、未生成派生文件；详见
 [`轻量运行简报`](docs/reviews/2026-07-18-m4-frame-lite-run.md)。这不代表进入 MILESTONE-005 或生产采用。
 
 `accuracy-report` 默认写入 `config.ACCURACY_REPORT_PATH`，生产路径为项目根目录的 `accuracy_report.txt`。测试会把该路径隔离到临时目录；手动运行报告可能改写 tracked 文件，提交前需要确认是否属于目标变更。
