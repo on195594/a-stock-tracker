@@ -17,7 +17,7 @@ Phase 1-3.6 历史实施记录，不再作为后续计划来源。
 - 当天 Tushare probe 的 daily/index/calendar/close cross-check 全部 PASS，readiness 恢复 `READY_CRON`，managed cron 已重新安装并确认五项任务齐全。
 - weekly PM loop 不再把中文“失败 0 只”判为失败；降级 `WARNING ... fallback失败` 归为 WARN，明确 ERROR/非零失败仍为 FAIL。真实 dry-run 从错误的 FAIL 恢复为符合现状的 WARN。
 - mypy 从 24 errors 修复后保持零错误；Ruff format 基线持续有效。
-- 当前完整质量基线：`859 passed`，Ruff lint/format、mypy、CLI help、`git diff --check` 全部通过。
+- 当前完整质量基线：`866 passed`，Ruff lint/format、mypy、CLI help、`git diff --check` 全部通过。
 
 ## 定性评分 v2 MILESTONE-002~003（已完成）
 
@@ -37,7 +37,7 @@ Phase 1-3.6 历史实施记录，不再作为后续计划来源。
 - 实现默认禁用、显式 authorization、独立 HOME/cache/state/tmp、bounded stdout/stderr/timeout 的 Reviewer A/B。
 - 实现 schema-valid seal、review index、逐字段 disagreement、完整 adjudication 和报告时原子 lineage 复验。
 - 轻量 builder 已生成 4,694 行 frame、1,170 行 exclusions 和固定 36 股 sample；sample SHA-256 为 `b278a7b00b71fd54e34519dead098602a8748635f1350414e1b78538a3d7635d`。
-- M5 fixture-first 批处理、artifact seal、聚合 gate、review finding 修复、real bundle 离线 builder 和 D1 零调用机器授权/preflight 已完成；模型命令仍只执行 synthetic fake transport。
+- M5 fixture-first 批处理、artifact seal、聚合 gate、review finding 修复、real bundle 离线 builder、D1 authorization/preflight 和严格只读 fundamentals snapshot builder 已完成；模型命令仍只执行 synthetic fake transport。
 
 **Next：**
 

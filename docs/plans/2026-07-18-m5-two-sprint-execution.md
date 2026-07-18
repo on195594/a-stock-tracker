@@ -29,7 +29,7 @@ gates.
 | Frame | 4,694 eligible rows | M4 lightweight Run 4 |
 | Coverage report | not generated | blocking |
 | Real bundle SHA-256 | not generated | blocking |
-| M5 implementation | orchestration, offline bundle builder, and zero-call D1 authorization preflight complete | local implementation; 859-test baseline |
+| M5 implementation | orchestration, offline bundle builder, D1 preflight, and read-only fundamentals snapshot builder complete | local implementation; 866-test baseline |
 
 The sample hash identifies sample/frame metadata only. It is not a coverage, corpus, context, or bundle hash.
 
@@ -47,6 +47,8 @@ A zero-call machine preview now freezes this proposal as:
 
 The authorization and checksum remain unsealed until the user approves that exact proposal. Preview validation reads
 only the fixed sample and frozen protocol; it performs zero network/model/database calls and creates no artifact.
+The authorization-bound fundamentals snapshot CLI is implemented and tested only against temporary SQLite fixtures;
+the real `tracker.db` remains unopened until approval, seal, and active preflight.
 
 The proposed authorization is limited to the frozen 36-company sample and `as_of_date=2026-07-17`:
 

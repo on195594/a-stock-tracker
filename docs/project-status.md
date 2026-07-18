@@ -5,7 +5,7 @@
 
 ## 当前结论
 
-主业务仍处于 **Phase 6 report-only 观察**，Framework B 不得生产写入；Phase 5 L3 v2 已完成 QFQ 生产接入和 Telegram 主推切换。定性评分 v2 进入两 Sprint 路线：M4 已生成 4,694 行 frame 和固定 36 股 sample，M5 fixture-first 编排、封存修复、real bundle 离线 builder 和 D1 零调用 authorization preflight 已完成；真实 corpus/coverage、source approval、real bundle 和模型执行均尚未发生。当前下一动作是批准 D1 authorization SHA `93c471…c0cf1`。
+主业务仍处于 **Phase 6 report-only 观察**，Framework B 不得生产写入；Phase 5 L3 v2 已完成 QFQ 生产接入和 Telegram 主推切换。定性评分 v2 进入两 Sprint 路线：M4 已生成 4,694 行 frame 和固定 36 股 sample，M5 编排、封存修复、real bundle builder、D1 authorization preflight 和严格只读 fundamentals snapshot builder 已完成；真实 corpus/coverage、source approval、real bundle 和模型执行均尚未发生。当前下一动作是批准 D1 authorization SHA `93c471…c0cf1`。
 
 2026-07-18 曾执行一次非 v1.3.2-compliant 的 `index_classify` 直连探测：HTTP 200、provider code 0、31 rows，未持久化原始响应。该探测不构成 frame、authorization、freeze、attestation 或生产采用证据。
 
@@ -52,7 +52,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | 定性评分 v2 MILESTONE-002 | 已完成 | 保持合同稳定和本地 validator fail-closed | MILESTONE-003 已独立完成 | REQ-001~035 对应本地合同齐全 |
 | 定性评分 v2 MILESTONE-003 | 已完成 | 使用独立 CLI/JSONL artifact；不接 pipeline 或生产 DB | M4 sample 已完成；转 M5 数据 Sprint | REQ-036~039 文件持久化、错误分类、脱敏、去重和隔离测试及 AGY 最终只读审查通过 |
 | 定性评分 v2 MILESTONE-004 | 轻量 frame/sample 完成 | 35/35 调用、4,694 frame、36 sample、12 cells 完整 | 在新授权下构建 corpus/coverage | sample 固定且不替换；八层 coverage 决定能否进入 real bundle |
-| 定性评分 v2 MILESTONE-005 | fixture-first、离线 bundle builder、D1 authorization preflight 完成 | 批准 SHA `93c471…c0cf1` 后执行真实 corpus/coverage | D1 bounded source authorization | exact bundle SHA 产生后才申请模型 Sprint；不授权生产 |
+| 定性评分 v2 MILESTONE-005 | fixture-first、离线 bundle/D1 preflight/只读 snapshot builder 完成 | 批准 SHA `93c471…c0cf1` 后 seal、snapshot、corpus/coverage | D1 bounded source authorization | exact bundle SHA 产生后才申请模型 Sprint；不授权生产 |
 | Phase 6 多框架激活 | report-only 观察 | 自动化 weekly PM loop 只读观察 B label / dry-run / cron 日志 | 2026-08-13 后首次 B label 自然结案复核 | B label 已结案 ≥20、overdue=0、数据质量门槛 OK、独立审查通过、另写生产化 spec |
 | Phase 7 选股宇宙扩展 | 未启动 | 等 Phase 6 或明确降级策略 | 暂无 | 单独设计动态池和 API 压测 |
 
@@ -73,7 +73,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | L3 v2 Phase 3 push trigger | 已完成，生产推送已切换 | `telegram_push.py` 触发条件 `entry_signal=1` → `l3_v2_signal=1`；commit `e080f15`；298/298 tests passed |
 | Framework A 倒置诊断 | 已完成，结论：不调权重 | Q5 avg_alpha_30d=-9.91%；根因=截面校准偏差+11支伪复制；agy投资审查：Priority 1=延伸60d/90d；60d首批到期 2026-07-14 |
 | 定性评分 v2 | M2+M3 完成；M4 sample 完成；M5 编排与离线 builder 完成 | sample SHA `b278a7…d7635d`；coverage/real bundle/model run 均未生成 |
-| 质量门禁 | 全部通过 | M5 定向 44 passed；全仓 859 passed；Ruff lint/format、mypy、CLI help、`git diff --check` PASS |
+| 质量门禁 | 全部通过 | M5 定向 51 passed；全仓 866 passed；Ruff lint/format、mypy、CLI help、`git diff --check` PASS |
 
 ## Spec Ledger
 
@@ -133,7 +133,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | 2026-07-15 | 定性评分 v2 MILESTONE-003 文件 shadow seam | 独立 Gemini client/CLI、0600 JSONL、并发锁与同 hash 去重、bounded retry/response/error、可选 legacy comparison 已完成；122 项定向、478 项全量测试和 AGY 最终只读审查 PASS；两次空 packet Gemini 调用均为 `VALID_INSUFFICIENT_DATA`，重复 CLI 运行 `api_called=false` | MILESTONE-003 完成；生产 DB/pipeline/cron/Telegram 保持不变；下一步必须先做 MILESTONE-004 evidence feasibility audit |
 | 2026-07-15 | 定性评分 v2 MILESTONE-004 v1.1 离线工具链 | 预注册/hash、确定性 frame/sample、URL/corpus、technical ledger、并发安全 create-only chain、默认禁用且隔离的双 reviewer、裁决和原子 coverage report 已完成；76 项 M4 定向、554 项全量测试与全部质量门禁通过 | 工具链完成但真实 audit 未执行；不读取真实 DB、不检索公司、不运行 Reviewer；下一步需用户单独批准候选 source/dataset 审计授权 |
 | 2026-07-15 | M4 静态输入执行授权 | 用户批准仅用带 provenance 的只读静态 dataset 完成 frame/sample/corpus；授权留档 SHA-256 为 `37aee66f8a3dc1a9f4aea61fe53f75cd4556ad2d9316b51b6d4c8b340c16f903` | dataset 尚未提供，不创建空 manifest；Reviewer、生产 DB/live provider/pipeline 继续禁止 |
-| 2026-07-18 | M4 sample + M5 fixture-first | 4,694 frame、36 sample 已冻结；M5 orchestration、artifact seals、聚合 report、离线 bundle builder 和 D1 authorization preflight 已实现，44 项定向/859 项全量通过 | 批准 SHA `93c471…c0cf1` 后才 seal/执行 D1；不提前执行 Reviewer/Claude/Gemini |
+| 2026-07-18 | M4 sample + M5 fixture-first | 4,694 frame、36 sample 已冻结；M5 orchestration、artifact seals、聚合 report、离线 bundle、D1 preflight 和只读 snapshot builder 已实现，51 项定向/866 项全量通过 | 批准 SHA `93c471…c0cf1` 后才 seal/执行 D1；不提前执行 Reviewer/Claude/Gemini |
 | 2026-08-13 后 | B label 30d 结案、overdue、行业覆盖、B-A delta | 待执行 | 满足门槛后写 `phase6-b-label-review.md`，不直接上线 |
 
 ## 每周自动复核

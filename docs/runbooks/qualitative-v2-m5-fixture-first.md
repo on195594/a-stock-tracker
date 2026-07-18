@@ -55,6 +55,23 @@ Before any D1 source or read-only database operation, preview the machine bounda
 read-only database field list, and all model/Reviewer/production prohibitions. Preflight does not open a socket, database,
 `.env`, credential variable, or artifact root.
 
+After the authorization is approved, sealed, and active, create the single allowed local fundamentals snapshot:
+
+```bash
+.venv/bin/python scripts/build_qualitative_v2_m5_fundamentals_snapshot.py \
+  --sample artifacts/milestone-004/lite/20260718T151349602626+0800-8e319618/derived/sample.csv \
+  --authorization reviews/milestone-005/<authorization>.json \
+  --checksum reviews/milestone-005/<authorization>.sha256 \
+  --output artifacts/milestone-005/data/<data-run-id>/fundamentals-snapshot.json \
+  --execute-read-only
+```
+
+The snapshot CLI accepts only the authorization-bound output and project-root `tracker.db`. It opens SQLite with
+`mode=ro`, enforces `PRAGMA query_only=ON`, uses one transaction, selects only the 36 sample codes and approved fields,
+and checks the main database file identity before/after. Missing rows and unusable identity/data/report-period rows are
+recorded explicitly and emit no evidence values. The create-only snapshot is mode `0600` under a `0700` data-run root.
+Tests use a temporary SQLite fixture; implementation and test verification do not open the real database.
+
 ## Offline real-bundle builder
 
 After source approval, all eight M4 coverage rows pass, and the 36 contexts/documents have been staged, build the final

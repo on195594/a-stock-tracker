@@ -122,6 +122,8 @@ class DataAuthorization:
     data_run_id: str
     not_before: datetime
     not_after: datetime
+    artifact_root: str
+    database_path: str
     sha256: str
     raw: bytes
 
@@ -286,6 +288,8 @@ def load_data_authorization(
         data_run_id=cast(str, value["data_run_id"]),
         not_before=_timestamp(value["not_before"], field="not_before"),
         not_after=_timestamp(value["not_after"], field="not_after"),
+        artifact_root=cast(str, value["artifact_root"]),
+        database_path=cast(str, value["database_path"]),
         sha256=digest,
         raw=raw,
     )
