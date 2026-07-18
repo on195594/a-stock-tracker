@@ -36,6 +36,25 @@ This implementation's model commands execute synthetic bundles only, through det
 
 `preview` validates and prints aggregate JSON only. It never reads credentials and never creates a run root. The execution flags currently select local deterministic fakes; their help text states that they do not authorize or perform real external calls.
 
+## Data authorization preflight
+
+Before any D1 source or read-only database operation, preview the machine boundary:
+
+```bash
+.venv/bin/python scripts/prepare_qualitative_v2_m5_data_authorization.py preview \
+  --sample artifacts/milestone-004/lite/20260718T151349602626+0800-8e319618/derived/sample.csv \
+  --authorization-id m5-data-readiness-20260718-01 \
+  --data-run-id m5-data-20260719-01 \
+  --not-before 2026-07-19T00:00:00+08:00 \
+  --not-after 2026-08-01T23:59:59+08:00
+```
+
+`preview` prints the canonical authorization and SHA-256 but creates nothing. After the user approves that exact hash,
+`seal` creates one authorization/checksum pair; `preflight --require-active` revalidates the fixed sample, M4 protocol,
+756-group matrix, host/method limits, D/D+1/D+2 schedule, 4,536 extreme HTTP-attempt ceiling, 8 GiB artifact ceiling,
+read-only database field list, and all model/Reviewer/production prohibitions. Preflight does not open a socket, database,
+`.env`, credential variable, or artifact root.
+
 ## Offline real-bundle builder
 
 After source approval, all eight M4 coverage rows pass, and the 36 contexts/documents have been staged, build the final

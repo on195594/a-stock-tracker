@@ -29,13 +29,24 @@ gates.
 | Frame | 4,694 eligible rows | M4 lightweight Run 4 |
 | Coverage report | not generated | blocking |
 | Real bundle SHA-256 | not generated | blocking |
-| M5 implementation | fixture-first orchestration and offline real-bundle builder complete | local implementation; 849-test baseline |
+| M5 implementation | orchestration, offline bundle builder, and zero-call D1 authorization preflight complete | local implementation; 859-test baseline |
 
 The sample hash identifies sample/frame metadata only. It is not a coverage, corpus, context, or bundle hash.
 
 ## Sprint 1 — data readiness
 
 ### D1. Bounded source authorization — pending user approval
+
+A zero-call machine preview now freezes this proposal as:
+
+- authorization ID: `m5-data-readiness-20260718-01`;
+- data run ID: `m5-data-20260719-01`;
+- window: `2026-07-19T00:00:00+08:00` through `2026-08-01T23:59:59+08:00`;
+- authorization SHA-256: `93c471fb070376d7d2004b5df8898fc7c7628658c8a82906be9242f847dc0cf1`;
+- search-matrix SHA-256: `46e82996ecb2a6760f4aad31555487f8154ce2459d248182dc06a1d978a81463`.
+
+The authorization and checksum remain unsealed until the user approves that exact proposal. Preview validation reads
+only the fixed sample and frozen protocol; it performs zero network/model/database calls and creates no artifact.
 
 The proposed authorization is limited to the frozen 36-company sample and `as_of_date=2026-07-17`:
 
@@ -104,6 +115,11 @@ not resumed. PASS or PROVISIONAL remains research-only and does not authorize M6
 The next executable action is D1. A concise approval response is sufficient:
 
 > 批准 `m5-data-readiness-20260718-01`，按本文件 D1 的来源、36 股、日期、只读数据库和隔离边界执行。
+
+This response approves authorization SHA-256
+`93c471fb070376d7d2004b5df8898fc7c7628658c8a82906be9242f847dc0cf1`, including the explicit `4,536` extreme HTTP
+attempt ceiling and `8 GiB` artifact ceiling. If approval arrives outside the frozen window, do not silently extend it;
+prepare a new proposal and SHA-256.
 
 Without that approval, the repository can validate synthetic fixtures and existing hashes but cannot manufacture the
 missing real corpus, coverage report, or bundle.
