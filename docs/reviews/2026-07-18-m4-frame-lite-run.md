@@ -61,3 +61,23 @@ All three failed ignored runs remain local diagnostic records. The repository re
 
 This success produces a local research frame/sample only. It does not authorize MILESTONE-005, Reviewer, production DB,
 pipeline, cron, Telegram, Gemini, or production adoption.
+
+## Post-run quality review
+
+A local, read-only review reused the published Run 4 CSV files and made no provider requests.
+
+- Integrity: **PASS** — 4,694 unique frame codes, 36 unique sample codes, and every sample row exactly matches its frame
+  row apart from `sampling_hash`.
+- Determinism: **PASS** — recomputing `SHA-256(seed + 0x1f + ts_code)` reproduced the same three selections in each
+  of the 12 super-stratum/market-cap cells.
+- Stratification: **PASS** — recomputing the `total_mv,ts_code` median split reproduced every low/high assignment; the
+  smallest cell contains 106 eligible stocks.
+- Coverage: the frame contains all 31 SW2021 industries. The sample contains 20 industries because selection is defined
+  over six super-strata and two market-cap bands, not over individual industries.
+- Sample composition: `SSE=14`, `SZSE=22`; `main board=21`, `ChiNext=11`, `STAR Market=4`.
+- Boundary review: `T00018.SH` remains the sole `invalid_member_code`; the three `missing_daily` rows and two
+  `unsupported_board` rows remain exclusions and do not leak into the frame or sample.
+- Artifact integrity: all three derived SHA-256 values were recomputed and match the Run 4 values above.
+
+No defect was found, so this review changes neither the builder nor the generated artifacts. The current-member snapshot
+limitation and the no-MILESTONE-005/no-production boundary remain unchanged.
