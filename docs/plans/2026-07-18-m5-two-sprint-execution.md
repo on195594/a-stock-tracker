@@ -40,6 +40,8 @@ The sample hash identifies sample/frame metadata only. It is not a coverage, cor
 The proposed authorization is limited to the frozen 36-company sample and `as_of_date=2026-07-17`:
 
 - use official CNINFO, corresponding SSE/SZSE, and CNIPA material for the frozen M4 source/query matrix;
+- restrict official hosts to `cninfo.com.cn`, `sse.com.cn`, `szse.cn`, `cnipa.gov.cn`, and
+  `cponline.cnipa.gov.cn` (including their subdomains), over verified HTTPS with no cross-domain redirect;
 - retain official raw document bytes, URL/document identifier, capture time, MIME, byte count, SHA-256, and locator in
   the Git-ignored M4 artifact root;
 - use a read-only local fundamentals snapshot only for the final M5 contexts, limited to the same 36 codes and fields
@@ -49,6 +51,13 @@ The proposed authorization is limited to the frozen 36-company sample and `as_of
 - do not call Claude, Gemini, Codex reviewer subprocesses, or AGY reviewer subprocesses under this authorization;
 - stop on unknown source, source/date drift, missing provenance, technical failure, or sample/layer drift; do not replace a
   sampled company.
+
+The frozen scale is explicit: `36 x 3 x 7 = 756` source/query groups, at most one attempt on each of D/D+1/D+2
+(`2,268` search attempts only in the all-technical-failure extreme), at most 20 unique candidate documents per company
+(`720` total), and exactly one relationship report per company (`36` total). Document/relationship operations retain
+the same three-date technical-attempt ceiling. There is no same-day automatic retry or fallback source. The local
+fundamentals snapshot uses one read-only SQLite transaction and is limited to the 36 sample codes; it must not open the
+database in write mode.
 
 This authorization may populate and validate the static corpus only. It does not approve a reviewer or M5 model call.
 
