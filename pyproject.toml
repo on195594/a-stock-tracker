@@ -48,6 +48,7 @@ files = [
     "scripts/export_m4_sampling_frame_akshare_szse_https.py",
     "scripts/export_m4_sampling_frame_historical_hybrid.py",
     "scripts/probe_m4_frame_source.py",
+    "scripts/build_m4_frame_lite.py",
 ]
 ignore_missing_imports = true
 follow_imports = "skip"

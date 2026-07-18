@@ -91,6 +91,11 @@ python3 scripts/run_qualitative_v2_shadow.py \
 
 # 删除某只股票的本地历史数据
 python3 pipeline.py remove 601857
+
+# M4 轻量 probe（5 次请求）与同 run build（仅补采另外 30 个行业）
+python3 scripts/build_m4_frame_lite.py probe --trade-date 20260717
+python3 scripts/build_m4_frame_lite.py build \
+  --from-probe artifacts/milestone-004/lite/<run-id>
 ```
 
 MILESTONE-004 的 v1.1 legacy acquisition route 已关闭，v1.2 失败 attempt 保持永久 `non-adoptable`，
