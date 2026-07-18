@@ -11,6 +11,8 @@
 
 2026-07-18 12:34:38 +08:00 交互填写选择 fresh Claude external approver，并明确当前没有账户侧 entitlement/剩余额度证据、继续形成 DEFER。直接 Claude Opus 因 session limit、AGY Claude Opus 4.6 因独立 quota 均在出具决策前退出；因此只有用户输入和审查提示，没有外部签署决定，`EXECUTION_AUTHORITY: NOT_GRANTED`。未生成 authorization、读取 token 或调用 provider；需在 Claude 配额恢复后重试，或改由符合隔离要求的人工外部审批者出具 DEFER。
 
+2026-07-18 12:38:14 +08:00 fresh independent capability subagent 已核验 packet checksum、freeze chain、角色隔离、拟议 IDs/日期/窗口/路径并签署 `DECISION: DEFER`、`EXECUTION_AUTHORITY: NOT_GRANTED`。当前账户 authority/tier、四类 API entitlement/剩余额度、cost/terms、probe-date suitability、历史 `40203`/无重试及 name-only ST 风险接受均缺少当前证据；补齐前不得发布 authorization、读取 token 或执行 provider。阻断可修复，故未选择永久 REJECT。
+
 2026-07-17 M4 v1.3.1 工程实现：v1.3 `0ad8c6…a12df` 历史字节不变；v2 authorization/artifact schemas、36/2 精确矩阵、父 supervisor deadline、attempt 外 phase journal、raw-first publication、exact-number gates/ledger、date failure nullable evidence、candidate/post-publication 双复验、五文件 generator closure 和 legacy rejection guard 已落地。当前仅有无 token/无 socket 合成执行证据，没有真实 authorization 或 Tushare attempt。
 
 2026-07-17 M4 v1.3.1 capability 外部审批包已准备：审批请求列明精确 36-call 上限、既往 `40203` 风险、固定协议/hash、单次无重试边界、数据暴露和结果处置；另提供未签署 decision template。材料本身不构成授权，仍待外部审批者确定 approver/publisher/operator、唯一 IDs、probe trade date、`+08:00` 窗口和发布路径后签署；当前仍不得生成 canonical authorization、读取 token 或执行请求。
