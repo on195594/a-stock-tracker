@@ -7,7 +7,7 @@ A 股选股与方法论验证项目。当前定位是 **Framework A 定量评分
 ## 当前状态
 
 - 主分支：`master`
-- 当前阶段：Phase 5 L3 v2 已接入生产评分与推送；Phase 6 仍处于 report-only 观察期；来源约束的定性评分 v2 已完成 MILESTONE-002、MILESTONE-003；M4 v1.3.2 治理实现已退役，轻量 probe 因 provider `count=0` 与 31 rows 矛盾而 fail-closed，未生成 frame/sample
+- 当前阶段：Phase 5 L3 v2 已接入生产评分与推送；Phase 6 仍处于 report-only 观察期；来源约束的定性评分 v2 已完成 MILESTONE-002、MILESTONE-003；M4 v1.3.2 治理实现已退役，修复后的轻量 probe 5/5 通过，但 build 在首次补采请求发生 transport failure，仍无 frame/sample
 - 生产框架：`SUPPORTED_FRAMEWORKS = {"A"}`；Framework B 历史数据保留，Phase 6 前不得启用生产写入
 - watchlist：35 只，维护在 `config.py`
 - 评分阈值：`buy_strong=44`、`buy_moderate=35`、`buy_light=26`
@@ -21,7 +21,7 @@ A 股选股与方法论验证项目。当前定位是 **Framework A 定量评分
 - Gemini 定性评分：`moat`、`market_pos`、`sentiment`，30 天缓存，失败时 all-or-nothing fallback 到固定值。
 - Outcome 追踪：记录 30/60/90 天收益、沪深 300 benchmark 和 generated `alpha_*d`。
 - L3 买点层：v1 保留用于历史审计；生产 daily 优先读取 QFQ 日线计算 `l3_v2_signal`，Telegram 主推已切换到 v2。
-- 定性评分 v2：MILESTONE-002 合同、MILESTONE-003 文件型 shadow seam 已完成；M4 v1.3.2 的 authorization、freeze、golden、oracle、attestation 和多角色审批实现已退役，仍可从 Git 历史恢复；轻量 builder 已实现，但首次真实 probe 在第 1 次调用停止，未接 Reviewer、生产 DB、pipeline、cron、Telegram 或 Gemini。
+- 定性评分 v2：MILESTONE-002 合同、MILESTONE-003 文件型 shadow seam 已完成；M4 v1.3.2 的 authorization、freeze、golden、oracle、attestation 和多角色审批实现已退役，仍可从 Git 历史恢复；轻量 builder 已实现并通过 probe，但 build 尚未完成，未接 Reviewer、生产 DB、pipeline、cron、Telegram 或 Gemini。
 - Telegram 推送：日报分为主推、候补和雷达；只有强分且 L3 v2 通过的股票进入主推，发送失败不阻断 daily。
 - Google Sheets 同步：展示层能力，失败只记录 warning，不是数据真相来源。
 - 数据治理：`docs/data-source-registry.yaml` 记录字段来源、缓存、刷新、fallback 和失败语义。
@@ -102,8 +102,9 @@ MILESTONE-004 的 v1.1 legacy acquisition route 已关闭，v1.2 失败 attempt 
 v1.3.1 capability 请求已撤回。2026-07-18 曾执行一次不符合 v1.3.2 协议的 `index_classify`
 直连探测：HTTP 200、provider code 0、31 rows，未持久化原始响应；它只证明当时接口可读，不能作为
 frame 或治理证据。v1.3.2 治理实现已从当前树退役但可从 Git 历史恢复，M4 后续改走轻量 frame/sample
-路径。13:31 的首次轻量 probe 仅调用一次 `index_classify`：HTTP 200、provider code 0、31 rows，
-但 provider `count=0`，因此严格停止且未 build、未重试、未生成派生文件；详见
+路径。13:31 的首次轻量 probe 因 `count=0`/31 rows 停止；修复后 14:59 的全新 probe 5/5 通过，
+但同 run build 在 ordinal 6 的首个补采 `index_member_all` 遇到 transport failure，再次无重试停止。
+两次运行均未生成派生文件；详见
 [`轻量运行简报`](docs/reviews/2026-07-18-m4-frame-lite-run.md)。这不代表进入 MILESTONE-005 或生产采用。
 
 `accuracy-report` 默认写入 `config.ACCURACY_REPORT_PATH`，生产路径为项目根目录的 `accuracy_report.txt`。测试会把该路径隔离到临时目录；手动运行报告可能改写 tracked 文件，提交前需要确认是否属于目标变更。
