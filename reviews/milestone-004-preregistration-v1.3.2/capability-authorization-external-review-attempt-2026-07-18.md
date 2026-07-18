@@ -26,4 +26,3 @@ The user's selected outcome remains an input requesting a DEFER decision; it is 
 No authorization JSON/checksum, attempt, lock, phase journal, or publication artifact was created. No `.env`, token,
 credential store, provider, production database, pipeline, or cron was accessed. The frozen protocol and packet were
 not modified.
-

@@ -18,4 +18,3 @@ Related request:
 
 These answers do not authorize the approver to infer account state, use a live provider preflight, read a token, or
 convert missing evidence into APPROVE. The proposed IDs, paths, date, and window remain unexecuted draft values.
-
