@@ -336,7 +336,9 @@ def test_classification_must_match_all_31_codes_and_names(tmp_path: Path) -> Non
         run_probe(tmp_path, FakeTransport(dataset))
 
 
-@pytest.mark.parametrize("case", ["l1", "future", "out_date", "is_new", "empty", "limit"])
+@pytest.mark.parametrize(
+    "case", ["l1", "future", "out_date", "is_new", "empty", "limit", "active_nonstandard", "unknown_suffix"]
+)
 def test_member_contract_failures_stop_build(tmp_path: Path, case: str) -> None:
     dataset = make_dataset()
     target = tuple(lite.SW2021_INDUSTRIES)[1]
@@ -351,8 +353,14 @@ def test_member_contract_failures_stop_build(tmp_path: Path, case: str) -> None:
         row[10] = "N"
     elif case == "empty":
         dataset.members[target] = []
-    else:
+    elif case == "limit":
         dataset.members[target] = [row[:] for _ in range(2000)]
+    elif case == "active_nonstandard":
+        row[6] = "T00018.SH"
+        row[7] = "正常公司"
+    else:
+        row[6] = "T00018.HK"
+        row[7] = "历史公司(退市)"
     transport = FakeTransport(dataset)
     run_root = run_probe(tmp_path, transport)
 
@@ -427,6 +435,7 @@ def test_universe_filters_boards_names_currency_bj_and_listing_age(tmp_path: Pat
         _add_stock(dataset, ts_code, name, **kwargs)
     _add_member(dataset, industry, "600908.SH", "缺股票")
     _add_member(dataset, industry, "920001.BJ", "北交所")
+    _add_member(dataset, industry, "T00018.SH", "上港集箱(退市)")
     for ts_code, name, market, exchange in [
         ("688001.SH", " 科创公司 ", "科创板", "SSE"),
         ("000001.SZ", "深主板", "主板", "SZSE"),
@@ -456,6 +465,7 @@ def test_universe_filters_boards_names_currency_bj_and_listing_age(tmp_path: Pat
     assert counts == {
         "bj_exchange": 1,
         "excluded_name": 4,
+        "invalid_member_code": 1,
         "listed_less_than_3_years": 1,
         "missing_daily": 1,
         "missing_stock": 1,

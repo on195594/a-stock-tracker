@@ -27,6 +27,9 @@ member calls, so the complete run uses 35 provider requests. Calls are serial wi
 there is no automatic retry. A nonempty response may use provider `count=0` as an unknown-count sentinel only when
 `has_more=false`; the run summary records that anomaly. Positive count mismatches, a zero sentinel without explicit
 `has_more=false`, and all other provider, HTTP, schema, truncation, mapping, or sampling-cell failures stop the run.
+Member codes normally require six digits plus `.SH`, `.SZ`, or `.BJ`. A non-six-digit code with one of those market
+suffixes is retained only when its normalized member name explicitly contains `退市`; it is published solely in
+`excluded.csv` with reason `invalid_member_code`. Active nonstandard codes and unknown suffixes remain batch failures.
 
 The run directory is mode `0700`. Successful builds atomically publish `derived/frame.csv`, `derived/sample.csv`, and
 `derived/excluded.csv`; failed builds retain captured raw responses and a failure summary but publish no `derived/`.

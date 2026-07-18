@@ -434,6 +434,19 @@ def _validate_classification(response: ParsedResponse) -> None:
         raise LiteError("classification differs from the SW2021 mapping")
 
 
+def _is_standard_member_code(ts_code: str) -> bool:
+    return re.fullmatch(r"\d{6}\.(SH|SZ|BJ)", ts_code) is not None
+
+
+def _is_retired_nonstandard_member(ts_code: str, name: object) -> bool:
+    normalized_name = _normalize_name(name)
+    return (
+        not _is_standard_member_code(ts_code)
+        and re.fullmatch(r"[A-Z0-9]{1,12}\.(SH|SZ|BJ)", ts_code) is not None
+        and "退市" in normalized_name
+    )
+
+
 def _validate_member(response: ParsedResponse, code: str, name: str, trade_date: date) -> None:
     if not response.rows or len(response.rows) >= 2000:
         raise LiteError(f"member response size is invalid for {code}")
@@ -446,7 +459,7 @@ def _validate_member(response: ParsedResponse, code: str, name: str, trade_date:
             raise LiteError(f"member current-state drift for {code}")
         if _date_value(row.get("in_date"), f"member/{code}/in_date") > trade_date:
             raise LiteError(f"member in_date is after trade date for {code}")
-        if not re.fullmatch(r"\d{6}\.(SH|SZ|BJ)", ts_code):
+        if not _is_standard_member_code(ts_code) and not _is_retired_nonstandard_member(ts_code, row.get("name")):
             raise LiteError(f"member security code is malformed for {code}")
         if ts_code in seen:
             raise LiteError(f"duplicate member security for {code}")
@@ -753,7 +766,9 @@ def _assemble_rows(
         stock = stocks.get(ts_code)
         name = member_name
         reason: str | None = None
-        if ts_code.endswith(".BJ"):
+        if not _is_standard_member_code(ts_code):
+            reason = "invalid_member_code"
+        elif ts_code.endswith(".BJ"):
             reason = "bj_exchange"
         elif stock is None:
             reason = "missing_stock"
