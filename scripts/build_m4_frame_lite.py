@@ -111,6 +111,8 @@ class ParsedResponse:
     """Contain a schema-checked provider response."""
 
     rows: tuple[Mapping[str, object], ...]
+    provider_count: int | None
+    count_mode: str
 
 
 class Transport(Protocol):
@@ -247,6 +249,20 @@ class _Runner:
         validator(parsed)
         receipt["status"] = "pass"
         receipt["row_count"] = len(parsed.rows)
+        receipt["provider_count"] = parsed.provider_count
+        receipt["count_mode"] = parsed.count_mode
+        if parsed.count_mode == "unknown_zero_sentinel":
+            anomalies = self.summary.setdefault("response_anomalies", [])
+            if not isinstance(anomalies, list):
+                raise LiteError("run summary response_anomalies are malformed")
+            anomalies.append(
+                {
+                    "ordinal": ordinal,
+                    "api_name": spec.api_name,
+                    "kind": "unknown_zero_count_sentinel",
+                    "row_count": len(parsed.rows),
+                }
+            )
         api_rows = self.summary.setdefault("api_rows", {})
         if not isinstance(api_rows, dict):
             raise LiteError("run summary api_rows are malformed")
@@ -378,21 +394,30 @@ def _parse_response(raw: bytes, requested_fields: Sequence[str]) -> ParsedRespon
     items = data.get("items")
     if not isinstance(items, list):
         raise LiteError("response rows are malformed")
-    count = data.get("count")
-    if count is not None and (isinstance(count, bool) or not isinstance(count, int) or count != len(items)):
-        raise LiteError("response count differs from rows")
+    has_more: bool | None = None
     if "has_more" in data:
         has_more = data["has_more"]
         if not isinstance(has_more, bool):
             raise LiteError("response has_more is malformed")
         if has_more:
             raise LiteError("response is paginated")
+    count = data.get("count")
+    if count is None:
+        count_mode = "absent"
+    elif isinstance(count, bool) or not isinstance(count, int) or count < 0:
+        raise LiteError("response count is malformed")
+    elif count == len(items):
+        count_mode = "exact"
+    elif count == 0 and items and has_more is False:
+        count_mode = "unknown_zero_sentinel"
+    else:
+        raise LiteError("response count differs from rows")
     rows: list[Mapping[str, object]] = []
     for item in items:
         if not isinstance(item, list) or len(item) != len(fields):
             raise LiteError("response row width differs from fields")
         rows.append(dict(zip(fields, item, strict=True)))
-    return ParsedResponse(tuple(rows))
+    return ParsedResponse(tuple(rows), count, count_mode)
 
 
 def _validate_classification(response: ParsedResponse) -> None:
@@ -572,6 +597,7 @@ def run_probe(
         "failed_call": None,
         "calls": [],
         "api_rows": {},
+        "response_anomalies": [],
     }
     _write_summary(run_root, summary)
     runner = _Runner(
@@ -633,6 +659,8 @@ def _read_probe_response(
     if token.encode("utf-8") in raw:
         raise LiteError("probe raw response contains credential echo")
     parsed = _parse_response(raw, spec.fields)
+    if receipt.get("provider_count") != parsed.provider_count or receipt.get("count_mode") != parsed.count_mode:
+        raise LiteError("probe response count metadata drift")
     _validator_for(spec, trade_date)(parsed)
     return parsed
 

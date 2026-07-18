@@ -274,6 +274,7 @@ def test_transport_exception_and_token_echo_never_persist_token(tmp_path: Path) 
         ("http", "HTTP status"),
         ("oversize", "32 MiB"),
         ("count", "count differs"),
+        ("zero_without_has_more", "count differs"),
         ("has_more", "paginated"),
         ("fields", "fields differ"),
         ("width", "row width"),
@@ -292,6 +293,9 @@ def test_response_integrity_failures_stop_probe(
         value = json.loads(response.body)
         if case == "count":
             value["data"]["count"] += 1
+        elif case == "zero_without_has_more":
+            value["data"]["count"] = 0
+            value["data"].pop("has_more")
         elif case == "has_more":
             value["data"]["has_more"] = True
         elif case == "fields":
@@ -304,6 +308,25 @@ def test_response_integrity_failures_stop_probe(
         monkeypatch.setattr(lite, "MAX_RESPONSE_BYTES", 64)
     with pytest.raises(lite.LiteError, match=message):
         run_probe(tmp_path, FakeTransport(make_dataset(), override))
+
+
+def test_zero_count_sentinel_is_accepted_and_recorded_for_nonempty_single_pages(tmp_path: Path) -> None:
+    def zero_count(_spec: lite.CallSpec, response: lite.TransportResponse) -> lite.TransportResponse:
+        value = json.loads(response.body)
+        value["data"]["count"] = 0
+        return lite.TransportResponse(200, json.dumps(value).encode())
+
+    transport = FakeTransport(make_dataset(), zero_count)
+    run_root = run_probe(tmp_path, transport)
+    derived = run_build(run_root, transport)
+    summary = json.loads((run_root / "run-summary.json").read_text())
+
+    assert derived.is_dir()
+    assert summary["probe_pass"] is summary["build_pass"] is True
+    assert len(summary["response_anomalies"]) == 34
+    assert {item["kind"] for item in summary["response_anomalies"]} == {"unknown_zero_count_sentinel"}
+    assert summary["calls"][0]["provider_count"] == 0
+    assert summary["calls"][0]["count_mode"] == "unknown_zero_sentinel"
 
 
 def test_classification_must_match_all_31_codes_and_names(tmp_path: Path) -> None:

@@ -24,7 +24,9 @@ python scripts/build_m4_frame_lite.py build \
 
 `probe` makes five calls. A successful `build` revalidates those saved responses and makes only the other 30 industry
 member calls, so the complete run uses 35 provider requests. Calls are serial with a minimum 1.3-second start interval;
-there is no automatic retry. Any provider, HTTP, schema, truncation, mapping, or sampling-cell failure stops the run.
+there is no automatic retry. A nonempty response may use provider `count=0` as an unknown-count sentinel only when
+`has_more=false`; the run summary records that anomaly. Positive count mismatches, a zero sentinel without explicit
+`has_more=false`, and all other provider, HTTP, schema, truncation, mapping, or sampling-cell failures stop the run.
 
 The run directory is mode `0700`. Successful builds atomically publish `derived/frame.csv`, `derived/sample.csv`, and
 `derived/excluded.csv`; failed builds retain captured raw responses and a failure summary but publish no `derived/`.
