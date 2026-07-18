@@ -6,7 +6,8 @@
 
 - 从当前树退役 v1.3.2 的 authorization、freeze、golden、oracle、attestation 和多角色审批实现；更早的 v1.3.1 实现与全部 Git 历史保持可恢复。
 - 记录一次非 v1.3.2-compliant 的 `index_classify` 直连探测：HTTP 200、provider code 0、31 rows，未持久化原始响应，不能作为 frame 或治理证据。
-- M4 改走隔离的轻量 frame/sample 路径；本次退役不代表进入 MILESTONE-005 或生产采用。
+- 新增隔离的轻量 frame/sample builder：probe 5 次、复用 probe 后仅补采 30 个行业，严格响应完整性、A 股资格、12-cell 确定性抽样、token 扫描和原子派生发布；新增 33 项定向测试，全仓 `811 passed`。
+- 13:31 的首次真实轻量 probe 在第 1 次 `index_classify` 因 provider `count=0` 与 31 rows 不一致而 fail-closed；仅发出 1 次请求，无重试、build、frame/sample 或生产副作用。
 
 ## 2026-07-17 — MILESTONE-004 segmented REST v1.3.1
 
