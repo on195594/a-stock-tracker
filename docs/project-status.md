@@ -7,6 +7,8 @@
 
 主业务仍处于 **Phase 6 report-only 观察**，Framework B 不得生产写入；Phase 5 L3 v2 已完成 QFQ 生产接入和 Telegram 主推切换。定性评分 v2 M4 v1.1 acquisition route 已关闭，v1.2 Tushare capability probe 已完整执行但 FAIL。v1.3.2 no-stock-ST 协议、v3 schema、golden/oracle 和隔离离线实现已由外部 attestation 冻结，但本阶段未创建授权、未执行真实请求、未组装 frame/sample；因此仍无合格 frame，MILESTONE-005 继续阻断。
 
+2026-07-18 M4 v1.3.2 capability 外部审批包草案已准备并以独立 packet checksum 绑定：提出 fresh authorization/attempt IDs、`2026-07-17` probe date、`2026-07-20 18:00–20:00 +08:00` 窗口、35-call v3 边界、角色、路径、quota/cost/terms 门禁和 name-only ST 残余风险接受条款。fresh external approver 身份、当前账户侧四类 API entitlement 与剩余额度证据仍为 blocking pending；材料不是 authorization，未生成 JSON/sidecar、未读取 token、未联网或执行 provider。窗口过期前未获得完整 APPROVE 时必须另建新 IDs/路径/窗口的 packet。
+
 2026-07-17 M4 v1.3.1 工程实现：v1.3 `0ad8c6…a12df` 历史字节不变；v2 authorization/artifact schemas、36/2 精确矩阵、父 supervisor deadline、attempt 外 phase journal、raw-first publication、exact-number gates/ledger、date failure nullable evidence、candidate/post-publication 双复验、五文件 generator closure 和 legacy rejection guard 已落地。当前仅有无 token/无 socket 合成执行证据，没有真实 authorization 或 Tushare attempt。
 
 2026-07-17 M4 v1.3.1 capability 外部审批包已准备：审批请求列明精确 36-call 上限、既往 `40203` 风险、固定协议/hash、单次无重试边界、数据暴露和结果处置；另提供未签署 decision template。材料本身不构成授权，仍待外部审批者确定 approver/publisher/operator、唯一 IDs、probe trade date、`+08:00` 窗口和发布路径后签署；当前仍不得生成 canonical authorization、读取 token 或执行请求。

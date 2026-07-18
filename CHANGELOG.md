@@ -2,6 +2,13 @@
 
 所有重大变更按时间倒序记录。
 
+## 2026-07-18 — MILESTONE-004 v1.3.2 capability approval draft
+
+- 起草未签署、不可执行的外部审批请求、历史/用户事实输入记录和 fresh external decision template；以独立 packet checksum 绑定三份草案字节，不生成 capability authorization JSON 或 authorization sidecar。
+- 提出 fresh IDs、`2026-07-17` probe trade date、`2026-07-20 18:00–20:00 +08:00` 执行窗口及规范化目标路径；固定 v3 schema、35-call 上限、四类 API entitlement/quota/cost/terms 门禁、单次无重试和 PASS/FAIL 后续处置。
+- 明确 v1.3.1 的 `stock_st`/3000-point blocker 不再属于 v1.3.2 矩阵，同时要求外部 approver 显式接受 name-only `ST|*ST` 无法识别名称未标记风险警示股的残余风险。
+- 草案验收通过：packet checksum、freeze attestation、双 golden oracle、proposed matrix/window/path 检查及 v1.3.2 directed 148 项测试。外部 approver、当前账户侧 entitlement/剩余额度证据仍 pending；未读取 token、联网、执行 provider 或创建 attempt/control artifacts。
+
 ## 2026-07-17 — MILESTONE-004 segmented REST v1.3.2 frozen
 
 - 以 `f494c1…88042` v1.3.1 为直接前驱冻结完整 v1.3.2 协议，frame/date 矩阵为 35/2；删除独立 `stock_st` 请求、parser、gate 和 ledger source，daily 固定为 ordinal 35。
