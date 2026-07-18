@@ -67,6 +67,22 @@ quality has been evaluated, `collection_protocol_frozen=false` and `protocol_fre
 
 ## Next bounded evidence-quality pilot
 
+The zero-call authorization proposal is now implemented and validated. It is **not sealed or executable until the
+exact proposal SHA is approved**:
+
+- authorization ID: `m5-evidence-quality-pilot-20260719-01`;
+- proposed authorization SHA-256: `c565f6bf8af84d057f250c99faef5ab5aab9dffa58b95251189f06c7ba21801e`;
+- pilot run ID: `m5-evidence-quality-pilot-20260720-01`;
+- capability report SHA-256: `792743898f6805599f17b99061588eb1dab5d08d02d765b317a676be0ebca6fc`;
+- evidence window: `2025-07-18` through the frozen `2026-07-17` as-of date;
+- execution dates: `2026-07-20`, `2026-07-21`, and `2026-07-22` (one attempt per operation per local date);
+- exact query-matrix SHA-256: `6b0edfcd5526bf1506f3db2c8633cde820801e66087dbcddc012201fe8447f85`.
+
+The proposal validator parses the capability report rather than trusting a self-asserted flag. It requires CNINFO
+transport `available`, full-text semantics `demonstrated`, evidence quality `not_evaluated`, the route to be eligible,
+the global capability gate to remain open, and all external-call counters to be zero. Both the report content and its
+exact SHA are bound into the proposal.
+
 Before freezing the 36-company collection protocol, prepare a separate, exact authorization for this small pilot:
 
 - source: CNINFO only, because it is the only currently demonstrated route;
@@ -79,6 +95,10 @@ Before freezing the 36-company collection protocol, prepare a separate, exact au
 - maximum logical HTTP attempts: 18 query attempts plus 54 document attempts = 72;
 - same verified HTTPS, same-origin redirect, provenance, raw-byte hash, and create-only artifact rules;
 - no production database, Reviewer, Claude, Gemini, Telegram, pipeline, or cache access.
+
+The authorization permits only structural collection. It explicitly sets `semantic_quality_authorized=false` and
+`collection_protocol_frozen=false`; therefore even a structurally successful pilot cannot freeze the 36-company
+protocol or claim semantic evidence quality.
 
 The pilot report separates structural quality from semantic quality:
 

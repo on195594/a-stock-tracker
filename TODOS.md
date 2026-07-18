@@ -7,7 +7,7 @@ Phase 1-3.6 历史实施记录，不再作为后续计划来源。
 
 当前工作重心：
 
-1. **P1 定性评分 v2：** v1.2 离线 capability probe 已将传输、全文语义、证据质量拆分；CNINFO 是当前唯一已证明的官方全文路线，SSE/SZSE/CNIPA 为局部降级，证据质量仍未评估。下一动作是单独授权 6 股×1 查询、最多 18 文档的质量 pilot；完成后再冻结新采集协议和授权 SHA。
+1. **P1 定性评分 v2：** v1.2 离线 capability probe 已将传输、全文语义、证据质量拆分；CNINFO 是当前唯一已证明的官方全文路线，SSE/SZSE/CNIPA 为局部降级。六股结构质量 pilot 的零调用授权提案已生成，SHA 为 `c565f6bf8af84d057f250c99faef5ab5aab9dffa58b95251189f06c7ba21801e`，等待精确批准后封存和执行；语义质量仍需后续独立授权，完成后才能冻结新采集协议。
 2. **P2 L3 v2 选择性：** 2026-07-13/14 的 70 条 v2 记录全部为 pass，18/18 strong 每日均未被 L3 过滤；先在 report 中增加 v2 状态/门禁分布并积累 outcome，不据两天样本直接改规则。
 3. **P2 模型验证：** 基于已自然结案的 60d 数据，执行 Framework A 五分位 60d/90d 延伸评估；不据此顺手调权重。
 4. **P3 Phase 6：** Framework B 继续 report-only，等待 B label 30d 自然结案至 20 条；生产化必须另写实施计划并获得明确授权。
@@ -41,7 +41,7 @@ Phase 1-3.6 历史实施记录，不再作为后续计划来源。
 
 **Next：**
 
-1. 按 `docs/plans/2026-07-19-m5-source-capability-first-v1.2.md` 准备并批准 CNINFO 六公司轻量证据质量 pilot；不得据 capability PASS 推导证据质量 PASS。
+1. 审批 `reviews/milestone-005/v1.2-quality-pilot-authorization-proposal-2026-07-19.md` 中的精确 SHA，随后封存并执行 CNINFO 六公司轻量结构质量 pilot；不得据 capability PASS 或结构质量结果推导语义质量 PASS。
 2. pilot 完成并明确来源范围后冻结新采集协议/授权，重新开始 create-only data run；corpus 冻结后，以精确 corpus/bundle/prompt/command hash 申请 Reviewer A/B 执行授权，完成裁决和 coverage report。
 3. 八个 coverage layer 全部通过后构建 36 份真实 context，运行零凭证 `preview` 并冻结 real bundle SHA-256。
 4. 再以 exact sample/bundle/model/call/cost/credential/run-root 申请模型 Sprint 授权，依次执行 Claude blind reference、Gemini shadow 和 Claude support audit。
