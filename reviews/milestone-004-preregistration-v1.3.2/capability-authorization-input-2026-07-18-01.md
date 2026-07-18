@@ -76,4 +76,3 @@ material. A provider call is not authorized as an entitlement preflight.
 - No `.env`, token, credential store, `tracker.db`, or production log was read.
 - No network, Tushare/provider, pipeline/cron, Telegram, Gemini, Reviewer, or model call was made.
 - Frozen `P/K/G/C/M`, implementation files, review, and attestation were not modified.
-

@@ -188,4 +188,3 @@ After the approved single invocation, the operator removes `TUSHARE_TOKEN` and r
   escalate for a new protocol decision.
 
 No outcome advances directly to capture, assembly, Reviewer, production integration, or MILESTONE-005.
-
