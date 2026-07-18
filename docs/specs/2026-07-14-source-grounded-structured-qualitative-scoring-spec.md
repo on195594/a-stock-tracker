@@ -359,16 +359,16 @@ CREATE TABLE qualitative_score_evaluations (
 - **REQ-045:** Fixture-first 只能使用 synthetic 或人工整理的本地 evidence packet，可同时包含完整 positive 与各维度 `insufficient_data` cases；fixture 必须确定性、免凭证、无网络，并携带与未来真实 packet 完全相同的 taxonomy。
 - **REQ-046:** Fixture 结果只证明 parser/schema/validator/rubric 路径行为，不证明真实数据可得、事实正确或投资准确。
 - **REQ-047:** Real shadow 必须等待单独批准的 evidence source/provider，或带 provenance 的已批准静态 evidence dataset。真实证据缺失是 real-shadow blocker，不是 fixture-first blocker；不得为通过 real shadow 降低 moat/market_pos/sentiment 门槛。
-- **REQ-048:** 真实 shadow 属于付费外部调用和生产数据读取，执行前必须单独确认 provider/dataset、范围、股票样本、调用次数、凭证处理和输出位置；初始样本候选为按行业分层的 6 只代表股票。
+- **REQ-048:** 真实 shadow 属于付费外部调用和受控真实数据使用，执行前必须单独确认 provider/dataset、范围、股票样本、调用次数、凭证处理和输出位置；当前候选样本固定为 M4 产出的 36 股、六个 super-strata × low/high 的 12-cell sample，任一 layer 被排除时本次 M5 停止且不得替换股票。
 - **REQ-049:** v2 独立入口是优先的未来隔离 seam；确切文件、函数和 patch 位置由 implementation plan 基于当时代码决定，本 spec 不预先授权改生产入口。
-- **REQ-050:** 人工复核必须先在不知道 v1 分数和模型结果的情况下，基于同一 evidence packet 给出参考状态/评分，再比较 v2。
+- **REQ-050:** 单个独立 Claude reviewer 可以充当 `machine_blind_reference`，但必须先在看不到 Gemini 输出和 v1 分数的情况下，基于同一 evidence packet 给出参考状态/评分，再比较 Gemini。该参考不构成人工复核或独立投资判断；Claude 与 Gemini 可能共享模型偏差，报告必须显式保留这一限制。
 - **REQ-051:** Shadow pass gate：
   1. Schema validity = 100%。
   2. 未知 evidence ID 接受率 = 0%。
   3. 无依据事实数量 = 0。
   4. 所有证据不足 case 均 fail closed。
-  5. 对人工判定可评分的维度，至少 90% 落在人工参考分 ±1 内；样本不足时只能标记 provisional。
-- **REQ-052:** `provisional` 只能在后续获批 evaluation plan 预先定义并达到每维度最小可评分样本数、人工复核比例和行业覆盖，且扩展样本继续满足 REQ-051 后升级；具体样本门槛是 real-shadow plan 的待决策项，不能由运行后补定。通过 gate 仍不代表预测有效或自动批准 cutover。
+  5. 对 `machine_blind_reference` 判定可评分的维度，至少 90% 的 Gemini 分数落在参考分 ±1 内；样本不足时只能标记 provisional。该指标称为 `blind-reference agreement`，不得称为 human agreement。
+- **REQ-052:** `provisional` 只能在后续获批 evaluation plan 预先定义并达到每维度最小可评分样本数、blind-reference 覆盖和行业覆盖，且扩展样本继续满足 REQ-051 后升级；具体样本门槛必须在 real-shadow plan 中预先确定，不能由运行后补定。通过 gate 仍不代表人工确认、预测有效或自动批准 cutover。
 
 ### 7.7 生产切换与后验评估
 
@@ -587,7 +587,8 @@ Maps to: REQ-047~052, REQ-060, REQ-064, AC-006, AC-008, AC-012
 
 Outcome:
 - 只有批准的 provider 或带 provenance 静态数据集就绪、且 MILESTONE-004 覆盖率摸底已完成后，才可按获批样本运行固定次数 shadow。
-- 生成结构、证据、rubric agreement 报告，并按 REQ-060 分层暴露选择性偏差。
+- 单个独立 Claude reviewer 可按 REQ-050 先封存 `machine_blind_reference`；Gemini 完成后再由 Claude 执行揭盲的 evidence-support audit。
+- 生成结构、证据、blind-reference agreement 报告，并按 REQ-060 分层暴露选择性偏差；不得宣称 human agreement 或独立投资判断。
 
 Non-scope:
 - 不进入 `score_stock()`，不触发 Telegram。
@@ -687,17 +688,17 @@ Spec-only 阶段只允许人工撤销本 Spec 的本次 patch，不得触碰其�
 1. **真实 evidence source**：直接竞争优势、行业地位和 sentiment 后续使用可审计 provider，还是批准带 provenance 的静态 dataset？Fixture-first 不需要此决定。按 REQ-065，本问题分两步拍板：先只批准候选 provider/dataset 进入 MILESTONE-004 的"审计授权"（allowed to be probed），据此产出分层覆盖率数据；再基于覆盖率数据决定是否将其升级为 REQ-012/047 所需的最终"生产/real-shadow 数据授权"。这避免了"先定来源才能审计，又靠审计决定来源"的循环——审计授权门槛低于生产授权，可以先给一个或多个候选来源发放审计授权。
 2. **sentiment 数据边界**：项目路线图当前不建设独立舆情层；real shadow 是否批准静态 evidence dataset，或继续让真实 sentiment unavailable？REQ-061 的 `persistence_horizon` 字段假设未来证据来源能标注事件影响持续期，若批准的来源无法可靠提供该字段，需要重新评估本问题。
 3. **Shadow 存储**：已决定 MILESTONE-003 先使用 git-ignored JSONL artifact；未批准 SQLite evaluation 表或任何生产 DB schema 变更。
-4. **真实 shadow 计划**：6 只股票 × 单次调用是否只作 provisional 首轮，以及升级 gate 的每维度样本数、人工复核比例和行业覆盖是多少？
+4. **真实 shadow 计划**：获批样本是否只作 provisional 首轮，以及升级 gate 的每维度样本数、blind-reference 覆盖和行业覆盖是多少？
 5. **生产 cache 策略**：未来 cutover plan 是否采用优先候选的新版本表，还是提出充分理由 ALTER legacy 表？
 6. **生产适用范围**：若 sentiment 长期 unavailable，是否继续 all-or-nothing，还是另写 spec 将其移出 LLM 职责？本 spec 不允许静默放宽。
 
 ## 16. Approval state
 
 - Spec approval: **approved (2026-07-14，含07-14两轮codex方法论复核后的修订)**
-- Implementation approval: **MILESTONE-002 approved 2026-07-14 and completed；MILESTONE-003 file-artifact seam approved and completed 2026-07-15；MILESTONE-004 v1.1 preregistration/offline toolchain completed 2026-07-15；M4 static-input frame/sample/corpus execution authorized 2026-07-15；Tushare、AKShare、AKShare+direct SZSE HTTPS one-time exports all failed closed before publication, so dataset provenance remains blocked；real Reviewer execution remains pending separate authorization**——不隐含 MILESTONE-005~006 的授权（REQ-058）。
+- Implementation approval: **MILESTONE-002 approved 2026-07-14 and completed；MILESTONE-003 file-artifact seam approved and completed 2026-07-15；M4 轻量 frame/sample 已于 2026-07-18 生成 4,694 行 frame 与固定 36 股 sample；M4 evidence-feasibility coverage report 和真实 evidence bundle 尚未完成；M5 fixture-first synthetic 编排已实现，但真实 bundle 构建、Claude/Gemini 执行与 production 均待分别授权**——不隐含 MILESTONE-005 real execution 或 MILESTONE-006 的授权（REQ-058）。
 - Production DB schema approval: pending
 - Controlled Gemini contract smoke approval: **approved and passed 2026-07-15**（空 evidence packet，Gemini 2.5 Flash，`VALID_INSUFFICIENT_DATA`）；这不是 MILESTONE-005 真实证据 shadow。
-- Real evidence Gemini shadow approval: pending the frozen MILESTONE-004 coverage report and separate MILESTONE-005 provider、样本、调用次数和人工复核协议。
+- Real evidence Gemini shadow approval: pending the frozen MILESTONE-004 coverage report and separate MILESTONE-005 provider、样本、调用次数、machine-blind-reference 协议、完整 Claude 模型 ID 与成本/凭证批准。
 - Production cutover approval: pending
 
 本 spec 是开发契约草案，不构成任何生产、数据库、付费调用、cron、Telegram 或权重修改授权。

@@ -22,6 +22,7 @@ A 股选股与方法论验证项目。当前定位是 **Framework A 定量评分
 - Outcome 追踪：记录 30/60/90 天收益、沪深 300 benchmark 和 generated `alpha_*d`。
 - L3 买点层：v1 保留用于历史审计；生产 daily 优先读取 QFQ 日线计算 `l3_v2_signal`，Telegram 主推已切换到 v2。
 - 定性评分 v2：MILESTONE-002 合同、MILESTONE-003 文件型 shadow seam 已完成；M4 v1.3.2 的 authorization、freeze、golden、oracle、attestation 和多角色审批实现已退役，仍可从 Git 历史恢复；轻量 builder 已完成本地 frame/sample，但未接 Reviewer、生产 DB、pipeline、cron、Telegram 或 Gemini。
+- M5 fixture-first：已提供固定 36 股 sample 的 synthetic bundle 校验、批量 blind-reference/shadow/support-audit 编排和聚合 gate；当前执行仅使用无凭证 fake transport，真实 bundle 构建与外部调用仍待分别批准。
 - Telegram 推送：日报分为主推、候补和雷达；只有强分且 L3 v2 通过的股票进入主推，发送失败不阻断 daily。
 - Google Sheets 同步：展示层能力，失败只记录 warning，不是数据真相来源。
 - 数据治理：`docs/data-source-registry.yaml` 记录字段来源、缓存、刷新、fallback 和失败语义。
@@ -88,6 +89,11 @@ python3 scripts/run_qualitative_v2_shadow.py \
   --legacy-scores path/to/legacy-scores.json \
   --output artifacts/qualitative_v2_shadow.jsonl \
   --execute
+
+# M5 synthetic bundle 只读预检（不读取 .env、不创建 artifact）
+python3 scripts/run_qualitative_v2_m5.py preview \
+  --sample tests/fixtures/milestone005/sample.csv \
+  --bundle path/to/synthetic/bundle-manifest.json
 
 # 删除某只股票的本地历史数据
 python3 pipeline.py remove 601857

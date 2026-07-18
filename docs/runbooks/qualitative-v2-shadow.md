@@ -4,7 +4,7 @@
 
 This entrypoint evaluates an already-approved `QualitativeContext` without changing production scoring. It does not import `pipeline.py`, read or write `tracker.db`, update `qualitative_scores` or `predictions`, send Telegram messages, or change cron.
 
-MILESTONE-003 authorizes the file-artifact seam only. MILESTONE-004 v1.1 preregistration and the offline audit toolchain are implemented. Seven one-time frame exports stopped fail-closed before publication. A 2026-07-15 SZSE snapshot is sealed with provenance and a historical hybrid exporter is ready; its 13:34 request returned 5,525 Tushare rows but exposed `count=0` as an unknown-count sentinel before SWS collection. The compatible fail-closed parser is now covered offline. Reviewer execution remains unauthorized, and no coverage report exists. Real company shadow remains blocked until MILESTONE-004 produces a frozen, adjudicated report and MILESTONE-005 separately approves the provider/dataset, sample, call count, output location, and blind human review protocol.
+MILESTONE-003 authorizes the file-artifact seam only. MILESTONE-004 has produced the fixed 36-company frame/sample, but the evidence-feasibility coverage report is not complete. M5 fixture-first batch orchestration is implemented with synthetic evidence and fake transports only; see [`qualitative-v2-m5-fixture-first.md`](qualitative-v2-m5-fixture-first.md). Real company shadow remains blocked until MILESTONE-004 produces the coverage report, all failed layers are re-audited or excluded (exclusion stops this 36-company M5 sample), sources receive separate approval, a final static bundle is built, and external execution receives separate authorization.
 
 ## Input contract
 
@@ -62,4 +62,4 @@ Stop and do not rerun with relaxed validation if any of these occurs:
 - local validation reports schema, evidence, or semantic invalidity;
 - the artifact is corrupt or exceeds its size limit;
 - any code path attempts to touch production DB, pipeline, cron, Telegram, weights, or historical predictions;
-- the MILESTONE-004 coverage report and user scope disposition are absent, or the real-company run has not received the separate MILESTONE-005 approval.
+- the MILESTONE-004 coverage report and source approval are absent, or the real-company run has not received the separate MILESTONE-005 exact-model/budget/credential approval.
