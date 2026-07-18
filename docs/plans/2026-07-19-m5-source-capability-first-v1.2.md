@@ -67,8 +67,8 @@ quality has been evaluated, `collection_protocol_frozen=false` and `protocol_fre
 
 ## Next bounded evidence-quality pilot
 
-The zero-call authorization proposal is now implemented and validated. It is **not sealed or executable until the
-exact proposal SHA is approved**:
+The zero-call authorization proposal is implemented, validated, **approved at its exact SHA, and sealed**. Network
+execution remains fail-closed until the first authorized local date:
 
 - authorization ID: `m5-evidence-quality-pilot-20260719-01`;
 - proposed authorization SHA-256: `c565f6bf8af84d057f250c99faef5ab5aab9dffa58b95251189f06c7ba21801e`;

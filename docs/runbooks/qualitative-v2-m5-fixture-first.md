@@ -127,6 +127,35 @@ zero external calls. The report never promotes transport success into full-text 
 source failure is source-local when another official full-text route exists; collection still requires a bounded
 quality pilot and a new user-approved protocol.
 
+For the approved v1.2 structural-quality pilot, validate the sealed boundary before the execution window:
+
+```bash
+.venv/bin/python scripts/prepare_qualitative_v2_m5_quality_pilot.py preflight \
+  --sample tests/fixtures/milestone005/sample.csv \
+  --capability-report artifacts/milestone-005/data/m5-data-20260719-01/capability-probe-v1.2/report.json \
+  --authorization reviews/milestone-005/m5-evidence-quality-pilot-20260719-01.json \
+  --checksum reviews/milestone-005/m5-evidence-quality-pilot-20260719-01.sha256 \
+  --require-active
+```
+
+On one of the exact authorized local dates (`2026-07-20`, `2026-07-21`, `2026-07-22`), execute at most one attempt
+per pending operation:
+
+```bash
+.venv/bin/python scripts/run_qualitative_v2_m5_quality_pilot.py \
+  --sample tests/fixtures/milestone005/sample.csv \
+  --capability-report artifacts/milestone-005/data/m5-data-20260719-01/capability-probe-v1.2/report.json \
+  --authorization reviews/milestone-005/m5-evidence-quality-pilot-20260719-01.json \
+  --checksum reviews/milestone-005/m5-evidence-quality-pilot-20260719-01.sha256 \
+  --execute-network
+```
+
+`PROVISIONAL` permits only the next authorized-date attempt. `COMPLETE`, `FAIL`, an existing same-day attempt, input
+drift, or an expired window is terminal. To verify a terminal report without external access, replace
+`--execute-network` with `--verify-report`. Verification rebuilds the report from the canonical attempt-manifest chain,
+re-hashes every raw response, and compares the result with the report and checksum. This pilot evaluates structural
+quality only and cannot authorize semantic review or freeze the 36-company protocol.
+
 ## Offline real-bundle builder
 
 After source approval, all eight M4 coverage rows pass, and the 36 contexts/documents have been staged, build the final
