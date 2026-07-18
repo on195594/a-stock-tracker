@@ -1,6 +1,6 @@
 # M5 two-sprint execution control
 
-Status: **in progress; awaiting bounded data-source authorization**
+Status: **D1 stopped on source-capability drift; revised protocol/authorization required**
 
 Owner: user + codex
 
@@ -29,13 +29,13 @@ gates.
 | Frame | 4,694 eligible rows | M4 lightweight Run 4 |
 | Coverage report | not generated | blocking |
 | Real bundle SHA-256 | not generated | blocking |
-| M5 implementation | orchestration, offline bundle builder, D1 preflight, and read-only fundamentals snapshot builder complete | local implementation; 866-test baseline |
+| M5 implementation | orchestration, offline bundle builder, D1 preflight, read-only fundamentals snapshot, and official-front-door capture complete | local implementation; D1 execution record below |
 
 The sample hash identifies sample/frame metadata only. It is not a coverage, corpus, context, or bundle hash.
 
 ## Sprint 1 — data readiness
 
-### D1. Bounded source authorization — pending user approval
+### D1. Bounded source authorization — approved, executed, and stopped
 
 A zero-call machine preview now freezes this proposal as:
 
@@ -45,10 +45,17 @@ A zero-call machine preview now freezes this proposal as:
 - authorization SHA-256: `93c471fb070376d7d2004b5df8898fc7c7628658c8a82906be9242f847dc0cf1`;
 - search-matrix SHA-256: `46e82996ecb2a6760f4aad31555487f8154ce2459d248182dc06a1d978a81463`.
 
-The authorization and checksum remain unsealed until the user approves that exact proposal. Preview validation reads
-only the fixed sample and frozen protocol; it performs zero network/model/database calls and creates no artifact.
-The authorization-bound fundamentals snapshot CLI is implemented and tested only against temporary SQLite fixtures;
-the real `tracker.db` remains unopened until approval, seal, and active preflight.
+The user approved the exact authorization SHA-256. It was sealed at
+`reviews/milestone-005/m5-data-readiness-20260718-01.{json,sha256}`; execution waited for the real window and passed
+active preflight. The one authorized read-only fundamentals transaction completed with 36 `missing` rows and emitted
+no metric values.
+
+The 2026-07-19 D-date source capture consumed six official HTTPS attempts. CNINFO and SSE front pages and their exact
+query-controller scripts were frozen; SZSE had a transport error and CNIPA returned HTTP 412. Offline inspection of the
+frozen SSE controller found only the `TITLE` request parameter: `只看公告正文` is removed before the request and changes
+client-side main-announcement presentation, not the server-side keyword scope. Because v1.1 requires the keyword to
+apply to announcement content, the run stopped on source-capability ambiguity before batch queries. See
+`reviews/milestone-005/d1-day0-execution-2026-07-19.md`.
 
 The proposed authorization is limited to the frozen 36-company sample and `as_of_date=2026-07-17`:
 
@@ -114,14 +121,8 @@ not resumed. PASS or PROVISIONAL remains research-only and does not authorize M6
 
 ## Current next action
 
-The next executable action is D1. A concise approval response is sufficient:
-
-> 批准 `m5-data-readiness-20260718-01`，按本文件 D1 的来源、36 股、日期、只读数据库和隔离边界执行。
-
-This response approves authorization SHA-256
-`93c471fb070376d7d2004b5df8898fc7c7628658c8a82906be9242f847dc0cf1`, including the explicit `4,536` extreme HTTP
-attempt ceiling and `8 GiB` artifact ceiling. If approval arrives outside the frozen window, do not silently extend it;
-prepare a new proposal and SHA-256.
-
-Without that approval, the repository can validate synthetic fixtures and existing hashes but cannot manufacture the
-missing real corpus, coverage report, or bundle.
+Do not retry or relax the stopped run in place. Revise the evidence-feasibility protocol so each exchange source has a
+machine-verifiable, current official full-text capability or explicitly preregister a narrower title-only estimand and
+recalculate the coverage interpretation. The revision must also decide whether an HTTP-412 CNIPA UI can be accessed by
+an approved browser transport without exceeding the request/credential boundary. Freeze the new protocol, prepare a
+new authorization/data-run ID and SHA-256, and obtain user approval before any further source call.

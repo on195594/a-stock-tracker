@@ -72,6 +72,37 @@ and checks the main database file identity before/after. Missing rows and unusab
 recorded explicitly and emit no evidence values. The create-only snapshot is mode `0600` under a `0700` data-run root.
 Tests use a temporary SQLite fixture; implementation and test verification do not open the real database.
 
+Record the frozen official front doors once per allowed local date:
+
+```bash
+.venv/bin/python scripts/capture_qualitative_v2_m5_source_frontdoors.py \
+  --sample artifacts/milestone-004/lite/20260718T151349602626+0800-8e319618/derived/sample.csv \
+  --authorization reviews/milestone-005/<authorization>.json \
+  --checksum reviews/milestone-005/<authorization>.sha256 \
+  --execute-network
+```
+
+The capture uses only the four frozen official HTTPS front pages, verified TLS, exact-host redirects, a 60-second
+timeout, and the 64 MiB response ceiling. It writes one create-only date root and records successful raw bytes or a
+sanitized technical error; rerunning the same date is rejected before a request. Actual requests are charged to the
+authorization's search HTTP budget.
+
+If successful pages explicitly reference the frozen CNINFO/SSE query-controller assets, capture those exact assets and
+bind them to the front-door manifest:
+
+```bash
+.venv/bin/python scripts/capture_qualitative_v2_m5_source_ui_assets.py \
+  --sample artifacts/milestone-004/lite/20260718T151349602626+0800-8e319618/derived/sample.csv \
+  --authorization reviews/milestone-005/<authorization>.json \
+  --checksum reviews/milestone-005/<authorization>.sha256 \
+  --execute-network
+```
+
+The asset stage re-hashes the parent manifest and front-page bytes and proves each asset URL appears in its official
+parent page before making a request. A missing full-text control, changed source semantics, or unavailable front door
+is a protocol stop condition; the operator must not substitute a title-only endpoint, search engine, or alternate
+source.
+
 ## Offline real-bundle builder
 
 After source approval, all eight M4 coverage rows pass, and the 36 contexts/documents have been staged, build the final

@@ -7,7 +7,7 @@ Phase 1-3.6 历史实施记录，不再作为后续计划来源。
 
 当前工作重心：
 
-1. **P1 定性评分 v2：** 按 `docs/plans/2026-07-18-m5-two-sprint-execution.md` 推进“数据就绪 Sprint + 模型执行 Sprint”。M4 轻量 builder 已冻结 4,694 行 frame 和 36 股 sample；当前只缺真实 corpus/coverage、source approval 和 real bundle。下一动作是批准该计划 D1 的固定 36 股官方来源采集；coverage 全层通过并冻结 bundle SHA 后，才申请一次精确模型执行授权。
+1. **P1 定性评分 v2：** D1 精确授权已执行，但在批量查询前因 SSE 全文能力合同漂移停止；SZSE/CNIPA 首次前门请求也分别为传输错误/HTTP 412。下一动作是修订并冻结来源协议、生成新的授权 SHA，而不是在原 run 内重试或降级；coverage 全层通过并冻结 bundle SHA 后，才申请模型执行授权。
 2. **P2 L3 v2 选择性：** 2026-07-13/14 的 70 条 v2 记录全部为 pass，18/18 strong 每日均未被 L3 过滤；先在 report 中增加 v2 状态/门禁分布并积累 outcome，不据两天样本直接改规则。
 3. **P2 模型验证：** 基于已自然结案的 60d 数据，执行 Framework A 五分位 60d/90d 延伸评估；不据此顺手调权重。
 4. **P3 Phase 6：** Framework B 继续 report-only，等待 B label 30d 自然结案至 20 条；生产化必须另写实施计划并获得明确授权。
@@ -41,12 +41,12 @@ Phase 1-3.6 历史实施记录，不再作为后续计划来源。
 
 **Next：**
 
-1. 获批 SHA `93c471…c0cf1` 的 `m5-data-readiness-20260718-01` 后，先 seal + active preflight，再仅对固定 36 股构建 CNINFO、SSE/SZSE、CNIPA 官方静态 corpus，并按批准范围生成本地基本面只读快照。
-2. corpus 冻结后，以精确 corpus/bundle/prompt/command hash 申请一次 Reviewer A/B 执行授权，完成裁决和 coverage report。
+1. 以 `reviews/milestone-005/d1-day0-execution-2026-07-19.md` 为证据修订来源协议：明确 SSE/SZSE 可验证的全文语义与 CNIPA HTTP-412 浏览器边界，冻结新版本并生成新的授权 SHA。
+2. 新授权获批后重新开始 create-only data run；corpus 冻结后，以精确 corpus/bundle/prompt/command hash 申请一次 Reviewer A/B 执行授权，完成裁决和 coverage report。
 3. 八个 coverage layer 全部通过后构建 36 份真实 context，运行零凭证 `preview` 并冻结 real bundle SHA-256。
 4. 再以 exact sample/bundle/model/call/cost/credential/run-root 申请模型 Sprint 授权，依次执行 Claude blind reference、Gemini shadow 和 Claude support audit。
 
-**边界：** 当前 M5 CLI 只能执行 synthetic transport。D1 尚未批准，旧 live 授权均已消费；不得据本 TODO 调用来源、Reviewer、Claude 或 Gemini。生产 cache/schema、pipeline、cron、Telegram、权重、M6 和 cutover 始终不在两 Sprint 授权内。
+**边界：** 当前 M5 模型 CLI 仍只能执行 synthetic transport。D1 已批准但 run 已因来源能力漂移停止；不得据本 TODO 继续调用来源、Reviewer、Claude 或 Gemini。生产 cache/schema、pipeline、cron、Telegram、权重、M6 和 cutover 始终不在两 Sprint 授权内。
 
 ## L3 v2 qfq 覆盖修复（2026-07-12 已完成）
 
