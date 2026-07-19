@@ -19,7 +19,7 @@ from qualitative_v2_client import (
     call_gemini,
 )
 from qualitative_v2_contract import DIMENSION_NAMES, SCORE_RANGES
-from qualitative_v2_types import QualitativeContext
+from qualitative_v2_types import Evidence, QualitativeContext
 from qualitative_v2_validator import validate_context
 
 ARTIFACT_MAX_BYTES = 67_108_864
@@ -51,8 +51,21 @@ def _canonical_json(value: object) -> str:
 
 
 def _context_payload(context: QualitativeContext) -> dict[str, object]:
+    def evidence_payload(item: Evidence) -> dict[str, object]:
+        payload = item.canonical_dict()
+        if payload["state_type"] is None:
+            payload.pop("state_type")
+            payload.pop("effective_until")
+        elif payload["state_type"] == "event" and payload["effective_until"] is None:
+            payload.pop("effective_until")
+        if payload["persistence_horizon"] is None:
+            payload.pop("persistence_horizon")
+        if payload["materiality"] is None:
+            payload.pop("materiality")
+        return payload
+
     evidence = sorted(
-        (item.canonical_dict() for item in context.evidence),
+        (evidence_payload(item) for item in context.evidence),
         key=_canonical_json,
     )
     return {

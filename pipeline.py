@@ -63,6 +63,7 @@ from lib.market_data import (
     get_market_data_backfill_provider,
 )
 from gemini_scorer import get_qualitative_score
+from qualitative_v2_production import get_production_qualitative_score
 from scorer import (
     SUPPORTED_FRAMEWORKS,
     InsufficientDataError,
@@ -467,8 +468,15 @@ def cmd_daily() -> None:
                     else:
                         logger.debug(f"  {code} 无法计算实时PB分位（bps/hist缺失），使用缓存值")
 
-                # 注入 Gemini 定性评分（覆盖 phase1_fixed，失败自动 fallback）
-                qual = get_qualitative_score(code, name)
+                # v2 仅消费预先验证并写入独立表的结果；off/非 canary/缺数/损坏
+                # 均逐股回退既有 v1，不在 daily 内新增外部调用类型。
+                qual = get_production_qualitative_score(
+                    db,
+                    code,
+                    name,
+                    canary_codes=config.QUALITATIVE_V2_CANARY_CODES,
+                    legacy_getter=get_qualitative_score,
+                )
                 data["moat_fixed"] = qual["moat"]
                 data["market_pos_fixed"] = qual["market_pos"]
                 data["sentiment_fixed"] = qual["sentiment"]

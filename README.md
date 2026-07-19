@@ -90,6 +90,11 @@ python3 scripts/run_qualitative_v2_shadow.py \
   --output artifacts/qualitative_v2_shadow.jsonl \
   --execute
 
+# 生产 Fast Lane：先对真实 watchlist canary 做零凭证/零 artifact 预检
+python3 scripts/run_qualitative_v2_production.py preview \
+  --contexts path/to/exact-five-contexts \
+  --scope canary
+
 # M5 synthetic bundle 只读预检（不读取 .env、不创建 artifact）
 python3 scripts/run_qualitative_v2_m5.py preview \
   --sample tests/fixtures/milestone005/sample.csv \

@@ -189,6 +189,26 @@ def get_db() -> sqlite3.Connection:
         PRIMARY KEY (code, scored_date)
     )""")
 
+    # v2 与 legacy qualitative_scores 物理隔离。context/result 原文用于每次读取时
+    # 重新执行合同校验，避免只信任冗余分数字段或曾经通过的写入。
+    conn.execute("""CREATE TABLE IF NOT EXISTS qualitative_scores_v2 (
+        code          TEXT NOT NULL,
+        name          TEXT NOT NULL,
+        as_of_date    TEXT NOT NULL,
+        input_hash    TEXT NOT NULL,
+        model         TEXT NOT NULL,
+        overall_status TEXT NOT NULL CHECK (overall_status IN ('scored', 'insufficient_data')),
+        moat          INTEGER,
+        market_pos    INTEGER,
+        sentiment     INTEGER,
+        context_json  TEXT NOT NULL,
+        result_json   TEXT NOT NULL,
+        scored_at     TEXT NOT NULL,
+        PRIMARY KEY (code, as_of_date, input_hash, model)
+    )""")
+    conn.execute("""CREATE INDEX IF NOT EXISTS idx_qualitative_scores_v2_latest
+        ON qualitative_scores_v2(code, as_of_date DESC, scored_at DESC)""")
+
     # 兼容旧库：qualitative_scores 曾经用 code 单列主键，无法支持漂移检测。
     pk_cols = conn.execute("SELECT COUNT(*) FROM pragma_table_info('qualitative_scores') WHERE pk > 0").fetchone()[0]
     if pk_cols == 1:

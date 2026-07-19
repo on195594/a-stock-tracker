@@ -42,6 +42,10 @@ WATCHLIST: list[dict] = [
     {"code": "600785", "name": "新华百货"},
 ]
 
+# 定性评分 v2 生产开关。默认关闭；环境变量 QUALITATIVE_V2_MODE 仅接受
+# off/canary/on。canary 固定使用真实 watchlist 中跨行业的 5 只股票。
+QUALITATIVE_V2_CANARY_CODES: frozenset[str] = frozenset({"600036", "601088", "002594", "600941", "000963"})
+
 DB_PATH = os.path.expanduser("~/a-stock-tracker/tracker.db")
 LOG_DIR = os.path.expanduser("~/a-stock-tracker/logs/")
 WEIGHTS_PATH = os.path.join(os.path.dirname(__file__), "weights.json")
