@@ -701,6 +701,6 @@ Spec-only 阶段只允许人工撤销本 Spec 的本次 patch，不得触碰其�
 - Production DB schema approval: **现有独立 `qualitative_scores_v2` 表已随 canary 批准；hybrid 复用其 nullable 维度列，不新增 migration**
 - Controlled Gemini contract smoke approval: **approved and passed 2026-07-15**（空 evidence packet，Gemini 2.5 Flash，`VALID_INSUFFICIENT_DATA`）；这不是 MILESTONE-005 真实证据 shadow。
 - Real evidence Gemini shadow approval: pending the frozen MILESTONE-004 coverage report and separate MILESTONE-005 provider、样本、调用次数、machine-blind-reference 协议、完整 Claude 模型 ID 与成本/凭证批准。
-- Production cutover approval: **canary read path and dimension-level hybrid adapter approved；任何新的真实 Gemini run、全量 `on` 或历史回写仍须独立批准**
+- Production cutover approval: **canary read path and dimension-level hybrid adapter approved；603606 已于 2026-07-19 通过一次性授权完成 1 次 Gemini 调用并实际采用 hybrid；任何刷新、全量 `on` 或历史回写仍须独立批准**
 
 本 spec 只记录已明确批准的 canary/hybrid 边界；不构成任何新的付费调用、全量生产、历史数据库、cron、Telegram 或权重修改授权。

@@ -2,11 +2,11 @@
 
 ## 结论
 
-授权 `qualitative-v2-orient-cable-pilot-20260719-01` 已完成一次真实、受限、可回滚的生产闭环。603606 已加入 production canary 资格，但本次没有产生 v2 分数：近 30 天窗口缺少可证明持续性的 sentiment，采集器在读取 Gemini 凭证和发起模型调用前 fail closed，生产继续使用 v1。
+来源授权 `qualitative-v2-orient-cable-pilot-20260719-01` 完成 fail-closed 采集后，后续一次性授权 `qualitative-v2-orient-cable-hybrid-20260719-01` 已完成真实、受限、可回滚的 hybrid 生产闭环。603606 当前在 production canary 中使用 moat=7、market_pos=4 的 v2 分数；sentiment 因缺少近 30 天持续性证据而保持 v1。
 
-这次结果证明了传输、官方 PDF 全文提取、context 合同、逐股 fallback 和 off 回滚路径；不构成 v2 投资有效性或东方电缆定性评分通过的声明。
+这次结果证明了传输、官方 PDF 全文提取、context 合同、逐维 fallback 和 off 回滚路径；不构成 v2 投资有效性声明。
 
-## 授权与用量
+## 首次来源授权与用量
 
 - 标的：东方电缆（603606），仅此一股。
 - 截止日：2026-07-19；sentiment 窗口为 2026-06-19 至 2026-07-19。
@@ -19,7 +19,7 @@
 
 授权已在 `qualitative_v2_production_authorizations.json` 中退休，不能复用。剩余 1 次 HTTP attempt 不再执行。
 
-## 证据质量分层
+## 首次证据质量分层
 
 - 传输可用性：通过。CNINFO 官方 PDF、东方电缆公司简介/新闻页、CNINFO 全文查询均可形成带 hash 的响应记录。
 - 全文能力：通过。CNINFO 年报摘要 PDF 可由 pypdf 离线提取并通过本地 context validator。
@@ -34,15 +34,28 @@
 
 隔离 artifact：`artifacts/qualitative-v2-orient-cable/orient-cable-context-20260719-04/`。该目录被 Git 忽略，不进入源码提交。
 
-## 生产行为验证
+## 首次执行行为验证
 
 - `QUALITATIVE_V2_MODE=canary` 时，603606 属于 v2 eligible 集合；因为不存在合法 v2 scored 行，读取路径回退 v1。
 - `QUALITATIVE_V2_MODE=off` 时，603606 无条件使用 v1。
 - 执行 `score --execute` 时，缺失 sentiment 在创建 Gemini artifact、打开写数据库或调用 Gemini 之前被阻断。
 - 授权退休后重复运行，在创建 artifact、读取数据库或发起网络前被拒绝。
 
-## 后续条件
+## 路线 2 决定
 
 2026-07-19 后续采用路线 2：不放宽 sentiment 合同，改为维度级 `hybrid_v2`。离线复验已确认收紧后的规则能从已封存 PDF 的第 5 页定位公司特定研发生产能力、从第 3 页定位公司特定行业地位；sentiment 继续为 `insufficient_data`。该候选 context 通过本地 validator，input SHA-256 为 `299efe53f541c8ca4f0165c4276607c00bcc5a4ada09466528456ba3b14d6b1f`。生产适配器可保存已评分的 moat/market_pos，并仅让 sentiment 回退 v1。
 
-这项代码能力不等于已经执行模型或写入真实 v2 行。要让 603606 实际命中 `hybrid_v2`，仍需新的单股执行授权、新 create-only run ID 和一次 Gemini 逻辑调用；不得复用本次已退休授权。
+## Hybrid 执行结果
+
+- 授权：`qualitative-v2-orient-cable-hybrid-20260719-01`，执行后立即退休。
+- 输入 SHA-256：`299efe53f541c8ca4f0165c4276607c00bcc5a4ada09466528456ba3b14d6b1f`。
+- 派生 context manifest SHA-256：`290a895ef512f6794dc3acc592beabf7e78ff24e1697d2e438d91cf394ee9d73`。
+- 来源请求/PDF 下载：0/0；复用前序已封存且 hash 复验通过的官方 PDF。
+- Gemini：`gemini-2.5-flash`，1 个逻辑调用、1 个 HTTP attempt。
+- 本地状态：`VALID_INSUFFICIENT_DATA`；生产采用状态：`READY_HYBRID`。
+- v2 维度：moat=7、market_pos=4；sentiment=`NULL`，生产读取回退 v1。
+- 写入：`qualitative_scores_v2` 恰好 1 行；历史 predictions 行数 1,859，执行前后内容 SHA-256 均为 `78af6488707788e817515afc154a77d127c9a456d090ccc98ed890c1c898cbc4`。
+- 实际读取：canary 为 `7/4/3`，其中 moat/market_pos 来源为 v2、sentiment 来源为最新 v1；`off` 为完整 v1 `7/4/3`。本次切换改变了可审计来源，因 v1 最新值恰好相同，数值未变化。
+- 凭证：context/model artifacts 扫描未发现 API key。
+
+该 v2 行按 30 天 TTL 使用；到期、内容/hash 漂移或 `QUALITATIVE_V2_MODE=off` 时自动回退 v1。任何刷新都必须使用新的授权和 create-only run ID。

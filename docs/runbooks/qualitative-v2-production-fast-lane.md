@@ -16,7 +16,7 @@
 
 > 2026-07-19 状态：下述 `qualitative-v2-prod-canary-20260719-01` 已消耗 45/45 attempts，并记录在仓库跟踪的 `qualitative_v2_production_authorizations.json` 退休账本中。该命令仅作为历史执行示例；再次执行会在创建 artifact、打开数据库或发起网络请求前失败。未来采集必须先取得新授权并把新 ID、scope 和上限登记为唯一 active grant。
 
-> 东方电缆状态：`qualitative-v2-orient-cable-pilot-20260719-01` 已消耗 11/12 HTTP attempts 和 2/3 PDF downloads 后退休。官方 PDF 传输与提取通过，但在 2026-06-19 至 2026-07-19 窗口内没有得到持续性 sentiment，且提交前复核发现初版壁垒/行业地位截取规则过宽；因此 Gemini 为 0 调用、v2 表为 0 写入，603606 在 canary 模式继续逐股回退 v1。完整记录见 `docs/reviews/2026-07-19-orient-cable-production-pilot.md`。
+> 东方电缆状态：首次来源授权 `qualitative-v2-orient-cable-pilot-20260719-01` 在 Gemini 前停止；随后一次性授权 `qualitative-v2-orient-cable-hybrid-20260719-01` 使用封存输入、零新增来源请求完成 1 个 Gemini 逻辑调用/1 attempt，返回 `READY_HYBRID` 并写入 1 行 v2。603606 在 canary 模式采用 moat=7、market_pos=4，sentiment 使用 v1。两项授权均已退休，不能复用。完整记录见 `docs/reviews/2026-07-19-orient-cable-production-pilot.md`。
 
 先使用已批准的 CNINFO 边界构建真实 canary context。该命令只读 `stock_fundamentals`，不读取模型凭证、不写数据库：
 

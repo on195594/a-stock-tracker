@@ -16,6 +16,7 @@ import config
 import qualitative_v2_production as production_mod
 import scripts.run_qualitative_v2_production as production_cli
 from lib import cache as cache_mod
+from qualitative_v2_orient_cable_hybrid import HybridAuthorization
 from qualitative_v2_production import (
     ProductionV2Error,
     context_missing_score_dimensions,
@@ -464,11 +465,27 @@ def test_execute_reports_and_persists_hybrid_as_production_usable(
     raw_context["evidence"] = [item for item in evidence if item["claim_category"] != "market_sentiment"]
     validation = validate_context_dict(raw_context)
     assert validation.valid and validation.context is not None
+    authorization = HybridAuthorization(
+        "qualitative-v2-orient-cable-hybrid-fixture",
+        "603606",
+        validation.context.compute_input_hash(),
+        "fixture-context-run",
+        "fixture-source-run",
+        "a" * 64,
+        "b" * 64,
+        "c" * 64,
+        "gemini-2.5-flash",
+        1,
+        3,
+        0,
+        0,
+    )
 
     result, success = production_cli._execute(
         [validation.context],
         "orient-cable",
-        "hybrid-execution-fixture",
+        authorization.authorization_id,
+        authorization=authorization,
     )
 
     assert success is True

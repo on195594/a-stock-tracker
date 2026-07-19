@@ -20,6 +20,11 @@ import config  # noqa: E402
 from lib.cache import get_db  # noqa: E402
 from qualitative_v2_client import DEFAULT_GEMINI_MODEL  # noqa: E402
 from qualitative_v2_contract import DIMENSION_NAMES  # noqa: E402
+from qualitative_v2_orient_cable_hybrid import (  # noqa: E402
+    HybridAuthorization,
+    HybridAuthorizationError,
+    load_active_hybrid_authorization,
+)
 from qualitative_v2_production import (  # noqa: E402
     ProductionV2Error,
     context_missing_score_dimensions,
@@ -106,6 +111,7 @@ def _parser() -> argparse.ArgumentParser:
         subparser.add_argument("--scope", required=True, choices=("canary", "orient-cable", "all"))
         if command == "score":
             subparser.add_argument("--run-id", required=True)
+            subparser.add_argument("--authorization-id")
             subparser.add_argument(
                 "--execute",
                 action="store_true",
@@ -171,9 +177,31 @@ def _record_scored_dimensions(record: Mapping[str, object]) -> tuple[str, ...]:
     )
 
 
-def _execute(contexts: list[QualitativeContext], scope: str, run_id: str) -> tuple[dict[str, object], bool]:
+def _execute(
+    contexts: list[QualitativeContext],
+    scope: str,
+    run_id: str,
+    *,
+    authorization: HybridAuthorization | None = None,
+) -> tuple[dict[str, object], bool]:
     if RUN_ID_RE.fullmatch(run_id) is None or run_id in {".", ".."}:
         raise ProductionV2Error("run-id must be a bounded safe identifier")
+    if scope == "orient-cable":
+        if authorization is None:
+            raise ProductionV2Error("orient-cable score requires an active hybrid authorization")
+        if (
+            run_id != authorization.authorization_id
+            or authorization.target_code != "603606"
+            or authorization.model != DEFAULT_GEMINI_MODEL
+            or authorization.logical_call_limit != 1
+            or authorization.http_attempt_limit != 3
+            or len(contexts) != 1
+            or contexts[0].code != authorization.target_code
+            or contexts[0].compute_input_hash() != authorization.context_input_hash
+        ):
+            raise ProductionV2Error("orient-cable execution differs from the active hybrid grant")
+    elif authorization is not None:
+        raise ProductionV2Error("hybrid authorization is only valid for orient-cable scope")
     _load_env_file(PROJECT_ROOT / ".env")
     api_key = os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
@@ -246,6 +274,7 @@ def _execute(contexts: list[QualitativeContext], scope: str, run_id: str) -> tup
     return (
         {
             "fixed_model": DEFAULT_GEMINI_MODEL,
+            "authorization_id": authorization.authorization_id if authorization is not None else None,
             "fully_scored": fully_scored,
             "hybrid_scored": hybrid_scored,
             "outcomes": outcomes,
@@ -272,6 +301,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise ProductionV2Error(
                     "score requires --execute; no credential, artifact, database, or model was used"
                 )
+            authorization = None
+            if args.scope == "orient-cable":
+                if not args.authorization_id:
+                    raise ProductionV2Error("orient-cable score requires --authorization-id")
+                authorization = load_active_hybrid_authorization(PROJECT_ROOT, args.authorization_id)
+                if len(contexts) != 1 or contexts[0].compute_input_hash() != authorization.context_input_hash:
+                    raise ProductionV2Error("context input hash does not match the active hybrid authorization")
+            elif args.authorization_id:
+                raise ProductionV2Error("--authorization-id is only valid for orient-cable scope")
             missing = {context.code: context_missing_score_dimensions(context) for context in contexts}
             unscoreable = {
                 code: dimensions for code, dimensions in missing.items() if len(dimensions) == len(DIMENSION_NAMES)
@@ -280,8 +318,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise ProductionV2Error(
                     f"deterministic evidence gates cannot score any dimension for exact scope: {unscoreable}"
                 )
-            result, success = _execute(contexts, args.scope, args.run_id)
-    except (OSError, ProductionV2Error) as exc:
+            result, success = _execute(
+                contexts,
+                args.scope,
+                args.run_id,
+                authorization=authorization,
+            )
+    except (OSError, HybridAuthorizationError, ProductionV2Error) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
     print(json.dumps(result, allow_nan=False, ensure_ascii=False, sort_keys=True))
