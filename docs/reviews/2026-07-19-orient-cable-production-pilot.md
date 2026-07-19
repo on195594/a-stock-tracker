@@ -43,4 +43,6 @@
 
 ## 后续条件
 
-若要让东方电缆真正产生 v2 分数，需要新的独立授权，以及窗口内来自批准官方来源、能证明影响具有持续性的 sentiment 事件。不得通过放宽 freshness/persistence、补造片段或复用本次已退休授权来取得分数。
+2026-07-19 后续采用路线 2：不放宽 sentiment 合同，改为维度级 `hybrid_v2`。离线复验已确认收紧后的规则能从已封存 PDF 的第 5 页定位公司特定研发生产能力、从第 3 页定位公司特定行业地位；sentiment 继续为 `insufficient_data`。该候选 context 通过本地 validator，input SHA-256 为 `299efe53f541c8ca4f0165c4276607c00bcc5a4ada09466528456ba3b14d6b1f`。生产适配器可保存已评分的 moat/market_pos，并仅让 sentiment 回退 v1。
+
+这项代码能力不等于已经执行模型或写入真实 v2 行。要让 603606 实际命中 `hybrid_v2`，仍需新的单股执行授权、新 create-only run ID 和一次 Gemini 逻辑调用；不得复用本次已退休授权。

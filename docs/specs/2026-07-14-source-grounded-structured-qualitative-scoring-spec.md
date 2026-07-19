@@ -2,7 +2,7 @@
 title: Source-Grounded Structured Qualitative Scoring Spec
 status: approved
 created: 2026-07-14
-updated: 2026-07-15
+updated: 2026-07-19
 owner: lin / Hermes
 risk_tier: spec-first
 source_article: https://www.kdnuggets.com/structured-language-model-generation-with-outlines
@@ -23,6 +23,7 @@ What changed:
 - 明确 Outlines 不是当前首选依赖；复用其 constrained generation 思路，使用现有 Gemini REST 接口的原生结构化输出能力。
 - 将生产切换拆成 shadow/report-only 与显式 cutover 两个阶段。
 - 将“有合法 JSON”从成功条件降为必要条件；没有可引用证据时必须 fail closed。
+- 2026-07-19 生产适配修订：模型合同仍逐维 fail closed；合法的 partial result 可在生产读取时仅采用已验证的 v2 维度，其余维度显式回退 v1，并标记为 `hybrid_v2`。
 
 ## 2. 背景与问题定义
 
@@ -66,9 +67,9 @@ What changed:
 
 Schema 合法不能绕过本地验证。本地验证必须检查证据引用、状态与分数一致性、日期、新鲜度、值域和禁止额外字段。
 
-### G4. Fail closed，不把信息不足包装成评分
+### G4. 逐维 Fail closed，不把信息不足包装成评分
 
-证据不足时返回 `insufficient_data`，不得让模型猜分。生产适配器沿用“新鲜可信结果 → 过期可信缓存 → 固定 fallback”的顺序，不允许将部分新分数与部分 fallback 混用。
+证据不足的维度返回 `insufficient_data`，不得让模型猜分。生产适配器只允许采用已通过同一 validator 的 v2 scored 维度；合法 insufficient 维度可以显式回退 v1，组合结果必须标记为 `hybrid_v2` 并记录逐维来源。invalid、篡改或过期结果仍整股回退 v1。
 
 ### G5. 先 shadow，再决定是否切换生产
 
@@ -328,8 +329,8 @@ freshness_policy 由 `claim_category` 决定，不再由 `evidence_type` 决定�
 - **REQ-039:** `failure_reason` 只能保存有界错误 code 和最多 256 字符的脱敏摘要；Prompt、日志、context/result、artifact/table 均不得保存 API key、token、环境变量值、原始 headers、stack trace 或其他凭证/秘密。
 - **REQ-040:** 当前生产表 `qualitative_scores(code, moat, market_pos, sentiment, scored_date)` 缺少版本和 input hash，因而阻塞 production cutover；它不阻塞 fixture-first 或物理隔离的文件 artifact shadow。Fixture-first 不得选择或实施生产 migration。
 - **REQ-041:** 后续获批 cutover plan 必须二选一：优先候选是新建版本化生产表；`ALTER` legacy 表是需说明风险与理由的替代方案。任何方案都不得让 v1/v2 分数不可区分，并必须定义 migration、indexes、cache priority、backward compatibility、backup、readback、rollback 和版本分层报告。
-- **REQ-042:** Cutover 后缓存读取优先级必须为：schema/rubric/taxonomy/input-hash 均匹配的 fresh validated v2 → 同版本 stale validated v2 → legacy stale cache（仅迁移期）→ 固定 `FALLBACK`。
-- **REQ-043:** `insufficient_data`、`invalid` 或 API failure 不得覆盖 trusted cache；不得混用 v2、v1 和 fallback 的不同维度，保持 all-or-nothing。
+- **REQ-042:** Cutover 后每个维度的读取优先级必须为：schema/rubric/taxonomy/input-hash 均匹配的 fresh validated v2 scored dimension → v1 维度值 → v1 自身既有 fallback。v2 整行过期、invalid、hash/身份漂移或冗余列不一致时不得部分采用，必须整股回退 v1。
+- **REQ-043:** 合法 `VALID_INSUFFICIENT_DATA` 可以包含 scored 与 insufficient 维度的混合；生产只持久化 validator 确认的逐维整数/null，并在读取时把 null 维度回退 v1，标记为 `hybrid_v2`、记录逐维 `v2|v1` 来源。不得把缺证据维度填成中性 v2 分数；API failure、invalid、篡改或全维度 insufficient 不得产生 hybrid 采用。
 - **REQ-044:** 外部调用可对 timeout、429、5xx 做有上限、带抖动的 retry；401/403、malformed response、schema、evidence 或 semantic error 不重试。具体次数/退避值留给 implementation plan，但测试必须证明有界。
 
 候选 shadow 表（仅设计，不构成 DB 修改批准）：
@@ -375,7 +376,7 @@ CREATE TABLE qualitative_score_evaluations (
 - **REQ-053:** Production cutover 必须另写并批准 implementation plan，列出确切代码 seam、REQ-041 的 DB 策略、migration/indexes、测试、受控 smoke、部署和回滚；本 spec 不批准任何实现或 DB 变更。
 - **REQ-054:** 修改生产 DB 前必须备份 `tracker.db`，验证备份可打开和关键表可读，并在 migration 后执行 readback；rollback 必须覆盖代码和物理 DB 恢复。
 - **REQ-055:** Cutover 不得回写历史 predictions，只影响批准日期之后的新评分；v1 生产路径在兼容期必须继续按当前合同工作。
-- **REQ-056:** Cutover 后必须记录评分方法版本，使 reporting/`accuracy-report` 按 schema/rubric/taxonomy 版本和 score_date 分层，禁止 v1/v2 混算。
+- **REQ-056:** Cutover 后必须记录评分方法版本，使 reporting/`accuracy-report` 按 schema/rubric/taxonomy 版本、score_date 和 `v1|v2|hybrid_v2` 采用模式分层；hybrid 必须保留逐维来源，禁止把它静默并入 full v2。
 - **REQ-057:** 后验投资验证至少分别报告 30/60/90 日 alpha、hit rate、样本数和置信限制；在自然结案样本不足前不得宣称准确性提升。
 - **REQ-058:** Implementation、生产 DB、真实 Gemini shadow 和 production cutover 均保持 pending，必须分别批准；任何前一阶段通过都不隐含后一阶段授权。
 
@@ -400,7 +401,7 @@ CREATE TABLE qualitative_score_evaluations (
 
 ## 8. Test matrix
 
-以下是未来实现合同，不授权本次新增测试或运行真实 API。Fixture-first cases 使用纯本地对象、mock HTTP 和临时路径；later shadow 与 production-cutover cases 不阻塞第一阶段完成。
+以下是实现合同。Fixture-first cases 使用纯本地对象、mock HTTP 和临时路径；真实 API 仍需独立执行授权。
 
 | Stage | Case | Expected assertion |
 |---|---|---|
@@ -423,7 +424,7 @@ CREATE TABLE qualitative_score_evaluations (
 | Fixture-first | malformed response | 分类为 `MALFORMED_RESPONSE`，不产出 trusted result |
 | Fixture-first | mocked API timeout / 401 / 403 / 429 / 5xx | 分别映射 timeout/auth/rate-limit/server bounded status，reason 脱敏 |
 | Fixture-first | retry policy | auth/schema/evidence/semantic 不 retry；429/5xx 有界 retry；达到上限后 fallback |
-| Fixture-first | all-or-nothing | 任一维度 invalid/insufficient 时不拼接 v2、v1、fallback 维度 |
+| Fixture-first | invalid all-or-nothing 与合法 hybrid | 任一维度 invalid 时整股拒绝；合法 partial result 保留 scored 维度整数和 insufficient 维度 null，生产合成时逐维来源可见 |
 | Fixture-first | 版本 mismatch | schema/rubric/taxonomy/input-hash 任一不符均不视为同版本 trusted result |
 | Fixture-first | 不覆盖 trusted cache | 用 mock repository 证明 invalid/insufficient/API failure 不触发可信缓存覆盖 |
 | Later shadow | provenance 与真实证据可用性 | 仅批准 provider/dataset 可运行；缺 moat/market_pos/sentiment 真实证据明确阻塞 |
@@ -437,6 +438,7 @@ CREATE TABLE qualitative_score_evaluations (
 | Production cutover | stale same-version cache | 新调用失败后可用同版本 stale validated cache |
 | Production cutover | legacy migration fallback | 仅兼容窗口按明确优先级读取 legacy cache，且来源/版本可区分 |
 | Production cutover | v1 backward compatibility | 当前 v1 production path 在切换前及兼容窗口行为不变 |
+| Production cutover | hybrid_v2 | partial 行逐维整数/null 与 result 一致；scored 维度来自 v2、null 维度只回退 v1；全维不足、篡改、过期或关闭模式整股 v1 |
 | Production cutover | migration/readback/rollback/reporting | indexes、备份可读、迁移 readback、物理 rollback 和版本分层报告均验证 |
 | Production cutover | predictive validity 批准材料 | cutover 批准材料含逐维度 30/60/90 日 alpha/hit rate 比较结果，或显式声明"预测有效性未确认"的记录决策（验证 REQ-063）|
 
@@ -468,7 +470,7 @@ CREATE TABLE qualitative_score_evaluations (
 - 让模型引用未提供的 evidence ID。
 - 用模型训练记忆补齐公司事实。
 - 把 `insufficient_data` 静默转成中性分后称为模型结果。
-- 混用新评分、旧评分和 fallback 三个维度。
+- 未经 validator 和逐维来源标记，静默混用新评分、旧评分和 fallback。
 - 删除或覆盖无关工作区改动。
 - 提交 `.env`、API key、token 或真实私密 headers。
 - 未经批准改写生产 `tracker.db`、predictions 或 cron。
@@ -500,7 +502,7 @@ Local evidence sources
 - **把现有基本面指标直接当 moat/market_pos 证据**：盈利质量不等于竞争壁垒，规模也不等于行业领导地位。
 - **sentiment 缺数据时自动给 3 分并标为模型结果**：掩盖数据缺口。固定 3 只能继续作为系统 fallback，并必须与模型评分区分。
 - **直接扩展现有 qualitative_scores 后立刻切换**：无法在不影响生产的前提下比较 v1/v2，且 schema 变更需要额外批准。
-- **部分字段采用新模型结果**：破坏现有 all-or-nothing 安全边界，使评分来源难以解释。
+- **静默采用部分新模型结果**：没有逐维 validator、整数/null 一致性和来源标记时不可解释；已批准的 `hybrid_v2` 必须满足 REQ-043 的显式边界。
 - **为跑通 real shadow 放宽 evidence taxonomy**：把数据缺口转化为无依据分数；缺少批准的真实证据应阻塞 real shadow，而非削弱合同。
 - **fixture-first 决定生产表 migration**：本地合同测试不需要生产 schema；版本表或 legacy ALTER 必须在后续 cutover plan 中选择。
 
@@ -508,9 +510,9 @@ Local evidence sources
 
 - **AC-001 maps to REQ-001~012:** Evidence packet 有显式、版本化、机器可检查 taxonomy，未知/矛盾/过期证据 fail closed，主验证不依赖前缀推断。
 - **AC-002 maps to REQ-013~022:** Gemini 原生 JSON Schema 保持必填 `integer | null` score，并把当前 nullable 支持记录为实施时重查/smoke 的官方文档假设。
-- **AC-003 maps to REQ-023~030:** 独立 validator 覆盖 shape、版本、evidence、freshness、状态语义和 all-or-nothing invalidation。
+- **AC-003 maps to REQ-023~030:** 独立 validator 覆盖 shape、版本、evidence、freshness、状态语义；任一 invalid 仍 all-or-nothing 拒绝，合法 per-dimension insufficient 保留为 null。
 - **AC-004 maps to REQ-031~035:** 三维使用版本化 rubric，结构/evidence/rubric 指标与 predictive validity 分离。
-- **AC-005 maps to REQ-036~044:** Shadow 物理隔离、脱敏 bounded failure 分类、retry、cache 版本和 cutover-only migration blocker 均明确。
+- **AC-005 maps to REQ-036~044:** Shadow 物理隔离、脱敏 bounded failure 分类、retry、cache 版本、显式 hybrid 采用和 cutover-only migration blocker 均明确。
 - **AC-006 maps to REQ-045~052:** Fixture 与 real shadow 分阶段，真实证据缺失只阻塞 real shadow，gate/provisional 升级不弱化证据门槛。
 - **AC-007 maps to REQ-053~058:** Cutover plan 必须覆盖版本化 DB 策略、备份/readback/rollback、v1 兼容和分层后验报告，且所有批准仍 pending。
 - **AC-008:** 第 8 节 test matrix 覆盖要求的成功、失败、retry、cache、版本、兼容与隔离 cases，并标记 Fixture-first/Later shadow/Production cutover。
@@ -682,6 +684,7 @@ Spec-only 阶段只允许人工撤销本 Spec 的本次 patch，不得触碰其�
 8. `evidence_type`（来源载体）与 `claim_category`（投资论点）拆分为两层字段，`allowed_dimensions`/`freshness_policy` 由 `claim_category` 决定；不再让来源载体单独决定可支持的评分维度（07-14 投资视角审查后修订，见 6.1/REQ-003~009）。
 9. Real shadow 前必须先完成证据可得性摸底（REQ-059），量化 `competitive_moat` direct 证据的真实分层覆盖率，不得跳过直接假设生产可用。
 10. Sentiment 证据必须携带 `persistence_horizon`/`materiality`，`one_time` 证据不得单独支持 `scored` 或 1/5 档（REQ-061~062），以降低短期消息噪音被误当中期投资信号的风险。
+11. 2026-07-19 已决定生产采用维度级 `hybrid_v2`：不降低 sentiment 门槛；合法 scored 维度使用 v2，insufficient 维度回退 v1并记录来源，invalid/篡改/过期仍整股回退。
 
 ### 待用户/Reviewer确认
 
@@ -690,15 +693,14 @@ Spec-only 阶段只允许人工撤销本 Spec 的本次 patch，不得触碰其�
 3. **Shadow 存储**：已决定 MILESTONE-003 先使用 git-ignored JSONL artifact；未批准 SQLite evaluation 表或任何生产 DB schema 变更。
 4. **真实 shadow 计划**：获批样本是否只作 provisional 首轮，以及升级 gate 的每维度样本数、blind-reference 覆盖和行业覆盖是多少？
 5. **生产 cache 策略**：未来 cutover plan 是否采用优先候选的新版本表，还是提出充分理由 ALTER legacy 表？
-6. **生产适用范围**：若 sentiment 长期 unavailable，是否继续 all-or-nothing，还是另写 spec 将其移出 LLM 职责？本 spec 不允许静默放宽。
 
 ## 16. Approval state
 
 - Spec approval: **approved (2026-07-14，含07-14两轮codex方法论复核后的修订)**
-- Implementation approval: **MILESTONE-002 approved 2026-07-14 and completed；MILESTONE-003 file-artifact seam approved and completed 2026-07-15；M4 轻量 frame/sample 已于 2026-07-18 生成 4,694 行 frame 与固定 36 股 sample；M4 evidence-feasibility coverage report 和真实 evidence bundle 尚未完成；M5 fixture-first synthetic 编排已实现，但真实 bundle 构建、Claude/Gemini 执行与 production 均待分别授权**——不隐含 MILESTONE-005 real execution 或 MILESTONE-006 的授权（REQ-058）。
-- Production DB schema approval: pending
+- Implementation approval: **MILESTONE-002/003 已完成；production canary 及 2026-07-19 `hybrid_v2` 适配已获用户批准；M5 fixture-first synthetic 编排已实现，但真实 M5 bundle、Claude/Gemini 执行仍待分别授权**——不隐含 MILESTONE-005 real execution 或 MILESTONE-006 的授权（REQ-058）。
+- Production DB schema approval: **现有独立 `qualitative_scores_v2` 表已随 canary 批准；hybrid 复用其 nullable 维度列，不新增 migration**
 - Controlled Gemini contract smoke approval: **approved and passed 2026-07-15**（空 evidence packet，Gemini 2.5 Flash，`VALID_INSUFFICIENT_DATA`）；这不是 MILESTONE-005 真实证据 shadow。
 - Real evidence Gemini shadow approval: pending the frozen MILESTONE-004 coverage report and separate MILESTONE-005 provider、样本、调用次数、machine-blind-reference 协议、完整 Claude 模型 ID 与成本/凭证批准。
-- Production cutover approval: pending
+- Production cutover approval: **canary read path and dimension-level hybrid adapter approved；任何新的真实 Gemini run、全量 `on` 或历史回写仍须独立批准**
 
-本 spec 是开发契约草案，不构成任何生产、数据库、付费调用、cron、Telegram 或权重修改授权。
+本 spec 只记录已明确批准的 canary/hybrid 边界；不构成任何新的付费调用、全量生产、历史数据库、cron、Telegram 或权重修改授权。

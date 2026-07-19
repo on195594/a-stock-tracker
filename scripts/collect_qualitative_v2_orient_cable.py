@@ -77,7 +77,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
     print(json.dumps(result, allow_nan=False, ensure_ascii=False, sort_keys=True))
-    return 0 if result["score_ready"] else 2
+    return 0 if result["hybrid_ready"] else 2
 
 
 if __name__ == "__main__":

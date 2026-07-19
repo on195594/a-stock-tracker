@@ -109,12 +109,15 @@ def test_collects_valid_context_and_stops_before_model_without_sentiment(
         as_of_date=date(2026, 7, 19),
         fetcher=_fetcher(),
     )
-    assert result["status"] == "INSUFFICIENT_EVIDENCE"
+    assert result["status"] == "READY_FOR_HYBRID_MODEL"
     assert result["missing_score_dimensions"] == ["sentiment"]
+    assert result["scoreable_dimensions"] == ["moat", "market_pos"]
+    assert result["hybrid_ready"] is True
     assert result["http_attempts"] == 6
     assert result["pdf_downloads"] == 1
     manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["gemini_calls"] == 0
+    assert manifest["hybrid_ready"] is True
     context = json.loads((root / "contexts" / "603606.json").read_text(encoding="utf-8"))
     assert validate_context_dict(context).valid
 
@@ -140,6 +143,7 @@ def test_recent_persistent_cninfo_evidence_makes_context_score_ready(
     )
     assert result["status"] == "READY_FOR_MODEL"
     assert result["missing_score_dimensions"] == []
+    assert result["hybrid_ready"] is True
 
 
 def test_generic_industry_language_is_not_company_direct_evidence(
@@ -159,6 +163,7 @@ def test_generic_industry_language_is_not_company_direct_evidence(
         fetcher=_fetcher(),
     )
     assert result["missing_score_dimensions"] == ["moat", "market_pos", "sentiment"]
+    assert result["hybrid_ready"] is False
 
 
 def test_cninfo_epoch_milliseconds_are_accepted_for_fresh_sentiment(

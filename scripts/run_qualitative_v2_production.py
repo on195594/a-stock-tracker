@@ -8,7 +8,7 @@ import json
 import os
 import re
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import cast
 
@@ -19,6 +19,7 @@ if str(PROJECT_ROOT) not in sys.path:
 import config  # noqa: E402
 from lib.cache import get_db  # noqa: E402
 from qualitative_v2_client import DEFAULT_GEMINI_MODEL  # noqa: E402
+from qualitative_v2_contract import DIMENSION_NAMES  # noqa: E402
 from qualitative_v2_production import (  # noqa: E402
     ProductionV2Error,
     context_missing_score_dimensions,
@@ -115,13 +116,19 @@ def _parser() -> argparse.ArgumentParser:
 
 def _preview(contexts: list[QualitativeContext], scope: str) -> dict[str, object]:
     missing = {context.code: list(context_missing_score_dimensions(context)) for context in contexts}
+    scoreable = {
+        code: [dimension for dimension in DIMENSION_NAMES if dimension not in missing_dimensions]
+        for code, missing_dimensions in missing.items()
+    }
     return {
         "codes": [context.code for context in contexts],
         "execution_enabled": False,
         "fixed_model": DEFAULT_GEMINI_MODEL,
+        "hybrid_ready": all(scoreable_dimensions for scoreable_dimensions in scoreable.values()),
         "logical_call_limit": len(contexts),
         "maximum_http_attempts": len(contexts) * 3,
         "missing_score_dimensions": missing,
+        "scoreable_dimensions": scoreable,
         "score_ready": not any(missing.values()),
         "scope": scope,
         "validated": True,
@@ -146,6 +153,24 @@ def _create_run_root(run_id: str) -> Path:
     return run_root
 
 
+def _record_scored_dimensions(record: Mapping[str, object]) -> tuple[str, ...]:
+    result_json = record.get("result_json")
+    if not isinstance(result_json, str):
+        raise ProductionV2Error("validated shadow record is missing result_json")
+    try:
+        result = json.loads(result_json)
+    except json.JSONDecodeError as exc:
+        raise ProductionV2Error("validated shadow result_json is invalid") from exc
+    if not isinstance(result, dict) or not isinstance(result.get("dimensions"), dict):
+        raise ProductionV2Error("validated shadow dimensions are invalid")
+    dimensions = result["dimensions"]
+    return tuple(
+        dimension
+        for dimension in DIMENSION_NAMES
+        if isinstance(dimensions.get(dimension), dict) and dimensions[dimension].get("status") == "scored"
+    )
+
+
 def _execute(contexts: list[QualitativeContext], scope: str, run_id: str) -> tuple[dict[str, object], bool]:
     if RUN_ID_RE.fullmatch(run_id) is None or run_id in {".", ".."}:
         raise ProductionV2Error("run-id must be a bounded safe identifier")
@@ -160,6 +185,8 @@ def _execute(contexts: list[QualitativeContext], scope: str, run_id: str) -> tup
     expected_codes = frozenset(context.code for context in contexts)
     outcomes: list[dict[str, object]] = []
     fully_scored = 0
+    hybrid_scored = 0
+    production_usable = 0
     db = get_db()
     try:
         for context in contexts:
@@ -174,16 +201,30 @@ def _execute(contexts: list[QualitativeContext], scope: str, run_id: str) -> tup
                 api_called = outcome.api_called
                 status = str(outcome.record["validation_status"])
                 promoted = False
+                scored_dimensions: tuple[str, ...] = ()
                 if status in {"VALID_SCORED", "VALID_INSUFFICIENT_DATA"}:
                     promoted = promote_shadow_record(db, outcome.record, expected_codes=expected_codes)
+                    scored_dimensions = _record_scored_dimensions(outcome.record)
                     db.commit()
-                if status == "VALID_SCORED":
+                if len(scored_dimensions) == len(DIMENSION_NAMES):
                     fully_scored += 1
+                    production_usable += 1
+                elif scored_dimensions:
+                    hybrid_scored += 1
+                    production_usable += 1
                 outcomes.append(
                     {
+                        "adoption_mode": (
+                            "v2"
+                            if len(scored_dimensions) == len(DIMENSION_NAMES)
+                            else "hybrid_v2"
+                            if scored_dimensions
+                            else "v1"
+                        ),
                         "api_called": outcome.api_called,
                         "code": context.code,
                         "promoted": promoted,
+                        "scored_dimensions": list(scored_dimensions),
                         "validation_status": status,
                     }
                 )
@@ -200,15 +241,18 @@ def _execute(contexts: list[QualitativeContext], scope: str, run_id: str) -> tup
                 )
     finally:
         db.close()
-    complete = fully_scored == len(contexts)
+    complete = production_usable == len(contexts)
+    status = "READY" if fully_scored == len(contexts) else "READY_HYBRID" if complete else "DEGRADED"
     return (
         {
             "fixed_model": DEFAULT_GEMINI_MODEL,
             "fully_scored": fully_scored,
+            "hybrid_scored": hybrid_scored,
             "outcomes": outcomes,
+            "production_usable": production_usable,
             "run_id": run_id,
             "scope": scope,
-            "status": "READY" if complete else "DEGRADED",
+            "status": status,
             "total": len(contexts),
         },
         complete,
@@ -229,8 +273,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "score requires --execute; no credential, artifact, database, or model was used"
                 )
             missing = {context.code: context_missing_score_dimensions(context) for context in contexts}
-            if any(missing.values()):
-                raise ProductionV2Error(f"deterministic evidence gates cannot score the exact scope: {missing}")
+            unscoreable = {
+                code: dimensions for code, dimensions in missing.items() if len(dimensions) == len(DIMENSION_NAMES)
+            }
+            if unscoreable:
+                raise ProductionV2Error(
+                    f"deterministic evidence gates cannot score any dimension for exact scope: {unscoreable}"
+                )
             result, success = _execute(contexts, args.scope, args.run_id)
     except (OSError, ProductionV2Error) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

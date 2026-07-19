@@ -16,7 +16,7 @@ from datetime import date, datetime, timedelta
 from typing import cast
 
 from qualitative_v2_client import DEFAULT_GEMINI_MODEL
-from qualitative_v2_contract import DIMENSION_NAMES
+from qualitative_v2_contract import DIMENSION_NAMES, SCORE_RANGES
 from qualitative_v2_types import QualitativeContext
 from qualitative_v2_validator import validate_context, validate_context_dict, validate_model_output
 
@@ -143,7 +143,7 @@ def _validated_payloads(
     name: str,
     as_of_date: str,
     input_hash: str,
-) -> tuple[dict[str, object], dict[str, object], dict[str, int] | None, str]:
+) -> tuple[dict[str, object], dict[str, object], dict[str, int | None], str]:
     context_raw = _json_object(context_json, label="stored context_json")
     if set(context_raw) != _CONTEXT_FIELDS:
         raise ProductionV2Error("stored context_json field set drift")
@@ -164,14 +164,15 @@ def _validated_payloads(
     if not result_validation.valid or result_validation.result is None:
         raise ProductionV2Error(f"stored v2 result is invalid: {result_validation.rejection_reason}")
     result = result_validation.result
-    scores: dict[str, int] | None = None
-    if result.overall_status == "scored":
-        scores = {}
-        for dimension in DIMENSION_NAMES:
-            score = result.dimension(dimension).score
-            if score is None:
-                raise ProductionV2Error("scored v2 result contains a null score")
-            scores[dimension] = score
+    scores: dict[str, int | None] = {}
+    for dimension in DIMENSION_NAMES:
+        dimension_result = result.dimension(dimension)
+        score = dimension_result.score
+        if dimension_result.status == "scored" and score is None:
+            raise ProductionV2Error("scored v2 dimension contains a null score")
+        if dimension_result.status == "insufficient_data" and score is not None:
+            raise ProductionV2Error("insufficient v2 dimension contains a score")
+        scores[dimension] = score
     return context_raw, result_raw, scores, result.overall_status
 
 
@@ -230,9 +231,6 @@ def promote_shadow_record(
     if status != expected_validation_status:
         raise ProductionV2Error("shadow validation status is inconsistent with the result")
 
-    score_values: dict[str, int | None] = (
-        dict(scores) if scores is not None else {dimension: None for dimension in DIMENSION_NAMES}
-    )
     values = (
         code,
         name_value,
@@ -240,9 +238,9 @@ def promote_shadow_record(
         computed_hash,
         model,
         overall_status,
-        score_values["moat"],
-        score_values["market_pos"],
-        score_values["sentiment"],
+        scores["moat"],
+        scores["market_pos"],
+        scores["sentiment"],
         canonical_context,
         canonical_result,
         created_at,
@@ -274,8 +272,8 @@ def load_usable_v2_score(
     name: str,
     *,
     today: date | None = None,
-) -> dict[str, int] | None:
-    """Load and revalidate the newest fixed-model v2 row for one stock."""
+) -> dict[str, int | None] | None:
+    """Load and revalidate the newest row, preserving usable per-dimension scores."""
     current_date = today or date.today()
     row = conn.execute(
         """SELECT code, name, as_of_date, input_hash, model, overall_status,
@@ -321,13 +319,22 @@ def load_usable_v2_score(
     if validated_status != stored_status:
         raise ProductionV2Error("v2 cache status drift")
     denormalized = {"moat": stored_moat, "market_pos": stored_market_pos, "sentiment": stored_sentiment}
-    if scores is None:
-        if any(value is not None for value in denormalized.values()):
-            raise ProductionV2Error("insufficient v2 cache row contains denormalized scores")
-        return None
     if denormalized != scores:
         raise ProductionV2Error("v2 cache denormalized score drift")
-    return scores
+    return scores if any(value is not None for value in scores.values()) else None
+
+
+def _validated_legacy_scores(scores: Mapping[str, int]) -> dict[str, int]:
+    if set(scores) != set(DIMENSION_NAMES):
+        raise ProductionV2Error("legacy qualitative score must contain exactly moat/market_pos/sentiment")
+    validated: dict[str, int] = {}
+    for dimension in DIMENSION_NAMES:
+        score = scores[dimension]
+        minimum, maximum = SCORE_RANGES[dimension]
+        if isinstance(score, bool) or not isinstance(score, int) or not minimum <= score <= maximum:
+            raise ProductionV2Error(f"legacy qualitative score {dimension!r} is outside [{minimum},{maximum}]")
+        validated[dimension] = score
+    return validated
 
 
 def get_production_qualitative_score(
@@ -339,17 +346,34 @@ def get_production_qualitative_score(
     legacy_getter: LegacyGetter,
     mode: str | None = None,
 ) -> dict[str, int]:
-    """Return v2 when eligible and sealed, otherwise preserve the v1 path."""
+    """Return full or dimension-level hybrid v2, otherwise preserve the v1 path."""
     try:
         selected_mode = production_mode() if mode is None else mode
-        if is_v2_eligible(code, mode=selected_mode, canary_codes=canary_codes):
-            score = load_usable_v2_score(conn, code, name)
-            if score is not None:
-                logger.info("%s 定性评分使用 source-grounded v2", code)
-                return score
+        if not is_v2_eligible(code, mode=selected_mode, canary_codes=canary_codes):
+            return legacy_getter(code, name)
+        score = load_usable_v2_score(conn, code, name)
     except Exception as exc:
         logger.error("%s 定性评分 v2 fail-closed，逐股回退 v1：%s", code, exc)
-    return legacy_getter(code, name)
+        return legacy_getter(code, name)
+    if score is None:
+        return legacy_getter(code, name)
+    v2_dimensions = tuple(dimension for dimension in DIMENSION_NAMES if score[dimension] is not None)
+    if len(v2_dimensions) == len(DIMENSION_NAMES):
+        logger.info("%s 定性评分使用 source-grounded v2", code)
+        return {dimension: cast(int, score[dimension]) for dimension in DIMENSION_NAMES}
+    legacy_raw = legacy_getter(code, name)
+    try:
+        legacy = _validated_legacy_scores(legacy_raw)
+    except ProductionV2Error as exc:
+        logger.error("%s hybrid_v2 的 v1 维度无效，整股保留原 v1：%s", code, exc)
+        return legacy_raw
+    combined = {
+        dimension: cast(int, score[dimension]) if score[dimension] is not None else legacy[dimension]
+        for dimension in DIMENSION_NAMES
+    }
+    sources = {dimension: "v2" if dimension in v2_dimensions else "v1" for dimension in DIMENSION_NAMES}
+    logger.info("%s 定性评分使用 hybrid_v2，维度来源=%s", code, sources)
+    return combined
 
 
 __all__ = [

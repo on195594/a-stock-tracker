@@ -648,6 +648,7 @@ def collect_orient_cable_context(
     if not validation.valid or validation.context is None:
         raise ContextCollectionError(f"built orient-cable context is invalid: {validation.rejection_reason}")
     missing = list(context_missing_score_dimensions(validation.context))
+    scoreable = [dimension for dimension in ("moat", "market_pos", "sentiment") if dimension not in missing]
     input_hash = validation.context.compute_input_hash()
     _secure_write(run_root / "contexts" / f"{ORIENT_CABLE_CODE}.json", _canonical_bytes(context))
     manifest: dict[str, object] = {
@@ -664,6 +665,8 @@ def collect_orient_cable_context(
         "prior_http_attempts": prior_http_attempts,
         "cumulative_http_attempts": prior_http_attempts + len(ledger.operations),
         "missing_score_dimensions": missing,
+        "scoreable_dimensions": scoreable,
+        "hybrid_ready": bool(scoreable),
         "model_call_limit": authorization.gemini_logical_call_limit,
         "operations": ledger.operations,
         "pdf_download_limit": authorization.pdf_download_limit,
@@ -685,10 +688,14 @@ def collect_orient_cable_context(
         "cumulative_http_attempts": prior_http_attempts + len(ledger.operations),
         "manifest_sha256": manifest_sha,
         "missing_score_dimensions": missing,
+        "scoreable_dimensions": scoreable,
+        "hybrid_ready": bool(scoreable),
         "pdf_downloads": ledger.pdf_downloads,
         "cumulative_pdf_downloads": prior_pdf_attempts + ledger.pdf_downloads,
         "score_ready": not missing,
-        "status": "READY_FOR_MODEL" if not missing else "INSUFFICIENT_EVIDENCE",
+        "status": (
+            "READY_FOR_MODEL" if not missing else "READY_FOR_HYBRID_MODEL" if scoreable else "INSUFFICIENT_EVIDENCE"
+        ),
     }
 
 
