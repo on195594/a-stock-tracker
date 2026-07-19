@@ -1,0 +1,42 @@
+{
+  "expected_mode": "on",
+  "expected_scores": {
+    "000963": {
+      "market_pos": 4,
+      "moat": 7,
+      "sentiment": null
+    },
+    "002050": {
+      "market_pos": 5,
+      "moat": 8,
+      "sentiment": null
+    },
+    "600036": {
+      "market_pos": 4,
+      "moat": 7,
+      "sentiment": null
+    },
+    "600900": {
+      "market_pos": 5,
+      "moat": 8,
+      "sentiment": null
+    },
+    "601088": {
+      "market_pos": 5,
+      "moat": 8,
+      "sentiment": null
+    },
+    "603606": {
+      "market_pos": 4,
+      "moat": 7,
+      "sentiment": null
+    }
+  },
+  "prediction_snapshot": {
+    "row_count": 1859,
+    "sha256": "8e42f387831c2b304cc29e38a2da02ca99cc6978b89c6bb13782b48fea414516",
+    "through_date": "2026-07-17"
+  },
+  "schema_version": "qualitative-v2-production-acceptance-v1",
+  "watchlist_count": 35
+}

@@ -77,6 +77,35 @@ QUALITATIVE_V2_MODE=on
 
 随后等待正常交易日的常规 `daily` 调度。日志中的 `定性评分使用 source-grounded v2` 表示该股命中 full v2；`定性评分使用 hybrid_v2，维度来源=...` 表示逐维采用；其余股票保持 v1。非交易日不要为验证此开关而手动创建 prediction。
 
+## 自动化生产验收
+
+全局开关启用后先运行只读验收：
+
+```bash
+python scripts/check_qualitative_v2_production.py
+```
+
+该命令只解析 `.env` 中的 `QUALITATIVE_V2_MODE`，不会把 Gemini、Telegram 或其他键写入 `os.environ`、stdout 或报告；SQLite 使用 `mode=ro` 与 `query_only` 打开。当前 tracked baseline 绑定：
+
+- 模式必须为 `on`，watchlist/eligibility 必须为 35/35；
+- 000963、002050、600036、600900、601088、603606 的逐维 v2 分数必须与获批生产结果一致；
+- 其余 29 股必须归类为 v1 fallback，不能把 fallback 计入 v2 coverage；
+- 截至 2026-07-17 的 1,859 条 predictions 不可变评分字段必须保持同一 SHA-256；outcome/benchmark 字段不在 seal 中，允许后续自然结案；
+- 内存强制 `mode=off` 时，35 股必须全部调用 v1 getter，且不得访问 v2 数据库。
+
+输出为单行 JSON。`decision=PASS` 返回 exit 0；任何模式、watchlist、分数、validator、历史 seal 或回滚路径漂移均输出 `decision=ROLLBACK` 并返回 exit 2。`ROLLBACK` 是自动化决策和告警信号，检查器本身不会修改 `.env`、数据库或 artifact。
+
+下一交易日 `daily` 完成后执行：
+
+```bash
+python scripts/check_qualitative_v2_production.py \
+  --require-score-date 2026-07-20
+```
+
+附加门禁要求该日期恰好存在 watchlist 35 股 Framework A prediction，并在 `logs/daily.log` 中找到当前所有 v2 adoption 的 `hybrid_v2`/`source-grounded v2` 证据。若返回 `ROLLBACK`，先将 `.env` 的 `QUALITATIVE_V2_MODE` 设置为 `off`；后续新 pipeline 进程会完整使用 v1。不要删除 v2 表或修改历史 predictions。
+
+`qualitative_v2_production_acceptance_baseline.json` 是受审查的生产配置，不是运行时自动学习文件。扩大 v2 股票、刷新分数或改变历史 seal 时必须在同一变更中更新 baseline、测试和项目状态；检查器不会自行接受新状态。
+
 ## 扩展与回滚
 
 同日扩展 35 股使用新的 context 目录和新的 run ID：

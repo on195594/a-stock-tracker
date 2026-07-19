@@ -1,11 +1,14 @@
 # a-stock-tracker Project Status
 
 创建时间：2026-06-26
+最近更新：2026-07-19
 状态：active PM control page
 
 ## 当前结论
 
-主业务仍处于 **Phase 6 report-only 观察**，Framework B 不得生产写入；Phase 5 L3 v2 已完成 QFQ 生产接入和 Telegram 主推切换。定性评分 v2 进入两 Sprint 路线：M4 已生成 4,694 行 frame 和固定 36 股 sample，M5 编排、封存修复、real bundle builder、D1 authorization preflight 和严格只读 fundamentals snapshot builder 已完成；真实 corpus/coverage、source approval、real bundle 和模型执行均尚未发生。当前下一动作是批准 D1 authorization SHA `93c471…c0cf1`。
+主业务仍处于 **Phase 6 report-only 观察**，Framework B 不得生产写入；Phase 5 L3 v2 已完成 QFQ 生产接入和 Telegram 主推切换。定性评分 v2 的生产读路径已于 2026-07-19 切换为全局 `on`：35 股全部进入 v2 选择器，独立表中 6 股使用 moat/market_pos v2 与 sentiment v1，其余 29 股在合法 v2 行就绪前逐股回退 v1。该切换不修改历史 predictions，也不代表 35 股 v2 覆盖或预测有效性已经完成。
+
+M4/M5 研究路线继续保留，但已从生产上线关键路径拆出。36 股 sample、real bundle、Claude blind reference、Gemini shadow 和 support audit 用于研究代表性与 agreement，不再阻塞具备 validator、独立表、逐股 fallback 和 `off` 回滚的生产读取。当前生产下一动作是下一交易日自然 cron 确认；研究下一动作才是按独立范围继续 real bundle/审计。
 
 2026-07-18 曾执行一次非 v1.3.2-compliant 的 `index_classify` 直连探测：HTTP 200、provider code 0、31 rows，未持久化原始响应。该探测不构成 frame、authorization、freeze、attestation 或生产采用证据。
 
@@ -52,7 +55,8 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | 定性评分 v2 MILESTONE-002 | 已完成 | 保持合同稳定和本地 validator fail-closed | MILESTONE-003 已独立完成 | REQ-001~035 对应本地合同齐全 |
 | 定性评分 v2 MILESTONE-003 | 已完成 | 使用独立 CLI/JSONL artifact；不接 pipeline 或生产 DB | M4 sample 已完成；转 M5 数据 Sprint | REQ-036~039 文件持久化、错误分类、脱敏、去重和隔离测试及 AGY 最终只读审查通过 |
 | 定性评分 v2 MILESTONE-004 | 轻量 frame/sample 完成 | 35/35 调用、4,694 frame、36 sample、12 cells 完整 | 在新授权下构建 corpus/coverage | sample 固定且不替换；八层 coverage 决定能否进入 real bundle |
-| 定性评分 v2 MILESTONE-005 | fixture-first、离线 bundle/D1 preflight/只读 snapshot builder 完成 | 批准 SHA `93c471…c0cf1` 后 seal、snapshot、corpus/coverage | D1 bounded source authorization | exact bundle SHA 产生后才申请模型 Sprint；不授权生产 |
+| 定性评分 v2 生产读路径 | 全局 `on`，自动预检 PASS，待自然 cron 确认 | 验收器复验 6 股 hybrid、29 股 fallback、历史 seal 与 `off` 回滚 | 下一交易日 16:30 `daily` 后运行 `--require-score-date` | 35/35 正常完成；无批量异常、历史改写或错误 v2 采用 |
+| 定性评分 v2 MILESTONE-005 | fixture-first 与离线 builder 完成；发布后研究 | real bundle/blind reference/support audit 与生产解耦 | 独立安排研究批次 | 只形成研究证据，不静默改变生产合同、权重或 fallback |
 | Phase 6 多框架激活 | report-only 观察 | 自动化 weekly PM loop 只读观察 B label / dry-run / cron 日志 | 2026-08-13 后首次 B label 自然结案复核 | B label 已结案 ≥20、overdue=0、数据质量门槛 OK、独立审查通过、另写生产化 spec |
 | Phase 7 选股宇宙扩展 | 未启动 | 等 Phase 6 或明确降级策略 | 暂无 | 单独设计动态池和 API 压测 |
 
@@ -65,22 +69,25 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | cron | weekly / weekly-PM / QFQ / daily / outcome-update 五项已按门禁重新安装 | `00 16` QFQ、`30 16` daily、`00 17` outcome；managed block 已核对 |
 | 真实 probe | 当天已刷新并通过 | `docs/reviews/2026-07-15-tushare-capability-probe.md` |
 | 真实 backfill | 已完成 | 2026-07-12 35/35 行情刷新成功（ok=35, degraded=0, failed=0） |
-| 真实 daily | 最近一次自然运行成功 | 2026-07-14 写入 35 条，L3 覆盖 35/35，Telegram 与 Sheets 成功；2026-07-15 readiness 已重新放行 |
-| 生产数据规模 | A 1681 条、B 73 条；A 30d/60d 已结案 953/253 | 2026-07-15 对 `tracker.db` 只读查询；最新 score_date=2026-07-14 |
+| 真实 daily | 最近一次自然运行成功；全局 v2 尚待自然运行 | 2026-07-17 写入 35 条，L3 覆盖 35/35，Telegram 与 Sheets 成功；全局 `on` 于非交易日 2026-07-19 启用 |
+| 生产数据规模 | predictions 1,859 条（A 1,786、B 73） | 2026-07-19 对 `tracker.db` 只读查询；最新 score_date=2026-07-17 |
 | Framework B | report-only | `SUPPORTED_FRAMEWORKS={"A"}`，不写 B 生产 predictions |
 | Phase 6 阻塞 | B label 已结案样本不足 | 数据质量门槛 OK；B label `0/20`，最早可评估日期 `2026-08-13`（accuracy-report 生成于 2026-07-15） |
 | L3 v2 QFQ / 生产写入 | 已完成，选择性待观察 | `daily_bars.adjusted='qfq'` 覆盖 35 个代码、4585 行（至 2026-07-13）；v2 记录 70 条且 70/70 pass，两天 strong 均为 18/18 通过门禁 |
 | L3 v2 Phase 3 push trigger | 已完成，生产推送已切换 | `telegram_push.py` 触发条件 `entry_signal=1` → `l3_v2_signal=1`；commit `e080f15`；298/298 tests passed |
 | Framework A 倒置诊断 | 已完成，结论：不调权重 | Q5 avg_alpha_30d=-9.91%；根因=截面校准偏差+11支伪复制；agy投资审查：Priority 1=延伸60d/90d；60d首批到期 2026-07-14 |
-| 定性评分 v2 | M2+M3 完成；M4 sample 完成；M5 编排与离线 builder 完成 | sample SHA `b278a7…d7635d`；coverage/real bundle/model run 均未生成 |
-| 质量门禁 | 全部通过 | M5 定向 51 passed；全仓 866 passed；Ruff lint/format、mypy、CLI help、`git diff --check` PASS |
+| 定性评分 v2 | 全局 `on`；6/35 hybrid、29/35 v1 fallback | v2 表 6 行：000963/002050/600036/600900/601088/603606；全部为 moat/market_pos scored、sentiment NULL |
+| 定性评分 v2 研究审计 | M4 sample 与 M5 fixture-first/builder 完成；real bundle 未完成 | sample SHA `b278a7…d7635d`；不再作为当前生产读取阻塞项 |
+| 质量门禁 | 全部通过 | 自动验收实现后全仓 933 passed、生产定向 25 passed；Ruff lint/format、mypy、CLI smoke、`git diff --check` PASS |
 
 ## Spec Ledger
 
 | Spec / Plan | 状态 | Owner | 下一动作 | Exit criteria |
 |---|---|---|---|---|
-| `docs/evolution-roadmap.md` | v1.27 当前基线 | Hermes PM | 随 Phase 状态变化更新 | 和真实系统状态一致 |
-| `docs/plans/2026-07-18-m5-two-sprint-execution.md` | active；D1 待批准 | user + codex | 批准 bounded source scope 后执行数据 Sprint | coverage 全层 PASS、real bundle SHA 冻结，再申请模型 Sprint |
+| `docs/evolution-roadmap.md` | v1.29 当前基线 | Hermes PM | 随 Phase 状态变化更新 | 和真实系统状态一致 |
+| `docs/reviews/2026-07-19-qualitative-v2-production-retrospective.md` | final；当前生产复盘 | codex | 下一交易日自然 cron 确认 | 把上线安全、数据覆盖和研究有效性分开管理 |
+| `qualitative_v2_production_acceptance_baseline.json` | active；生产验收基线 | codex | v2 adoption 变化时随同审查更新 | checker 只读复验，不自动学习或覆盖基线 |
+| `docs/plans/2026-07-18-m5-two-sprint-execution.md` | historical research plan；D1 授权已执行/后续路线已演化 | user + codex | 仅在继续 36 股研究审计时引用 | 不再作为生产上线或扩大预计算覆盖的串行前置 |
 | `docs/plans/2026-06-26-phase6-report-only-next-steps.md` | active | Hermes PM | 继续 P3-B 周度复核 | B label review 前 report-only 流程稳定 |
 | `docs/specs/2026-07-02-weekly-pm-loop-automation-spec.md` | implemented；2026-07-15 parser 误报已修复 | Hermes PM + agy review | 观察下一次自然摘要 | 每周一自动 Telegram 摘要可信，不重复告警，不越权启用生产化 |
 | `/home/lin/a-stock-lib/docs/plans/2026-07-01-three-project-next-work-plan.md` | active cross-project plan | Hermes PM | 按 P0/P1/P2 顺序推进共享包、tracker、research 联动事项 | 三项目版本/文档/任务边界一致 |
@@ -88,7 +95,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | `docs/reviews/2026-07-15-tushare-capability-probe.md` | latest probe evidence，全部 PASS | 系统探测 | 按 freshness 门禁定期刷新 | `check_market_data_readiness.py --scope cron` 当前 READY |
 | `accuracy_report.txt` | latest tracked report（生成于 2026-07-15） | pipeline | 按周更新 | Phase 6 仍明确 report-only |
 | `docs/specs/2026-07-08-l3-v2-entry-signal-spec.md` | draft 历史父 spec；其 Phase 2/3 子 spec 已实施 | Hermes PM + agy review | 观察 v2 生产数据，不再执行旧 NEED_QFQ 下一步 | 规则变更需另开审查，不回写历史分数 |
-| `docs/specs/2026-07-14-source-grounded-structured-qualitative-scoring-spec.md` | approved；M2+M3 完成；M4 sample 完成 | Hermes PM + codex + AGY review | 按两 Sprint 计划补 coverage 与 real bundle | 不得把 sample 冒充 coverage/bundle，不得跳过报告进入 real shadow/cutover |
+| `docs/specs/2026-07-14-source-grounded-structured-qualitative-scoring-spec.md` | approved；生产 hybrid/global read 已实施 | Hermes PM + codex + AGY review | 保持合同稳定；覆盖扩展走预计算批次 | 不得把 fallback 冒充 v2，不得把结构有效性冒充预测有效性 |
 | `docs/plans/2026-07-15-milestone-004-evidence-feasibility-preregistration-v1.1.md` | frozen historical；acquisition route 技术关闭 | codex + AGY review | 保持协议/hash/artifacts 不变；不得 retry/resume/assemble incomplete | seed、URL、Reviewer、Wilson 与 scope disposition 契约均由测试覆盖 |
 | `docs/plans/2026-07-16-milestone-004-frame-source-capability-preregistration-v1.2.md` | frozen；执行完成；capability FAIL | codex + Claude review PASS | 无；attempt 已消费 | `NO_QUALIFIED_FRAME_SOURCE`；继续需另开 v1.3 |
 | `docs/plans/2026-07-17-milestone-004-segmented-rest-preregistration-v1.3.1.md` | frozen implementation contract；无真实授权 | codex | 保持 hash/provenance；仅在新外部授权后可执行 | capability/date/capture 分别授权；本阶段不联网、不组装 |
@@ -107,7 +114,9 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | Blocker | Impact | Unblock condition | ETA |
 |---|---|---|---|
 | B label 已结案样本不足 `0/20` | 阻止 Framework B 生产化 | 已结案 ≥20 且 overdue=0 | 最早 2026-08-13 后 |
-| qualitative v2 缺 corpus/coverage/source approval | 阻止 real bundle 和模型 Sprint | 批准并执行两 Sprint 计划 D1；corpus 后再绑定 Reviewer 授权 | 待用户批准 D1 |
+| qualitative v2 仅 6/35 有合法 partial 行 | 不阻断安全读取，但限制 v2 实际覆盖 | 分批复用官方 PDF/离线提取/validator 路线补齐其余 29 股 | P1，按批次推进 |
+| 全局 `on` 尚无自然 daily 证据 | 自动预检 PASS，但运维闭环未最终确认 | 下一交易日观察现有 16:30 cron，并运行 checker `--require-score-date`；异常则切 `off` | 下一交易日 |
+| M5 real bundle/blind-reference/support audit 未完成 | 限制研究代表性与 agreement 结论 | 作为发布后独立研究执行 | P2，不阻断当前生产读取 |
 | Framework A strong 层级尚未证明优于基准 | 不宜调权重或宣称模型有效 | 另开权重复核 spec | 待更多样本与独立审查 |
 | L3 v2 当前未体现过滤选择性 | 2026-07-13/14 共 70/70 pass，strong 18/18 每日全部通过 | 先增加 v2 状态/门禁分布报告并积累 30/60d outcome；不据两天样本改规则 | P2 |
 | Framework A 60d/90d 延伸评估未执行 | “持有期错配”假说尚未复核 | 当前已有 A 60d 结案 253 条；先做只读五分位对比，90d 继续等待 | P2 |
@@ -134,6 +143,8 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | 2026-07-15 | 定性评分 v2 MILESTONE-004 v1.1 离线工具链 | 预注册/hash、确定性 frame/sample、URL/corpus、technical ledger、并发安全 create-only chain、默认禁用且隔离的双 reviewer、裁决和原子 coverage report 已完成；76 项 M4 定向、554 项全量测试与全部质量门禁通过 | 工具链完成但真实 audit 未执行；不读取真实 DB、不检索公司、不运行 Reviewer；下一步需用户单独批准候选 source/dataset 审计授权 |
 | 2026-07-15 | M4 静态输入执行授权 | 用户批准仅用带 provenance 的只读静态 dataset 完成 frame/sample/corpus；授权留档 SHA-256 为 `37aee66f8a3dc1a9f4aea61fe53f75cd4556ad2d9316b51b6d4c8b340c16f903` | dataset 尚未提供，不创建空 manifest；Reviewer、生产 DB/live provider/pipeline 继续禁止 |
 | 2026-07-18 | M4 sample + M5 fixture-first | 4,694 frame、36 sample 已冻结；M5 orchestration、artifact seals、聚合 report、离线 bundle、D1 preflight 和只读 snapshot builder 已实现，51 项定向/866 项全量通过 | 批准 SHA `93c471…c0cf1` 后才 seal/执行 D1；不提前执行 Reviewer/Claude/Gemini |
+| 2026-07-19 | 定性评分 v2 生产闭环与全局读模式 | 东方电缆及指定五股形成 6 行合法 partial v2；模式切到 `on`；只读验证 35/35 返回有效，6 股 hybrid、29 股 v1 fallback；predictions 保持 1,859 行 | 下一交易日自然 cron 确认；随后分批扩大覆盖，M5 研究审计独立推进 |
+| 2026-07-19 | 自动化生产验收与回滚检查 | tracked baseline 封存历史评分字段；真实只读预检 PASS；`off` 证明 35 股均走 v1 且不访问 v2 DB | 下一交易日以 `--require-score-date` 验收 daily 行数和 adoption 日志 |
 | 2026-08-13 后 | B label 30d 结案、overdue、行业覆盖、B-A delta | 待执行 | 满足门槛后写 `phase6-b-label-review.md`，不直接上线 |
 
 ## 每周自动复核
@@ -184,3 +195,5 @@ python3 scripts/offline_l3_v2_backtest.py \
 - 不在 Phase 6 report-only 任务中顺手改评分权重、schema 或 watchlist。
 - 不在 qfq 覆盖不足或 `QFQ_ALIGNMENT_FAILED` 影响 buy_strong 子集时输出 `GO_TDD`。
 - 不用快速循环请求 Tushare `adj_factor` 绕过限频；先设计显式限速、缓存或分批方案。
+- 不把 `QUALITATIVE_V2_MODE=on` 描述成 35 股已有 v2 数据，也不把 v1 fallback 计为 v2 覆盖。
+- 不让 M5 研究 agreement 门禁静默阻塞已有独立表、逐股 fallback 和 `off` 回滚的生产读路径。

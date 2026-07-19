@@ -1,7 +1,7 @@
 # a-stock-tracker 进化路线图
 
-**版本：** v1.14
-**基线日期：** 2026-07-15
+**版本：** v1.29
+**基线日期：** 2026-07-19
 **文档定位：** 系统演化的顶层规划文档。所有后续 Phase 的修改、补丁、设计决策均以本文档为基线。若实施中发现偏差，先更新本文档，再改代码。
 
 ---
@@ -20,33 +20,34 @@
 
 ---
 
-## 二、当前系统基线（2026-07-15 快照）
+## 二、当前系统基线（2026-07-19 快照）
 
 ### 能力盘点
 
 | 模块 | 状态 | 说明 |
 |------|------|------|
-| Framework A 评分 | ✅ 正常 | 生产写入框架仍仅 A；2026-07-14 `daily` 写入 35 条，live DB 共 1681 条 A 记录 |
+| Framework A 评分 | ✅ 正常 | 生产写入框架仍仅 A；最近一次自然 `daily` 为 2026-07-17，live DB 共 1,786 条 A 记录 |
 | Framework B 评分 | ⏸ report-only | 73 条历史记录保留，`SUPPORTED_FRAMEWORKS={"A"}`；B label 自然结案样本不足 `0/20`，最早 2026-08-13 后复核，不启用生产写入 |
 | 每日 PB 分位 | ✅ 正常 | current_pb = 收盘价/bps，ranked in pb_hist_monthly；当前 watchlist PB 日度可计算 35/35 |
 | 毛利率字段 | ✅ 正常 | 基本面缓存 35/35，金融行业 gross_margin 不适用按规则跳过 |
-| Gemini 定性评分 | ✅ 正常 | 30天缓存，退避重试（429/5xx，最多3次），过期缓存降级，all-or-nothing fallback；当前缓存存在 35/35 |
+| 定性评分 | ✅ v1 + v2 hybrid | v1 保持 30 天缓存与既有 fallback；v2 全局选择器已启用，6 股使用 source-grounded moat/market_pos，其余维度或股票回退 v1 |
 | Telegram 推送 | ✅ v2 门禁已上线 | 主推条件为 ≥ buy_strong 且 `l3_v2_signal=1`；v2 为 0/NULL 的高分股进入候补 |
 | Outcome 追踪 | ✅ 最近运行正常 | live DB 中 Framework A 30d/60d 结案 953/253；90d 尚无结案 |
 | L3 买点层 | ✅ v2 Phase 2+3 完成；选择性待观察 | QFQ 覆盖 35/35 codes、4585 行；2026-07-13/14 共写入 70 条 v2 记录且全部 pass；cron 工作日 16:00 采集 |
-| 定性评分 v2 | 🔶 两 Sprint 推进中 | M4 已生成 4,694 frame/36 sample；M5 synthetic fixture-first 完成。当前先做数据 Sprint 的 corpus/coverage/source approval/real bundle，再以 exact bundle SHA 申请模型 Sprint |
+| 定性评分 v2 | ✅ 全局生产读路径；覆盖扩展中 | `QUALITATIVE_V2_MODE=on`；35 股全部进入选择器，6 股 hybrid、29 股 v1 fallback。M5 36 股审计改为发布后独立研究，不阻塞安全读取 |
 | 行情数据源 | ✅ `READY_CRON` | `a-stock-lib==0.2.0`；2026-07-15 probe 的 daily/index/calendar/close cross-check 全部 PASS |
 | cron | ✅ 已按门禁重新安装 | weekly/weekly-PM/QFQ/daily/outcome 五项 managed cron 均已确认 |
-| 质量门禁 | ✅ 全绿 | `866 passed`；Ruff lint/format、mypy、CLI help、`git diff --check` 与固定 sample SHA-256 复验全部通过 |
+| 质量门禁 | ✅ 全绿 | 自动验收实现后全仓 `933 passed`、生产定向 `25 passed`；Ruff lint/format、mypy、CLI smoke、`git diff --check` 全部通过 |
 
 ### 关键数据规模
 
 - watchlist：35只（手动维护，固定池）
-- Framework A 记录：1681 条；live DB 30d/60d 结案：953/253 条（2026-07-15 只读查询）
+- Framework A 记录：1,786 条；predictions 合计 1,859 条（2026-07-19 只读查询）
 - Framework B 历史记录：73 条；生产写入暂停，仅 report-only 观察
 - L3 v1 记录：1078 条，其中通过 148 条、30d 已结案 350 条；L3 v2 记录 70 条且 70/70 pass，两天 strong 均为 18/18 通过门禁，选择性尚未得到证明
 - 最新 tracked accuracy report 生成于 2026-07-15；其中 post-fix A 30d 结案 735 条，L3 v1 pass 的 30d 已结案 71 条
 - Phase 6 当前阻塞：B label 已结案样本不足 `0/20`，最早可评估日期 `2026-08-13`
+- 定性评分 v2：独立表 6 行，000963/002050/600036/600900/601088/603606 的 moat/market_pos 来自 v2，sentiment 因证据不足为 `NULL` 并回退 v1；其余 29 股完整回退 v1
 
 ### 已知系统性偏差
 
@@ -293,3 +294,5 @@
 | v1.25 | 2026-07-16 | 单次 strict-TLS 诊断确认 SWS 服务端只发送有效叶证书、缺 GeoTrust/DigiCert 中间证书，验证 code 20；不接受 AKShare `verify=False`，下一步等待服务端修复或单独授权官方中间证书/静态包路径。 |
 | v1.26 | 2026-07-18 | M4 轻量 builder 35/35 请求完成，冻结 4,694 行 frame、1,170 行 exclusions 和 36 股 12-cell sample；sample SHA-256 为 `b278a7…d7635d`，不等同 coverage 或 bundle。 |
 | v1.27 | 2026-07-18 | M5 synthetic fixture-first 编排、blind-reference seal、Gemini early-stop、support audit 和可复验 aggregate report 完成；路线压缩为数据就绪 Sprint + 模型执行 Sprint，D1 来源授权待批准。 |
+| v1.28 | 2026-07-19 | 定性评分 v2 完成可回滚生产闭环：东方电缆和指定五股形成 6 行合法 partial v2，全局模式切到 `on`，35 股选择器只读验证为 6 股 hybrid + 29 股 v1 fallback；M5 代表性/agreement 审计改为发布后独立研究。 |
+| v1.29 | 2026-07-19 | 新增只读生产验收与回滚检查：tracked baseline 绑定 6 股逐维分数和截至 2026-07-17 的历史评分 seal；自动输出 PASS/ROLLBACK，并可在自然 daily 后复验 35 股 prediction 与 v2 adoption 日志。 |

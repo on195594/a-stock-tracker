@@ -14,6 +14,7 @@ Branch: master
 - `qualitative_v2_audit.py` — M4 frame/sample、URL/corpus、technical ledger、Wilson coverage 与 fail-closed lineage
 - `qualitative_v2_audit_artifacts.py` — create-only blob/stage、跨进程锁、上游 hash binding 与完整 chain verification
 - `qualitative_v2_audit_review.py` — 隔离 Reviewer preview/authorization、bounded subprocess、seal/index、裁决与原子 coverage report
+- `qualitative_v2_production_acceptance.py` — 只读生产模式/adoption/历史 seal/自然 daily 与 `off` 回滚验收
 
 ## Key Interactions to Verify
 
@@ -118,19 +119,21 @@ Branch: master
 - `pytest` with `tmp_path` fixture for DB isolation
 - Mock AKShare API calls (do not make real network calls in tests)
 - Mock Gemini API calls (`patch.object(gemini_scorer, "_call_gemini", ...)`)
-- Test files（2026-07-16 基线：645 passed）：
+- Test files（2026-07-19 基线：933 passed）：
   - `tests/test_scorer.py`
   - `tests/test_pipeline.py`（含 cmd_init/cmd_weekly/cmd_outcome_update 覆盖，Batch A+B 新增）
   - `tests/test_gemini_scorer.py`（含 retry backoff / stale cache 路径，Batch B 更新）
   - `tests/test_fetcher.py`（含 spot_em retry state machine，Batch B 新增）
   - `tests/test_cache.py`（含 _ensure_columns allowlist，Batch B 新增）
   - `tests/test_agent_reviewer.py`（含 Gemini REST / fallback / validate，Batch B 新增）
+  - `tests/test_qualitative_v2_production_acceptance.py`（生产 PASS/ROLLBACK、历史 seal、daily 证据和 `off` 零 DB 访问）
   - `tests/milestone004/test_audit.py`（frame/sample、URL/corpus、technical ledger、Wilson/coverage）
   - `tests/milestone004/test_artifacts.py`（blob/path、create-only、并发 stage、hash chain）
   - `tests/milestone004/test_review.py`（bundle、authorization、subprocess limits、seal/index/adjudication/report）
   - `tests/milestone004/test_frame_source_capability.py`（授权/三调用/raw-first/来源门禁/non-adoptable/离线篡改复验）
 - **禁止在测试中发起真实网络请求**（AKShare / Gemini / Telegram 均须 mock）
 - **M4 测试不得运行真实 Codex、AGY 或 Gemini**；子进程场景只允许 `sys.executable` 的本地无害 helper。
+- 定性评分 v2 生产验收测试必须使用 `tmp_path` SQLite/.env/log；覆盖 PASS、模式漂移、历史评分改写、validator 异常脱敏、daily 证据缺失和 `off` 零 DB 访问。
 
 ## Test Coverage Map
 
@@ -185,4 +188,4 @@ Branch: master
 | `test_validate_rejects_out_of_range` | moat>10/market_pos>5/float/缺字段 → `_validate` 返回 None |
 | `test_cache_hit_skips_api` | 30天内缓存命中 → `_call_gemini` 不被调用 |
 
-**总计：645 个测试用例**（其中 M4 定向 167 项；详见各模块测试文件；基线日期：2026-07-16）
+**总计：933 个测试用例**（详见各模块测试文件；基线日期：2026-07-19）

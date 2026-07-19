@@ -336,6 +336,37 @@ entry_signal_reason='SOURCE_STALE'
 - qfq 对齐检查不只检查日期，也要检查 latest factor、zero factor、缺失 factor。
 - 离线脚本与报告必须保留 `source/adjusted/volume_unit/alignment_reason`，方便复审发现价量口径混用。
 
+---
+
+## G. 交付与治理陷阱
+
+### G-1｜把研究完备性门禁放进生产上线关键路径
+
+**现象（2026-07-19 定性评分 v2）：** 项目先后增加 36 股分层、coverage、real bundle、blind reference、support audit 和多轮单次授权。它们能提升研究可信度，却被串成生产上线前置；每次来源异常都会推迟整个项目，尽管生产适配器已经具备独立表、逐股 v1 fallback 和 `off` 回滚。
+
+**根因：** 没有区分三个目标：运行安全、数据覆盖、投资/模型有效性。用同一组 P0/P1/P2/P3 优先级管理三类目标，导致研究增强项被误判为上线阻断项。
+
+**修复：** 生产路径采用预计算 v2 + 逐维 hybrid + 逐股 fallback，先验证不可逆风险和错误采用风险；M5 36 股代表性/agreement 作为发布后研究继续。上线 gate 只保留凭证、历史改写、回滚、validator/hash、批量隔离和错误采用等安全项。
+
+**防复发：**
+
+- 新 gate 必须明确保护的是“安全、覆盖或有效性”中的哪一类。
+- 只有安全 gate 默认阻断上线；覆盖不足可以 fallback，有效性不足只能限制声明和后续权重调整。
+- 可逆读开关不得自动继承真实数据研究的全部审批链。
+- 同类小批量扩展复用已审定协议，不为每批股票新建一套编排框架。
+
+---
+
+### G-2｜全局开关启用不等于全量数据覆盖
+
+**现象：** `QUALITATIVE_V2_MODE=on` 会让 35 股全部进入 v2 选择器，但当前只有 6 股存在合法 partial v2 行；其余 29 股安全回退 v1。如果文档只写“v2 已全局上线”，容易被误读为 35 股都使用 v2 三维评分。
+
+**根因：** 把 eligibility、adoption 和 coverage 三个指标合并成一个“上线状态”。
+
+**修复：** 文档和运维报告分别记录：选择器资格 35/35、实际 hybrid 采用 6/35、full v2 采用 0/35、v1 fallback 29/35。合法 partial 行也必须逐维报告来源。
+
+**防复发：** 任何 rollout 开关都至少报告“进入选择器数量、实际采用数量、fallback 数量、失败数量”；不得把 fallback 成功计入新版本覆盖。
+
 ## 附录：快速检索
 
 | 关键词 | 对应条目 |
@@ -368,3 +399,5 @@ entry_signal_reason='SOURCE_STALE'
 | 公共符号重命名未 grep 调用方 | F-6 |
 | 回测去重 / 20 交易日冷却 / sparse prediction dates | F-7 |
 | qfq volume / 价量复权口径 | F-8 |
+| 研究门禁阻塞上线 / 优先级过重 | G-1 |
+| 全局 on / eligibility / adoption / coverage | G-2 |

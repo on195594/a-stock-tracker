@@ -102,7 +102,7 @@ avg_score 有约 4-5 分系统性偏移，Phase 4 optimizer 训练需按 score_d
 
 ---
 
-## Phase 状态快照（2026-07-15）
+## Phase 状态快照（2026-07-19）
 
 | Phase | 状态 | 说明 |
 |-------|------|------|
@@ -112,7 +112,7 @@ avg_score 有约 4-5 分系统性偏移，Phase 4 optimizer 训练需按 score_d
 | Phase 5 L3 v2（QFQ）| ✅ Phase 2+3 完成 | Phase 2: QFQ 35/35×130 行回填，pass_strong 激活，cron 16:00；Phase 3: 推送触发切换至 l3_v2_signal=1（commit e080f15） |
 | 定性评分 v2 MILESTONE-002 | ✅ fixture-first 完成 | contract/types/taxonomy/schema/prompt/validator 与 145 项本地合同测试已完成，AGY 边界加固复审 PASS |
 | 定性评分 v2 MILESTONE-003 | ✅ 文件 shadow seam 完成 | 独立 client/CLI、JSONL artifact、错误分类、重试和同 hash 去重已完成，AGY 最终只读审查 PASS；该研究 shadow 与后续生产 canary 物理隔离 |
-| 定性评分 v2 生产读路径 | ✅ 全局 `on` | 35 股全部进入 v2 选择器；独立 v2 表 6 行。603606 及 000963/002050/600036/600900/601088 使用 moat/market_pos v2 与 sentiment v1 fallback，其余 29 股无合法 v2 行时逐股回退 v1 |
+| 定性评分 v2 生产读路径 | ✅ 全局 `on` | 35 股全部进入 v2 选择器；独立 v2 表 6 行。603606 及 000963/002050/600036/600900/601088 使用 moat/market_pos v2 与 sentiment v1 fallback，其余 29 股逐股回退 v1；只读生产验收当前 PASS |
 | 定性评分 v2 MILESTONE-004 | ⛔ `NO_QUALIFIED_FRAME_SOURCE` | v1.1 技术关闭；v1.2 三调用完整执行但均为 Tushare `40203`，capability FAIL；attempt 已消费，禁止重试/回退，继续须另开 v1.3 |
 | Phase 6 多框架激活 | 🔶 report-only | Framework B 仍不写生产；B label 0/20 自然结案 |
 | Phase 7 选股宇宙 | ⏸ 未启动 | 待 Phase 6 完成或明确降级策略 |

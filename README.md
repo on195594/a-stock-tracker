@@ -98,6 +98,13 @@ python3 scripts/run_qualitative_v2_production.py preview \
   --contexts path/to/exact-five-contexts \
   --scope canary
 
+# 只读生产验收：PASS=exit 0，ROLLBACK=exit 2；不读取模型凭证、不写 .env/DB/artifact
+python3 scripts/check_qualitative_v2_production.py
+
+# 下一交易日 daily 后追加自然运行证据检查
+python3 scripts/check_qualitative_v2_production.py \
+  --require-score-date 2026-07-20
+
 # 经明确授权后，从 CNINFO 全文片段构建真实 canary context
 python3 scripts/collect_qualitative_v2_production_contexts.py \
   --authorization-id qualitative-v2-prod-canary-20260719-01 \
@@ -192,6 +199,7 @@ python3 pipeline.py init
 - `lib/l3_v2.py` / `lib/l3_v2_pipeline.py`：L3 v2 纯计算规则与 QFQ 优先的生产包装层。
 - `qualitative_v2_contract.py` / `qualitative_v2_types.py` / `qualitative_v2_taxonomy.py` / `qualitative_v2_schema.py` / `qualitative_v2_prompt.py` / `qualitative_v2_validator.py`：定性评分 v2 的本地合同和 fail-closed 语义边界。
 - `qualitative_v2_client.py` / `qualitative_v2_shadow.py` / `scripts/run_qualitative_v2_shadow.py`：物理隔离的 Gemini shadow transport、JSONL persistence 和显式 CLI；不被生产 pipeline 导入。
+- `qualitative_v2_production_acceptance.py` / `scripts/check_qualitative_v2_production.py`：只读复验全局模式、v2 adoption、历史 predictions seal、自然 daily 证据与 `off` 回滚路径；失败输出 `ROLLBACK` 和 exit 2，但不自行改写生产配置。
 - `docs/runbooks/qualitative-v2-shadow.md`：shadow 输入、执行、artifact、去重和停止条件。
 - `lib/agent_reviewer.py`：只读 reviewer schema/fake reviewer。
 - `weights.json`：评分权重与阈值。
