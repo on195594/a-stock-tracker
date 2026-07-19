@@ -18,6 +18,7 @@ from qualitative_v2_production import (
     ProductionV2Error,
     context_missing_score_dimensions,
     get_production_qualitative_score,
+    is_v2_eligible,
     load_usable_v2_score,
     production_mode,
     promote_shadow_record,
@@ -160,6 +161,14 @@ def test_mode_is_exact_and_defaults_off() -> None:
     assert production_mode({"QUALITATIVE_V2_MODE": "on"}) == "on"
     with pytest.raises(ProductionV2Error):
         production_mode({"QUALITATIVE_V2_MODE": "ON"})
+
+
+def test_orient_cable_pilot_is_eligible_only_in_canary_or_on() -> None:
+    production_canaries = config.QUALITATIVE_V2_CANARY_CODES | config.QUALITATIVE_V2_PILOT_CODES
+    assert "603606" not in config.QUALITATIVE_V2_CANARY_CODES
+    assert is_v2_eligible("603606", mode="canary", canary_codes=production_canaries)
+    assert is_v2_eligible("603606", mode="on", canary_codes=production_canaries)
+    assert not is_v2_eligible("603606", mode="off", canary_codes=production_canaries)
 
 
 def test_nonempty_shadow_context_remains_valid_wire_input() -> None:

@@ -241,3 +241,76 @@ def test_active_authorization_is_exact_and_tracked(tmp_path: Path) -> None:
     ) == ProductionContextAuthorization("active-canary-01", "canary", 45)
     with pytest.raises(ContextCollectionError, match="does not match"):
         load_active_authorization(tmp_path, authorization_id="different-canary-01", scope="canary")
+
+
+def test_orient_cable_authorization_preserves_exact_extended_limits(tmp_path: Path) -> None:
+    ledger = {
+        "schema_version": "qualitative-v2-production-authorizations-v1",
+        "active": {
+            "authorization_id": "qualitative-v2-orient-cable-pilot-20260719-01",
+            "scope": "orient-cable",
+            "http_attempt_limit": 12,
+            "target_codes": ["603606"],
+            "pdf_download_limit": 3,
+            "gemini_logical_call_limit": 1,
+            "gemini_http_attempt_limit": 3,
+            "allowed_hosts": [
+                "www.cninfo.com.cn",
+                "static.cninfo.com.cn",
+                "www.sse.com.cn",
+                "static.sse.com.cn",
+                "www.orientcable.com",
+            ],
+            "as_of_date": "2026-07-19",
+        },
+        "retired": [],
+    }
+    (tmp_path / AUTHORIZATION_LEDGER_FILENAME).write_text(json.dumps(ledger), encoding="utf-8")
+
+    assert load_active_authorization(
+        tmp_path,
+        authorization_id="qualitative-v2-orient-cable-pilot-20260719-01",
+        scope="orient-cable",
+    ) == ProductionContextAuthorization(
+        "qualitative-v2-orient-cable-pilot-20260719-01",
+        "orient-cable",
+        12,
+        target_codes=("603606",),
+        pdf_download_limit=3,
+        gemini_logical_call_limit=1,
+        gemini_http_attempt_limit=3,
+        allowed_hosts=(
+            "www.cninfo.com.cn",
+            "static.cninfo.com.cn",
+            "www.sse.com.cn",
+            "static.sse.com.cn",
+            "www.orientcable.com",
+        ),
+        as_of_date="2026-07-19",
+    )
+
+
+def test_orient_cable_authorization_rejects_limit_drift(tmp_path: Path) -> None:
+    ledger = {
+        "schema_version": "qualitative-v2-production-authorizations-v1",
+        "active": {
+            "authorization_id": "qualitative-v2-orient-cable-pilot-20260719-01",
+            "scope": "orient-cable",
+            "http_attempt_limit": 12,
+            "target_codes": ["603606"],
+            "pdf_download_limit": 4,
+            "gemini_logical_call_limit": 1,
+            "gemini_http_attempt_limit": 3,
+            "allowed_hosts": ["www.cninfo.com.cn"],
+            "as_of_date": "2026-07-19",
+        },
+        "retired": [],
+    }
+    (tmp_path / AUTHORIZATION_LEDGER_FILENAME).write_text(json.dumps(ledger), encoding="utf-8")
+
+    with pytest.raises(ContextCollectionError, match="contract drift"):
+        load_active_authorization(
+            tmp_path,
+            authorization_id="qualitative-v2-orient-cable-pilot-20260719-01",
+            scope="orient-cable",
+        )

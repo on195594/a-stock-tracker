@@ -5,7 +5,7 @@
 生产路径不再等待 M4/M5 的 36 股研究审计。v2 采用独立预计算批处理，`daily` 只读取已通过本地合同复验的结果；任何缺数、过期、损坏、`insufficient_data` 或外部失败均逐股回退现有 v1。
 
 - 开关：`QUALITATIVE_V2_MODE=off|canary|on`，默认 `off`。
-- canary：招商银行、中国神华、比亚迪、中国移动、华东医药。
+- canary：招商银行、中国神华、比亚迪、中国移动、华东医药；另含经独立授权加入资格的东方电缆单股 pilot。
 - 固定模型：`gemini-2.5-flash`，每股一个逻辑调用、最多 3 次 HTTP attempt。
 - 存储：只写 `qualitative_scores_v2`；不更新旧 `qualitative_scores`，不回写历史 `predictions`。
 - artifact：`artifacts/qualitative-v2-production/<run-id>/gemini.jsonl`，run ID create-only。
@@ -14,6 +14,8 @@
 ## 当天启用步骤
 
 > 2026-07-19 状态：下述 `qualitative-v2-prod-canary-20260719-01` 已消耗 45/45 attempts，并记录在仓库跟踪的 `qualitative_v2_production_authorizations.json` 退休账本中。该命令仅作为历史执行示例；再次执行会在创建 artifact、打开数据库或发起网络请求前失败。未来采集必须先取得新授权并把新 ID、scope 和上限登记为唯一 active grant。
+
+> 东方电缆状态：`qualitative-v2-orient-cable-pilot-20260719-01` 已消耗 11/12 HTTP attempts 和 2/3 PDF downloads 后退休。官方 PDF 传输与提取通过，但在 2026-06-19 至 2026-07-19 窗口内没有得到持续性 sentiment，且提交前复核发现初版壁垒/行业地位截取规则过宽；因此 Gemini 为 0 调用、v2 表为 0 写入，603606 在 canary 模式继续逐股回退 v1。完整记录见 `docs/reviews/2026-07-19-orient-cable-production-pilot.md`。
 
 先使用已批准的 CNINFO 边界构建真实 canary context。该命令只读 `stock_fundamentals`，不读取模型凭证、不写数据库：
 
@@ -28,7 +30,7 @@ python scripts/collect_qualitative_v2_production_contexts.py \
 
 采集器对每家公司执行 `核心技术`、`市场占有率`、`合同期限` 三组全文检索，保存原始响应 SHA、locator、manifest 和通过 `validate_context_dict()` 的 context。技术成功但没有匹配片段时，context 只保留实际存在的基本面 supporting evidence；不得补造直接证据，也不得因此调用 Gemini。
 
-随后预检与真实 watchlist 身份完全一致的 context。canary 目录必须恰好包含 5 个 JSON；全量目录必须恰好包含 35 个 JSON。
+随后预检与真实 watchlist 身份完全一致的 context。原 canary scope 目录必须恰好包含 5 个 JSON；东方电缆 `orient-cable` scope 必须恰好包含 1 个 JSON；全量目录必须恰好包含 35 个 JSON。
 
 ```bash
 python scripts/run_qualitative_v2_production.py preview \

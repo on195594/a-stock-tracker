@@ -7,7 +7,7 @@ A 股选股与方法论验证项目。当前定位是 **Framework A 定量评分
 ## 当前状态
 
 - 主分支：`master`
-- 当前阶段：Phase 5 L3 v2 已接入生产评分与推送；Phase 6 仍处于 report-only 观察期；来源约束的定性评分 v2 已启用 5 股生产 canary 读路径，当前无合法 v2 行，5/5 自动回退 v1；M4/M5 继续作为发布后研究审计
+- 当前阶段：Phase 5 L3 v2 已接入生产评分与推送；Phase 6 仍处于 report-only 观察期；来源约束的定性评分 v2 已启用原 5 股及东方电缆单股 pilot 的生产 canary 读路径，当前无合法 v2 行，6/6 自动回退 v1；M4/M5 继续作为发布后研究审计
 - 生产框架：`SUPPORTED_FRAMEWORKS = {"A"}`；Framework B 历史数据保留，Phase 6 前不得启用生产写入
 - watchlist：35 只，维护在 `config.py`
 - 评分阈值：`buy_strong=44`、`buy_moderate=35`、`buy_light=26`
@@ -22,7 +22,7 @@ A 股选股与方法论验证项目。当前定位是 **Framework A 定量评分
 - Outcome 追踪：记录 30/60/90 天收益、沪深 300 benchmark 和 generated `alpha_*d`。
 - L3 买点层：v1 保留用于历史审计；生产 daily 优先读取 QFQ 日线计算 `l3_v2_signal`，Telegram 主推已切换到 v2。
 - 定性评分 v2 研究链路：MILESTONE-002 合同、MILESTONE-003 文件型 shadow seam 已完成；M4 v1.3.2 的 authorization、freeze、golden、oracle、attestation 和多角色审批实现已退役，仍可从 Git 历史恢复；轻量 builder 已完成本地 frame/sample。研究链路与下述生产 canary 保持隔离。
-- 定性评分 v2 生产 canary：5 股生产读路径已通过 `.env` 启用，结果存储与 v1 隔离；当前 `qualitative_scores_v2` 为 0 行，5/5 保持 v1。已批准 CNINFO 全文片段采集消耗 45/45 HTTP attempts 后未获得直接证据，因此未调用 Gemini、未扩展 35 股。
+- 定性评分 v2 生产 canary：原 5 股及东方电缆单股 pilot 的生产读路径已通过 `.env` 启用，结果存储与 v1 隔离；当前 `qualitative_scores_v2` 为 0 行，6/6 保持 v1。原 5 股 CNINFO 全文片段采集消耗 45/45 HTTP attempts 后未获得直接证据；东方电缆 pilot 消耗 11/12 attempts、2/3 PDF downloads，证明官方 PDF 可提取，但证据复核仍缺少合格 sentiment，且初版壁垒/行业地位截取过宽，因此在 Gemini 前停止并收紧提取规则。
 - M5 fixture-first：已提供固定 36 股 sample 的 synthetic bundle 校验、批量 blind-reference/shadow/support-audit 编排和聚合 gate；当前执行仅使用无凭证 fake transport，真实 bundle 构建与外部调用仍待分别批准。
 - Telegram 推送：日报分为主推、候补和雷达；只有强分且 L3 v2 通过的股票进入主推，发送失败不阻断 daily。
 - Google Sheets 同步：展示层能力，失败只记录 warning，不是数据真相来源。

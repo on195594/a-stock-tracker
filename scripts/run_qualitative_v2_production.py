@@ -53,10 +53,11 @@ def _target_companies(scope: str) -> dict[str, str]:
         raise ProductionV2Error("production watchlist contains duplicate codes")
     if scope == "all":
         return watchlist
-    missing = config.QUALITATIVE_V2_CANARY_CODES - watchlist.keys()
+    target_codes = config.QUALITATIVE_V2_CANARY_CODES if scope == "canary" else config.QUALITATIVE_V2_PILOT_CODES
+    missing = target_codes - watchlist.keys()
     if missing:
-        raise ProductionV2Error(f"configured canary codes are outside the watchlist: {sorted(missing)}")
-    return {code: watchlist[code] for code in sorted(config.QUALITATIVE_V2_CANARY_CODES)}
+        raise ProductionV2Error(f"configured {scope} codes are outside the watchlist: {sorted(missing)}")
+    return {code: watchlist[code] for code in sorted(target_codes)}
 
 
 def _load_contexts(directory: Path, expected: dict[str, str]) -> list[QualitativeContext]:
@@ -101,7 +102,7 @@ def _parser() -> argparse.ArgumentParser:
     for command in ("preview", "score"):
         subparser = subparsers.add_parser(command)
         subparser.add_argument("--contexts", required=True, type=Path)
-        subparser.add_argument("--scope", required=True, choices=("canary", "all"))
+        subparser.add_argument("--scope", required=True, choices=("canary", "orient-cable", "all"))
         if command == "score":
             subparser.add_argument("--run-id", required=True)
             subparser.add_argument(

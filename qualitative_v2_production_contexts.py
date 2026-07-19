@@ -30,6 +30,13 @@ MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 MAX_RETAINED_SNIPPETS = 3
 CANARY_HTTP_LIMIT = 45
 ALL_HTTP_LIMIT = 315
+ORIENT_CABLE_ALLOWED_HOSTS = (
+    "www.cninfo.com.cn",
+    "static.cninfo.com.cn",
+    "www.sse.com.cn",
+    "static.sse.com.cn",
+    "www.orientcable.com",
+)
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 _PERSISTENT_RE = re.compile(r"(合同期限|履行期限|有效期|持续|长期|[一二三四五六七八九十\d]+年|\d+个月)")
 
@@ -51,6 +58,12 @@ class ProductionContextAuthorization:
     authorization_id: str
     scope: str
     http_attempt_limit: int
+    target_codes: tuple[str, ...] = ()
+    pdf_download_limit: int = 0
+    gemini_logical_call_limit: int = 0
+    gemini_http_attempt_limit: int = 0
+    allowed_hosts: tuple[str, ...] = ()
+    as_of_date: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,13 +90,13 @@ def _authorization_fields(value: object, *, label: str) -> tuple[str, str, int]:
     if (
         not isinstance(authorization_id, str)
         or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", authorization_id) is None
-        or scope not in {"canary", "all"}
+        or scope not in {"canary", "all", "orient-cable"}
         or isinstance(http_attempt_limit, bool)
         or not isinstance(http_attempt_limit, int)
         or http_attempt_limit <= 0
     ):
         raise ContextCollectionError(f"{label} authorization entry is invalid")
-    expected_limit = CANARY_HTTP_LIMIT if scope == "canary" else ALL_HTTP_LIMIT
+    expected_limit = {"canary": CANARY_HTTP_LIMIT, "all": ALL_HTTP_LIMIT, "orient-cable": 12}[str(scope)]
     if http_attempt_limit != expected_limit:
         raise ContextCollectionError(f"{label} authorization attempt limit drift")
     return authorization_id, scope, http_attempt_limit
@@ -151,14 +164,53 @@ def load_active_authorization(
     active = ledger.get("active")
     if active is None:
         raise ContextCollectionError("no active production context authorization")
-    if not isinstance(active, dict) or set(active) != {"authorization_id", "scope", "http_attempt_limit"}:
+    common_fields = {"authorization_id", "scope", "http_attempt_limit"}
+    orient_fields = common_fields | {
+        "target_codes",
+        "pdf_download_limit",
+        "gemini_logical_call_limit",
+        "gemini_http_attempt_limit",
+        "allowed_hosts",
+        "as_of_date",
+    }
+    if not isinstance(active, dict) or (set(active) != common_fields and set(active) != orient_fields):
         raise ContextCollectionError("active authorization entry contract drift")
     active_id, active_scope, active_limit = _authorization_fields(active, label="active")
     if active_id in retired_ids:
         raise ContextCollectionError("active authorization is also retired")
     if authorization_id != active_id or scope != active_scope:
         raise ContextCollectionError("authorization-id or scope does not match the active production grant")
-    return ProductionContextAuthorization(active_id, active_scope, active_limit)
+    if active_scope != "orient-cable":
+        return ProductionContextAuthorization(active_id, active_scope, active_limit)
+    target_codes = active.get("target_codes")
+    allowed_hosts = active.get("allowed_hosts")
+    pdf_limit = active.get("pdf_download_limit")
+    gemini_logical_limit = active.get("gemini_logical_call_limit")
+    gemini_http_limit = active.get("gemini_http_attempt_limit")
+    active_as_of_date = active.get("as_of_date")
+    if (
+        target_codes != ["603606"]
+        or allowed_hosts != list(ORIENT_CABLE_ALLOWED_HOSTS)
+        or isinstance(pdf_limit, bool)
+        or pdf_limit != 3
+        or isinstance(gemini_logical_limit, bool)
+        or gemini_logical_limit != 1
+        or isinstance(gemini_http_limit, bool)
+        or gemini_http_limit != 3
+        or active_as_of_date != "2026-07-19"
+    ):
+        raise ContextCollectionError("orient-cable authorization contract drift")
+    return ProductionContextAuthorization(
+        active_id,
+        active_scope,
+        active_limit,
+        target_codes=("603606",),
+        pdf_download_limit=3,
+        gemini_logical_call_limit=1,
+        gemini_http_attempt_limit=3,
+        allowed_hosts=ORIENT_CABLE_ALLOWED_HOSTS,
+        as_of_date="2026-07-19",
+    )
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):

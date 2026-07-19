@@ -474,7 +474,7 @@ def cmd_daily() -> None:
                     db,
                     code,
                     name,
-                    canary_codes=config.QUALITATIVE_V2_CANARY_CODES,
+                    canary_codes=config.QUALITATIVE_V2_CANARY_CODES | config.QUALITATIVE_V2_PILOT_CODES,
                     legacy_getter=get_qualitative_score,
                 )
                 data["moat_fixed"] = qual["moat"]
