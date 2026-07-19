@@ -15,6 +15,7 @@ Branch: master
 - `qualitative_v2_audit_artifacts.py` — create-only blob/stage、跨进程锁、上游 hash binding 与完整 chain verification
 - `qualitative_v2_audit_review.py` — 隔离 Reviewer preview/authorization、bounded subprocess、seal/index、裁决与原子 coverage report
 - `qualitative_v2_production_acceptance.py` — 只读生产模式/adoption/历史 seal/自然 daily 与 `off` 回滚验收
+- `cron-setup.sh` / `cron-alert-wrap.sh` — 验收位于 daily/outcome-update 之间；仅该任务把 exit 2 `ROLLBACK` 接入 Telegram 告警
 
 ## Key Interactions to Verify
 
@@ -127,6 +128,7 @@ Branch: master
   - `tests/test_cache.py`（含 _ensure_columns allowlist，Batch B 新增）
   - `tests/test_agent_reviewer.py`（含 Gemini REST / fallback / validate，Batch B 新增）
   - `tests/test_qualitative_v2_production_acceptance.py`（生产 PASS/ROLLBACK、历史 seal、daily 证据和 `off` 零 DB 访问）
+  - `tests/test_qualitative_v2_production_cron.py`（动态当天日期、managed cron 顺序、exit 2 告警与 weekly PM 兼容语义）
   - `tests/milestone004/test_audit.py`（frame/sample、URL/corpus、technical ledger、Wilson/coverage）
   - `tests/milestone004/test_artifacts.py`（blob/path、create-only、并发 stage、hash chain）
   - `tests/milestone004/test_review.py`（bundle、authorization、subprocess limits、seal/index/adjudication/report）

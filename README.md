@@ -160,9 +160,10 @@ bash cron-setup.sh
 - 每周一 09:30：运行 Phase 6 weekly PM loop
 - 工作日 16:00：采集 QFQ 日线
 - 工作日 16:30：运行 `daily`
+- 工作日 16:45：只读运行 qualitative-v2 production acceptance；`ROLLBACK` 触发 Telegram 告警
 - 工作日 17:00：运行 `outcome-update`
 
-`cron-setup.sh` 会先运行 `scripts/check_market_data_readiness.py --scope cron`。只有最新 Tushare probe 同时通过 daily 写入门禁与 index/calendar 能力门禁时，才新增 `daily` / `outcome-update`；否则只配置 weekly。
+`cron-setup.sh` 会先运行 `scripts/check_market_data_readiness.py --scope cron`。只有最新 Tushare probe 同时通过 daily 写入门禁与 index/calendar 能力门禁时，才新增 `daily` / qualitative-v2 production acceptance / `outcome-update`；否则不配置这三个相互依赖的工作日任务。
 
 cron、Telegram、Gemini、Google Sheets 都不应在测试中真实触发。
 

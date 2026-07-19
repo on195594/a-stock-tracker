@@ -78,7 +78,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | Framework A 倒置诊断 | 已完成，结论：不调权重 | Q5 avg_alpha_30d=-9.91%；根因=截面校准偏差+11支伪复制；agy投资审查：Priority 1=延伸60d/90d；60d首批到期 2026-07-14 |
 | 定性评分 v2 | 全局 `on`；6/35 hybrid、29/35 v1 fallback | v2 表 6 行：000963/002050/600036/600900/601088/603606；全部为 moat/market_pos scored、sentiment NULL |
 | 定性评分 v2 研究审计 | M4 sample 与 M5 fixture-first/builder 完成；real bundle 未完成 | sample SHA `b278a7…d7635d`；不再作为当前生产读取阻塞项 |
-| 质量门禁 | 全部通过 | 自动验收实现后全仓 933 passed、生产定向 25 passed；Ruff lint/format、mypy、CLI smoke、`git diff --check` PASS |
+| 质量门禁 | 全部通过 | managed cron/ROLLBACK 告警集成后全仓 937 passed、cron 定向 4 passed；Ruff lint/format、mypy 127 files、CLI smoke、shell syntax、`git diff --check` PASS |
 
 ## Spec Ledger
 
@@ -115,7 +115,8 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 |---|---|---|---|
 | B label 已结案样本不足 `0/20` | 阻止 Framework B 生产化 | 已结案 ≥20 且 overdue=0 | 最早 2026-08-13 后 |
 | qualitative v2 仅 6/35 有合法 partial 行 | 不阻断安全读取，但限制 v2 实际覆盖 | 分批复用官方 PDF/离线提取/validator 路线补齐其余 29 股 | P1，按批次推进 |
-| 全局 `on` 尚无自然 daily 证据 | 自动预检 PASS，但运维闭环未最终确认 | 下一交易日观察现有 16:30 cron，并运行 checker `--require-score-date`；异常则切 `off` | 下一交易日 |
+| 全局 `on` 尚无自然 daily 证据 | 自动预检 PASS，但运维闭环未最终确认 | 2026-07-20 由 16:30 daily 后的 16:45 managed acceptance 自动验收并告警；异常则切 `off` | 下一交易日 |
+| market-data cron readiness 报告已过期 | 当前 managed cron 继续保留，但直接重跑 `cron-setup.sh` 会 fail closed 并移除 daily/acceptance/outcome-update | 下次重装 cron 前刷新 capability probe 并恢复 `READY_CRON` | 下次重装前 |
 | M5 real bundle/blind-reference/support audit 未完成 | 限制研究代表性与 agreement 结论 | 作为发布后独立研究执行 | P2，不阻断当前生产读取 |
 | Framework A strong 层级尚未证明优于基准 | 不宜调权重或宣称模型有效 | 另开权重复核 spec | 待更多样本与独立审查 |
 | L3 v2 当前未体现过滤选择性 | 2026-07-13/14 共 70/70 pass，strong 18/18 每日全部通过 | 先增加 v2 状态/门禁分布报告并积累 30/60d outcome；不据两天样本改规则 | P2 |
@@ -145,6 +146,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | 2026-07-18 | M4 sample + M5 fixture-first | 4,694 frame、36 sample 已冻结；M5 orchestration、artifact seals、聚合 report、离线 bundle、D1 preflight 和只读 snapshot builder 已实现，51 项定向/866 项全量通过 | 批准 SHA `93c471…c0cf1` 后才 seal/执行 D1；不提前执行 Reviewer/Claude/Gemini |
 | 2026-07-19 | 定性评分 v2 生产闭环与全局读模式 | 东方电缆及指定五股形成 6 行合法 partial v2；模式切到 `on`；只读验证 35/35 返回有效，6 股 hybrid、29 股 v1 fallback；predictions 保持 1,859 行 | 下一交易日自然 cron 确认；随后分批扩大覆盖，M5 研究审计独立推进 |
 | 2026-07-19 | 自动化生产验收与回滚检查 | tracked baseline 封存历史评分字段；真实只读预检 PASS；`off` 证明 35 股均走 v1 且不访问 v2 DB | 下一交易日以 `--require-score-date` 验收 daily 行数和 adoption 日志 |
+| 2026-07-19 | 自动化验收 managed cron 与告警 | 工作日 16:45 在 daily/outcome-update 之间执行 `--require-today`；真实 crontab 已去重安装 1 条；验收 exit 2 显式发送 `ROLLBACK` Telegram 告警，weekly PM 的 exit 2 去重语义不变；全仓 937 passed | 观察 2026-07-20 首次自然 cron 日志与告警链路；重跑 `cron-setup.sh` 前刷新已过期的 readiness |
 | 2026-08-13 后 | B label 30d 结案、overdue、行业覆盖、B-A delta | 待执行 | 满足门槛后写 `phase6-b-label-review.md`，不直接上线 |
 
 ## 每周自动复核

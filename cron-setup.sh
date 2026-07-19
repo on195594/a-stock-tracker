@@ -26,13 +26,14 @@ WEEKLY_RULE="00 10 * * 6 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .v
 PM_LOOP_RULE="30 09 * * 1 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python scripts/weekly_pm_loop.py\" weekly-pm-loop >> $PROJECT_DIR/logs/weekly-pm-loop.log 2>&1"
 QFQ_RULE="00 16 * * 1-5 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python scripts/fetch_qfq_daily_bars.py\" qfq-daily-bars >> $PROJECT_DIR/logs/qfq-daily-bars.log 2>&1"
 DAILY_RULE="30 16 * * 1-5 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python pipeline.py daily\" daily >> $PROJECT_DIR/logs/daily.log 2>&1"
+ACCEPTANCE_RULE="45 16 * * 1-5 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python scripts/check_qualitative_v2_production.py --require-today\" qualitative-v2-production-acceptance --alert-exit-2 >> $PROJECT_DIR/logs/qualitative-v2-production-acceptance.log 2>&1"
 OUTCOME_RULE="00 17 * * 1-5 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python pipeline.py outcome-update\" outcome-update >> $PROJECT_DIR/logs/outcome.log 2>&1"
 
 MARKET_DATA_READY=0
 if "$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/scripts/check_market_data_readiness.py" >/tmp/a-stock-market-data-readiness.log 2>&1; then
     MARKET_DATA_READY=1
 else
-    echo "⚠️  行情 provider 尚未通过恢复门禁；将只配置 weekly，并移除 daily/outcome-update"
+    echo "⚠️  行情 provider 尚未通过恢复门禁；将只配置 weekly，并移除 daily/production-acceptance/outcome-update"
     cat /tmp/a-stock-market-data-readiness.log
 fi
 
@@ -45,6 +46,7 @@ BASE_CRONTAB=$(printf '%s\n' "$CURRENT_CRONTAB" | awk \
     in_block { next }
     /# a-stock-tracker/ { next }
     /a-stock-tracker\/cron-alert-wrap\.sh/ && /pipeline\.py (weekly|daily|outcome-update)/ { next }
+    /a-stock-tracker\/cron-alert-wrap\.sh/ && /check_qualitative_v2_production\.py/ { next }
     /a-stock-tracker\/cron-alert-wrap\.sh/ && /weekly_pm_loop\.py/ { next }
     /a-stock-tracker\/cron-alert-wrap\.sh/ && /fetch_qfq_daily_bars\.py/ { next }
     { print }
@@ -73,14 +75,18 @@ $MANAGED_CRONTAB
 # a-stock-tracker daily (工作日 16:30)
 $DAILY_RULE
 
+# a-stock-tracker qualitative-v2 production acceptance (工作日 16:45，daily 后、outcome-update 前)
+$ACCEPTANCE_RULE
+
 # a-stock-tracker outcome-update (工作日 17:00)
 $OUTCOME_RULE
 EOF
 )
     echo "✅ 已配置 daily 任务"
+    echo "✅ 已配置 qualitative-v2 production acceptance 任务"
     echo "✅ 已配置 outcome-update 任务"
 else
-    echo "⏸️  已移除 daily / outcome-update cron；配置 TUSHARE_TOKEN 并通过 probe 后再运行本脚本"
+    echo "⏸️  已移除 daily / production-acceptance / outcome-update cron；配置 TUSHARE_TOKEN 并通过 probe 后再运行本脚本"
 fi
 
 MANAGED_CRONTAB=$(cat <<EOF
@@ -102,9 +108,11 @@ echo "  • weekly-pm-loop: 每周一 09:30 复核 Phase 6 并发送 Telegram �
 echo "  • qfq-daily-bars: 每个工作日 16:00 采集 QFQ 前复权日线"
 if [ "$MARKET_DATA_READY" -eq 1 ]; then
     echo "  • daily:          每个工作日 16:30 评分 + Sheets 同步"
+    echo "  • v2-acceptance:  每个工作日 16:45 只读验收；ROLLBACK 触发 Telegram 告警"
     echo "  • outcome-update: 每个工作日 17:00 更新到期结果"
 else
     echo "  • daily:          HOLD（行情恢复门禁未通过）"
+    echo "  • v2-acceptance:  HOLD（daily 未配置）"
     echo "  • outcome-update: HOLD（行情恢复门禁未通过）"
 fi
 echo ""
@@ -115,4 +123,5 @@ echo "查看执行日志："
 echo "  tail -f $PROJECT_DIR/logs/weekly.log"
 echo "  tail -f $PROJECT_DIR/logs/weekly-pm-loop.log"
 echo "  tail -f $PROJECT_DIR/logs/daily.log"
+echo "  tail -f $PROJECT_DIR/logs/qualitative-v2-production-acceptance.log"
 echo "  tail -f $PROJECT_DIR/logs/outcome.log"

@@ -7,6 +7,7 @@ import argparse
 import json
 import sqlite3
 import sys
+from datetime import date
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -26,15 +27,34 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--env-file", type=Path, default=PROJECT_ROOT / ".env")
     parser.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
     parser.add_argument("--daily-log", type=Path, default=Path(config.LOG_DIR) / "daily.log")
-    parser.add_argument(
+    score_date = parser.add_mutually_exclusive_group()
+    score_date.add_argument(
         "--require-score-date",
         help="Also require an exact 35-stock Framework A daily run and v2 adoption log evidence for YYYY-MM-DD.",
+    )
+    score_date.add_argument(
+        "--require-today",
+        action="store_true",
+        help="Require today's exact Framework A daily run and v2 adoption log evidence (for managed cron).",
     )
     return parser
 
 
+def resolve_required_score_date(
+    require_score_date: str | None,
+    require_today: bool,
+    *,
+    today: date | None = None,
+) -> str | None:
+    """Resolve the daily evidence date without shell date interpolation."""
+    if require_today:
+        return (today or date.today()).isoformat()
+    return require_score_date
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    required_score_date = resolve_required_score_date(args.require_score_date, args.require_today)
     canary_codes = config.QUALITATIVE_V2_CANARY_CODES | config.QUALITATIVE_V2_PILOT_CODES
     try:
         report = run_acceptance(
@@ -44,7 +64,7 @@ def main(argv: list[str] | None = None) -> int:
             daily_log_path=args.daily_log,
             watchlist=config.WATCHLIST,
             canary_codes=canary_codes,
-            required_score_date=args.require_score_date,
+            required_score_date=required_score_date,
         )
     except (AcceptanceError, ProductionV2Error, OSError, sqlite3.Error, ValueError) as exc:
         report = {
