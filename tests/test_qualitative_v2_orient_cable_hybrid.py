@@ -9,14 +9,14 @@ from pathlib import Path
 
 import pytest
 
-import qualitative_v2_orient_cable_hybrid as hybrid
-from qualitative_v2_orient_cable_hybrid import (
+import a_stock_tracker.qualitative.orient_cable_hybrid as hybrid
+from a_stock_tracker.qualitative.orient_cable_hybrid import (
     HybridAuthorization,
     HybridAuthorizationError,
     build_authorized_hybrid_context,
     load_active_hybrid_authorization,
 )
-from qualitative_v2_validator import validate_context_dict
+from a_stock_tracker.qualitative.validator import validate_context_dict
 
 
 def _canonical(value: object) -> bytes:

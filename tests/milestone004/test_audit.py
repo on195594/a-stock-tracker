@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-import qualitative_v2_audit as audit_module
-from qualitative_v2_audit import (
+import a_stock_tracker.qualitative.audit as audit_module
+from a_stock_tracker.qualitative.audit import (
     QUERIES,
     SAMPLING_SEED,
     SUPER_STRATA,

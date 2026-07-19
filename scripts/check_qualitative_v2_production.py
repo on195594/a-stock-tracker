@@ -14,11 +14,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-import config  # noqa: E402
-from qualitative_v2_production import ProductionV2Error  # noqa: E402
-from qualitative_v2_production_acceptance import AcceptanceError, run_acceptance  # noqa: E402
+import a_stock_tracker.config as config  # noqa: E402
+from a_stock_tracker.qualitative.production import ProductionV2Error  # noqa: E402
+from a_stock_tracker.qualitative.production_acceptance import AcceptanceError, run_acceptance  # noqa: E402
 
-DEFAULT_BASELINE = PROJECT_ROOT / "qualitative_v2_production_acceptance_baseline.json"
+DEFAULT_BASELINE = PROJECT_ROOT / "config" / "qualitative" / "production_acceptance_baseline.json"
 
 
 def _parser() -> argparse.ArgumentParser:

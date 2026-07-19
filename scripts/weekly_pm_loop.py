@@ -177,7 +177,7 @@ def check_accuracy_report(project_root: Path) -> CheckResult:
 
     output = result.stdout.strip()
     if not output:
-        report_path = project_root / "accuracy_report.txt"
+        report_path = project_root / "artifacts" / "reports" / "accuracy-report.txt"
         if report_path.exists():
             output = report_path.read_text(encoding="utf-8")
 

@@ -93,7 +93,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | `/home/lin/a-stock-lib/docs/plans/2026-07-01-three-project-next-work-plan.md` | active cross-project plan | Hermes PM | 按 P0/P1/P2 顺序推进共享包、tracker、research 联动事项 | 三项目版本/文档/任务边界一致 |
 | `docs/runbooks/market-data-provider-recovery.md` | active | Hermes PM | 若 readiness/cron 语义变更则同步 | HOLD/READY 行为与 `cron-setup.sh` 一致 |
 | `docs/reviews/2026-07-15-tushare-capability-probe.md` | latest probe evidence，全部 PASS | 系统探测 | 按 freshness 门禁定期刷新 | `check_market_data_readiness.py --scope cron` 当前 READY |
-| `accuracy_report.txt` | latest tracked report（生成于 2026-07-15） | pipeline | 按周更新 | Phase 6 仍明确 report-only |
+| `artifacts/reports/accuracy-report.txt` | ignored runtime report | pipeline | 按周更新 | Phase 6 仍明确 report-only，运行后不污染 Git 状态 |
 | `docs/specs/2026-07-08-l3-v2-entry-signal-spec.md` | draft 历史父 spec；其 Phase 2/3 子 spec 已实施 | Hermes PM + agy review | 观察 v2 生产数据，不再执行旧 NEED_QFQ 下一步 | 规则变更需另开审查，不回写历史分数 |
 | `docs/specs/2026-07-14-source-grounded-structured-qualitative-scoring-spec.md` | approved；生产 hybrid/global read 已实施 | Hermes PM + codex + AGY review | 保持合同稳定；覆盖扩展走预计算批次 | 不得把 fallback 冒充 v2，不得把结构有效性冒充预测有效性 |
 | `docs/plans/2026-07-15-milestone-004-evidence-feasibility-preregistration-v1.1.md` | frozen historical；acquisition route 技术关闭 | codex + AGY review | 保持协议/hash/artifacts 不变；不得 retry/resume/assemble incomplete | seed、URL、Reviewer、Wilson 与 scope disposition 契约均由测试覆盖 |

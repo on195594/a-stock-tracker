@@ -249,6 +249,22 @@ Phase 6 下一步：人工复核
     assert "production_guard=missing_restrictive_marker" in result.detail
 
 
+def test_accuracy_report_fallback_reads_artifacts_report(project_root: Path, monkeypatch) -> None:
+    report_path = project_root / "artifacts" / "reports" / "accuracy-report.txt"
+    report_path.parent.mkdir(parents=True)
+    report_path.write_text(REPORT_OK, encoding="utf-8")
+
+    monkeypatch.setattr(
+        weekly_pm_loop.subprocess,
+        "run",
+        lambda args, **kwargs: subprocess.CompletedProcess(args, 0, "", ""),
+    )
+
+    result = weekly_pm_loop.check_accuracy_report(project_root)
+
+    assert result.status == "OK"
+
+
 def test_main_returns_two_for_business_warning_after_telegram_sent(
     project_root: Path,
     monkeypatch,

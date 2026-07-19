@@ -13,7 +13,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from qualitative_v2_orient_cable_hybrid import (  # noqa: E402
+from a_stock_tracker.qualitative.orient_cable_hybrid import (  # noqa: E402
     HybridAuthorizationError,
     build_authorized_hybrid_context,
     load_active_hybrid_authorization,

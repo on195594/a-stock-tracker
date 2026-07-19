@@ -9,7 +9,7 @@ A 股选股与方法论验证项目。当前定位是 **Framework A 定量评分
 - 主分支：`master`
 - 当前阶段：Phase 5 L3 v2 已接入生产评分与推送；Phase 6 仍处于 report-only 观察期；来源约束的定性评分 v2 已切换为全局 `on` 读模式，并支持逐维 `hybrid_v2`；当前东方电缆及本次指定 5 股采用 moat/market_pos v2、sentiment v1，其余 29 股在合法 v2 行就绪前逐股回退 v1；M4/M5 继续作为发布后研究审计
 - 生产框架：`SUPPORTED_FRAMEWORKS = {"A"}`；Framework B 历史数据保留，Phase 6 前不得启用生产写入
-- watchlist：35 只，维护在 `config.py`
+- watchlist：35 只，维护在 `a_stock_tracker/config.py`
 - 评分阈值：`buy_strong=44`、`buy_moderate=35`、`buy_light=26`
 - L3 主推条件：`total_score >= buy_strong AND l3_v2_signal = 1`；v2 为 `0/NULL` 的高分股票进入候补而不是主推
 - 数据库：`tracker.db`，核心表为 `stock_fundamentals`、`predictions`、`index_prices`、`qualitative_scores`
@@ -27,7 +27,7 @@ A 股选股与方法论验证项目。当前定位是 **Framework A 定量评分
 - Telegram 推送：日报分为主推、候补和雷达；只有强分且 L3 v2 通过的股票进入主推，发送失败不阻断 daily。
 - Google Sheets 同步：展示层能力，失败只记录 warning，不是数据真相来源。
 - 数据治理：`docs/data-source-registry.yaml` 记录字段来源、缓存、刷新、fallback 和失败语义。
-- 只读 reviewer schema：`lib/agent_reviewer.py` 限制 reviewer 只能输出 commentary，不能覆盖分数、阈值、交易动作或 DB 写入。
+- 只读 reviewer schema：`a_stock_tracker/integrations/agent_reviewer.py` 限制 reviewer 只能输出 commentary，不能覆盖分数、阈值、交易动作或 DB 写入。
 
 ## 安装
 
@@ -135,7 +135,7 @@ frame 或治理证据。v1.3.2 治理实现已从当前树退役但可从 Git �
 1,170 行 exclusions 和 36 股 sample。详见
 [`轻量运行简报`](docs/reviews/2026-07-18-m4-frame-lite-run.md)。这不代表进入 MILESTONE-005 或生产采用。
 
-`accuracy-report` 默认写入 `config.ACCURACY_REPORT_PATH`，生产路径为项目根目录的 `accuracy_report.txt`。测试会把该路径隔离到临时目录；手动运行报告可能改写 tracked 文件，提交前需要确认是否属于目标变更。
+`accuracy-report` 默认写入 `config.ACCURACY_REPORT_PATH`，生产路径为被 Git 忽略的 `artifacts/reports/accuracy-report.txt`。测试会把该路径隔离到临时目录，运行报告不会产生 tracked 文件变更。
 
 当前报告包含：
 
@@ -171,7 +171,7 @@ cron、Telegram、Gemini、Google Sheets 都不应在测试中真实触发。
 
 添加股票：
 
-1. 编辑 `config.py` 中的 `WATCHLIST`。
+1. 编辑 `a_stock_tracker/config.py` 中的 `WATCHLIST`。
 2. 运行：
 
 ```bash
@@ -185,32 +185,26 @@ python3 pipeline.py init
 
 ## 核心模块
 
-- `pipeline.py`：主编排器，支持 `init` / `weekly` / `daily` / `outcome-update` / `accuracy-report` / `remove`。
-- `scorer.py`：Framework A 确定性评分，breakpoints 线性插值，PB 分位纯计算。
-- `gemini_scorer.py`：Gemini 定性评分、缓存、校验和 fallback。
-- `telegram_push.py`：Telegram 信号推送，筛选 `buy_strong` 且 L3 通过的记录。
-- `sheets_sync.py`：Google Sheets 展示层同步。
-- `lib/cache.py`：SQLite schema、迁移和缓存管理。
-- `lib/market_data.py`：行情 provider 兼容入口；协议原语和 Tushare/BaoStock 实现来自 `a-stock-lib==0.2.0`，本地只保留环境门禁和 cache service。
+- `pipeline.py`：向后兼容的薄入口；主编排实现在 `a_stock_tracker/cli.py`。
+- `a_stock_tracker/scoring.py`：Framework A 确定性评分，breakpoints 线性插值，PB 分位纯计算。
+- `a_stock_tracker/data/`：SQLite schema、基本面抓取、行情 provider 与缓存管理。
+- `a_stock_tracker/signals/`：L3 v1/v2 纯计算与生产包装层。
+- `a_stock_tracker/integrations/`：Gemini 定性评分与只读 reviewer 适配器。
+- `a_stock_tracker/reporting/`：Telegram、Google Sheets 和 Framework B report-only 输出。
+- `a_stock_tracker/qualitative/`：定性评分 v2 合同、校验、生产路径及 M4/M5 研究工作流。
 - `a_stock_lib.providers.tushare_quotes`：Tushare Pro 行情 provider，覆盖评分价、L3 日线、outcome 和沪深 300 指数日线。
 - `a_stock_lib.providers.baostock_quotes`：BaoStock 行情 provider，仅作为 Tushare fallback 或显式 backfill 源。
-- `lib/fetcher.py`：AKShare、腾讯 fallback、百度估值等数据读取。
-- `lib/data_quality.py`：required/degradable/derived 字段质量模型。
-- `lib/entry_signal.py`：L3 v1 买点层纯计算 seam。
-- `lib/l3_v2.py` / `lib/l3_v2_pipeline.py`：L3 v2 纯计算规则与 QFQ 优先的生产包装层。
-- `qualitative_v2_contract.py` / `qualitative_v2_types.py` / `qualitative_v2_taxonomy.py` / `qualitative_v2_schema.py` / `qualitative_v2_prompt.py` / `qualitative_v2_validator.py`：定性评分 v2 的本地合同和 fail-closed 语义边界。
-- `qualitative_v2_client.py` / `qualitative_v2_shadow.py` / `scripts/run_qualitative_v2_shadow.py`：物理隔离的 Gemini shadow transport、JSONL persistence 和显式 CLI；不被生产 pipeline 导入。
-- `qualitative_v2_production_acceptance.py` / `scripts/check_qualitative_v2_production.py`：只读复验全局模式、v2 adoption、历史 predictions seal、自然 daily 证据与 `off` 回滚路径；失败输出 `ROLLBACK` 和 exit 2，但不自行改写生产配置。
-- `docs/runbooks/qualitative-v2-shadow.md`：shadow 输入、执行、artifact、去重和停止条件。
-- `lib/agent_reviewer.py`：只读 reviewer schema/fake reviewer。
-- `weights.json`：评分权重与阈值。
+- `config/weights.json`：评分权重与阈值。
+- `config/qualitative/`：生产授权账本与只读验收基线。
 - `docs/data-source-registry.yaml`：字段级数据源 registry。
+- `docs/architecture.md`：完整目录约定和模块依赖方向。
+- `AGENTS.md` / `tests/test_project_structure.py`：仓库级结构约束及其自动回归门禁。
 
 ## 数据语义
 
 - `predictions` 是审计数据；历史 `total_score`、`weights_hash`、`outcome_*d`、`benchmark_*d` 不应手动改写。
 - `alpha_*d` 是 SQLite generated column，禁止在 INSERT/UPDATE 中直接写入。
-- `weights_hash` 只对 `weights.json["frameworks"]` 子树计算，`updated_at` 和 `version` 不影响 hash。
+- `weights_hash` 只对 `config/weights.json["frameworks"]` 子树计算，`updated_at` 和 `version` 不影响 hash。
 - `outcome_*d` 和 `benchmark_*d` 单位是百分比，例如 `5.2` 表示上涨 5.2%。
 - `entry_signal=NULL AND entry_signal_version IS NULL` 表示 pre-L3 历史记录。
 - `entry_signal=NULL AND entry_signal_version='v1'` 表示 L3 v1 已运行但不可计算。
@@ -266,7 +260,7 @@ git diff --check
 
 - 所有 AKShare、Gemini、Telegram、Google Sheets 调用必须 mock。
 - 测试数据库必须用 `tmp_path` 或 monkeypatch 隔离，不能写真实 `tracker.db`。
-- 报告测试不应改写项目根目录的 tracked `accuracy_report.txt`。
+- 报告测试必须把输出路径隔离到临时目录，不得在项目根目录创建报告文件。
 
 ## 设计文档
 

@@ -1,4 +1,4 @@
-"""tests/test_fetcher.py — lib/fetcher.py 和 pipeline._compute_daily_pb_percentile 的单元测试。
+"""Tests for the packaged data fetcher and daily PB-percentile helper.
 
 禁止真实 AKShare 网络请求。所有外部调用通过 monkeypatch 替换。
 """
@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 import time
 from unittest.mock import patch
@@ -17,9 +18,22 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-import lib.fetcher as fetcher_mod  # noqa: E402
-import lib.cache as cache_mod  # noqa: E402
-import pipeline  # noqa: E402
+import a_stock_tracker.data.fetcher as fetcher_mod  # noqa: E402
+import a_stock_tracker.data.cache as cache_mod  # noqa: E402
+import a_stock_tracker.cli as pipeline  # noqa: E402
+
+
+def test_fetcher_module_entrypoint_shows_usage_without_direct_file_execution() -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "a_stock_tracker.data.fetcher"],
+        cwd=PROJECT_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert "用法" in result.stdout
 
 
 def _sleep_longer_than_timeout() -> str:
@@ -121,7 +135,7 @@ def test_report_period_is_cached_field() -> None:
 
 def test_cmd_fetch_skips_cache_write_when_no_valid_fields(monkeypatch) -> None:
     """所有外部源失败时不应写入 0 字段缓存。"""
-    set_cache = patch("lib.fetcher.set_fundamentals").start()
+    set_cache = patch("a_stock_tracker.data.fetcher.set_fundamentals").start()
     monkeypatch.setattr(fetcher_mod, "timed_call", lambda *a, **k: ("ERROR", "dns failed"))
     monkeypatch.setattr(fetcher_mod, "timed_call_with_retry", lambda *a, **k: ("ERROR", "dns failed"))
     monkeypatch.setattr(fetcher_mod, "get_spot_em_snapshot", lambda *a, **k: None)
@@ -498,7 +512,7 @@ def test_bps_adjusted_in_cmd_fetch(monkeypatch) -> None:
 @pytest.fixture
 def tmp_cache_db(tmp_path, monkeypatch):
     """把 lib.cache.DB_PATH 指向 tmp_path 下的临时数据库。"""
-    import config
+    import a_stock_tracker.config as config
 
     db_path = str(tmp_path / "test_cache.db")
     monkeypatch.setattr(cache_mod, "DB_PATH", db_path)

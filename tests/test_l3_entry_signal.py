@@ -10,7 +10,7 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from lib.entry_signal import ENTRY_SIGNAL_VERSION, compute_entry_signal  # noqa: E402
+from a_stock_tracker.signals.entry_signal import ENTRY_SIGNAL_VERSION, compute_entry_signal  # noqa: E402
 
 
 def _bars(closes: list[float], volumes: list[float] | None = None) -> pd.DataFrame:

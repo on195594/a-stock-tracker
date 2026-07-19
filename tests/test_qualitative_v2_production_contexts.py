@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from qualitative_v2_production_contexts import (
+from a_stock_tracker.qualitative.production_contexts import (
     AUTHORIZATION_LEDGER_FILENAME,
     ContextCollectionError,
     ProductionContextAuthorization,
@@ -21,7 +21,7 @@ from qualitative_v2_production_contexts import (
     load_active_authorization,
     load_prior_http_attempts,
 )
-from qualitative_v2_validator import validate_context_dict
+from a_stock_tracker.qualitative.validator import validate_context_dict
 
 COMPANIES = {
     "000963": ("华东医药", "医药制造"),

@@ -359,6 +359,40 @@ def test_oversold_pass_strong_in_zone_with_shrinking_volume() -> None:
     assert result.reason == "PASS_STRONG"
 
 
+def test_oversold_ignores_missing_volume_outside_required_window() -> None:
+    panel = _make_oversold_panel(last_close=85.0, vol_early=100.0, vol_last5=50.0)
+    bars = list(panel.bars)
+    first = bars[0]
+    bars[0] = DailyBar(
+        date=first.date,
+        open=first.open,
+        high=first.high,
+        low=first.low,
+        close=first.close,
+        volume=None,
+        source=first.source,
+        adjusted=first.adjusted,
+        volume_unit=first.volume_unit,
+        fetched_at=first.fetched_at,
+        quality_status=first.quality_status,
+    )
+    panel = PricePanel(
+        code=panel.code,
+        adjusted=panel.adjusted,
+        bars=tuple(bars),
+        source=panel.source,
+        volume_unit=panel.volume_unit,
+        preload_start=panel.preload_start,
+        stale_reason=panel.stale_reason,
+        limitation=panel.limitation,
+    )
+
+    result = compute_l3_v2_oversold(panel, _qfq_contract())
+
+    assert result.signal == 1
+    assert result.status == "pass_strong"
+
+
 def test_oversold_pass_weak_when_qfq_unavailable() -> None:
     panel = _make_oversold_panel(last_close=85.0, vol_early=100.0, vol_last5=50.0)
     result = compute_l3_v2_oversold(panel, _none_contract())

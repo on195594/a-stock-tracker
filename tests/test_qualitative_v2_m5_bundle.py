@@ -11,8 +11,8 @@ from typing import cast
 
 import pytest
 
-import qualitative_v2_m5 as m5
-from qualitative_v2_m5_bundle import build_real_bundle
+import a_stock_tracker.qualitative.m5.pipeline as m5
+from a_stock_tracker.qualitative.m5.bundle import build_real_bundle
 from scripts.build_qualitative_v2_m5_bundle import main as cli_main
 
 SAMPLE = Path(__file__).parent / "fixtures" / "milestone005" / "sample.csv"

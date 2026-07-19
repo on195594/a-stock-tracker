@@ -11,9 +11,9 @@ from typing import cast
 
 import pytest
 
-import qualitative_v2_m5_capability_probe as capability
-import qualitative_v2_m5_source_frontdoors as frontdoors
-from qualitative_v2_m5_data_auth import seal_data_authorization
+import a_stock_tracker.qualitative.m5.capability_probe as capability
+import a_stock_tracker.qualitative.m5.source_frontdoors as frontdoors
+from a_stock_tracker.qualitative.m5.data_auth import seal_data_authorization
 from scripts.probe_qualitative_v2_m5_source_capability import main as cli_main
 
 SAMPLE = Path(__file__).parent / "fixtures" / "milestone005" / "sample.csv"

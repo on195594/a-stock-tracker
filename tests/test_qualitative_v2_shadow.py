@@ -12,9 +12,9 @@ from pathlib import Path
 
 import pytest
 
-from qualitative_v2_client import GeminiCallResult, ValidationStatus
-from qualitative_v2_shadow import ShadowRunOutcome, run_shadow_evaluation
-from qualitative_v2_types import DimensionResult, Dimensions, QualitativeContext, ScoringResult
+from a_stock_tracker.qualitative.client import GeminiCallResult, ValidationStatus
+from a_stock_tracker.qualitative.shadow import ShadowRunOutcome, run_shadow_evaluation
+from a_stock_tracker.qualitative.types import DimensionResult, Dimensions, QualitativeContext, ScoringResult
 
 
 def _context(code: str = "000000") -> QualitativeContext:

@@ -1,5 +1,8 @@
 # CLAUDE.md — a-stock-tracker
 
+> 开始任何文件新增、移动或重命名前，必须先读 `AGENTS.md` 和
+> `docs/architecture.md`；结构变更必须通过 `tests/test_project_structure.py`。
+
 ## 项目简介
 A 股自动评分管道。每日盘后对 watchlist 运行 Framework A 定量评分（SQLite），
 追踪 30/60/90 天收益率及 benchmark 相对 alpha。
@@ -32,18 +35,18 @@ pytest tests/ -v                  # 修改前必须全通过
 
 | 文件 | 职责 |
 |------|------|
-| `pipeline.py` | 主编排器（init / daily / outcome-update / accuracy-report）|
-| `scorer.py` | 评分引擎（breakpoints 线性插值，不调 AKShare）|
-| `gemini_scorer.py` | Phase 3：Gemini 定性评分（30天缓存，退避重试，过期缓存降级，all-or-nothing fallback）|
-| `telegram_push.py` | 每日分层推送（主推：≥44 分 AND `l3_v2_signal=1`；v2 0/NULL 的高分股进入候补）|
-| `weights.json` | 模型权重（阈值 buy_strong=44/moderate=35/light=26）|
-| `config.py` | watchlist / DB_PATH / LOG_DIR（禁止硬编码股票代码或路径）|
+| `pipeline.py` / `a_stock_tracker/cli.py` | 兼容入口 / 主编排器实现 |
+| `a_stock_tracker/scoring.py` | 评分引擎（breakpoints 线性插值，不调 AKShare）|
+| `a_stock_tracker/integrations/` | Gemini 定性评分与 reviewer 外部适配器 |
+| `a_stock_tracker/reporting/` | Telegram、Sheets 与报告层 |
+| `config/weights.json` | 模型权重（阈值 buy_strong=44/moderate=35/light=26）|
+| `a_stock_tracker/config.py` | watchlist / DB_PATH / LOG_DIR（禁止硬编码股票代码或路径）|
 | `.env` | GEMINI_API_KEY / TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID |
-| `lib/fetcher.py` | AKShare 封装，仅用于基本面/估值/财报缓存（来自 a-stock-research skill，独立演进）|
-| `lib/market_data.py` | 行情数据 provider 兼容入口；协议原语和 Tushare/BaoStock 实现来自 `a-stock-lib==0.2.0`，AKShare/东方财富行情入口已禁用（`SOURCE_DISABLED`） |
+| `a_stock_tracker/data/fetcher.py` | AKShare 封装，仅用于基本面/估值/财报缓存 |
+| `a_stock_tracker/data/market_data.py` | 行情数据 provider 兼容入口 |
 | `a_stock_lib.providers.tushare_quotes` | 行情主源（需 `TUSHARE_TOKEN`），probe 通过后启用 |
 | `a_stock_lib.providers.baostock_quotes` | 行情 degraded fallback，仅 Tushare 失败后或显式 backfill 使用 |
-| `lib/cache.py` | SQLite 管理（predictions / index_prices / qualitative_scores 表）|
+| `a_stock_tracker/data/cache.py` | SQLite 管理（predictions / index_prices / qualitative_scores 表）|
 
 ---
 
@@ -52,13 +55,13 @@ pytest tests/ -v                  # 修改前必须全通过
 ### 禁止行为
 - **禁止直接写 `alpha_*d` 列** — SQLite Generated Column，写入会报错
 - **禁止 UPDATE 已有 predictions 的 `total_score` / `weights_hash`** — 破坏实验数据可比性
-- **禁止修改 lib/cache.py 的 DB_PATH** 使其指向 `~/.claude/skills/a-stock-research/cache.db`
-- **禁止在 `scorer.py` 对 `invert: true` 字段做额外变换** — breakpoints 已按"高值→低分"排列，插值逻辑统一
+- **禁止修改 `a_stock_tracker/data/cache.py` 的 DB_PATH** 使其指向 `~/.claude/skills/a-stock-research/cache.db`
+- **禁止在 `a_stock_tracker/scoring.py` 对 `invert: true` 字段做额外变换** — breakpoints 已按"高值→低分"排列，插值逻辑统一
 - **禁止测试中发起真实 AKShare 网络请求** — 所有 AKShare 调用必须 Mock
 - **禁止让 Sheets sync 失败阻断 daily cron** — SQLite 是真相来源，Sheets 是展示层，失败只记 WARNING
 
 ### 必须行为
-- **修改 weights.json 后**：hash 会变，若当日已有记录需手动删除或等次日
+- **修改 `config/weights.json` 后**：hash 会变，若当日已有记录需手动删除或等次日
 - **新增字段到 predictions 表**：必须同步更新 `get_db()` DDL 和 INSERT 语句
 - **新增测试**：用 `tmp_path` fixture 隔离，不使用真实 `tracker.db`
 - **pipeline 启动**：保留 `assert sqlite3.sqlite_version_info >= (3, 31, 0)`（Generated Column 依赖）
@@ -81,13 +84,13 @@ pytest tests/ -v                  # 修改前必须全通过
 avg_score 有约 4-5 分系统性偏移，Phase 4 optimizer 训练需按 score_date 分层。详见 `docs/lessons-learned.md`。
 
 **行情数据源（2026-06-09 起迁移，与基本面数据源分离）**：AKShare/东方财富**行情**入口已禁用，
-`lib/market_data.py` 默认 provider 返回 `SOURCE_DISABLED`。当前行情主源是 `a-stock-lib==0.2.0`
+`a_stock_tracker/data/market_data.py` 默认 provider 返回 `SOURCE_DISABLED`。当前行情主源是 `a-stock-lib==0.2.0`
 中的 Tushare provider（需 `TUSHARE_TOKEN`），失败后降级到同包 BaoStock provider（degraded）。`_ensure_index_prices` 走同一套 provider，不再直连
 新浪/腾讯接口。成组恢复 `daily` / `outcome-update` 前必须 `python3 scripts/check_market_data_readiness.py --scope cron` 返回 `READY_CRON`
 （最新探测报告见 `docs/reviews/*-tushare-capability-probe.md`）。详见
 `docs/runbooks/market-data-provider-recovery.md` 和
 `docs/plans/2026-06-09-market-data-provider-replacement-plan.md`。
-基本面/估值/财报抓取（`lib/fetcher.py`）仍用 AKShare，未受此次迁移影响。
+基本面/估值/财报抓取（`a_stock_tracker/data/fetcher.py`）仍用 AKShare，未受此次迁移影响。
 
 ---
 
@@ -118,7 +121,7 @@ avg_score 有约 4-5 分系统性偏移，Phase 4 optimizer 训练需按 score_d
 | Phase 7 选股宇宙 | ⏸ 未启动 | 待 Phase 6 完成或明确降级策略 |
 
 optimizer.py 启动门槛：Framework A 30d 结案 ≥ 100（已满足） AND `hit_rate_vs_300 > 55%`（待验证）。  
-Framework B 重启：在 scorer.py 加回 "B"，另写生产化 spec 并经独立审查。
+Framework B 重启：在 `a_stock_tracker/scoring.py` 加回 "B"，另写生产化 spec 并经独立审查。
 
 运维门禁是动态状态，不以本快照替代实时检查。恢复或重装 `daily` / `outcome-update` cron 前必须重新运行 `scripts/check_market_data_readiness.py --scope cron`；2026-07-15 当天 probe 的 daily/index/calendar/close cross-check 全部 PASS，当前为 `READY_CRON`，managed cron 已重新安装。
 

@@ -16,29 +16,29 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-import config  # noqa: E402
-from lib.cache import get_db  # noqa: E402
-from qualitative_v2_client import DEFAULT_GEMINI_MODEL  # noqa: E402
-from qualitative_v2_contract import DIMENSION_NAMES  # noqa: E402
-from qualitative_v2_orient_cable_hybrid import (  # noqa: E402
+import a_stock_tracker.config as config  # noqa: E402
+from a_stock_tracker.data.cache import get_db  # noqa: E402
+from a_stock_tracker.qualitative.client import DEFAULT_GEMINI_MODEL  # noqa: E402
+from a_stock_tracker.qualitative.contract import DIMENSION_NAMES  # noqa: E402
+from a_stock_tracker.qualitative.orient_cable_hybrid import (  # noqa: E402
     HybridAuthorization,
     HybridAuthorizationError,
     load_active_hybrid_authorization,
 )
-from qualitative_v2_production import (  # noqa: E402
+from a_stock_tracker.qualitative.production import (  # noqa: E402
     ProductionV2Error,
     context_missing_score_dimensions,
     promote_shadow_record,
 )
-from qualitative_v2_production_contexts import ContextCollectionError  # noqa: E402
-from qualitative_v2_selected_five import (  # noqa: E402
+from a_stock_tracker.qualitative.production_contexts import ContextCollectionError  # noqa: E402
+from a_stock_tracker.qualitative.selected_five import (  # noqa: E402
     SelectedFiveAuthorization,
     load_active_authorization as load_selected_five_authorization,
     validate_context_manifest,
 )
-from qualitative_v2_shadow import run_shadow_evaluation  # noqa: E402
-from qualitative_v2_types import QualitativeContext  # noqa: E402
-from qualitative_v2_validator import validate_context_dict  # noqa: E402
+from a_stock_tracker.qualitative.shadow import run_shadow_evaluation  # noqa: E402
+from a_stock_tracker.qualitative.types import QualitativeContext  # noqa: E402
+from a_stock_tracker.qualitative.validator import validate_context_dict  # noqa: E402
 
 MAX_CONTEXT_BYTES = 1_048_576
 RUN_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")

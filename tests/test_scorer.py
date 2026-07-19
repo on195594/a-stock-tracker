@@ -1,11 +1,11 @@
-"""tests/test_scorer.py — scorer.py 的 11 个单元测试。
+"""Tests for the packaged deterministic scoring engine.
 
 所有测试直接构造最小 weights dict 传入 score_stock()，
 不读取真实 weights.json，不发起任何网络请求。
 """
 
 import pytest
-from scorer import (
+from a_stock_tracker.scoring import (
     InsufficientDataError,
     UnsupportedFrameworkError,
     score_stock,
@@ -226,7 +226,7 @@ def test_phase3_fixed_field_override():
 
 
 def test_compute_daily_pb_percentile_matches_pipeline_contract() -> None:
-    from scorer import compute_daily_pb_percentile
+    from a_stock_tracker.scoring import compute_daily_pb_percentile
 
     hist = [0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.2, 2.4, 2.6, 2.8, 3.0]
     data = {"bps": 10.0, "pb_hist_monthly": hist}
@@ -245,7 +245,7 @@ def test_score_stock_loads_weights_from_disk():
 
 
 def test_score_field_without_interpolate():
-    from scorer import _score_field
+    from a_stock_tracker.scoring import _score_field
 
     field_cfg = {"max_score": 10}  # Missing interpolate and phase1_fixed
     score = _score_field("some_field", 5.0, field_cfg)
@@ -253,7 +253,7 @@ def test_score_field_without_interpolate():
 
 
 def test_interpolate_fallback():
-    from scorer import _interpolate
+    from a_stock_tracker.scoring import _interpolate
 
     # float('nan') fails all <= and >= comparisons, so it falls through the loop
     assert _interpolate(float("nan"), [[0.0, 0.0], [10.0, 10.0]]) == 10.0

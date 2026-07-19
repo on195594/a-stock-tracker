@@ -10,9 +10,8 @@ credentials/
 .ruff_cache/
 .pytest_cache/
 .coverage
-accuracy_report.txt
 .agents/
 .codex/
 .claude/
-data/
+/data/
 artifacts/

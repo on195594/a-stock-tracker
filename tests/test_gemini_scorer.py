@@ -1,4 +1,4 @@
-"""tests/test_gemini_scorer.py — gemini_scorer 的 5 个单元测试。
+"""Tests for the packaged Gemini qualitative-scoring integration.
 
 所有测试 mock _call_gemini 或 _check_cache/_write_cache，不发起真实网络请求。
 """
@@ -12,7 +12,7 @@ from unittest.mock import patch
 # ---------------------------------------------------------------------------
 def test_normal_path():
     """Gemini 正常返回，应写缓存并返回解析后的 dict。"""
-    import gemini_scorer
+    import a_stock_tracker.integrations.gemini_scorer as gemini_scorer
 
     with (
         patch.object(gemini_scorer, "_check_cache", return_value=None),
@@ -30,7 +30,7 @@ def test_normal_path():
 # ---------------------------------------------------------------------------
 def test_timeout_fallback():
     """_call_gemini 返回 None（超时场景），应返回完整 FALLBACK 值且不写缓存。"""
-    import gemini_scorer
+    import a_stock_tracker.integrations.gemini_scorer as gemini_scorer
 
     with (
         patch.object(gemini_scorer, "_check_cache", return_value=None),
@@ -48,7 +48,7 @@ def test_timeout_fallback():
 # ---------------------------------------------------------------------------
 def test_invalid_json_response(monkeypatch):
     """Gemini API 返回非 JSON（如纯文本），_call_gemini 应捕获 JSONDecodeError 并 fallback。"""
-    import gemini_scorer
+    import a_stock_tracker.integrations.gemini_scorer as gemini_scorer
 
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
 
@@ -74,7 +74,7 @@ def test_invalid_json_response(monkeypatch):
 # ---------------------------------------------------------------------------
 def test_validate_rejects_out_of_range():
     """_validate 对越界值应返回 None（触发 all-or-nothing fallback）。"""
-    import gemini_scorer
+    import a_stock_tracker.integrations.gemini_scorer as gemini_scorer
 
     # moat 超过 10
     assert gemini_scorer._validate({"moat": 11, "market_pos": 4, "sentiment": 3}) is None
@@ -97,7 +97,7 @@ def test_validate_rejects_out_of_range():
 # ---------------------------------------------------------------------------
 def test_cache_hit_skips_api():
     """qualitative_scores 有 30 天内记录时，_call_gemini 不应被调用。"""
-    import gemini_scorer
+    import a_stock_tracker.integrations.gemini_scorer as gemini_scorer
 
     cached = {"moat": 6, "market_pos": 3, "sentiment": 4}
     with (
@@ -115,7 +115,7 @@ def test_cache_hit_skips_api():
 # ---------------------------------------------------------------------------
 def test_markdown_code_block_stripped(monkeypatch):
     """Gemini 偶尔以 ```json\n{...}\n``` 包装返回值，_call_gemini 应剥离 markdown 后正常解析。"""
-    import gemini_scorer
+    import a_stock_tracker.integrations.gemini_scorer as gemini_scorer
 
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
 
@@ -138,8 +138,8 @@ def test_markdown_code_block_stripped(monkeypatch):
 # ---------------------------------------------------------------------------
 def test_check_cache_multiple_rows_returns_latest(tmp_path, monkeypatch):
     """qualitative_scores 同一 code 有多行时，应返回 scored_date 最新的记录。"""
-    import gemini_scorer
-    from lib import cache as cache_mod
+    import a_stock_tracker.integrations.gemini_scorer as gemini_scorer
+    from a_stock_tracker.data import cache as cache_mod
     from datetime import date, timedelta
 
     db_path = str(tmp_path / "tracker.db")
@@ -169,7 +169,7 @@ def test_check_cache_multiple_rows_returns_latest(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 def test_write_cache_insert_ignore_same_date(tmp_path, monkeypatch):
     """同 code + scored_date 写入两次，INSERT OR IGNORE 应保留第一次的值。"""
-    from lib import cache as cache_mod
+    from a_stock_tracker.data import cache as cache_mod
 
     db_path = str(tmp_path / "tracker.db")
     monkeypatch.setattr(cache_mod, "DB_PATH", db_path)
@@ -198,8 +198,8 @@ def test_write_cache_insert_ignore_same_date(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 def test_check_cache_expired(tmp_path, monkeypatch):
     """超过 30 天的缓存应返回 None。"""
-    import gemini_scorer
-    from lib import cache as cache_mod
+    import a_stock_tracker.integrations.gemini_scorer as gemini_scorer
+    from a_stock_tracker.data import cache as cache_mod
     from datetime import date, timedelta
 
     db_path = str(tmp_path / "tracker.db")
@@ -222,8 +222,8 @@ def test_check_cache_expired(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 def test_check_cache_stale(tmp_path, monkeypatch):
     """无论是否过期，_check_cache_stale 都应返回最新值，不存在时返回 None。"""
-    import gemini_scorer
-    from lib import cache as cache_mod
+    import a_stock_tracker.integrations.gemini_scorer as gemini_scorer
+    from a_stock_tracker.data import cache as cache_mod
     from datetime import date, timedelta
 
     db_path = str(tmp_path / "tracker.db")
@@ -249,7 +249,7 @@ def test_check_cache_stale(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 def test_call_gemini_empty_api_key(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "")
-    import gemini_scorer
+    import a_stock_tracker.integrations.gemini_scorer as gemini_scorer
 
     assert gemini_scorer._call_gemini("000001", "平安银行") is None
 
@@ -258,7 +258,7 @@ def test_call_gemini_empty_api_key(monkeypatch):
 # 12. _call_gemini HTTP Errors (Retries & Auth)
 # ---------------------------------------------------------------------------
 def test_call_gemini_http_errors(monkeypatch):
-    import gemini_scorer
+    import a_stock_tracker.integrations.gemini_scorer as gemini_scorer
     import urllib.error
 
     monkeypatch.setenv("GEMINI_API_KEY", "test")
@@ -288,7 +288,7 @@ def test_call_gemini_http_errors(monkeypatch):
 # 13. _call_gemini Generic Exception
 # ---------------------------------------------------------------------------
 def test_call_gemini_generic_exception(monkeypatch):
-    import gemini_scorer
+    import a_stock_tracker.integrations.gemini_scorer as gemini_scorer
 
     monkeypatch.setenv("GEMINI_API_KEY", "test")
     with patch("urllib.request.urlopen", side_effect=Exception("Unknown Error")):
@@ -299,7 +299,7 @@ def test_call_gemini_generic_exception(monkeypatch):
 # 14. get_qualitative_score 兜底旧缓存
 # ---------------------------------------------------------------------------
 def test_get_qualitative_score_stale_fallback():
-    import gemini_scorer
+    import a_stock_tracker.integrations.gemini_scorer as gemini_scorer
 
     stale_data = {"moat": 8, "market_pos": 3, "sentiment": 2}
     with (
@@ -315,8 +315,8 @@ def test_get_qualitative_score_stale_fallback():
 # 15. _check_cache 空结果
 # ---------------------------------------------------------------------------
 def test_check_cache_empty(tmp_path, monkeypatch):
-    import gemini_scorer
-    from lib import cache as cache_mod
+    import a_stock_tracker.integrations.gemini_scorer as gemini_scorer
+    from a_stock_tracker.data import cache as cache_mod
 
     db_path = str(tmp_path / "tracker.db")
     monkeypatch.setattr(cache_mod, "DB_PATH", db_path)
@@ -327,8 +327,8 @@ def test_check_cache_empty(tmp_path, monkeypatch):
 # 16. _write_cache 执行写入
 # ---------------------------------------------------------------------------
 def test_write_cache_execution(tmp_path, monkeypatch):
-    import gemini_scorer
-    from lib import cache as cache_mod
+    import a_stock_tracker.integrations.gemini_scorer as gemini_scorer
+    from a_stock_tracker.data import cache as cache_mod
 
     db_path = str(tmp_path / "tracker.db")
     monkeypatch.setattr(cache_mod, "DB_PATH", db_path)
@@ -345,7 +345,7 @@ def test_write_cache_execution(tmp_path, monkeypatch):
 # 17. _call_gemini TimeoutError
 # ---------------------------------------------------------------------------
 def test_call_gemini_timeout(monkeypatch):
-    import gemini_scorer
+    import a_stock_tracker.integrations.gemini_scorer as gemini_scorer
 
     monkeypatch.setenv("GEMINI_API_KEY", "test")
     with patch("urllib.request.urlopen", side_effect=TimeoutError):

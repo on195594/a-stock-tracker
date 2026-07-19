@@ -13,7 +13,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from qualitative_v2_m5_bundle import build_real_bundle  # noqa: E402
+from a_stock_tracker.qualitative.m5.bundle import build_real_bundle  # noqa: E402
 
 
 def _parser() -> argparse.ArgumentParser:

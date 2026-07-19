@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import date, timedelta
 
-from lib.l3_v2_pipeline import compute_l3_v2_from_daily_bars
+from a_stock_tracker.signals.l3_v2_pipeline import compute_l3_v2_from_daily_bars
 
 
 CODE = "000001"

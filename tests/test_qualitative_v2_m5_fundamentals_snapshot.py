@@ -13,8 +13,8 @@ from typing import cast
 
 import pytest
 
-import qualitative_v2_m5_fundamentals_snapshot as snapshot
-from qualitative_v2_m5_data_auth import seal_data_authorization
+import a_stock_tracker.qualitative.m5.fundamentals_snapshot as snapshot
+from a_stock_tracker.qualitative.m5.data_auth import seal_data_authorization
 from scripts.build_qualitative_v2_m5_fundamentals_snapshot import main as cli_main
 
 SAMPLE = Path(__file__).parent / "fixtures" / "milestone005" / "sample.csv"

@@ -14,8 +14,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from qualitative_v2_m5 import _canonical_json  # noqa: E402
-from qualitative_v2_m5_capability_probe import (  # noqa: E402
+from a_stock_tracker.qualitative.m5.pipeline import _canonical_json  # noqa: E402
+from a_stock_tracker.qualitative.m5.capability_probe import (  # noqa: E402
     CapabilityProbeError,
     capability_report,
     seal_capability_report,

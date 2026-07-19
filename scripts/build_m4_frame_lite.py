@@ -31,7 +31,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from qualitative_v2_audit import INDUSTRY_TO_SUPER, SAMPLING_SEED, SUPER_STRATA, SW2021_INDUSTRIES  # noqa: E402
+from a_stock_tracker.qualitative.audit import INDUSTRY_TO_SUPER, SAMPLING_SEED, SUPER_STRATA, SW2021_INDUSTRIES  # noqa: E402
 
 
 API_URL = "https://api.tushare.pro:443"

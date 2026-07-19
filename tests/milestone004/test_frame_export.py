@@ -8,7 +8,7 @@ from urllib.request import Request
 
 import pytest
 
-from qualitative_v2_audit import SUPER_STRATA, SW2021_INDUSTRIES
+from a_stock_tracker.qualitative.audit import SUPER_STRATA, SW2021_INDUSTRIES
 from scripts import export_m4_sampling_frame as exporter
 from scripts.export_m4_sampling_frame import ExportError, TushareApiClient, export_sampling_frame
 

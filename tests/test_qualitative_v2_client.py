@@ -9,8 +9,8 @@ from email.message import Message
 
 import pytest
 
-from qualitative_v2_client import GeminiCallResult, ValidationStatus, call_gemini
-from qualitative_v2_types import QualitativeContext
+from a_stock_tracker.qualitative.client import GeminiCallResult, ValidationStatus, call_gemini
+from a_stock_tracker.qualitative.types import QualitativeContext
 
 
 def _context() -> QualitativeContext:

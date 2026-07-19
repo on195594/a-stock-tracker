@@ -13,6 +13,7 @@ import subprocess
 import sys
 import types
 from datetime import date, timedelta
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pandas as pd
@@ -22,10 +23,10 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-import config  # noqa: E402
-from lib import cache as cache_mod  # noqa: E402
-from lib import market_data  # noqa: E402
-import pipeline  # noqa: E402
+import a_stock_tracker.config as config  # noqa: E402
+from a_stock_tracker.data import cache as cache_mod  # noqa: E402
+from a_stock_tracker.data import market_data  # noqa: E402
+import a_stock_tracker.cli as pipeline  # noqa: E402
 
 
 def _with_ohlc(df: pd.DataFrame) -> pd.DataFrame:
@@ -1144,18 +1145,15 @@ def test_accuracy_report_l3_counts_null_semantics_and_strong_candidates(tmp_db, 
     assert "L3 30d 样本不足" in out
 
 
-def test_accuracy_report_does_not_modify_project_tracked_report(tmp_db, capsys):
-    """测试隔离数据库时，accuracy-report 不应改写项目根目录的 tracked 报告文件。"""
-    report_path = os.path.join(PROJECT_ROOT, "accuracy_report.txt")
-    before = open(report_path, "rb").read()
-    try:
-        pipeline.cmd_accuracy_report()
-        capsys.readouterr()
-        after = open(report_path, "rb").read()
-    finally:
-        with open(report_path, "wb") as f:
-            f.write(before)
-    assert after == before
+def test_accuracy_report_writes_only_to_isolated_output_path(tmp_db, capsys):
+    """测试报告写入 fixture 配置的路径，不在项目根目录创建运行产物。"""
+    root_report = Path(PROJECT_ROOT) / "accuracy_report.txt"
+
+    pipeline.cmd_accuracy_report()
+    capsys.readouterr()
+
+    assert Path(config.ACCURACY_REPORT_PATH).is_file()
+    assert not root_report.exists()
 
 
 # ---------------------------------------------------------------------------
@@ -1431,7 +1429,7 @@ def test_accuracy_report_framework_b_dry_run_flags_roe_trend_warning(
     assert stable_lines and all("⚠️ROE趋势预警" not in line for line in stable_lines)
 
     # 分数本身不受影响：用同样的数据直接调用打分逻辑核对，确认报告里的 B 分数没有被打分前置调整改过
-    from scorer import score_stock
+    from a_stock_tracker.scoring import score_stock
 
     expected_b = score_stock("600036", "B", warned_data, weights=fake_weights, enforce_supported=False)
     assert f"B={expected_b['total_score']:.1f}" in warned_line

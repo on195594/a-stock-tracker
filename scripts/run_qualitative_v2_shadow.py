@@ -15,9 +15,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from qualitative_v2_client import DEFAULT_GEMINI_MODEL  # noqa: E402
-from qualitative_v2_shadow import run_shadow_evaluation  # noqa: E402
-from qualitative_v2_validator import validate_context_dict  # noqa: E402
+from a_stock_tracker.qualitative.client import DEFAULT_GEMINI_MODEL  # noqa: E402
+from a_stock_tracker.qualitative.shadow import run_shadow_evaluation  # noqa: E402
+from a_stock_tracker.qualitative.validator import validate_context_dict  # noqa: E402
 
 MAX_INPUT_BYTES = 1_048_576
 DEFAULT_OUTPUT = PROJECT_ROOT / "artifacts" / "qualitative_v2_shadow.jsonl"

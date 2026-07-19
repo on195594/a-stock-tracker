@@ -1,4 +1,4 @@
-"""tests/test_framework_b_report.py — lib/framework_b_report.py 的 ROE 趋势预警单元测试。
+"""Tests for Framework B report-only ROE trend warnings.
 
 覆盖 _has_roe_trend_warning（纯函数）和 _score_framework_b_candidate（确认打分行为不受影响）。
 不发起任何网络请求。
@@ -13,8 +13,8 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from lib.framework_b_report import _has_roe_trend_warning, _score_framework_b_candidate
-from scorer import score_stock
+from a_stock_tracker.reporting.framework_b_report import _has_roe_trend_warning, _score_framework_b_candidate
+from a_stock_tracker.scoring import score_stock
 
 WEIGHTS = {
     "frameworks": {

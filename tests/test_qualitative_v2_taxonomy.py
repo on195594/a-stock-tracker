@@ -1,4 +1,4 @@
-"""Fixture-first tests for qualitative_v2_taxonomy.py (spec section 6.1, REQ-005, REQ-064)."""
+"""Fixture-first tests for the qualitative taxonomy (spec section 6.1, REQ-005, REQ-064)."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ from datetime import date
 
 import pytest
 
-import qualitative_v2_taxonomy as taxonomy
-from qualitative_v2_contract import DIMENSION_NAMES
+import a_stock_tracker.qualitative.taxonomy as taxonomy
+from a_stock_tracker.qualitative.contract import DIMENSION_NAMES
 
 
 def test_taxonomy_dimensions_are_aligned_with_central_contract() -> None:
@@ -49,8 +49,8 @@ def test_financial_performance_and_valuation_cannot_be_direct() -> None:
 
 
 def test_context_directness_allowed_for_moat_industry_position_and_sentiment() -> None:
-    """codex review: only financial_performance/valuation restrict directness beyond the
-    full direct|supporting|context set (spec 6.1); the other three claim_categories must
+    """Only financial_performance/valuation restrict directness beyond the full
+    direct|supporting|context set (spec 6.1); the other three claim_categories must
     still permit context evidence (it just can't alone trigger scored -- validator's job)."""
     for claim_category in ("competitive_moat", "industry_position", "market_sentiment"):
         assert taxonomy.is_directness_allowed(claim_category, "context") is True

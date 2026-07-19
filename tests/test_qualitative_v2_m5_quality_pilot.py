@@ -12,10 +12,10 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
-import qualitative_v2_m5_quality_pilot as pilot
-from qualitative_v2_m5 import EXPECTED_SAMPLE_SHA256, _canonical_json
-from qualitative_v2_m5_quality_pilot_auth import seal_quality_pilot_authorization
-from qualitative_v2_m5_source_frontdoors import FetchResult
+import a_stock_tracker.qualitative.m5.quality_pilot as pilot
+from a_stock_tracker.qualitative.m5.pipeline import EXPECTED_SAMPLE_SHA256, _canonical_json
+from a_stock_tracker.qualitative.m5.quality_pilot_auth import seal_quality_pilot_authorization
+from a_stock_tracker.qualitative.m5.source_frontdoors import FetchResult
 from scripts.run_qualitative_v2_m5_quality_pilot import main as cli_main
 
 SAMPLE = Path(__file__).parent / "fixtures" / "milestone005" / "sample.csv"

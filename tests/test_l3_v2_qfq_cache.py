@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from lib import l3_v2_qfq_cache as cache
+from a_stock_tracker.data import l3_v2_qfq_cache as cache
 
 
 def sample_frame(code: str = "000001") -> pd.DataFrame:

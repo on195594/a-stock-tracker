@@ -9,8 +9,8 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from lib.l3_v2 import V2_VERSION  # noqa: E402
-from lib.l3_v2_pipeline import compute_l3_v2_from_daily_bars  # noqa: E402
+from a_stock_tracker.signals.l3_v2 import V2_VERSION  # noqa: E402
+from a_stock_tracker.signals.l3_v2_pipeline import compute_l3_v2_from_daily_bars  # noqa: E402
 
 
 def _make_db(bars: list[dict]) -> sqlite3.Connection:

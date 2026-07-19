@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 
 REGISTRY_PATH = Path(__file__).resolve().parents[1] / "docs" / "data-source-registry.yaml"
-WEIGHTS_PATH = Path(__file__).resolve().parents[1] / "weights.json"
+WEIGHTS_PATH = Path(__file__).resolve().parents[1] / "config" / "weights.json"
 
 REQUIRED_KEYS = {
     "field",

@@ -12,8 +12,8 @@ from typing import cast
 
 import pytest
 
-import qualitative_v2_m5_data_auth as auth
-from qualitative_v2_m5 import _load_sample
+import a_stock_tracker.qualitative.m5.data_auth as auth
+from a_stock_tracker.qualitative.m5.pipeline import _load_sample
 from scripts.prepare_qualitative_v2_m5_data_authorization import main as cli_main
 
 SAMPLE = Path(__file__).parent / "fixtures" / "milestone005" / "sample.csv"

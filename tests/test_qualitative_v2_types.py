@@ -1,4 +1,4 @@
-"""Fixture-first tests for qualitative_v2_types.py (spec REQ-001~003, REQ-002 input_hash)."""
+"""Fixture-first tests for qualitative contract types (spec REQ-001~003)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from dataclasses import replace
 
 import pytest
 
-from qualitative_v2_types import DimensionResult, Dimensions, Evidence, QualitativeContext, ScoringResult
+from a_stock_tracker.qualitative.types import DimensionResult, Dimensions, Evidence, QualitativeContext, ScoringResult
 
 
 def _make_evidence(evidence_id: str = "fundamentals.roe_3y_avg") -> Evidence:
@@ -199,8 +199,7 @@ def test_evidence_canonical_dict_sorts_allowed_dimensions() -> None:
 
 def test_scoring_result_wraps_three_dimensions_under_dimensions_field() -> None:
     """REQ-015/016: top-level must be schema_version/overall_status/as_of_date/dimensions,
-    with moat/market_pos/sentiment nested under dimensions -- not flattened at top level
-    (codex review caught the original flattened draft)."""
+    with moat/market_pos/sentiment nested under dimensions, not flattened at top level."""
     dim = DimensionResult(
         status="insufficient_data", score=None, confidence="low", evidence_ids=(), rationale="no evidence"
     )

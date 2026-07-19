@@ -14,7 +14,7 @@ def test_init_accuracy_tab_empty():
     """accuracy_report tab 为空时写入 COUNTIFS 公式，使用 USER_ENTERED 模式。
     header 行末尾附带 schema hash；数据行从第二行起。
     """
-    import sheets_sync
+    import a_stock_tracker.reporting.sheets_sync as sheets_sync
 
     ws = MagicMock()
     ws.get_all_values.return_value = []
@@ -46,7 +46,7 @@ def test_init_accuracy_tab_empty():
 
 def test_init_accuracy_tab_existing_same_schema():
     """accuracy_report tab schema hash 未变时不覆盖。"""
-    import sheets_sync
+    import a_stock_tracker.reporting.sheets_sync as sheets_sync
 
     ws = MagicMock()
     # 首行末尾带有当前 hash
@@ -65,7 +65,7 @@ def test_init_accuracy_tab_existing_same_schema():
 
 def test_init_accuracy_tab_schema_changed():
     """accuracy_report tab 存在但 schema hash 与当前不一致时，自动重写。"""
-    import sheets_sync
+    import a_stock_tracker.reporting.sheets_sync as sheets_sync
 
     ws = MagicMock()
     # 首行末尾是旧 hash
@@ -88,7 +88,7 @@ def test_init_accuracy_tab_schema_changed():
 
 def test_acc_row_includes_90d():
     """_acc_row 应生成 11 列（标签 + 10个公式），包含 90d 命中率和 alpha。"""
-    import sheets_sync
+    import a_stock_tracker.reporting.sheets_sync as sheets_sync
 
     row = sheets_sync._acc_row("≥55分", 55, 200)
 

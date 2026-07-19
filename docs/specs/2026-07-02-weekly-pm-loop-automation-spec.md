@@ -28,7 +28,7 @@ Phase 6 当前仍处于 report-only 观察期。现有手工 weekly PM loop 每�
 
 - 不恢复 Framework B 生产写入。
 - 不修改 `SUPPORTED_FRAMEWORKS`、`weights.json`、watchlist、schema 或历史 predictions。
-- 不自动提交 `accuracy_report.txt` 或任何文档变化。
+- 不自动提交运行产物或任何文档变化。
 - 不在测试中访问真实 Telegram、Tushare、BaoStock、Gemini 或 Google Sheets。
 - 不替代 2026-07-26 后的 B label 人工复核；自动化只提醒是否达到复核条件。
 
@@ -135,9 +135,9 @@ database is locked
 .venv/bin/python pipeline.py accuracy-report
 ```
 
-该命令允许更新 tracked `accuracy_report.txt`，但自动化脚本不执行 git 操作。
+该命令更新被忽略的 `artifacts/reports/accuracy-report.txt`，自动化脚本不执行 git 操作。
 
-脚本从 stdout 或 `accuracy_report.txt` 提取：
+脚本从 stdout 或 `artifacts/reports/accuracy-report.txt` 提取：
 
 - `Phase 6 readiness`
 - `Phase 6 生产化阻塞项`
@@ -166,15 +166,15 @@ database is locked
 不纳入 git：
 
 - `logs/`
+- `artifacts/`
 - `.env`
-- 真实运行产生的 `accuracy_report.txt` 变化，除非 PM 单独确认提交。
 
 ## 实现约束
 
 - 使用 Python 标准库实现，不新增依赖。
 - Telegram 发送使用 `urllib.request`，与现有 `telegram_push.py` 风格一致。
 - 外部命令通过 `subprocess.run(..., timeout=...)` 执行。
-- `tests/test_weekly_pm_loop.py` 必须严格 monkeypatch `subprocess.run`；任何未 mock 的 subprocess 调用都应抛异常，避免测试读取真实 `tracker.db` 或改写真实 `accuracy_report.txt`。
+- `tests/test_weekly_pm_loop.py` 必须严格 monkeypatch `subprocess.run`；任何未 mock 的 subprocess 调用都应抛异常，避免测试读取真实 `tracker.db` 或写入真实 `artifacts/`。
 - 每个检查必须有独立 timeout：
   - readiness：120 秒
   - accuracy-report：300 秒

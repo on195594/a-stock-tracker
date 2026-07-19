@@ -16,14 +16,14 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-import config  # noqa: E402
-from qualitative_v2_orient_cable_pilot import (  # noqa: E402
+import a_stock_tracker.config as config  # noqa: E402
+from a_stock_tracker.qualitative.orient_cable_pilot import (  # noqa: E402
     collect_orient_cable_context,
     create_pilot_run_root,
     load_prior_pdf_attempts,
     load_prior_source_attempts,
 )
-from qualitative_v2_production_contexts import (  # noqa: E402
+from a_stock_tracker.qualitative.production_contexts import (  # noqa: E402
     ContextCollectionError,
     load_active_authorization,
 )

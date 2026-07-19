@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 import requests  # type: ignore[import-untyped]
 
-from qualitative_v2_audit import SW2021_INDUSTRIES
+from a_stock_tracker.qualitative.audit import SW2021_INDUSTRIES
 from scripts import export_m4_sampling_frame_akshare as exporter
 from scripts.export_m4_sampling_frame_akshare import (
     AUTHORIZED_FUNCTIONS,

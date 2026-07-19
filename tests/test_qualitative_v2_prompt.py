@@ -8,9 +8,9 @@ from typing import cast
 
 import pytest
 
-from qualitative_v2_contract import PROMPT_PACKET_MAX_BYTES
-from qualitative_v2_prompt import build_scoring_prompt
-from qualitative_v2_types import Evidence, QualitativeContext
+from a_stock_tracker.qualitative.contract import PROMPT_PACKET_MAX_BYTES
+from a_stock_tracker.qualitative.prompt import build_scoring_prompt
+from a_stock_tracker.qualitative.types import Evidence, QualitativeContext
 
 
 def _evidence(evidence_id: str, value: str = "durable evidence") -> Evidence:

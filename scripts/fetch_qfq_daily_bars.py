@@ -20,8 +20,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from a_stock_lib.providers.baostock_quotes import to_baostock_stock_code
-from config import WATCHLIST
-from lib.cache import DB_PATH, upsert_daily_bars
+from a_stock_tracker.config import WATCHLIST
+from a_stock_tracker.data.cache import DB_PATH, upsert_daily_bars
 
 logger = logging.getLogger(__name__)
 

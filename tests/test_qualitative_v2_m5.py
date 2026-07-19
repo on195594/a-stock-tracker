@@ -12,11 +12,11 @@ from typing import cast
 
 import pytest
 
-import qualitative_v2_m5 as m5
-from qualitative_v2_client import GeminiCallResult, ValidationStatus
-from qualitative_v2_m5 import ModelResponse
-from qualitative_v2_types import QualitativeContext
-from qualitative_v2_validator import validate_model_output
+import a_stock_tracker.qualitative.m5.pipeline as m5
+from a_stock_tracker.qualitative.client import GeminiCallResult, ValidationStatus
+from a_stock_tracker.qualitative.m5.pipeline import ModelResponse
+from a_stock_tracker.qualitative.types import QualitativeContext
+from a_stock_tracker.qualitative.validator import validate_model_output
 from scripts.run_qualitative_v2_m5 import main as cli_main
 
 SAMPLE = Path(__file__).parent / "fixtures" / "milestone005" / "sample.csv"

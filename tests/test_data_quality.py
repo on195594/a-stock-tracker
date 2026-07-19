@@ -1,6 +1,6 @@
 import json
 
-from lib.data_quality import FieldStatus, evaluate_data_quality
+from a_stock_tracker.data.data_quality import FieldStatus, evaluate_data_quality
 
 
 def _complete_data() -> dict:

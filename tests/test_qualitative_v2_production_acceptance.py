@@ -10,8 +10,8 @@ from typing import cast
 
 import pytest
 
-from lib import cache as cache_mod
-from qualitative_v2_production_acceptance import (
+from a_stock_tracker.data import cache as cache_mod
+from a_stock_tracker.qualitative.production_acceptance import (
     BASELINE_SCHEMA_VERSION,
     AcceptanceError,
     ScoreLoader,

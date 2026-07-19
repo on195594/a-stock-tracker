@@ -10,7 +10,7 @@ from typing import Any
 import pandas as pd
 import pytest
 
-from lib import l3_v2_qfq_cache as cache
+from a_stock_tracker.data import l3_v2_qfq_cache as cache
 
 
 SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "collect_l3_v2_qfq_cache.py"

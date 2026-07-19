@@ -11,8 +11,8 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from lib import cache as cache_mod  # noqa: E402
-from lib.market_data import (  # noqa: E402
+from a_stock_tracker.data import cache as cache_mod  # noqa: E402
+from a_stock_tracker.data.market_data import (  # noqa: E402
     AUTH_MISSING,
     EMPTY_RESPONSE,
     CompositeMarketDataProvider,

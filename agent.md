@@ -2,11 +2,13 @@
 
 本文件给后续 coding agent 使用。项目权威文档优先级为：
 
-1. `docs/evolution-roadmap.md`
-2. `docs/specs/2026-05-30-phase5-l3-entry-signal-spec.md`
-3. `docs/specs/2026-05-29-agent-engineering-governance-spec.md`
-4. `docs/data-source-registry.yaml`
-5. `README.md`
+1. `AGENTS.md`（仓库结构与工作约束）
+2. `docs/architecture.md`（目录和依赖边界）
+3. `docs/evolution-roadmap.md`
+4. `docs/specs/2026-05-30-phase5-l3-entry-signal-spec.md`
+5. `docs/specs/2026-05-29-agent-engineering-governance-spec.md`
+6. `docs/data-source-registry.yaml`
+7. `README.md`
 
 `CLAUDE.md` 可作为历史上下文参考，但若与代码或上述文档冲突，以代码和上述文档为准。
 
@@ -24,7 +26,7 @@ AKShare / fallback data
   -> accuracy-report / Telegram / Sheets presentation
 ```
 
-当前只支持 Framework A。Framework B/C/D/E/F 不要擅自启用；Framework B 放在 Phase 6。Phase 6 当前仍是 report-only 准备期，允许增强报告和 dry-run 解释，但不得写 B predictions、不得修改 `weights.json`、不得把 B 加回生产框架。
+当前只支持 Framework A。Framework B/C/D/E/F 不要擅自启用；Framework B 放在 Phase 6。Phase 6 当前仍是 report-only 准备期，允许增强报告和 dry-run 解释，但不得写 B predictions、不得修改 `config/weights.json`、不得把 B 加回生产框架。
 
 ## 工作前检查
 
@@ -46,7 +48,9 @@ python3 pipeline.py daily
 python3 pipeline.py outcome-update
 python3 pipeline.py accuracy-report
 pytest tests/ -q
+pytest tests/test_project_structure.py -q
 ruff check .
+ruff format --check .
 mypy
 git diff --check
 ```
@@ -60,12 +64,14 @@ git diff --check
 - 不手动改写历史 `predictions.total_score`、`weights_hash`、`outcome_*d`、`benchmark_*d`。
 - 不把 Framework B report-only readiness 当作生产化授权；B 生产写入必须另有明确计划和用户授权。
 - 不把 `entry_signal=NULL` 当作 `0`。
-- 不修改 `lib/cache.py` 的 DB 路径指向旧 skill 目录。
+- 不修改 `a_stock_tracker/data/cache.py` 的 DB 路径指向旧 skill 目录。
 - 不把 Google Sheets 当作数据真相来源；SQLite 是 source of truth。
+- 不提交凭据、私钥、token 或 service-account JSON；本地凭据只放在被忽略的 `credentials/`。
+- 运行时报告只写入被忽略的 `artifacts/`，不得在项目根目录创建或跟踪报告文件。
 
 ## 数据和评分语义
 
-- 阈值来自 `weights.json["thresholds"]`，当前为 `44/35/26`。
+- 阈值来自 `config/weights.json["thresholds"]`，当前为 `44/35/26`。
 - `weights_hash` 只对 `weights["frameworks"]` 子树计算。
 - `outcome_*d` 和 `benchmark_*d` 是百分比，不是小数或价格差。
 - `entry_signal_version` 当前为 `v1`。
@@ -77,13 +83,13 @@ git diff --check
 
 修改评分逻辑时：
 
-- 先读 `scorer.py`、`weights.json` 和相关测试。
-- 如果改 `weights.json["frameworks"]`，会改变 `weights_hash`，当天已有记录时 daily 会冲突退出。
+- 先读 `a_stock_tracker/scoring.py`、`config/weights.json` 和相关测试。
+- 如果改 `config/weights.json["frameworks"]`，会改变 `weights_hash`，当天已有记录时 daily 会冲突退出。
 - `invert: true` 只是语义标记；breakpoints 已按业务含义排列，不要对输入额外取反。
 
 修改 pipeline 或 DB schema 时：
 
-- 同步更新 `lib/cache.py` DDL、迁移逻辑、INSERT/UPDATE 语句和测试。
+- 同步更新 `a_stock_tracker/data/cache.py` DDL、迁移逻辑、INSERT/UPDATE 语句和测试。
 - 迁移只能 additive，禁止 drop/recreate `predictions` 来修历史表。
 - 新增 report 数字时，要能用明确 SQL 从 DB 复现。
 
@@ -91,7 +97,7 @@ git diff --check
 
 - 先更新 spec/roadmap 中的版本和语义。
 - 升级 `ENTRY_SIGNAL_VERSION`，不要复用 `v1` 表达新规则。
-- 保持 `lib/entry_signal.py` 为纯计算 seam，不写 DB，不发网络请求。
+- 保持 `a_stock_tracker/signals/entry_signal.py` 为纯计算 seam，不写 DB，不发网络请求。
 
 修改外部集成时：
 

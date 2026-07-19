@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import cast
 
-from qualitative_v2_contract import (
+from a_stock_tracker.qualitative.contract import (
     CONFIDENCE_VALUES,
     DIMENSION_NAMES,
     DIMENSION_STATUS_VALUES,
@@ -14,7 +14,7 @@ from qualitative_v2_contract import (
     SCHEMA_VERSION,
     SCORE_RANGES,
 )
-from qualitative_v2_schema import RATIONALE_MAX_CHARS, build_generation_config, build_response_schema
+from a_stock_tracker.qualitative.schema import RATIONALE_MAX_CHARS, build_generation_config, build_response_schema
 
 
 def _properties(schema: dict[str, object]) -> dict[str, object]:

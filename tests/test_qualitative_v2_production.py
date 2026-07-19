@@ -12,12 +12,12 @@ from pathlib import Path
 
 import pytest
 
-import config
-import qualitative_v2_production as production_mod
+import a_stock_tracker.config as config
+import a_stock_tracker.qualitative.production as production_mod
 import scripts.run_qualitative_v2_production as production_cli
-from lib import cache as cache_mod
-from qualitative_v2_orient_cable_hybrid import HybridAuthorization
-from qualitative_v2_production import (
+from a_stock_tracker.data import cache as cache_mod
+from a_stock_tracker.qualitative.orient_cable_hybrid import HybridAuthorization
+from a_stock_tracker.qualitative.production import (
     ProductionV2Error,
     context_missing_score_dimensions,
     get_production_qualitative_score,
@@ -26,9 +26,9 @@ from qualitative_v2_production import (
     production_mode,
     promote_shadow_record,
 )
-from qualitative_v2_shadow import _context_payload
-from qualitative_v2_shadow import ShadowRunOutcome
-from qualitative_v2_validator import validate_context_dict
+from a_stock_tracker.qualitative.shadow import _context_payload
+from a_stock_tracker.qualitative.shadow import ShadowRunOutcome
+from a_stock_tracker.qualitative.validator import validate_context_dict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 AS_OF_DATE = "2026-07-19"

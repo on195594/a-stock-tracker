@@ -28,7 +28,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from lib.l3_v2 import (  # noqa: E402,F401 - compatibility re-exports
+from a_stock_tracker.signals.l3_v2 import (  # noqa: E402,F401 - compatibility re-exports
     FREEFALL_THRESHOLD,
     OVERSOLD_UPPER_THRESHOLD,
     OVERSOLD_VOLUME_RATIO,
@@ -41,7 +41,7 @@ from lib.l3_v2 import (  # noqa: E402,F401 - compatibility re-exports
     compute_l3_v2_candidate,
     compute_l3_v2_oversold,
 )
-from lib.l3_v2_qfq_cache import (  # noqa: E402
+from a_stock_tracker.data.l3_v2_qfq_cache import (  # noqa: E402
     CacheInvalidError,
     CacheMissingError,
     FixedIntervalRateLimiter,
@@ -49,6 +49,7 @@ from lib.l3_v2_qfq_cache import (  # noqa: E402
     derive_qfq_ohlcv,
     read_cache,
 )
+from a_stock_tracker.paths import WEIGHTS_PATH  # noqa: E402
 
 
 DEFAULT_REPORT = Path("docs/reviews/2026-07-08-l3-v2-backtest-report.md")
@@ -208,10 +209,9 @@ def parse_codes(values: list[str] | None) -> tuple[str, ...] | None:
 def load_buy_strong_threshold(override: float | None) -> tuple[float, str]:
     if override is not None:
         return override, "cli"
-    weights_path = Path("weights.json")
     try:
-        data = json.loads(weights_path.read_text(encoding="utf-8"))
-        return float(data["thresholds"]["buy_strong"]), "weights.json:thresholds.buy_strong"
+        data = json.loads(WEIGHTS_PATH.read_text(encoding="utf-8"))
+        return float(data["thresholds"]["buy_strong"]), "config/weights.json:thresholds.buy_strong"
     except Exception:
         return 44.0, "default:44"
 

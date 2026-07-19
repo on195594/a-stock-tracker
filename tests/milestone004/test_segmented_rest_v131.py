@@ -10,8 +10,8 @@ from typing import Any
 
 import pytest
 
-import qualitative_v2_m4_segmented_core as core
-from qualitative_v2_audit import (
+import a_stock_tracker.qualitative.m4.segmented_core as core
+from a_stock_tracker.qualitative.audit import (
     AuditBlockedError,
     SW2021_INDUSTRIES,
     canonical_json_bytes,
@@ -34,10 +34,15 @@ DETAILED_RUNTIME_PHASES = (
     "candidate_verification",
     "manifest_publication",
 )
-from qualitative_v2_m4_segmented_core import AuthorizationError, SecurityError, VerificationError
-from qualitative_v2_m4_segmented_core import row_sha256, strict_json_loads
-from qualitative_v2_m4_segmented_verify import ParsedResponse, parse_provider_response, reproduce_date, reproduce_frame
-from qualitative_v2_m4_segmented_rest import (
+from a_stock_tracker.qualitative.m4.segmented_core import AuthorizationError, SecurityError, VerificationError
+from a_stock_tracker.qualitative.m4.segmented_core import row_sha256, strict_json_loads
+from a_stock_tracker.qualitative.m4.segmented_verify import (
+    ParsedResponse,
+    parse_provider_response,
+    reproduce_date,
+    reproduce_frame,
+)
+from a_stock_tracker.qualitative.m4.segmented_rest import (
     CallReceipt,
     DateEvidenceAuthorization,
     FrameAuthorization,
@@ -135,7 +140,7 @@ def test_both_authorization_schemas_reject_every_missing_and_unknown_field(
     root = relative.rsplit("/", 1)[0]
     core.ROOTS.update({"capability": root, "date_selection_evidence": root, "capture": root})
     try:
-        import qualitative_v2_m4_segmented_verify as verifier
+        import a_stock_tracker.qualitative.m4.segmented_verify as verifier
 
         monkeypatch.setattr(verifier, "_verify_reference_chains", lambda _authorization, _visited: None)
         zone = timezone(timedelta(hours=8))
@@ -190,7 +195,7 @@ def test_authorization_cross_field_mismatch_matrix(monkeypatch: pytest.MonkeyPat
     root = relative.rsplit("/", 1)[0]
     core.ROOTS.update({"capability": root, "capture": root, "date_selection_evidence": root})
     try:
-        import qualitative_v2_m4_segmented_verify as verifier
+        import a_stock_tracker.qualitative.m4.segmented_verify as verifier
 
         monkeypatch.setattr(verifier, "_verify_reference_chains", lambda _authorization, _visited: None)
         zone = timezone(timedelta(hours=8))
@@ -585,7 +590,7 @@ def test_missing_credential_seals_offline_verifiable_failure(monkeypatch: pytest
         path, checksum = _write_authorization(auth_dir, value)
         _remove(directory)
         monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
-        from qualitative_v2_m4_segmented_runtime import RuntimeHooks, _runtime_hooks
+        from a_stock_tracker.qualitative.m4.segmented_runtime import RuntimeHooks, _runtime_hooks
 
         def forbidden(*_args: object, **_kwargs: object) -> object:
             raise AssertionError("transport must not be built without a credential")
@@ -614,7 +619,7 @@ def test_invalid_credentials_seal_credential_invalid_without_transport(
     auth_dir.mkdir()
     core.ROOTS["capability"] = root
     try:
-        import qualitative_v2_m4_segmented_runtime as runtime
+        import a_stock_tracker.qualitative.m4.segmented_runtime as runtime
 
         now = datetime.now(timezone(timedelta(hours=8))).replace(microsecond=0)
         value = _capability_value(directory.name, f"{root}/{directory.name}", now=now)
@@ -716,7 +721,7 @@ def test_token_echo_is_terminal_no_blob_and_fail_fast(monkeypatch: pytest.Monkey
         _remove(directory)
         token = "a" * 64
         monkeypatch.setenv("TUSHARE_TOKEN", token)
-        from qualitative_v2_m4_segmented_runtime import RuntimeHooks, TransportResponse, _runtime_hooks
+        from a_stock_tracker.qualitative.m4.segmented_runtime import RuntimeHooks, TransportResponse, _runtime_hooks
 
         def echo(*_args: object, **_kwargs: object) -> TransportResponse:
             return TransportResponse(
@@ -780,7 +785,7 @@ def test_provider_failures_seal_with_reproducible_classification(
         path, checksum = _write_authorization(auth_dir, value)
         _remove(directory)
         monkeypatch.setenv("TUSHARE_TOKEN", "a" * 64)
-        from qualitative_v2_m4_segmented_runtime import RuntimeHooks, TransportResponse, _runtime_hooks
+        from a_stock_tracker.qualitative.m4.segmented_runtime import RuntimeHooks, TransportResponse, _runtime_hooks
 
         def response(*_args: object, **_kwargs: object) -> TransportResponse:
             return TransportResponse("https://api.tushare.pro", "https://api.tushare.pro", 200, "application/json", raw)
@@ -1222,7 +1227,7 @@ def test_external_authorization_and_generator_drift_fail_closed(
         verify_segmented_rest_attempt(result.attempt_dir)
     authorization.write_bytes(original)
 
-    import qualitative_v2_m4_segmented_verify as verifier
+    import a_stock_tracker.qualitative.m4.segmented_verify as verifier
 
     monkeypatch.setattr(verifier, "generator_references", lambda: [])
     with pytest.raises(VerificationError, match="provenance_drift"):
@@ -1285,7 +1290,7 @@ def test_full_synthetic_reference_chain_commits_capture_eligibility(monkeypatch:
         }
     )
     try:
-        from qualitative_v2_m4_segmented_runtime import RuntimeHooks, TransportResponse, _runtime_hooks
+        from a_stock_tracker.qualitative.m4.segmented_runtime import RuntimeHooks, TransportResponse, _runtime_hooks
 
         _frame_authorization, frame_responses = _valid_frame_reproduction()
         date_authorization, calendar_responses, _receipts, _sealed = _valid_date_reproduction()
@@ -1450,7 +1455,7 @@ def test_real_supervisor_deadline_recovers_each_publication_phase(
         import os
         import time
 
-        from qualitative_v2_m4_segmented_runtime import RuntimeHooks, TransportResponse, _runtime_hooks
+        from a_stock_tracker.qualitative.m4.segmented_runtime import RuntimeHooks, TransportResponse, _runtime_hooks
 
         zone = timezone(timedelta(hours=8))
 
@@ -1512,7 +1517,7 @@ def test_real_supervisor_seals_then_reraises_cancellation(
         import signal
         import time
 
-        from qualitative_v2_m4_segmented_runtime import RuntimeHooks, TransportResponse, _runtime_hooks
+        from a_stock_tracker.qualitative.m4.segmented_runtime import RuntimeHooks, TransportResponse, _runtime_hooks
 
         zone = timezone(timedelta(hours=8))
 
@@ -1561,7 +1566,7 @@ def test_real_supervisor_cancellation_covers_detailed_runtime_phases(
         import signal
         import time
 
-        from qualitative_v2_m4_segmented_runtime import RuntimeHooks, TransportResponse, _runtime_hooks
+        from a_stock_tracker.qualitative.m4.segmented_runtime import RuntimeHooks, TransportResponse, _runtime_hooks
 
         zone = timezone(timedelta(hours=8))
 
@@ -1621,7 +1626,7 @@ def test_simultaneous_deadline_and_cancellation_classifies_deadline_first(
         import signal
         import time
 
-        import qualitative_v2_m4_segmented_runtime as runtime
+        import a_stock_tracker.qualitative.m4.segmented_runtime as runtime
 
         zone = timezone(timedelta(hours=8))
         before = datetime.now(zone).replace(microsecond=0)
@@ -1680,7 +1685,7 @@ def test_deadline_during_late_pass_publication_never_commits_eligible_pass(
         import signal
         import time
 
-        import qualitative_v2_m4_segmented_runtime as runtime
+        import a_stock_tracker.qualitative.m4.segmented_runtime as runtime
 
         _authorization, responses = _valid_frame_reproduction()
         zone = timezone(timedelta(hours=8))
@@ -1758,7 +1763,7 @@ def test_parent_finalize_defers_cancellation_until_after_seal(
         import os
         import signal
 
-        import qualitative_v2_m4_segmented_runtime as runtime
+        import a_stock_tracker.qualitative.m4.segmented_runtime as runtime
 
         zone = timezone(timedelta(hours=8))
         now = datetime.now(zone).replace(microsecond=0)
@@ -1826,7 +1831,7 @@ def test_transport_boundary_and_size_failures_seal_without_socket(
     auth_dir.mkdir()
     core.ROOTS["capability"] = root
     try:
-        import qualitative_v2_m4_segmented_runtime as runtime
+        import a_stock_tracker.qualitative.m4.segmented_runtime as runtime
 
         zone = timezone(timedelta(hours=8))
         now = datetime.now(zone).replace(microsecond=0)
@@ -1866,7 +1871,7 @@ def test_cumulative_attempt_size_limit_fails_before_second_blob(
 ) -> None:
     from dataclasses import replace
 
-    import qualitative_v2_m4_segmented_runtime as runtime
+    import a_stock_tracker.qualitative.m4.segmented_runtime as runtime
 
     directory, relative = _workspace()
     root = relative.rsplit("/", 1)[0]
@@ -1915,7 +1920,7 @@ def test_cumulative_attempt_size_limit_fails_before_second_blob(
 
 
 def test_attempt_blob_replaced_by_symlink_fails_closed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    import qualitative_v2_m4_segmented_runtime as runtime
+    import a_stock_tracker.qualitative.m4.segmented_runtime as runtime
 
     directory, relative = _workspace()
     root = relative.rsplit("/", 1)[0]
@@ -1961,7 +1966,7 @@ def test_attempt_blob_replaced_by_symlink_fails_closed(monkeypatch: pytest.Monke
 def test_default_rest_request_has_exact_method_origin_headers_body_and_no_proxy_or_cookie(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import qualitative_v2_m4_segmented_runtime as runtime
+    import a_stock_tracker.qualitative.m4.segmented_runtime as runtime
 
     observed: dict[str, object] = {}
 
@@ -2029,7 +2034,7 @@ def test_stale_lock_and_create_only_collision_fail_closed(monkeypatch: pytest.Mo
     auth_dir.mkdir()
     core.ROOTS["capability"] = root
     try:
-        import qualitative_v2_m4_segmented_runtime as runtime
+        import a_stock_tracker.qualitative.m4.segmented_runtime as runtime
 
         zone = timezone(timedelta(hours=8))
         now = datetime.now(zone).replace(microsecond=0)
@@ -2193,7 +2198,7 @@ def test_worker_deadline_after_success_receipt_keeps_success_and_stops(monkeypat
     auth_dir.mkdir()
     core.ROOTS["capability"] = root
     try:
-        import qualitative_v2_m4_segmented_runtime as runtime
+        import a_stock_tracker.qualitative.m4.segmented_runtime as runtime
 
         zone = timezone(timedelta(hours=8))
         before = datetime.now(zone).replace(microsecond=0)
@@ -2243,7 +2248,7 @@ def test_two_executors_contend_for_one_create_only_attempt(
 ) -> None:
     import multiprocessing
 
-    import qualitative_v2_m4_segmented_runtime as runtime
+    import a_stock_tracker.qualitative.m4.segmented_runtime as runtime
 
     directory, relative = _workspace()
     root = relative.rsplit("/", 1)[0]
@@ -2312,7 +2317,7 @@ def test_two_executors_contend_for_one_create_only_attempt(
     ],
 )
 def test_cli_rejects_abbreviated_options(argv: list[str]) -> None:
-    from qualitative_v2_m4_segmented_rest import _parser
+    from a_stock_tracker.qualitative.m4.segmented_rest import _parser
 
     with pytest.raises(SystemExit):
         _parser().parse_args(argv)
@@ -2329,7 +2334,7 @@ def test_supervisor_setup_windows_defer_sigterm_and_seal(monkeypatch: pytest.Mon
         import os
         import signal
 
-        import qualitative_v2_m4_segmented_runtime as runtime
+        import a_stock_tracker.qualitative.m4.segmented_runtime as runtime
 
         zone = timezone(timedelta(hours=8))
         now = datetime.now(zone).replace(microsecond=0)

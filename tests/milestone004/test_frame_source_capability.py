@@ -11,8 +11,8 @@ from typing import Callable
 
 import pytest
 
-from qualitative_v2_audit import SUPER_STRATA, SW2021_INDUSTRIES, canonical_json_bytes
-from qualitative_v2_m4_capability import (
+from a_stock_tracker.qualitative.audit import SUPER_STRATA, SW2021_INDUSTRIES, canonical_json_bytes
+from a_stock_tracker.qualitative.m4.capability import (
     API_URL,
     AUTHORIZATION_SCHEMA_VERSION,
     PROTOCOL_HASH_PATH,

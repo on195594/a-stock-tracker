@@ -1,4 +1,4 @@
-"""Fixture-first tests for qualitative_v2_validator.py, covering spec section 8
+"""Fixture-first tests for the qualitative validator, covering spec section 8
 (Fixture-first test matrix) for REQ-005/007~009/019/023~030/062/064."""
 
 from __future__ import annotations
@@ -8,7 +8,7 @@ from datetime import date
 
 import pytest
 
-from qualitative_v2_contract import (
+from a_stock_tracker.qualitative.contract import (
     CONTEXT_TEXT_MAX_CHARS,
     EVIDENCE_ID_MAX_CHARS,
     EVIDENCE_IDS_MAX_ITEMS,
@@ -17,14 +17,14 @@ from qualitative_v2_contract import (
     SOURCE_MAX_CHARS,
     UNIT_MAX_CHARS,
 )
-from qualitative_v2_types import Evidence, QualitativeContext
-from qualitative_v2_validator import (
+from a_stock_tracker.qualitative.types import Evidence, QualitativeContext
+from a_stock_tracker.qualitative.validator import (
     validate_context,
     validate_context_dict,
     validate_evidence_dict,
     validate_model_output,
 )
-from qualitative_v2_taxonomy import CLAIM_CATEGORY_REGISTRY
+from a_stock_tracker.qualitative.taxonomy import CLAIM_CATEGORY_REGISTRY
 
 AS_OF_DATE = "2026-07-14"
 AS_OF_DATE_OBJ = date(2026, 7, 14)
@@ -331,8 +331,8 @@ def test_directness_not_allowed_for_claim_category_rejected() -> None:
 
 
 def test_non_canonical_freshness_policy_rejected_even_though_known_value() -> None:
-    """codex review Critical: a market_sentiment item declaring the
-    financial_performance-length policy (550d instead of canonical 30d)
+    """A market_sentiment item declaring the financial-performance policy
+    (550d instead of canonical 30d)
     must be rejected outright, not merely accepted and evaluated against
     the wrong (longer) window."""
     raw = _sentiment_evidence()
@@ -398,8 +398,7 @@ def test_source_must_be_nonblank_and_bounded(source: str) -> None:
 
 
 def test_unhashable_evidence_type_fails_closed_not_typeerror() -> None:
-    """codex review Important #2: a list/dict value in a field checked
-    against a frozenset must be rejected cleanly, not raise TypeError."""
+    """A list/dict checked against a frozenset must fail closed, not raise TypeError."""
     raw = _financial_evidence()
     raw["evidence_type"] = ["not", "a", "string"]
     result = validate_evidence_dict(raw, as_of_date_value=AS_OF_DATE_OBJ)
@@ -923,7 +922,7 @@ def test_extra_top_level_field_rejected() -> None:
 def test_claim_category_registry_still_internally_consistent() -> None:
     """Sanity check tying this test module to the taxonomy registry so a
     future accidental registry edit is caught here too, not only in
-    test_qualitative_v2_taxonomy.py."""
+    the taxonomy test module."""
     assert "competitive_moat" in CLAIM_CATEGORY_REGISTRY
     assert "context" in CLAIM_CATEGORY_REGISTRY["competitive_moat"].directness_values
 
@@ -990,8 +989,7 @@ def test_rationale_character_limit_boundary(length: int, expected_valid: bool) -
 
 
 def test_non_string_evidence_id_reference_in_output_rejected() -> None:
-    """codex review Important #1: a bare int evidence_id reference must be
-    rejected, not coerced via str() and treated as equal to its string twin."""
+    """A bare int evidence_id must be rejected rather than coerced to a string."""
     context = _build_context([_financial_evidence(), _moat_evidence()])
     output = {
         "schema_version": "qualitative-score-v2",
@@ -1014,8 +1012,7 @@ def test_non_string_evidence_id_reference_in_output_rejected() -> None:
 
 
 def test_hand_built_context_with_fabricated_fresh_status_does_not_bypass_recomputed_freshness() -> None:
-    """codex review Important #3 (defense in depth): validate_model_output
-    must not trust a QualitativeContext/Evidence's stored freshness_status
+    """validate_model_output must not trust a typed context's stored freshness_status
     if it bypasses validate_context_dict -- freshness is recomputed from
     source_date/canonical policy at citation-check time."""
     stale_but_claims_fresh = Evidence(

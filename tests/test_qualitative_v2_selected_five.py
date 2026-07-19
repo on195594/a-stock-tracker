@@ -12,10 +12,10 @@ from typing import cast
 
 import pytest
 
-import qualitative_v2_selected_five as selected
-from qualitative_v2_orient_cable_pilot import OfficialFetchResult
-from qualitative_v2_production_contexts import ContextCollectionError
-from qualitative_v2_selected_five import (
+import a_stock_tracker.qualitative.selected_five as selected
+from a_stock_tracker.qualitative.orient_cable_pilot import OfficialFetchResult
+from a_stock_tracker.qualitative.production_contexts import ContextCollectionError
+from a_stock_tracker.qualitative.selected_five import (
     SelectedFiveAuthorization,
     collect_selected_five,
     create_run_root,

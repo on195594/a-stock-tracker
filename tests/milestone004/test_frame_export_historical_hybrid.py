@@ -11,7 +11,7 @@ from urllib.request import Request
 import pandas as pd
 import pytest
 
-from qualitative_v2_audit import SW2021_INDUSTRIES, canonical_json_bytes
+from a_stock_tracker.qualitative.audit import SW2021_INDUSTRIES, canonical_json_bytes
 from scripts.export_m4_sampling_frame import Transport
 from scripts.export_m4_sampling_frame_akshare import CallResult, ExportError, HttpCapture
 from scripts.export_m4_sampling_frame_historical_hybrid import export_historical_sampling_frame

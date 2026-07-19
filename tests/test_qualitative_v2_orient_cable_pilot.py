@@ -9,10 +9,14 @@ from pathlib import Path
 
 import pytest
 
-import qualitative_v2_orient_cable_pilot as pilot
-from qualitative_v2_orient_cable_pilot import OfficialFetchResult, collect_orient_cable_context, create_pilot_run_root
-from qualitative_v2_production_contexts import ContextCollectionError, ProductionContextAuthorization
-from qualitative_v2_validator import validate_context_dict
+import a_stock_tracker.qualitative.orient_cable_pilot as pilot
+from a_stock_tracker.qualitative.orient_cable_pilot import (
+    OfficialFetchResult,
+    collect_orient_cable_context,
+    create_pilot_run_root,
+)
+from a_stock_tracker.qualitative.production_contexts import ContextCollectionError, ProductionContextAuthorization
+from a_stock_tracker.qualitative.validator import validate_context_dict
 
 ALLOWED_HOSTS = (
     "static.cninfo.com.cn",
