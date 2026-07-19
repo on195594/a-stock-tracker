@@ -15,6 +15,7 @@ import config
 from lib import cache as cache_mod
 from qualitative_v2_production import (
     ProductionV2Error,
+    context_missing_score_dimensions,
     get_production_qualitative_score,
     load_usable_v2_score,
     production_mode,
@@ -167,6 +168,17 @@ def test_nonempty_shadow_context_remains_valid_wire_input() -> None:
     payload.pop("input_hash")
     round_trip = validate_context_dict(payload)
     assert round_trip.valid, round_trip.rejection_reason
+    assert context_missing_score_dimensions(validation.context) == ()
+
+
+def test_deterministic_readiness_rejects_supporting_only_context() -> None:
+    raw = _context()
+    evidence = raw["evidence"]
+    assert isinstance(evidence, list)
+    raw["evidence"] = [evidence[1]]
+    validation = validate_context_dict(raw)
+    assert validation.valid and validation.context is not None
+    assert context_missing_score_dimensions(validation.context) == ("moat", "market_pos", "sentiment")
 
 
 def test_promoted_scored_row_is_revalidated_on_every_read(db) -> None:

@@ -17,7 +17,8 @@ from typing import cast
 
 from qualitative_v2_client import DEFAULT_GEMINI_MODEL
 from qualitative_v2_contract import DIMENSION_NAMES
-from qualitative_v2_validator import validate_context_dict, validate_model_output
+from qualitative_v2_types import QualitativeContext
+from qualitative_v2_validator import validate_context, validate_context_dict, validate_model_output
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,31 @@ LegacyGetter = Callable[[str, str], dict[str, int]]
 
 class ProductionV2Error(ValueError):
     """A v2 production record or runtime setting failed closed."""
+
+
+def context_missing_score_dimensions(context: QualitativeContext) -> tuple[str, ...]:
+    """Return dimensions that cannot possibly pass the deterministic evidence gates."""
+    validation = validate_context(context)
+    if not validation.valid or validation.context is None:
+        raise ProductionV2Error(f"invalid production context: {validation.rejection_reason}")
+    evidence = validation.context.evidence
+    moat = any(
+        item.claim_category == "competitive_moat" and item.directness == "direct" and item.freshness_status == "fresh"
+        for item in evidence
+    ) and any(item.claim_category == "financial_performance" and item.freshness_status == "fresh" for item in evidence)
+    market_pos = any(
+        item.claim_category == "industry_position" and item.directness == "direct" and item.freshness_status == "fresh"
+        for item in evidence
+    )
+    sentiment = any(
+        item.claim_category == "market_sentiment"
+        and item.directness == "direct"
+        and item.freshness_status == "fresh"
+        and item.persistence_horizon in {"multi_quarter", "structural"}
+        for item in evidence
+    )
+    ready = {"moat": moat, "market_pos": market_pos, "sentiment": sentiment}
+    return tuple(dimension for dimension in DIMENSION_NAMES if not ready[dimension])
 
 
 def _canonical_json(value: object) -> str:
@@ -329,6 +355,7 @@ def get_production_qualitative_score(
 __all__ = [
     "MODE_ENV",
     "ProductionV2Error",
+    "context_missing_score_dimensions",
     "get_production_qualitative_score",
     "is_v2_eligible",
     "load_usable_v2_score",

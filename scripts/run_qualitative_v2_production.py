@@ -19,7 +19,11 @@ if str(PROJECT_ROOT) not in sys.path:
 import config  # noqa: E402
 from lib.cache import get_db  # noqa: E402
 from qualitative_v2_client import DEFAULT_GEMINI_MODEL  # noqa: E402
-from qualitative_v2_production import ProductionV2Error, promote_shadow_record  # noqa: E402
+from qualitative_v2_production import (  # noqa: E402
+    ProductionV2Error,
+    context_missing_score_dimensions,
+    promote_shadow_record,
+)
 from qualitative_v2_shadow import run_shadow_evaluation  # noqa: E402
 from qualitative_v2_types import QualitativeContext  # noqa: E402
 from qualitative_v2_validator import validate_context_dict  # noqa: E402
@@ -109,12 +113,15 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _preview(contexts: list[QualitativeContext], scope: str) -> dict[str, object]:
+    missing = {context.code: list(context_missing_score_dimensions(context)) for context in contexts}
     return {
         "codes": [context.code for context in contexts],
         "execution_enabled": False,
         "fixed_model": DEFAULT_GEMINI_MODEL,
         "logical_call_limit": len(contexts),
         "maximum_http_attempts": len(contexts) * 3,
+        "missing_score_dimensions": missing,
+        "score_ready": not any(missing.values()),
         "scope": scope,
         "validated": True,
     }
@@ -220,6 +227,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise ProductionV2Error(
                     "score requires --execute; no credential, artifact, database, or model was used"
                 )
+            missing = {context.code: context_missing_score_dimensions(context) for context in contexts}
+            if any(missing.values()):
+                raise ProductionV2Error(f"deterministic evidence gates cannot score the exact scope: {missing}")
             result, success = _execute(contexts, args.scope, args.run_id)
     except (OSError, ProductionV2Error) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

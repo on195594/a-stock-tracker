@@ -45,6 +45,13 @@ WATCHLIST: list[dict] = [
 # 定性评分 v2 生产开关。默认关闭；环境变量 QUALITATIVE_V2_MODE 仅接受
 # off/canary/on。canary 固定使用真实 watchlist 中跨行业的 5 只股票。
 QUALITATIVE_V2_CANARY_CODES: frozenset[str] = frozenset({"600036", "601088", "002594", "600941", "000963"})
+QUALITATIVE_V2_INDUSTRIES: dict[str, str] = {
+    "600036": "银行",
+    "601088": "煤炭",
+    "002594": "汽车制造",
+    "600941": "通信运营",
+    "000963": "医药制造",
+}
 
 DB_PATH = os.path.expanduser("~/a-stock-tracker/tracker.db")
 LOG_DIR = os.path.expanduser("~/a-stock-tracker/logs/")

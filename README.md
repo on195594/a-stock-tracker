@@ -95,6 +95,13 @@ python3 scripts/run_qualitative_v2_production.py preview \
   --contexts path/to/exact-five-contexts \
   --scope canary
 
+# 经明确授权后，从 CNINFO 全文片段构建真实 canary context
+python3 scripts/collect_qualitative_v2_production_contexts.py \
+  --authorization-id qualitative-v2-prod-canary-20260719-01 \
+  --scope canary --as-of-date 2026-07-19 \
+  --run-id qualitative-v2-contexts-canary-20260719-01 \
+  --execute-cninfo
+
 # M5 synthetic bundle 只读预检（不读取 .env、不创建 artifact）
 python3 scripts/run_qualitative_v2_m5.py preview \
   --sample tests/fixtures/milestone005/sample.csv \

@@ -13,7 +13,20 @@
 
 ## 当天启用步骤
 
-先准备与真实 watchlist 身份完全一致、且通过 `validate_context_dict()` 的 context 文件。canary 目录必须恰好包含 5 个 JSON；全量目录必须恰好包含 35 个 JSON。
+先使用已批准的 CNINFO 边界构建真实 canary context。该命令只读 `stock_fundamentals`，不读取模型凭证、不写数据库：
+
+```bash
+python scripts/collect_qualitative_v2_production_contexts.py \
+  --authorization-id qualitative-v2-prod-canary-20260719-01 \
+  --scope canary \
+  --as-of-date 2026-07-19 \
+  --run-id qualitative-v2-contexts-canary-20260719-01 \
+  --execute-cninfo
+```
+
+采集器对每家公司执行 `核心技术`、`市场占有率`、`合同期限` 三组全文检索，保存原始响应 SHA、locator、manifest 和通过 `validate_context_dict()` 的 context。技术成功但没有匹配片段时，context 只保留实际存在的基本面 supporting evidence；不得补造直接证据，也不得因此调用 Gemini。
+
+随后预检与真实 watchlist 身份完全一致的 context。canary 目录必须恰好包含 5 个 JSON；全量目录必须恰好包含 35 个 JSON。
 
 ```bash
 python scripts/run_qualitative_v2_production.py preview \
