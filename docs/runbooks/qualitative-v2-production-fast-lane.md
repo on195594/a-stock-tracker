@@ -48,13 +48,13 @@ python scripts/run_qualitative_v2_production.py score \
 
 批处理逐股继续。只有 `VALID_SCORED` 和 `VALID_INSUFFICIENT_DATA` 可进入独立 v2 表；生产读取仅采用前者。若命令返回 `DEGRADED`，已成功的股票仍可 canary，其余自动走 v1。
 
-确认至少一只 canary 为 `VALID_SCORED` 后，在运行 pipeline 的环境中设置：
+生产 canary 读路径可以在 v2 表为空时先启用，以验证真实调度、逐股回退和一键回滚；此时评分变化为零。在运行 pipeline 的环境中设置：
 
 ```text
 QUALITATIVE_V2_MODE=canary
 ```
 
-随后运行常规 `daily`。日志中的 `定性评分使用 source-grounded v2` 表示该股命中 v2；其余股票保持 v1。
+随后等待正常交易日的常规 `daily` 调度。日志中的 `定性评分使用 source-grounded v2` 表示该股命中 v2；其余股票保持 v1。非交易日不要为验证此开关而手动创建 prediction。
 
 ## 扩展与回滚
 

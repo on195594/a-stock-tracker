@@ -4,7 +4,7 @@
 
 `qualitative-v2-prod-canary-20260719-01` 已在当天执行完毕并按证据门禁停止。CNINFO 传输可用，但 5 股 × 3 维度的精确全文检索没有返回任何公告片段；因此 5 份 context 均只有本地 ROE supporting evidence，`score_ready=false`。
 
-未调用 Gemini，未写 `qualitative_scores_v2`，未设置 `QUALITATIVE_V2_MODE=canary`，也未触发 35 股扩展。生产继续使用现有 v1。
+未调用 Gemini，未写 `qualitative_scores_v2`，也未触发 35 股扩展。证据执行结束后已单独启用 `QUALITATIVE_V2_MODE=canary` 生产读路径；由于 v2 表为空，5/5 canary 均确定性回退现有 v1，评分变化为零。
 
 ## 已批准边界与实际消耗
 
@@ -44,7 +44,19 @@
 
 - Gemini artifact：不存在；
 - `qualitative_scores_v2`：0 行；
-- `QUALITATIVE_V2_MODE`：未设置；
+- `QUALITATIVE_V2_MODE`：证据执行阶段未设置；随后生产激活为 `canary`；
 - 35 股扩展：未触发。
 
 下一步不需要等待自然日，但必须更换证据获取路线并使用新授权；本授权的 45 次 CNINFO HTTP 预算已经耗尽。候选路线应先证明能返回公司定向正文或结构化片段，再进入新一轮模型调用，不能继续扩大无证据查询。
+
+## 后续生产激活
+
+同日完成了不改变评分的 canary 读路径上线：
+
+- `.env` 设置 `QUALITATIVE_V2_MODE=canary`，生产进程启动时会加载该模式；
+- 只读烟测确认 canary 身份为 5 股，`qualitative_scores_v2` 为 0 行，5/5 走 v1 fallback；
+- 进程级覆盖 `QUALITATIVE_V2_MODE=off` 已验证可立即回滚；
+- managed cron 已安装，下一正常交易日的 `daily` 会自动使用 canary 模式；
+- 2026-07-19 为非交易日，因此未手动运行 `daily`，未新增周末 prediction。
+
+这表示生产编排、隔离表、fallback 和回滚路径已经上线，但不表示 source-grounded v2 分数已经被采用。合法 v2 行仍为 0，后续必须以新的证据来源授权增量填充。

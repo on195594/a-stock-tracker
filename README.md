@@ -7,7 +7,7 @@ A 股选股与方法论验证项目。当前定位是 **Framework A 定量评分
 ## 当前状态
 
 - 主分支：`master`
-- 当前阶段：Phase 5 L3 v2 已接入生产评分与推送；Phase 6 仍处于 report-only 观察期；来源约束的定性评分 v2 已完成 MILESTONE-002、MILESTONE-003；M4 v1.3.2 治理实现已退役，轻量 builder 已生成 4,694 行本地 frame 和 36 股 sample，但未进入 MILESTONE-005 或生产采用
+- 当前阶段：Phase 5 L3 v2 已接入生产评分与推送；Phase 6 仍处于 report-only 观察期；来源约束的定性评分 v2 已启用 5 股生产 canary 读路径，当前无合法 v2 行，5/5 自动回退 v1；M4/M5 继续作为发布后研究审计
 - 生产框架：`SUPPORTED_FRAMEWORKS = {"A"}`；Framework B 历史数据保留，Phase 6 前不得启用生产写入
 - watchlist：35 只，维护在 `config.py`
 - 评分阈值：`buy_strong=44`、`buy_moderate=35`、`buy_light=26`
@@ -21,7 +21,8 @@ A 股选股与方法论验证项目。当前定位是 **Framework A 定量评分
 - Gemini 定性评分：`moat`、`market_pos`、`sentiment`，30 天缓存，失败时 all-or-nothing fallback 到固定值。
 - Outcome 追踪：记录 30/60/90 天收益、沪深 300 benchmark 和 generated `alpha_*d`。
 - L3 买点层：v1 保留用于历史审计；生产 daily 优先读取 QFQ 日线计算 `l3_v2_signal`，Telegram 主推已切换到 v2。
-- 定性评分 v2：MILESTONE-002 合同、MILESTONE-003 文件型 shadow seam 已完成；M4 v1.3.2 的 authorization、freeze、golden、oracle、attestation 和多角色审批实现已退役，仍可从 Git 历史恢复；轻量 builder 已完成本地 frame/sample，但未接 Reviewer、生产 DB、pipeline、cron、Telegram 或 Gemini。
+- 定性评分 v2 研究链路：MILESTONE-002 合同、MILESTONE-003 文件型 shadow seam 已完成；M4 v1.3.2 的 authorization、freeze、golden、oracle、attestation 和多角色审批实现已退役，仍可从 Git 历史恢复；轻量 builder 已完成本地 frame/sample。研究链路与下述生产 canary 保持隔离。
+- 定性评分 v2 生产 canary：5 股生产读路径已通过 `.env` 启用，结果存储与 v1 隔离；当前 `qualitative_scores_v2` 为 0 行，5/5 保持 v1。已批准 CNINFO 全文片段采集消耗 45/45 HTTP attempts 后未获得直接证据，因此未调用 Gemini、未扩展 35 股。
 - M5 fixture-first：已提供固定 36 股 sample 的 synthetic bundle 校验、批量 blind-reference/shadow/support-audit 编排和聚合 gate；当前执行仅使用无凭证 fake transport，真实 bundle 构建与外部调用仍待分别批准。
 - Telegram 推送：日报分为主推、候补和雷达；只有强分且 L3 v2 通过的股票进入主推，发送失败不阻断 daily。
 - Google Sheets 同步：展示层能力，失败只记录 warning，不是数据真相来源。
@@ -47,6 +48,7 @@ TELEGRAM_BOT_TOKEN=你的_Bot_Token
 TELEGRAM_CHAT_ID=你的_Chat_ID
 TUSHARE_TOKEN=你的_Tushare_Pro_Token
 MARKET_DATA_ALLOW_BAOSTOCK_ONLY=0
+QUALITATIVE_V2_MODE=off
 ```
 
 说明：
@@ -56,6 +58,7 @@ MARKET_DATA_ALLOW_BAOSTOCK_ONLY=0
 - 未配置 Telegram 时，推送静默跳过，不影响评分和写库。
 - 启用 Tushare 前先运行 `python3 scripts/probe_tushare_market_data.py`，确认 `daily`、`index_daily`、`trade_cal` 权限和字段可用。
 - `MARKET_DATA_ALLOW_BAOSTOCK_ONLY=1` 只允许 `market-data-backfill` 使用 BaoStock；不会让 `daily` 写入新评分。
+- `QUALITATIVE_V2_MODE` 仅接受 `off`、`canary`、`on`。当前生产使用 `canary`；某只股票没有合法且新鲜的 v2 记录时逐股回退 v1，不改变其评分。
 - `.env` 必须保持在 git 外，不要提交真实密钥。
 
 ## 常用命令
