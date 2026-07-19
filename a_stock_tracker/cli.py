@@ -380,126 +380,99 @@ def _backfill_null_prices(db: sqlite3.Connection, today: str, provider: MarketDa
     return updated
 
 
-def cmd_daily() -> None:
-    weights = _load_weights()
-    weights_hash = _compute_weights_hash(weights)
-    today = _today()
-    db = get_db()
-    try:
-        provider = get_default_market_data_provider()
-        with provider_session(provider):
-            market_data_cache = MarketDataCacheService(db, provider)
-
-            # 启动检查：今日已有记录且 hash 不同 → 拒绝运行
-            existing = db.execute(
-                "SELECT DISTINCT weights_hash FROM predictions WHERE score_date = ?", (today,)
-            ).fetchall()
-            if existing:
-                existing_hashes = {r[0] for r in existing}
-                if weights_hash not in existing_hashes:
-                    logger.error(
-                        f"冲突：今日 {today} 已有 weights_hash={existing_hashes}，"
-                        f"当前 hash={weights_hash}。\n"
-                        f"请手动删除今日记录后重跑：\n"
-                        f"  DELETE FROM predictions WHERE score_date='{today}';"
-                    )
-                    sys.exit(1)
-
-            codes = [item["code"] for item in config.WATCHLIST]
-            coverage = market_data_cache.refresh_daily_bars(codes, today, 120)
-            logger.info(
-                "L3 行情刷新：ok=%s degraded=%s failed=%s total=%s",
-                coverage.ok,
-                coverage.degraded,
-                coverage.failed,
-                coverage.total,
+def _ensure_no_weights_hash_conflict(db, today: str, weights_hash: str) -> None:
+    # 启动检查：今日已有记录且 hash 不同 → 拒绝运行
+    existing = db.execute("SELECT DISTINCT weights_hash FROM predictions WHERE score_date = ?", (today,)).fetchall()
+    if existing:
+        existing_hashes = {r[0] for r in existing}
+        if weights_hash not in existing_hashes:
+            logger.error(
+                f"冲突：今日 {today} 已有 weights_hash={existing_hashes}，"
+                f"当前 hash={weights_hash}。\n"
+                f"请手动删除今日记录后重跑：\n"
+                f"  DELETE FROM predictions WHERE score_date='{today}';"
             )
+            sys.exit(1)
 
-            # 获取今日 price_at_score（优先 daily_bars 最近交易日 close，5 天 freshness SLA）
-            score_prices: dict = {}
-            for item in config.WATCHLIST:
-                code = item["code"]
-                price = _get_score_price(db, provider, code, today)
-                if price is not None:
-                    score_prices[code] = price
-            if score_prices:
-                logger.info(f"price_at_score：获取到 {len(score_prices)} 只股票收盘价")
-                _backfill_null_prices(db, today, provider)
-            else:
-                logger.error("price_at_score 全部失败，今日评分中止（今日记录不写入，明日将写入明日数据）")
-                return
 
-            skipped: list[str] = []
-            written = 0
+def _collect_score_prices(db, provider, today: str) -> dict[str, float]:
+    score_prices: dict = {}
+    for item in config.WATCHLIST:
+        code = item["code"]
+        price = _get_score_price(db, provider, code, today)
+        if price is not None:
+            score_prices[code] = price
+    return score_prices
 
-            for item in config.WATCHLIST:
-                code = item["code"]
-                name = item["name"]
-                fundamentals = get_fundamentals(code)
-                if not fundamentals:
-                    logger.warning(f"  跳过 {code}：无基本面缓存（请先运行 init）")
-                    skipped.append(code)
-                    continue
 
-                placeholders = ",".join("?" * len(SUPPORTED_FRAMEWORKS))
-                written_today = db.execute(
-                    f"SELECT COUNT(DISTINCT framework) FROM predictions WHERE code=? AND score_date=? AND weights_hash=? AND framework IN ({placeholders})",
-                    (code, today, weights_hash, *sorted(SUPPORTED_FRAMEWORKS)),
-                ).fetchone()[0]
-                if written_today == len(SUPPORTED_FRAMEWORKS):
-                    logger.info(f"  检查点跳过 {code}：今日 {written_today}/{len(SUPPORTED_FRAMEWORKS)} 框架已完整写入")
-                    continue
+def _inject_daily_pb_percentile(data: dict, price_at_score: float | None, code: str) -> None:
+    # 注入日度实时 PB 分位（股价变化→分位变化→评分每日变化）
+    if price_at_score:
+        daily_pct = _compute_daily_pb_percentile(price_at_score, data)
+        if daily_pct is not None:
+            data["pb_percentile_10y"] = daily_pct
+            logger.debug(f"  {code} 实时PB分位={daily_pct}%（价={price_at_score}, bps={data.get('bps')}）")
+        else:
+            logger.debug(f"  {code} 无法计算实时PB分位（bps/hist缺失），使用缓存值")
 
-                data = dict(fundamentals.get("data", fundamentals))
-                report_period = data.get("report_period")
-                price_at_score = score_prices.get(code)
 
-                # 注入日度实时 PB 分位（股价变化→分位变化→评分每日变化）
-                if price_at_score:
-                    daily_pct = _compute_daily_pb_percentile(price_at_score, data)
-                    if daily_pct is not None:
-                        data["pb_percentile_10y"] = daily_pct
-                        logger.debug(f"  {code} 实时PB分位={daily_pct}%（价={price_at_score}, bps={data.get('bps')}）")
-                    else:
-                        logger.debug(f"  {code} 无法计算实时PB分位（bps/hist缺失），使用缓存值")
+def _apply_qualitative_scores(db, code: str, name: str, data: dict) -> None:
+    # v2 仅消费预先验证并写入独立表的结果；off/非 canary/缺数/损坏
+    # 均逐股回退既有 v1，不在 daily 内新增外部调用类型。
+    qual = get_production_qualitative_score(
+        db,
+        code,
+        name,
+        canary_codes=config.QUALITATIVE_V2_CANARY_CODES | config.QUALITATIVE_V2_PILOT_CODES,
+        legacy_getter=get_qualitative_score,
+    )
+    data["moat_fixed"] = qual["moat"]
+    data["market_pos_fixed"] = qual["market_pos"]
+    data["sentiment_fixed"] = qual["sentiment"]
 
-                # v2 仅消费预先验证并写入独立表的结果；off/非 canary/缺数/损坏
-                # 均逐股回退既有 v1，不在 daily 内新增外部调用类型。
-                qual = get_production_qualitative_score(
-                    db,
-                    code,
-                    name,
-                    canary_codes=config.QUALITATIVE_V2_CANARY_CODES | config.QUALITATIVE_V2_PILOT_CODES,
-                    legacy_getter=get_qualitative_score,
-                )
-                data["moat_fixed"] = qual["moat"]
-                data["market_pos_fixed"] = qual["market_pos"]
-                data["sentiment_fixed"] = qual["sentiment"]
 
-                threshold_adjusted = 0
-                entry_signal_result = _compute_stock_entry_signal(db, code, today)
-                l3_v2_result = compute_l3_v2_from_daily_bars(db, code, today)
-                l3_v2_fetched_at = _l3v2_now()
+def _prepare_stock_scoring_input(
+    db, item: dict, today: str, weights_hash: str, score_prices: dict[str, float], skipped: list[str]
+) -> dict | None:
+    code = item["code"]
+    name = item["name"]
+    fundamentals = get_fundamentals(code)
+    if not fundamentals:
+        logger.warning(f"  跳过 {code}：无基本面缓存（请先运行 init）")
+        skipped.append(code)
+        return None
+    placeholders = ",".join("?" * len(SUPPORTED_FRAMEWORKS))
+    written_today = db.execute(
+        f"SELECT COUNT(DISTINCT framework) FROM predictions WHERE code=? AND score_date=? AND weights_hash=? AND framework IN ({placeholders})",
+        (code, today, weights_hash, *sorted(SUPPORTED_FRAMEWORKS)),
+    ).fetchone()[0]
+    if written_today == len(SUPPORTED_FRAMEWORKS):
+        logger.info(f"  检查点跳过 {code}：今日 {written_today}/{len(SUPPORTED_FRAMEWORKS)} 框架已完整写入")
+        return None
+    data = dict(fundamentals.get("data", fundamentals))
+    report_period = data.get("report_period")
+    price_at_score = score_prices.get(code)
+    _inject_daily_pb_percentile(data, price_at_score, code)
+    _apply_qualitative_scores(db, code, name, data)
+    return {
+        "code": code,
+        "name": name,
+        "data": data,
+        "report_period": report_period,
+        "price_at_score": price_at_score,
+        "threshold_adjusted": 0,
+        "entry_signal_result": _compute_stock_entry_signal(db, code, today),
+        "l3_v2_result": compute_l3_v2_from_daily_bars(db, code, today),
+        "l3_v2_fetched_at": _l3v2_now(),
+    }
 
-                stock_written = 0
-                savepoint_created = False
-                try:
-                    db.execute("SAVEPOINT sp_stock")
-                    savepoint_created = True
-                    for framework in sorted(SUPPORTED_FRAMEWORKS):
-                        try:
-                            result = score_stock(code, framework, data, weights=weights)
-                        except InsufficientDataError as e:
-                            logger.warning(f"  跳过 {code}/{framework}：{e}")
-                            skipped.append(f"{code}/{framework}")
-                            continue
-                        except UnsupportedFrameworkError as e:
-                            logger.error(f"  错误 {code}/{framework}：{e}")
-                            skipped.append(f"{code}/{framework}")
-                            continue
 
-                        cursor = db.execute(
-                            """INSERT OR IGNORE INTO predictions
+# fmt: off
+def _upsert_one_framework_prediction(
+    db, prep: dict, today: str, weights_hash: str, framework: str, result: dict
+) -> bool:
+    cursor = db.execute(
+        """INSERT OR IGNORE INTO predictions
                                (code, name, framework, score_date, price_at_score,
                                 quant_score, total_score, weights_hash, report_period,
                                 threshold_adjusted, entry_signal, entry_signal_version,
@@ -508,34 +481,20 @@ def cmd_daily() -> None:
                                 l3_v2_signal, l3_v2_version, l3_v2_status, l3_v2_reason,
                                 l3_v2_fetched_at, created_at)
                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                            (
-                                code,
-                                name,
-                                framework,
-                                today,
-                                price_at_score,
-                                result["quant_score"],
-                                result["total_score"],
-                                weights_hash,
-                                report_period,
-                                threshold_adjusted,
-                                entry_signal_result.signal,
-                                entry_signal_result.version,
-                                entry_signal_result.status,
-                                entry_signal_result.reason,
-                                entry_signal_result.source,
-                                entry_signal_result.fetched_at,
-                                l3_v2_result.signal,
-                                l3_v2_result.version,
-                                l3_v2_result.status,
-                                l3_v2_result.reason,
-                                l3_v2_fetched_at,
-                                datetime.now().isoformat(),
-                            ),
-                        )
-                        if cursor.rowcount == 0:
-                            db.execute(
-                                """UPDATE predictions
+        (
+            prep["code"], prep["name"], framework, today, prep["price_at_score"],
+            result["quant_score"], result["total_score"], weights_hash, prep["report_period"],
+            prep["threshold_adjusted"], prep["entry_signal_result"].signal,
+            prep["entry_signal_result"].version, prep["entry_signal_result"].status,
+            prep["entry_signal_result"].reason, prep["entry_signal_result"].source,
+            prep["entry_signal_result"].fetched_at, prep["l3_v2_result"].signal,
+            prep["l3_v2_result"].version, prep["l3_v2_result"].status,
+            prep["l3_v2_result"].reason, prep["l3_v2_fetched_at"], datetime.now().isoformat(),
+        ),
+    )
+    if cursor.rowcount == 0:
+        db.execute(
+            """UPDATE predictions
                                    SET entry_signal=?,
                                        entry_signal_version=?,
                                        entry_signal_status=?,
@@ -548,47 +507,53 @@ def cmd_daily() -> None:
                                        l3_v2_reason=?,
                                        l3_v2_fetched_at=?
                                    WHERE code=? AND framework=? AND score_date=?""",
-                                (
-                                    entry_signal_result.signal,
-                                    entry_signal_result.version,
-                                    entry_signal_result.status,
-                                    entry_signal_result.reason,
-                                    entry_signal_result.source,
-                                    entry_signal_result.fetched_at,
-                                    l3_v2_result.signal,
-                                    l3_v2_result.version,
-                                    l3_v2_result.status,
-                                    l3_v2_result.reason,
-                                    l3_v2_fetched_at,
-                                    code,
-                                    framework,
-                                    today,
-                                ),
-                            )
-                        if cursor.rowcount > 0:
-                            stock_written += 1
-                        logger.info(
-                            f"  ✓ {code} {name} [{framework}]  总分={result['total_score']}  "
-                            f"data_quality={result['data_quality']}"
-                        )
-                    db.execute("RELEASE SAVEPOINT sp_stock")
-                    written += stock_written
-                except Exception as e:
-                    logger.error(f"  {code} 写入异常，回滚本股全部框架: {e}")
-                    if savepoint_created:
-                        db.execute("ROLLBACK TO SAVEPOINT sp_stock")
-                        db.execute("RELEASE SAVEPOINT sp_stock")
+            (
+                prep["entry_signal_result"].signal, prep["entry_signal_result"].version,
+                prep["entry_signal_result"].status, prep["entry_signal_result"].reason,
+                prep["entry_signal_result"].source, prep["entry_signal_result"].fetched_at,
+                prep["l3_v2_result"].signal, prep["l3_v2_result"].version,
+                prep["l3_v2_result"].status, prep["l3_v2_result"].reason,
+                prep["l3_v2_fetched_at"], prep["code"], framework, today,
+            ),
+        )
+    return cursor.rowcount > 0
+# fmt: on
 
-            log_line = f"{today} daily 完成：写入 {written} 条，跳过 {len(skipped)} 条" + (
-                f"（{skipped}）" if skipped else ""
+
+def _write_stock_predictions(db, prep: dict, today: str, weights_hash: str, weights: dict, skipped: list[str]) -> int:
+    code, name, data = prep["code"], prep["name"], prep["data"]
+    stock_written = 0
+    savepoint_created = False
+    try:
+        db.execute("SAVEPOINT sp_stock")
+        savepoint_created = True
+        for framework in sorted(SUPPORTED_FRAMEWORKS):
+            try:
+                result = score_stock(code, framework, data, weights=weights)
+            except InsufficientDataError as e:
+                logger.warning(f"  跳过 {code}/{framework}：{e}")
+                skipped.append(f"{code}/{framework}")
+                continue
+            except UnsupportedFrameworkError as e:
+                logger.error(f"  错误 {code}/{framework}：{e}")
+                skipped.append(f"{code}/{framework}")
+                continue
+            if _upsert_one_framework_prediction(db, prep, today, weights_hash, framework, result):
+                stock_written += 1
+            logger.info(
+                f"  ✓ {code} {name} [{framework}]  总分={result['total_score']}  data_quality={result['data_quality']}"
             )
-            logger.info(log_line)
-            _log_l3_coverage(db, today, weights.get("thresholds", {}).get("buy_strong", 55))
-            with open(os.path.join(config.LOG_DIR, "daily_log.txt"), "a", encoding="utf-8") as f:
-                f.write(log_line + "\n")
-    finally:
-        db.close()
+        db.execute("RELEASE SAVEPOINT sp_stock")
+        return stock_written
+    except Exception as e:
+        logger.error(f"  {code} 写入异常，回滚本股全部框架: {e}")
+        if savepoint_created:
+            db.execute("ROLLBACK TO SAVEPOINT sp_stock")
+            db.execute("RELEASE SAVEPOINT sp_stock")
+        return 0
 
+
+def _run_daily_post_steps(today: str, weights: dict) -> None:
     # Telegram 推送（阈值来自 weights.json，失败不阻断）
     try:
         import a_stock_tracker.reporting.telegram_push as telegram_push
@@ -605,6 +570,51 @@ def cmd_daily() -> None:
         sheets_sync.sync_all()
     except Exception as e:
         logger.warning(f"Sheets sync 失败（不影响 SQLite 数据）：{e}")
+
+
+def cmd_daily() -> None:
+    weights = _load_weights()
+    weights_hash = _compute_weights_hash(weights)
+    today = _today()
+    db = get_db()
+    try:
+        provider = get_default_market_data_provider()
+        with provider_session(provider):
+            market_data_cache = MarketDataCacheService(db, provider)
+            _ensure_no_weights_hash_conflict(db, today, weights_hash)
+            codes = [item["code"] for item in config.WATCHLIST]
+            coverage = market_data_cache.refresh_daily_bars(codes, today, 120)
+            logger.info(
+                "L3 行情刷新：ok=%s degraded=%s failed=%s total=%s",
+                coverage.ok,
+                coverage.degraded,
+                coverage.failed,
+                coverage.total,
+            )
+            score_prices = _collect_score_prices(db, provider, today)
+            if score_prices:
+                logger.info(f"price_at_score：获取到 {len(score_prices)} 只股票收盘价")
+                _backfill_null_prices(db, today, provider)
+            else:
+                logger.error("price_at_score 全部失败，今日评分中止（今日记录不写入，明日将写入明日数据）")
+                return
+            skipped: list[str] = []
+            written = 0
+            for item in config.WATCHLIST:
+                prep = _prepare_stock_scoring_input(db, item, today, weights_hash, score_prices, skipped)
+                if prep is None:
+                    continue
+                written += _write_stock_predictions(db, prep, today, weights_hash, weights, skipped)
+            log_line = f"{today} daily 完成：写入 {written} 条，跳过 {len(skipped)} 条" + (
+                f"（{skipped}）" if skipped else ""
+            )
+            logger.info(log_line)
+            _log_l3_coverage(db, today, weights.get("thresholds", {}).get("buy_strong", 55))
+            with open(os.path.join(config.LOG_DIR, "daily_log.txt"), "a", encoding="utf-8") as f:
+                f.write(log_line + "\n")
+    finally:
+        db.close()
+    _run_daily_post_steps(today, weights)
 
 
 # ──────────────────────────────────────────────
