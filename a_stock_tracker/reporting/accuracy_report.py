@@ -323,7 +323,7 @@ def _classify_stock_audit(
         issues.append(period_issue)
     if data.get("price_at_score") is None:
         issues.append("missing:price_at_score")
-    if not qualitative:
+    if not _latest_qualitative_row(db, code):
         issues.append("gemini:no_cache")
     problem = f"{code} {item['name']}: {', '.join(issues)}" if issues else None
     return {
