@@ -41,7 +41,7 @@
 
 ## 上线、隔离与回滚验证
 
-- `.env` 保持 `QUALITATIVE_V2_MODE=canary`，以上 5 股均在 canary 资格集合中。
+- 本批完成后用户批准直接上线 v2，`.env` 已切换为 `QUALITATIVE_V2_MODE=on`；35 股全部进入 v2 选择器，现有 6 行继续按合同采用，其余股票缺行时逐股回退 v1。
 - 只读验证表明，canary 返回 v2 moat/market_pos 与 v1 sentiment；`off` 返回完整 v1。
 - context、manifest、模型结果和冗余分数每次读取均重新验证；漂移、过期或损坏会逐股回退 v1。
 - 模型 artifact 为 create-only，权限为 `0700`/`0600`；API key 扫描为 0 命中。

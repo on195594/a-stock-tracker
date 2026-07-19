@@ -61,11 +61,19 @@ python scripts/run_qualitative_v2_production.py score \
 
 `qualitative_scores_v2` 中 partial 行保留已评分整数，缺失维度必须为 `NULL`；读取时 context/result/hash 和冗余列任一漂移都会整股回退 v1。
 
-生产 canary 读路径可以在 v2 表为空时先启用，以验证真实调度、逐股回退和一键回滚；此时评分变化为零。在运行 pipeline 的环境中设置：
+生产 canary 读路径可以在 v2 表为空时先启用，以验证真实调度、逐股回退和一键回滚；此时评分变化为零。历史 canary 配置为：
 
 ```text
 QUALITATIVE_V2_MODE=canary
 ```
+
+2026-07-19 经用户批准直接上线 v2 后，生产已切换为：
+
+```text
+QUALITATIVE_V2_MODE=on
+```
+
+`on` 表示 35 股全部进入 v2 选择器，不表示可以绕过证据合同。当前 6 股读取合法 hybrid v2，其余 29 股在合法 v2 行就绪前逐股回退 v1。
 
 随后等待正常交易日的常规 `daily` 调度。日志中的 `定性评分使用 source-grounded v2` 表示该股命中 full v2；`定性评分使用 hybrid_v2，维度来源=...` 表示逐维采用；其余股票保持 v1。非交易日不要为验证此开关而手动创建 prediction。
 
