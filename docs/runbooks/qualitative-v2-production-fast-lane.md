@@ -13,6 +13,8 @@
 
 ## 当天启用步骤
 
+> 2026-07-19 状态：下述 `qualitative-v2-prod-canary-20260719-01` 已消耗 45/45 attempts，并记录在仓库跟踪的 `qualitative_v2_production_authorizations.json` 退休账本中。该命令仅作为历史执行示例；再次执行会在创建 artifact、打开数据库或发起网络请求前失败。未来采集必须先取得新授权并把新 ID、scope 和上限登记为唯一 active grant。
+
 先使用已批准的 CNINFO 边界构建真实 canary context。该命令只读 `stock_fundamentals`，不读取模型凭证、不写数据库：
 
 ```bash

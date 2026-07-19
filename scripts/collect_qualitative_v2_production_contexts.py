@@ -18,12 +18,10 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import config  # noqa: E402
 from qualitative_v2_production_contexts import (  # noqa: E402
-    ALL_HTTP_LIMIT,
-    AUTHORIZATION_ID,
-    CANARY_HTTP_LIMIT,
     ContextCollectionError,
     collect_production_contexts,
     create_context_run_root,
+    load_active_authorization,
     load_prior_http_attempts,
 )
 
@@ -58,17 +56,20 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
-        if args.authorization_id != AUTHORIZATION_ID:
-            raise ContextCollectionError("authorization-id does not match the approved fast-lane boundary")
         if not args.execute_cninfo:
             raise ContextCollectionError("--execute-cninfo is required; no artifact, database, or request was used")
+        authorization = load_active_authorization(
+            PROJECT_ROOT,
+            authorization_id=args.authorization_id,
+            scope=args.scope,
+        )
         companies = _companies(args.scope)
         prior_http_attempts = load_prior_http_attempts(
             PROJECT_ROOT,
             authorization_id=args.authorization_id,
             scope=args.scope,
         )
-        http_limit = CANARY_HTTP_LIMIT if args.scope == "canary" else ALL_HTTP_LIMIT
+        http_limit = authorization.http_attempt_limit
         if prior_http_attempts >= http_limit:
             raise ContextCollectionError("no authorized CNINFO HTTP attempts remain")
         run_root = create_context_run_root(PROJECT_ROOT, args.run_id)
@@ -77,6 +78,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             result = collect_production_contexts(
                 connection,
                 companies,
+                authorization=authorization,
                 scope=args.scope,
                 run_root=run_root,
                 as_of_date=args.as_of_date,

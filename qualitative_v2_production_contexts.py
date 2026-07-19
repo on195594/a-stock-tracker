@@ -21,7 +21,8 @@ from typing import cast
 
 from qualitative_v2_validator import validate_context_dict
 
-AUTHORIZATION_ID = "qualitative-v2-prod-canary-20260719-01"
+AUTHORIZATION_LEDGER_FILENAME = "qualitative_v2_production_authorizations.json"
+AUTHORIZATION_LEDGER_SCHEMA = "qualitative-v2-production-authorizations-v1"
 CNINFO_ENDPOINT = "https://www.cninfo.com.cn/new/fulltextSearch/full"
 CNINFO_HOST = "www.cninfo.com.cn"
 MAX_OPERATION_ATTEMPTS = 3
@@ -44,6 +45,15 @@ class ContextCollectionError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
+class ProductionContextAuthorization:
+    """One repository-tracked active production collection grant."""
+
+    authorization_id: str
+    scope: str
+    http_attempt_limit: int
+
+
+@dataclass(frozen=True, slots=True)
 class SnippetFetchResult:
     """One non-redirecting CNINFO HTTP attempt."""
 
@@ -56,6 +66,99 @@ class SnippetFetchResult:
 
 
 Fetcher = Callable[[str], SnippetFetchResult]
+
+
+def _authorization_fields(value: object, *, label: str) -> tuple[str, str, int]:
+    if not isinstance(value, dict):
+        raise ContextCollectionError(f"{label} authorization entry is invalid")
+    authorization_id = value.get("authorization_id")
+    scope = value.get("scope")
+    http_attempt_limit = value.get("http_attempt_limit")
+    if (
+        not isinstance(authorization_id, str)
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", authorization_id) is None
+        or scope not in {"canary", "all"}
+        or isinstance(http_attempt_limit, bool)
+        or not isinstance(http_attempt_limit, int)
+        or http_attempt_limit <= 0
+    ):
+        raise ContextCollectionError(f"{label} authorization entry is invalid")
+    expected_limit = CANARY_HTTP_LIMIT if scope == "canary" else ALL_HTTP_LIMIT
+    if http_attempt_limit != expected_limit:
+        raise ContextCollectionError(f"{label} authorization attempt limit drift")
+    return authorization_id, scope, http_attempt_limit
+
+
+def load_active_authorization(
+    project_root: Path,
+    *,
+    authorization_id: str,
+    scope: str,
+) -> ProductionContextAuthorization:
+    """Load the tracked active grant and reject retired IDs without consulting artifacts."""
+    path = project_root / AUTHORIZATION_LEDGER_FILENAME
+    if path.is_symlink() or not path.is_file():
+        raise ContextCollectionError("production authorization ledger is missing or unsafe")
+    try:
+        ledger = json.loads(path.read_bytes())
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ContextCollectionError("production authorization ledger is invalid") from exc
+    if not isinstance(ledger, dict) or set(ledger) != {"schema_version", "active", "retired"}:
+        raise ContextCollectionError("production authorization ledger contract drift")
+    if ledger.get("schema_version") != AUTHORIZATION_LEDGER_SCHEMA:
+        raise ContextCollectionError("production authorization ledger schema drift")
+    retired = ledger.get("retired")
+    if not isinstance(retired, list):
+        raise ContextCollectionError("production retired authorization ledger is invalid")
+    retired_ids: set[str] = set()
+    requested_authorization_is_retired = False
+    for entry in retired:
+        retired_id, _retired_scope, retired_limit = _authorization_fields(entry, label="retired")
+        if not isinstance(entry, dict) or set(entry) != {
+            "authorization_id",
+            "scope",
+            "http_attempt_limit",
+            "consumed_http_attempts",
+            "retired_on",
+            "reason",
+        }:
+            raise ContextCollectionError("retired authorization entry contract drift")
+        consumed = entry.get("consumed_http_attempts")
+        retired_on = entry.get("retired_on")
+        reason = entry.get("reason")
+        if (
+            retired_id in retired_ids
+            or isinstance(consumed, bool)
+            or not isinstance(consumed, int)
+            or not 0 <= consumed <= retired_limit
+            or not isinstance(retired_on, str)
+            or not isinstance(reason, str)
+            or not reason.strip()
+        ):
+            raise ContextCollectionError("retired authorization entry is invalid")
+        try:
+            if date.fromisoformat(retired_on).isoformat() != retired_on:
+                raise ValueError
+        except ValueError as exc:
+            raise ContextCollectionError("retired authorization date is invalid") from exc
+        retired_ids.add(retired_id)
+        if retired_id == authorization_id:
+            requested_authorization_is_retired = True
+
+    if requested_authorization_is_retired:
+        raise ContextCollectionError("production authorization is retired and cannot be reused")
+
+    active = ledger.get("active")
+    if active is None:
+        raise ContextCollectionError("no active production context authorization")
+    if not isinstance(active, dict) or set(active) != {"authorization_id", "scope", "http_attempt_limit"}:
+        raise ContextCollectionError("active authorization entry contract drift")
+    active_id, active_scope, active_limit = _authorization_fields(active, label="active")
+    if active_id in retired_ids:
+        raise ContextCollectionError("active authorization is also retired")
+    if authorization_id != active_id or scope != active_scope:
+        raise ContextCollectionError("authorization-id or scope does not match the active production grant")
+    return ProductionContextAuthorization(active_id, active_scope, active_limit)
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -344,6 +447,7 @@ def collect_production_contexts(
     conn: sqlite3.Connection,
     companies: Mapping[str, tuple[str, str]],
     *,
+    authorization: ProductionContextAuthorization,
     scope: str,
     run_root: Path,
     as_of_date: date,
@@ -354,10 +458,14 @@ def collect_production_contexts(
     """Collect exactly three CNINFO queries per company and seal valid contexts."""
     if scope not in {"canary", "all"}:
         raise ContextCollectionError("scope must be canary or all")
+    if authorization.scope != scope:
+        raise ContextCollectionError("authorization scope drift")
     expected_count = 5 if scope == "canary" else 35
     if len(companies) != expected_count:
         raise ContextCollectionError(f"{scope} scope must contain exactly {expected_count} companies")
     http_limit = CANARY_HTTP_LIMIT if scope == "canary" else ALL_HTTP_LIMIT
+    if authorization.http_attempt_limit != http_limit:
+        raise ContextCollectionError("authorization HTTP attempt limit drift")
     if isinstance(prior_http_attempts, bool) or not 0 <= prior_http_attempts < http_limit:
         raise ContextCollectionError("no authorized CNINFO HTTP attempts remain")
     placeholders = ",".join("?" for _ in companies)
@@ -457,7 +565,7 @@ def collect_production_contexts(
         _secure_write(run_root / "contexts" / f"{code}.json", _canonical_bytes(context))
     manifest: dict[str, object] = {
         "schema_version": "qualitative-v2-production-contexts-v1",
-        "authorization_id": AUTHORIZATION_ID,
+        "authorization_id": authorization.authorization_id,
         "scope": scope,
         "as_of_date": as_of_date.isoformat(),
         "source": "CNINFO fulltextSearch/full",
@@ -477,7 +585,7 @@ def collect_production_contexts(
     _secure_write(run_root / "manifest.json", manifest_raw)
     _secure_write(run_root / "manifest.sha256", f"{manifest_sha256}  manifest.json\n".encode("ascii"))
     return {
-        "authorization_id": AUTHORIZATION_ID,
+        "authorization_id": authorization.authorization_id,
         "contexts": len(context_hashes),
         "contexts_path": str(run_root / "contexts"),
         "http_attempt_limit": http_limit,
@@ -491,11 +599,13 @@ def collect_production_contexts(
 
 
 __all__ = [
-    "AUTHORIZATION_ID",
+    "AUTHORIZATION_LEDGER_FILENAME",
     "ContextCollectionError",
+    "ProductionContextAuthorization",
     "SnippetFetchResult",
     "collect_production_contexts",
     "create_context_run_root",
     "fetch_cninfo_snippets",
     "load_prior_http_attempts",
+    "load_active_authorization",
 ]

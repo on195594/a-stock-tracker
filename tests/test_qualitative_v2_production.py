@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 import config
+import qualitative_v2_production as production_mod
 from lib import cache as cache_mod
 from qualitative_v2_production import (
     ProductionV2Error,
@@ -211,6 +212,22 @@ def test_tampered_v2_row_falls_back_per_stock(db) -> None:
         mode="canary",
     ) == {"moat": 5, "market_pos": 2, "sentiment": 3}
     assert calls == [("600036", "招商银行")]
+
+
+def test_unexpected_v2_read_error_falls_back_per_stock(db, monkeypatch: pytest.MonkeyPatch) -> None:
+    def unexpected_error(*_args: object, **_kwargs: object) -> dict[str, int] | None:
+        raise RuntimeError("validator implementation changed")
+
+    monkeypatch.setattr(production_mod, "load_usable_v2_score", unexpected_error)
+    legacy = lambda _code, _name: {"moat": 5, "market_pos": 2, "sentiment": 3}
+    assert get_production_qualitative_score(
+        db,
+        "600036",
+        "招商银行",
+        canary_codes=frozenset({"600036"}),
+        legacy_getter=legacy,
+        mode="canary",
+    ) == legacy("", "")
 
 
 def test_off_non_canary_and_insufficient_always_use_v1(db) -> None:

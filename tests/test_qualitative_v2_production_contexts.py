@@ -12,10 +12,13 @@ from pathlib import Path
 import pytest
 
 from qualitative_v2_production_contexts import (
+    AUTHORIZATION_LEDGER_FILENAME,
     ContextCollectionError,
+    ProductionContextAuthorization,
     SnippetFetchResult,
     collect_production_contexts,
     create_context_run_root,
+    load_active_authorization,
     load_prior_http_attempts,
 )
 from qualitative_v2_validator import validate_context_dict
@@ -27,6 +30,7 @@ COMPANIES = {
     "600941": ("中国移动", "通信运营"),
     "601088": ("中国神华", "煤炭"),
 }
+TEST_AUTHORIZATION = ProductionContextAuthorization("test-production-canary-01", "canary", 45)
 
 
 def _db() -> sqlite3.Connection:
@@ -72,6 +76,7 @@ def test_collects_exact_canary_with_sealed_valid_contexts(tmp_path: Path) -> Non
     result = collect_production_contexts(
         _db(),
         COMPANIES,
+        authorization=TEST_AUTHORIZATION,
         scope="canary",
         run_root=root,
         as_of_date=date(2026, 7, 19),
@@ -90,14 +95,14 @@ def test_collects_exact_canary_with_sealed_valid_contexts(tmp_path: Path) -> Non
         assert validation.valid, validation.rejection_reason
         assert len(raw["evidence"]) == 4
     manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["authorization_id"] == "qualitative-v2-prod-canary-20260719-01"
+    assert manifest["authorization_id"] == TEST_AUTHORIZATION.authorization_id
     assert manifest["database_reads"] == 1
     assert manifest["database_writes"] == 0
     assert manifest["model_calls"] == 0
     assert (
         load_prior_http_attempts(
             tmp_path,
-            authorization_id="qualitative-v2-prod-canary-20260719-01",
+            authorization_id=TEST_AUTHORIZATION.authorization_id,
             scope="canary",
         )
         == 15
@@ -109,6 +114,7 @@ def test_prior_attempts_are_rebuilt_and_enforced(tmp_path: Path) -> None:
     collect_production_contexts(
         _db(),
         COMPANIES,
+        authorization=TEST_AUTHORIZATION,
         scope="canary",
         run_root=root,
         as_of_date=date(2026, 7, 19),
@@ -122,6 +128,7 @@ def test_prior_attempts_are_rebuilt_and_enforced(tmp_path: Path) -> None:
         collect_production_contexts(
             _db(),
             COMPANIES,
+            authorization=TEST_AUTHORIZATION,
             scope="canary",
             run_root=root,
             as_of_date=date(2026, 7, 19),
@@ -143,6 +150,7 @@ def test_transient_failure_retries_without_exceeding_budget(tmp_path: Path) -> N
     result = collect_production_contexts(
         _db(),
         COMPANIES,
+        authorization=TEST_AUTHORIZATION,
         scope="canary",
         run_root=root,
         as_of_date=date(2026, 7, 19),
@@ -163,6 +171,7 @@ def test_redirect_or_scope_drift_fails_closed(tmp_path: Path) -> None:
         collect_production_contexts(
             _db(),
             COMPANIES,
+            authorization=TEST_AUTHORIZATION,
             scope="canary",
             run_root=root,
             as_of_date=date(2026, 7, 19),
@@ -172,6 +181,7 @@ def test_redirect_or_scope_drift_fails_closed(tmp_path: Path) -> None:
         collect_production_contexts(
             _db(),
             {"600036": COMPANIES["600036"]},
+            authorization=TEST_AUTHORIZATION,
             scope="canary",
             run_root=root,
             as_of_date=date(2026, 7, 19),
@@ -190,3 +200,44 @@ def test_context_run_root_is_create_only_and_rejects_symlink(tmp_path: Path) -> 
     artifacts.symlink_to(other, target_is_directory=True)
     with pytest.raises(ContextCollectionError, match="symlink"):
         create_context_run_root(tmp_path / "symlinked", "unsafe")
+
+
+def test_retired_authorization_stays_blocked_without_artifacts(tmp_path: Path) -> None:
+    ledger = {
+        "schema_version": "qualitative-v2-production-authorizations-v1",
+        "active": None,
+        "retired": [
+            {
+                "authorization_id": "retired-canary-01",
+                "scope": "canary",
+                "http_attempt_limit": 45,
+                "consumed_http_attempts": 45,
+                "retired_on": "2026-07-19",
+                "reason": "test budget exhausted",
+            }
+        ],
+    }
+    (tmp_path / AUTHORIZATION_LEDGER_FILENAME).write_text(json.dumps(ledger), encoding="utf-8")
+
+    assert not (tmp_path / "artifacts").exists()
+    with pytest.raises(ContextCollectionError, match="retired"):
+        load_active_authorization(tmp_path, authorization_id="retired-canary-01", scope="canary")
+
+
+def test_active_authorization_is_exact_and_tracked(tmp_path: Path) -> None:
+    ledger = {
+        "schema_version": "qualitative-v2-production-authorizations-v1",
+        "active": {
+            "authorization_id": "active-canary-01",
+            "scope": "canary",
+            "http_attempt_limit": 45,
+        },
+        "retired": [],
+    }
+    (tmp_path / AUTHORIZATION_LEDGER_FILENAME).write_text(json.dumps(ledger), encoding="utf-8")
+
+    assert load_active_authorization(
+        tmp_path, authorization_id="active-canary-01", scope="canary"
+    ) == ProductionContextAuthorization("active-canary-01", "canary", 45)
+    with pytest.raises(ContextCollectionError, match="does not match"):
+        load_active_authorization(tmp_path, authorization_id="different-canary-01", scope="canary")

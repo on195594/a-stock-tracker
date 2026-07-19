@@ -347,7 +347,7 @@ def get_production_qualitative_score(
             if score is not None:
                 logger.info("%s 定性评分使用 source-grounded v2", code)
                 return score
-    except (ProductionV2Error, sqlite3.Error) as exc:
+    except Exception as exc:
         logger.error("%s 定性评分 v2 fail-closed，逐股回退 v1：%s", code, exc)
     return legacy_getter(code, name)
 

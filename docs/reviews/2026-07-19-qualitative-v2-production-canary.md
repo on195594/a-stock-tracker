@@ -60,3 +60,7 @@
 - 2026-07-19 为非交易日，因此未手动运行 `daily`，未新增周末 prediction。
 
 这表示生产编排、隔离表、fallback 和回滚路径已经上线，但不表示 source-grounded v2 分数已经被采用。合法 v2 行仍为 0，后续必须以新的证据来源授权增量填充。
+
+## Claude 上线审查修复
+
+Claude Opus 对生产变更范围完成只读审查并给出 `PASS`，同时识别两个防御性缺口。现已增加仓库跟踪的授权账本，将本授权以 45/45 attempts 标记为 retired；即使 ignored artifacts 被清理，同一授权也无法重用。v2 生产适配器也已扩大普通异常的逐股 fallback 边界，避免未来 validator 异常中断整次 `daily`。详见 [`claude-qualitative-v2-production-canary-20260719`](claude-qualitative-v2-production-canary-20260719/independent-review.md)。
