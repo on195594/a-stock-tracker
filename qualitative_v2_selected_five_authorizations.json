@@ -1,0 +1,25 @@
+{
+  "active": null,
+  "retired": [
+    {
+      "authorization_id": "qualitative-v2-selected-five-20260719-01",
+      "context_hashes": {
+        "000963": "9f3273678536c9b21d2d435fe23ffedc4c02bc64d771f01b93cf6a88b403907f",
+        "002050": "f2106d2149b6590a1067bcbbb61ab0f360996e1f463ebcb478f8ecc81ab4a896",
+        "600036": "c597cd578638fa80760c5fa34032bc52fd4a59a586ed18f57047acc6637757f0",
+        "600900": "6a96e25d984b3a8d7bbcba54a6eb25bd0295f6140bfb367fa0c3a17df00ac5d5",
+        "601088": "0e0d6c00428e7b7e937f36a23972af639470535b909da4bda786647cf98e58bd"
+      },
+      "context_manifest_sha256": "c1a22828da357013d44a96f4bb2c5b531a0f514e53554f063fac2dddd80f4f24",
+      "gemini_http_attempts": 5,
+      "gemini_jsonl_sha256": "10194c06e002ad85a88d02ee54cf1f19150f68732b2ac0e742ceccc04762cfb3",
+      "gemini_logical_calls": 5,
+      "outcome": "READY_HYBRID",
+      "pdf_downloads": 8,
+      "retired_at": "2026-07-19T06:17:41Z",
+      "source_http_attempts": 24,
+      "v2_rows_created": 5
+    }
+  ],
+  "schema_version": "qualitative-v2-selected-five-authorizations-v1"
+}

@@ -5,7 +5,7 @@
 生产路径不再等待 M4/M5 的 36 股研究审计。v2 采用独立预计算批处理，`daily` 只读取已通过本地合同复验的结果；合法 partial result 按维度采用 v2/v1，任何过期、损坏、全维度 `insufficient_data` 或外部失败均逐股回退现有 v1。
 
 - 开关：`QUALITATIVE_V2_MODE=off|canary|on`，默认 `off`。
-- canary：招商银行、中国神华、比亚迪、中国移动、华东医药；另含经独立授权加入资格的东方电缆单股 pilot。
+- canary：原 5 股集合，加经独立授权纳入的东方电缆、长江电力和三花智控。
 - 固定模型：`gemini-2.5-flash`，每股一个逻辑调用、最多 3 次 HTTP attempt。
 - 存储：只写 `qualitative_scores_v2`；不更新旧 `qualitative_scores`，不回写历史 `predictions`。
 - artifact：`artifacts/qualitative-v2-production/<run-id>/gemini.jsonl`，run ID create-only。
@@ -17,6 +17,8 @@
 > 2026-07-19 状态：下述 `qualitative-v2-prod-canary-20260719-01` 已消耗 45/45 attempts，并记录在仓库跟踪的 `qualitative_v2_production_authorizations.json` 退休账本中。该命令仅作为历史执行示例；再次执行会在创建 artifact、打开数据库或发起网络请求前失败。未来采集必须先取得新授权并把新 ID、scope 和上限登记为唯一 active grant。
 
 > 东方电缆状态：首次来源授权 `qualitative-v2-orient-cable-pilot-20260719-01` 在 Gemini 前停止；随后一次性授权 `qualitative-v2-orient-cable-hybrid-20260719-01` 使用封存输入、零新增来源请求完成 1 个 Gemini 逻辑调用/1 attempt，返回 `READY_HYBRID` 并写入 1 行 v2。603606 在 canary 模式采用 moat=7、market_pos=4，sentiment 使用 v1。两项授权均已退休，不能复用。完整记录见 `docs/reviews/2026-07-19-orient-cable-production-pilot.md`。
+
+> 指定 5 股状态：一次性授权 `qualitative-v2-selected-five-20260719-01` 已完成招商银行、长江电力、中国神华、华东医药、三花智控的官方年报采集、结构化评分及生产写入。实际来源用量为 24 次 HTTP attempts、8 次 PDF downloads；Gemini 为 5 个逻辑调用/5 attempts。5 股均为 `READY_HYBRID`，授权已退休。完整记录见 `docs/reviews/2026-07-19-selected-five-production-batch.md`。
 
 先使用已批准的 CNINFO 边界构建真实 canary context。该命令只读 `stock_fundamentals`，不读取模型凭证、不写数据库：
 
@@ -31,7 +33,7 @@ python scripts/collect_qualitative_v2_production_contexts.py \
 
 采集器对每家公司执行 `核心技术`、`市场占有率`、`合同期限` 三组全文检索，保存原始响应 SHA、locator、manifest 和通过 `validate_context_dict()` 的 context。技术成功但没有匹配片段时，context 只保留实际存在的基本面 supporting evidence；不得补造直接证据，也不得因此调用 Gemini。
 
-随后预检与真实 watchlist 身份完全一致的 context。原 canary scope 目录必须恰好包含 5 个 JSON；东方电缆 `orient-cable` scope 必须恰好包含 1 个 JSON；全量目录必须恰好包含 35 个 JSON。
+随后预检与真实 watchlist 身份完全一致的 context。原 canary scope 目录必须恰好包含 5 个 JSON；东方电缆 `orient-cable` scope 必须恰好包含 1 个 JSON；已完成的一次性 `selected-five` scope 必须恰好包含指定的 5 个 JSON；全量目录必须恰好包含 35 个 JSON。
 
 ```bash
 python scripts/run_qualitative_v2_production.py preview \

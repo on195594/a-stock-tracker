@@ -30,6 +30,12 @@ from qualitative_v2_production import (  # noqa: E402
     context_missing_score_dimensions,
     promote_shadow_record,
 )
+from qualitative_v2_production_contexts import ContextCollectionError  # noqa: E402
+from qualitative_v2_selected_five import (  # noqa: E402
+    SelectedFiveAuthorization,
+    load_active_authorization as load_selected_five_authorization,
+    validate_context_manifest,
+)
 from qualitative_v2_shadow import run_shadow_evaluation  # noqa: E402
 from qualitative_v2_types import QualitativeContext  # noqa: E402
 from qualitative_v2_validator import validate_context_dict  # noqa: E402
@@ -59,7 +65,12 @@ def _target_companies(scope: str) -> dict[str, str]:
         raise ProductionV2Error("production watchlist contains duplicate codes")
     if scope == "all":
         return watchlist
-    target_codes = config.QUALITATIVE_V2_CANARY_CODES if scope == "canary" else config.QUALITATIVE_V2_PILOT_CODES
+    if scope == "selected-five":
+        target_codes = config.QUALITATIVE_V2_SELECTED_FIVE_CODES
+    else:
+        target_codes = (
+            config.QUALITATIVE_V2_LEGACY_CANARY_CODES if scope == "canary" else config.QUALITATIVE_V2_PILOT_CODES
+        )
     missing = target_codes - watchlist.keys()
     if missing:
         raise ProductionV2Error(f"configured {scope} codes are outside the watchlist: {sorted(missing)}")
@@ -108,7 +119,7 @@ def _parser() -> argparse.ArgumentParser:
     for command in ("preview", "score"):
         subparser = subparsers.add_parser(command)
         subparser.add_argument("--contexts", required=True, type=Path)
-        subparser.add_argument("--scope", required=True, choices=("canary", "orient-cable", "all"))
+        subparser.add_argument("--scope", required=True, choices=("canary", "orient-cable", "selected-five", "all"))
         if command == "score":
             subparser.add_argument("--run-id", required=True)
             subparser.add_argument("--authorization-id")
@@ -183,6 +194,7 @@ def _execute(
     run_id: str,
     *,
     authorization: HybridAuthorization | None = None,
+    selected_authorization: SelectedFiveAuthorization | None = None,
 ) -> tuple[dict[str, object], bool]:
     if RUN_ID_RE.fullmatch(run_id) is None or run_id in {".", ".."}:
         raise ProductionV2Error("run-id must be a bounded safe identifier")
@@ -202,6 +214,19 @@ def _execute(
             raise ProductionV2Error("orient-cable execution differs from the active hybrid grant")
     elif authorization is not None:
         raise ProductionV2Error("hybrid authorization is only valid for orient-cable scope")
+    if scope == "selected-five":
+        if selected_authorization is None:
+            raise ProductionV2Error("selected-five score requires an active authorization")
+        if (
+            run_id != selected_authorization.authorization_id
+            or selected_authorization.model != DEFAULT_GEMINI_MODEL
+            or selected_authorization.gemini_logical_call_limit != 5
+            or selected_authorization.gemini_http_attempt_limit != 15
+            or tuple(context.code for context in contexts) != selected_authorization.target_codes
+        ):
+            raise ProductionV2Error("selected-five execution differs from the direct user grant")
+    elif selected_authorization is not None:
+        raise ProductionV2Error("selected-five authorization is only valid for selected-five scope")
     _load_env_file(PROJECT_ROOT / ".env")
     api_key = os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
@@ -274,7 +299,13 @@ def _execute(
     return (
         {
             "fixed_model": DEFAULT_GEMINI_MODEL,
-            "authorization_id": authorization.authorization_id if authorization is not None else None,
+            "authorization_id": (
+                authorization.authorization_id
+                if authorization is not None
+                else selected_authorization.authorization_id
+                if selected_authorization is not None
+                else None
+            ),
             "fully_scored": fully_scored,
             "hybrid_scored": hybrid_scored,
             "outcomes": outcomes,
@@ -302,12 +333,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "score requires --execute; no credential, artifact, database, or model was used"
                 )
             authorization = None
+            selected_authorization = None
             if args.scope == "orient-cable":
                 if not args.authorization_id:
                     raise ProductionV2Error("orient-cable score requires --authorization-id")
                 authorization = load_active_hybrid_authorization(PROJECT_ROOT, args.authorization_id)
                 if len(contexts) != 1 or contexts[0].compute_input_hash() != authorization.context_input_hash:
                     raise ProductionV2Error("context input hash does not match the active hybrid authorization")
+            elif args.scope == "selected-five":
+                if not args.authorization_id:
+                    raise ProductionV2Error("selected-five score requires --authorization-id")
+                selected_authorization = load_selected_five_authorization(PROJECT_ROOT, args.authorization_id)
+                validate_context_manifest(PROJECT_ROOT, selected_authorization, args.contexts)
             elif args.authorization_id:
                 raise ProductionV2Error("--authorization-id is only valid for orient-cable scope")
             missing = {context.code: context_missing_score_dimensions(context) for context in contexts}
@@ -323,8 +360,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.scope,
                 args.run_id,
                 authorization=authorization,
+                selected_authorization=selected_authorization,
             )
-    except (OSError, HybridAuthorizationError, ProductionV2Error) as exc:
+    except (OSError, ContextCollectionError, HybridAuthorizationError, ProductionV2Error) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
     print(json.dumps(result, allow_nan=False, ensure_ascii=False, sort_keys=True))

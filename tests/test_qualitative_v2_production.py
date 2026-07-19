@@ -373,7 +373,7 @@ def test_preview_uses_exact_canary_without_credentials_or_artifacts(tmp_path: Pa
     contexts = tmp_path / "contexts"
     contexts.mkdir()
     names = {item["code"]: item["name"] for item in config.WATCHLIST}
-    for code in config.QUALITATIVE_V2_CANARY_CODES:
+    for code in config.QUALITATIVE_V2_LEGACY_CANARY_CODES:
         (contexts / f"{code}.json").write_text(
             json.dumps(_context(code, names[code]), ensure_ascii=False), encoding="utf-8"
         )

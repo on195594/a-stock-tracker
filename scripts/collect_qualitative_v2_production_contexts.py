@@ -30,7 +30,7 @@ def _companies(scope: str) -> dict[str, tuple[str, str]]:
     watchlist = {str(item["code"]): str(item["name"]) for item in config.WATCHLIST}
     if len(watchlist) != len(config.WATCHLIST):
         raise ContextCollectionError("production watchlist contains duplicate codes")
-    codes = sorted(watchlist if scope == "all" else config.QUALITATIVE_V2_CANARY_CODES)
+    codes = sorted(watchlist if scope == "all" else config.QUALITATIVE_V2_LEGACY_CANARY_CODES)
     expected = 35 if scope == "all" else 5
     if len(codes) != expected or any(code not in watchlist for code in codes):
         raise ContextCollectionError(f"{scope} company scope drift")

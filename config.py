@@ -44,12 +44,16 @@ WATCHLIST: list[dict] = [
 
 # 定性评分 v2 生产开关。默认关闭；环境变量 QUALITATIVE_V2_MODE 仅接受
 # off/canary/on。canary 使用原 5 股加独立批准的单股 production pilot。
-QUALITATIVE_V2_CANARY_CODES: frozenset[str] = frozenset({"600036", "601088", "002594", "600941", "000963"})
+QUALITATIVE_V2_LEGACY_CANARY_CODES: frozenset[str] = frozenset({"600036", "601088", "002594", "600941", "000963"})
+QUALITATIVE_V2_SELECTED_FIVE_CODES: frozenset[str] = frozenset({"600036", "600900", "601088", "000963", "002050"})
+QUALITATIVE_V2_CANARY_CODES: frozenset[str] = QUALITATIVE_V2_LEGACY_CANARY_CODES | QUALITATIVE_V2_SELECTED_FIVE_CODES
 QUALITATIVE_V2_PILOT_CODES: frozenset[str] = frozenset({"603606"})
 QUALITATIVE_V2_INDUSTRIES: dict[str, str] = {
     "600036": "银行",
     "601088": "煤炭",
+    "600900": "电力",
     "002594": "汽车制造",
+    "002050": "家电零部件",
     "600941": "通信运营",
     "000963": "医药制造",
     "603606": "电力设备",
