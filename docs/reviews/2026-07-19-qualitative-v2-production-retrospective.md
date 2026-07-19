@@ -1,7 +1,7 @@
 # 定性评分 v2 生产上线阶段复盘
 
 日期：2026-07-19
-范围：从 M5 fixture-first、来源能力探测，到东方电缆与指定五股生产写入，再到全局 `on` 读路径切换。
+范围：从 M5 fixture-first、来源能力探测，到东方电缆与指定五股生产写入、全局 `on` 读路径切换，以及上线后的自动验收、managed cron、告警和 P2 评审修复。
 
 ## 结论
 
@@ -26,6 +26,9 @@
 4. 东方电缆 pilot 通过官方 PDF + 离线 `pypdf` 提取证明全文路线可行；严格 sentiment 门禁仍无法满足，因此采用维度级 hybrid，不降低证据标准。
 5. 东方电缆及指定五股完成受限 Gemini 调用与独立表写入，共形成 6 行合法 partial v2；历史 predictions 保持不变。
 6. 用户批准直接上线后，生产模式从 `canary` 切到 `on`。只读选择器验证为 35/35 有效返回：6 股 hybrid、29 股 v1 fallback。
+7. 上线后增加只读 production acceptance：绑定 35 股 eligibility/adoption、6 股获批分数、1,859 条历史 predictions seal、自然 daily 证据和 `off` 零数据库访问回滚证明。
+8. managed cron 在工作日 16:45 自动验收，位于 16:30 daily 与 17:00 outcome-update 之间；production acceptance 的 exit 2 显式接入 `ROLLBACK` Telegram 告警，同时保留 weekly PM 的 exit 2 去重语义。
+9. P2 评审发现直接 `pytest` 的项目根导入回归和 shadow 跨模型幂等污染；分别通过 pytest `pythonpath` 配置和把 model 纳入 record/request key 修复，文档测试入口全仓 938 passed。
 
 ## 做对了什么
 
@@ -64,14 +67,17 @@
 3. 29 股没有合法 v2 行，虽然行为安全，但 v2 实际覆盖率仅 6/35。
 4. 结构/evidence 合法不证明评分能带来正 alpha；不得据此修改投资结论或权重。
 5. M5 real bundle、blind-reference agreement 和 support audit 尚未完成，只影响研究置信度，不影响当前 fallback 安全性。
+6. market-data readiness 报告已过期；当前 managed cron 保留，但重跑 `cron-setup.sh` 前必须先刷新 readiness，避免安装器 fail closed 删除工作日任务。
+7. 16:30/16:45 只是 cron 时间顺序；若 daily 超过 15 分钟，验收可能提前告警。当前不会错误 PASS，但首次自然运行仍需观察是否重叠。
 
 ## 下一阶段路线
 
 ### P0：下一交易日自然运行确认
 
 - 已实现 `scripts/check_qualitative_v2_production.py`：当前真实库预检返回 `PASS`，并复验 35/35 eligibility、6 股 hybrid、29 股 fallback、1,859 条历史评分 seal 和 `off` 零数据库访问；
-- 观察 QFQ 16:00、daily 16:30、outcome 17:00 的现有 cron，不手工补写周末 prediction；
+- 观察 QFQ 16:00、daily 16:30、production acceptance 16:45、outcome 17:00 的现有 cron，不手工补写周末 prediction；
 - 确认 daily 35/35 完成、6 股出现 `hybrid_v2` 来源日志、29 股正常 v1 fallback；
+- 确认 `logs/qualitative-v2-production-acceptance.log` 输出 `PASS`；若输出 `ROLLBACK`，确认 Telegram 告警送达并立即切 `off`；
 - 确认 Telegram/Sheets 后置失败不会阻断 SQLite，且 predictions 只新增当日正常记录；
 - 若出现批量异常，立即设 `QUALITATIVE_V2_MODE=off`，保留 v2 表供诊断。
 
@@ -89,4 +95,4 @@
 
 ## 完成定义
 
-本轮任务的工程上线目标与自动化预检已完成；运维确认要在下一交易日使用 `--require-score-date` 验收自然 cron 后关闭。项目下一阶段不应再以“继续设计 M5”为主线，而应以“自然运行确认 → 批量扩大合法 v2 覆盖 → 独立效果研究”为主线。
+本轮任务的工程上线、自动化验收、managed cron、告警接入和 P2 评审修复已完成；运维确认要在下一交易日由 `--require-today` 自然 cron 验收后关闭。项目下一阶段不应再以“继续设计 M5”为主线，而应以“自然运行确认 → 批量扩大合法 v2 覆盖 → 独立效果研究”为主线。

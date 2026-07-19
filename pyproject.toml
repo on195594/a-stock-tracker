@@ -15,6 +15,9 @@ select = [
     "F82",
 ]
 
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
 [tool.mypy]
 python_version = "3.13"
 files = [

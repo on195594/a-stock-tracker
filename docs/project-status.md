@@ -78,7 +78,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | Framework A 倒置诊断 | 已完成，结论：不调权重 | Q5 avg_alpha_30d=-9.91%；根因=截面校准偏差+11支伪复制；agy投资审查：Priority 1=延伸60d/90d；60d首批到期 2026-07-14 |
 | 定性评分 v2 | 全局 `on`；6/35 hybrid、29/35 v1 fallback | v2 表 6 行：000963/002050/600036/600900/601088/603606；全部为 moat/market_pos scored、sentiment NULL |
 | 定性评分 v2 研究审计 | M4 sample 与 M5 fixture-first/builder 完成；real bundle 未完成 | sample SHA `b278a7…d7635d`；不再作为当前生产读取阻塞项 |
-| 质量门禁 | 全部通过 | managed cron/ROLLBACK 告警集成后全仓 937 passed、cron 定向 4 passed；Ruff lint/format、mypy 127 files、CLI smoke、shell syntax、`git diff --check` PASS |
+| 质量门禁 | 全部通过 | P2 修复后文档入口 `.venv/bin/pytest tests/ -q` 全仓 938 passed；Ruff lint/format、mypy 127 files、CLI smoke、shell syntax、`git diff --check` PASS |
 
 ## Spec Ledger
 
@@ -147,6 +147,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | 2026-07-19 | 定性评分 v2 生产闭环与全局读模式 | 东方电缆及指定五股形成 6 行合法 partial v2；模式切到 `on`；只读验证 35/35 返回有效，6 股 hybrid、29 股 v1 fallback；predictions 保持 1,859 行 | 下一交易日自然 cron 确认；随后分批扩大覆盖，M5 研究审计独立推进 |
 | 2026-07-19 | 自动化生产验收与回滚检查 | tracked baseline 封存历史评分字段；真实只读预检 PASS；`off` 证明 35 股均走 v1 且不访问 v2 DB | 下一交易日以 `--require-score-date` 验收 daily 行数和 adoption 日志 |
 | 2026-07-19 | 自动化验收 managed cron 与告警 | 工作日 16:45 在 daily/outcome-update 之间执行 `--require-today`；真实 crontab 已去重安装 1 条；验收 exit 2 显式发送 `ROLLBACK` Telegram 告警，weekly PM 的 exit 2 去重语义不变；全仓 937 passed | 观察 2026-07-20 首次自然 cron 日志与告警链路；重跑 `cron-setup.sh` 前刷新已过期的 readiness |
+| 2026-07-19 | P2 pytest/shadow 幂等修复 | pytest 项目根路径由 `pyproject.toml` 固定；shadow record/request key 均增加 model；跨模型回归用例通过；文档入口全仓 938 passed | 关闭两个 P2；不同模型可共享 artifact 文件但不会复用彼此结果 |
 | 2026-08-13 后 | B label 30d 结案、overdue、行业覆盖、B-A delta | 待执行 | 满足门槛后写 `phase6-b-label-review.md`，不直接上线 |
 
 ## 每周自动复核

@@ -112,6 +112,8 @@ managed cron 会在工作日 16:45（`daily` 16:30 之后、`outcome-update` 17:
 
 2026-07-19 已把上述规则实际安装到用户 crontab，managed block 中恰好一条验收任务，首次自然运行是 2026-07-20。安装时行情 readiness 因最新 capability report 停留在 2026-07-15 而返回 `HOLD_CRON`；为避免 `cron-setup.sh` 按既定 fail-closed 语义删除仍在运行的 daily/outcome-update，本次只对现有 managed block 做了去重插入。再次运行 `cron-setup.sh` 前必须先刷新并通过 market-data readiness；报告过期不等于 provider 已确认失效。
 
+本阶段关于测试入口、跨模型幂等、exit 2 告警语义、readiness 安装副作用和 cron 重叠的长期规则，已归档到 [`lessons-learned.md`](../lessons-learned.md) G-3～G-7。
+
 附加门禁要求该日期恰好存在 watchlist 35 股 Framework A prediction，并在 `logs/daily.log` 中找到当前所有 v2 adoption 的 `hybrid_v2`/`source-grounded v2` 证据。若返回 `ROLLBACK`，先将 `.env` 的 `QUALITATIVE_V2_MODE` 设置为 `off`；后续新 pipeline 进程会完整使用 v1。不要删除 v2 表或修改历史 predictions。
 
 `qualitative_v2_production_acceptance_baseline.json` 是受审查的生产配置，不是运行时自动学习文件。扩大 v2 股票、刷新分数或改变历史 seal 时必须在同一变更中更新 baseline、测试和项目状态；检查器不会自行接受新状态。

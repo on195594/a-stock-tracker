@@ -1,6 +1,6 @@
 # a-stock-tracker 知识库：踩坑记录
 
-**最后更新：** 2026-07-10
+**最后更新：** 2026-07-19
 **范围：** 项目立项（2026-04）至今的技术坑、设计失误、调试经验。
 **用法：** 新功能开发前先检索本文档；每次踩到新坑立即补录。
 
@@ -14,6 +14,7 @@
 - [D. 外部 API 陷阱](#d-外部-api-陷阱)
 - [E. 测试隔离陷阱](#e-测试隔离陷阱)
 - [F. 架构设计陷阱](#f-架构设计陷阱)
+- [G. 交付与治理陷阱](#g-交付与治理陷阱)
 
 ---
 
@@ -367,6 +368,78 @@ entry_signal_reason='SOURCE_STALE'
 
 **防复发：** 任何 rollout 开关都至少报告“进入选择器数量、实际采用数量、fallback 数量、失败数量”；不得把 fallback 成功计入新版本覆盖。
 
+---
+
+### G-3｜只跑 `python -m pytest` 会掩盖文档测试入口的导入回归
+
+**现象（2026-07-19 P2 评审）：** `.venv/bin/python -m pytest -q` 全仓通过，但 README 规定的 `.venv/bin/pytest tests/ -q` 在收集嵌套 M4 测试时出现 11 个 `ModuleNotFoundError`，项目根模块和 `scripts` 无法导入。
+
+**根因：** 两种启动方式对 `sys.path[0]` 的处理不同；项目没有在 pytest 配置中显式固定项目根，验证流程又只执行了其中一种入口。
+
+**修复：** 在 `pyproject.toml` 增加 `[tool.pytest.ini_options] pythonpath = ["."]`，并真实执行文档入口，最终 938 项测试通过。
+
+**防复发：**
+
+- README/CI/runbook 公开的命令本身就是受支持接口，不能用“语义近似”的替代命令作为唯一证据。
+- 新增嵌套测试目录后至少执行一次直接 `pytest tests/ -q` 收集。
+- 质量报告必须记录实际运行的完整命令，不只写“pytest PASS”。
+
+---
+
+### G-4｜幂等键漏掉模型 ID 会跨模型复用旧结果
+
+**现象（2026-07-19 P2 评审）：** shadow JSONL 已保存 `model`，但同一 context 改用另一个 `--model` 时仍命中旧记录，未发生预期的新模型调用。
+
+**根因：** 记录字段与幂等身份定义脱节：`_record_key()` 和请求键只绑定 code/date/contract/input hash，没有包含同样会改变外部行为和输出的模型 ID。
+
+**修复：** record key 与 request key 同时加入 `model`；回归测试证明同模型重复执行只调用一次，不同模型各调用一次并各写一条记录。
+
+**防复发：**
+
+- 幂等键必须包含所有会改变请求或结果的参数，包括 model、prompt/contract version、输入 hash 和日期。
+- “字段已写入 artifact”不等于“字段已进入身份边界”；代码审查必须逐项对照 persisted fields 与 key fields。
+- 模型比较测试必须复用同一 context 和同一 artifact，才能暴露跨模型污染。
+
+---
+
+### G-5｜共享 exit code 不代表共享告警语义
+
+**现象：** `cron-alert-wrap.sh` 为避免 weekly PM 已发送摘要后重复告警，历史上统一忽略 exit 2；production acceptance 同样用 exit 2 表示 `ROLLBACK` 后，若直接接入会被静默吞掉。
+
+**根因：** 把进程退出码当成全局业务语义。exit 2 在 weekly PM 中表示“业务异常但已通知”，在 production acceptance 中表示“必须通知的回滚信号”。
+
+**修复：** 包装器默认保持 exit 2 去重，并提供任务级 `--alert-exit-2`；只有 production acceptance 显式启用，告警文本标记 `ROLLBACK`。
+
+**防复发：** 告警策略必须由“任务 + 退出码”共同决定。新增非零业务退出码时，先列出已有调用方语义并补正反例测试，禁止修改全局默认后让其他任务重复告警。
+
+---
+
+### G-6｜fail-closed 安装器可能在证据过期时删除仍在运行的任务
+
+**现象：** 2026-07-19 为 managed cron 增加 production acceptance 时，market-data readiness 因 2026-07-15 capability report 过期返回 `HOLD_CRON`。直接运行 `cron-setup.sh` 会按设计移除 daily、acceptance 和 outcome-update，尽管现有任务仍在运行且 provider 未被确认失效。
+
+**根因：** “是否允许从零恢复 cron”和“是否允许修改现有 managed block”共用一个安装入口；readiness freshness 过期被正确解释为不能恢复，却容易被操作者误用成必须立即停掉现有调度。
+
+**修复：** 先更新版本控制中的标准 cron 源，再对现有 managed block 做去重插入；没有在 `HOLD_CRON` 状态运行全量安装器。runbook 明确：下次重装前先刷新 readiness，报告过期不等于 provider 已确认失效。
+
+**防复发：**
+
+- 执行会重写 crontab 的脚本前，先单独只读运行其 readiness gate。
+- 区分 bootstrap/recovery、增量变更和 emergency disable 三种操作，不能用一个模糊命令替代。
+- 安装前后都保存并核对 managed block，检查目标条目数量、顺序和无关任务是否保持不变。
+
+---
+
+### G-7｜cron 时间先后不等于任务完成依赖
+
+**现象：** daily 计划在 16:30、验收在 16:45，通常能满足“daily 后验收”；但若 daily 超过 15 分钟，两个进程仍可能重叠，验收会因当日 35 股证据不完整而提前 `ROLLBACK`。
+
+**根因：** cron 只保证触发时间，不知道前序任务是否成功完成。把时间间隔当成 completion signal 会产生误告警，虽然当前验收 fail closed，不会错误 PASS。
+
+**修复：** 当前先利用精确 35 股行数和 adoption 日志门禁保证安全，并把重叠风险记录为运维噪声风险；尚未用自动放宽规则掩盖未完成的 daily。
+
+**防复发：** 需要严格 happens-after 时，应使用成功完成标记、文件锁或由前序任务成功后链式触发；不要仅增加等待分钟数。任何链式改造仍须保证 daily 失败能独立告警，不能因 `&&` 跳过验收而静默。
+
 ## 附录：快速检索
 
 | 关键词 | 对应条目 |
@@ -401,3 +474,8 @@ entry_signal_reason='SOURCE_STALE'
 | qfq volume / 价量复权口径 | F-8 |
 | 研究门禁阻塞上线 / 优先级过重 | G-1 |
 | 全局 on / eligibility / adoption / coverage | G-2 |
+| pytest 直接入口 / ModuleNotFoundError / pythonpath | G-3 |
+| shadow 跨模型复用 / 幂等键 / model | G-4 |
+| exit 2 / ROLLBACK 告警 / weekly PM 去重 | G-5 |
+| readiness 过期 / cron-setup 删除任务 / managed block | G-6 |
+| cron 重叠 / 时间顺序 / 完成依赖 | G-7 |

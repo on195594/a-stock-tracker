@@ -129,6 +129,7 @@ def _record_key(record: Mapping[str, object]) -> tuple[object, ...]:
         "rubric_version",
         "taxonomy_version",
         "input_hash",
+        "model",
     )
     missing = [field for field in fields if field not in record]
     if missing:
@@ -228,6 +229,7 @@ def run_shadow_evaluation(
         context.rubric_version,
         context.taxonomy_version,
         input_hash,
+        model,
     )
 
     with _locked_artifact(path) as artifact:

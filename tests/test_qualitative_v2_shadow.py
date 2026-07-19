@@ -141,6 +141,45 @@ def test_duplicate_key_skips_redundant_api_call_and_append(tmp_path: Path) -> No
     assert len(output.read_text(encoding="utf-8").splitlines()) == 1
 
 
+def test_different_models_have_independent_idempotency_keys(tmp_path: Path) -> None:
+    output = tmp_path / "shadow.jsonl"
+    called_models: list[str] = []
+
+    def model_client(context: QualitativeContext, api_key: str, model: str) -> GeminiCallResult:
+        assert context.code and api_key == "secret"
+        called_models.append(model)
+        return _valid_call_result()
+
+    first = run_shadow_evaluation(
+        _context(),
+        api_key="secret",
+        output_path=output,
+        model="gemini-model-a",
+        client=model_client,
+    )
+    duplicate = run_shadow_evaluation(
+        _context(),
+        api_key="secret",
+        output_path=output,
+        model="gemini-model-a",
+        client=model_client,
+    )
+    second_model = run_shadow_evaluation(
+        _context(),
+        api_key="secret",
+        output_path=output,
+        model="gemini-model-b",
+        client=model_client,
+    )
+
+    assert first.api_called and first.persisted
+    assert not duplicate.api_called and not duplicate.persisted
+    assert second_model.api_called and second_model.persisted
+    assert called_models == ["gemini-model-a", "gemini-model-b"]
+    records = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
+    assert [record["model"] for record in records] == ["gemini-model-a", "gemini-model-b"]
+
+
 def test_different_input_hash_appends_a_new_record(tmp_path: Path) -> None:
     output = tmp_path / "shadow.jsonl"
     client = _Client(_valid_call_result())
