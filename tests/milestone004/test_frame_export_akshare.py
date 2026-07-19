@@ -10,8 +10,8 @@ import pytest
 import requests  # type: ignore[import-untyped]
 
 from a_stock_tracker.qualitative.audit import SW2021_INDUSTRIES
-from scripts import export_m4_sampling_frame_akshare as exporter
-from scripts.export_m4_sampling_frame_akshare import (
+from scripts.archive_m4 import export_m4_sampling_frame_akshare as exporter
+from scripts.archive_m4.export_m4_sampling_frame_akshare import (
     AUTHORIZED_FUNCTIONS,
     CallResult,
     ExportError,

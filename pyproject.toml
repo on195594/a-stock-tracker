@@ -42,11 +42,11 @@ files = [
     "scripts/collect_qualitative_v2_orient_cable.py",
     "scripts/prepare_qualitative_v2_orient_cable_hybrid.py",
     "scripts/collect_qualitative_v2_selected_five.py",
-    "scripts/export_m4_sampling_frame.py",
-    "scripts/export_m4_sampling_frame_akshare.py",
-    "scripts/export_m4_sampling_frame_akshare_szse_https.py",
-    "scripts/export_m4_sampling_frame_historical_hybrid.py",
-    "scripts/probe_m4_frame_source.py",
+    "scripts/archive_m4/export_m4_sampling_frame.py",
+    "scripts/archive_m4/export_m4_sampling_frame_akshare.py",
+    "scripts/archive_m4/export_m4_sampling_frame_akshare_szse_https.py",
+    "scripts/archive_m4/export_m4_sampling_frame_historical_hybrid.py",
+    "scripts/archive_m4/probe_m4_frame_source.py",
     "scripts/build_m4_frame_lite.py",
 ]
 ignore_missing_imports = true

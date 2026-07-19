@@ -7,9 +7,9 @@ from typing import Any
 import pandas as pd
 import pytest
 
-from scripts.export_m4_sampling_frame_akshare import ExportError
-from scripts import export_m4_sampling_frame_akshare_szse_https as exporter
-from scripts.export_m4_sampling_frame_akshare_szse_https import SZSE_ENDPOINT, SzseHttpsSource
+from scripts.archive_m4.export_m4_sampling_frame_akshare import ExportError
+from scripts.archive_m4 import export_m4_sampling_frame_akshare_szse_https as exporter
+from scripts.archive_m4.export_m4_sampling_frame_akshare_szse_https import SZSE_ENDPOINT, SzseHttpsSource
 
 
 def _xlsx() -> bytes:

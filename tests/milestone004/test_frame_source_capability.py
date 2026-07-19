@@ -12,7 +12,7 @@ from typing import Callable
 import pytest
 
 from a_stock_tracker.qualitative.audit import SUPER_STRATA, SW2021_INDUSTRIES, canonical_json_bytes
-from a_stock_tracker.qualitative.m4.capability import (
+from a_stock_tracker.qualitative.archive_m4.capability import (
     API_URL,
     AUTHORIZATION_SCHEMA_VERSION,
     PROTOCOL_HASH_PATH,
@@ -29,8 +29,8 @@ from a_stock_tracker.qualitative.m4.capability import (
     reject_non_adoptable_probe,
     verify_capability_probe,
 )
-from scripts.export_m4_sampling_frame_akshare import ExportError
-from scripts.export_m4_sampling_frame_historical_hybrid import assemble_historical_sampling_frame
+from scripts.archive_m4.export_m4_sampling_frame_akshare import ExportError
+from scripts.archive_m4.export_m4_sampling_frame_historical_hybrid import assemble_historical_sampling_frame
 
 
 VALID_TIME = datetime.fromisoformat("2026-07-17T10:00:00+08:00")

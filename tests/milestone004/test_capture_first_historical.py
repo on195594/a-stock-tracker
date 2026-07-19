@@ -15,8 +15,8 @@ import pandas as pd
 import pytest
 
 from a_stock_tracker.qualitative.audit import SW2021_INDUSTRIES, canonical_json_bytes
-from scripts.export_m4_sampling_frame_akshare import ExportError
-from scripts.export_m4_sampling_frame_historical_hybrid import (
+from scripts.archive_m4.export_m4_sampling_frame_akshare import ExportError
+from scripts.archive_m4.export_m4_sampling_frame_historical_hybrid import (
     AUTHORIZATION_SCHEMA_VERSION,
     CALL_ID_DAILY_BASIC,
     CALL_ID_SSE_SUMMARY,

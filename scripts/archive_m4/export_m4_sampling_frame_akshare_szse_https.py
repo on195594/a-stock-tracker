@@ -14,11 +14,11 @@ from urllib.parse import urlsplit
 import pandas as pd
 import requests  # type: ignore[import-untyped]
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from scripts.export_m4_sampling_frame_akshare import (  # noqa: E402
+from scripts.archive_m4.export_m4_sampling_frame_akshare import (  # noqa: E402
     MAX_RESPONSE_BYTES,
     AkshareRunner,
     CallResult,
@@ -33,7 +33,7 @@ AUTHORIZED_AKSHARE_FUNCTIONS = frozenset({"index_component_sw", "stock_zh_a_spot
 SZSE_ENDPOINT = "https://www.szse.cn/api/report/ShowReport"
 SZSE_REFERER = "https://www.szse.cn/market/overview/index.html"
 DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "artifacts" / "milestone-004" / "incoming"
-BASE_EXPORTER_PATH = PROJECT_ROOT / "scripts" / "export_m4_sampling_frame_akshare.py"
+BASE_EXPORTER_PATH = PROJECT_ROOT / "scripts" / "archive_m4" / "export_m4_sampling_frame_akshare.py"
 SessionFactory = Callable[[], Any]
 
 

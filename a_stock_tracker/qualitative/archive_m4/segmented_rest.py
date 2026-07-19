@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 from typing import Sequence
 
-from a_stock_tracker.qualitative.m4.segmented_core import (
+from a_stock_tracker.qualitative.archive_m4.segmented_core import (
     AttemptResult,
     CallReceipt,
     DateEvidenceAuthorization,
@@ -17,8 +17,8 @@ from a_stock_tracker.qualitative.m4.segmented_core import (
     frame_call_matrix,
     load_authorization,
 )
-from a_stock_tracker.qualitative.m4.segmented_runtime import execute_supervised
-from a_stock_tracker.qualitative.m4.segmented_verify import verify_segmented_rest_attempt
+from a_stock_tracker.qualitative.archive_m4.segmented_runtime import execute_supervised
+from a_stock_tracker.qualitative.archive_m4.segmented_verify import verify_segmented_rest_attempt
 
 
 def execute_segmented_rest_attempt(

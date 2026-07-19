@@ -12,9 +12,9 @@ import pandas as pd
 import pytest
 
 from a_stock_tracker.qualitative.audit import SW2021_INDUSTRIES, canonical_json_bytes
-from scripts.export_m4_sampling_frame import Transport
-from scripts.export_m4_sampling_frame_akshare import CallResult, ExportError, HttpCapture
-from scripts.export_m4_sampling_frame_historical_hybrid import export_historical_sampling_frame
+from scripts.archive_m4.export_m4_sampling_frame import Transport
+from scripts.archive_m4.export_m4_sampling_frame_akshare import CallResult, ExportError, HttpCapture
+from scripts.archive_m4.export_m4_sampling_frame_historical_hybrid import export_historical_sampling_frame
 
 
 def _sha256(raw: bytes) -> str:

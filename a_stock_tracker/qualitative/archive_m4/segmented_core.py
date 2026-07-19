@@ -49,10 +49,10 @@ GENERATOR_FILES = (
 )
 GENERATOR_PATHS = {
     "qualitative_v2_audit.py": "a_stock_tracker/qualitative/audit.py",
-    "qualitative_v2_m4_segmented_core.py": "a_stock_tracker/qualitative/m4/segmented_core.py",
-    "qualitative_v2_m4_segmented_rest.py": "a_stock_tracker/qualitative/m4/segmented_rest.py",
-    "qualitative_v2_m4_segmented_runtime.py": "a_stock_tracker/qualitative/m4/segmented_runtime.py",
-    "qualitative_v2_m4_segmented_verify.py": "a_stock_tracker/qualitative/m4/segmented_verify.py",
+    "qualitative_v2_m4_segmented_core.py": "a_stock_tracker/qualitative/archive_m4/segmented_core.py",
+    "qualitative_v2_m4_segmented_rest.py": "a_stock_tracker/qualitative/archive_m4/segmented_rest.py",
+    "qualitative_v2_m4_segmented_runtime.py": "a_stock_tracker/qualitative/archive_m4/segmented_runtime.py",
+    "qualitative_v2_m4_segmented_verify.py": "a_stock_tracker/qualitative/archive_m4/segmented_verify.py",
 }
 
 ROOTS = {
@@ -665,7 +665,7 @@ def load_authorization(path: str | Path, checksum_path: str | Path) -> Authoriza
     else:
         raise AuthorizationError("authorization_schema_unknown")
     if isinstance(result, DateEvidenceAuthorization) or result.mode == "capture":
-        from a_stock_tracker.qualitative.m4.segmented_verify import _verify_reference_chains
+        from a_stock_tracker.qualitative.archive_m4.segmented_verify import _verify_reference_chains
 
         _verify_reference_chains(result, set())
     return result

@@ -14,7 +14,7 @@ a-stock-tracker/
 │   ├── integrations/         # Gemini 与 reviewer 外部适配器
 │   ├── reporting/            # Telegram、Sheets 与报告层
 │   └── qualitative/          # 定性评分合同、生产与研究链路
-│       ├── m4/               # MILESTONE-004 审计工作流
+│       ├── archive_m4/       # 已归档冻结的 MILESTONE-004 工作流，不在活动依赖图中
 │       └── m5/               # MILESTONE-005 数据与质量工作流
 ├── config/                   # 受版本控制的运行配置
 │   ├── weights.json

@@ -9,8 +9,8 @@ from urllib.request import Request
 import pytest
 
 from a_stock_tracker.qualitative.audit import SUPER_STRATA, SW2021_INDUSTRIES
-from scripts import export_m4_sampling_frame as exporter
-from scripts.export_m4_sampling_frame import ExportError, TushareApiClient, export_sampling_frame
+from scripts.archive_m4 import export_m4_sampling_frame as exporter
+from scripts.archive_m4.export_m4_sampling_frame import ExportError, TushareApiClient, export_sampling_frame
 
 
 def _response(fields: list[str], items: list[list[object]]) -> bytes:

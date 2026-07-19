@@ -19,7 +19,7 @@ from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from a_stock_tracker.qualitative.audit import canonical_json_bytes
-from a_stock_tracker.qualitative.m4.segmented_core import (
+from a_stock_tracker.qualitative.archive_m4.segmented_core import (
     CREDENTIAL_ENV_VAR,
     MANIFEST_SCHEMA,
     ORIGIN,
@@ -43,7 +43,7 @@ from a_stock_tracker.qualitative.m4.segmented_core import (
     strict_json_loads,
     time_text,
 )
-from a_stock_tracker.qualitative.m4.segmented_verify import (
+from a_stock_tracker.qualitative.archive_m4.segmented_verify import (
     exclusion_counts,
     parse_provider_response,
     reproduce_date,

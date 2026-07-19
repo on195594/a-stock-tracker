@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-import a_stock_tracker.qualitative.audit_review as review_module
+import a_stock_tracker.qualitative.archive_m4.audit_review as review_module
 from a_stock_tracker.qualitative.audit import (
     BlobRef,
     CandidateCorpus,
@@ -22,7 +22,7 @@ from a_stock_tracker.qualitative.audit import (
     SampleManifest,
     canonical_json_bytes,
 )
-from a_stock_tracker.qualitative.audit_review import (
+from a_stock_tracker.qualitative.archive_m4.audit_review import (
     InvocationPreview,
     ReviewAttempt,
     ReviewBundle,

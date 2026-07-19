@@ -23,7 +23,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -36,7 +36,7 @@ from a_stock_tracker.qualitative.audit import (  # noqa: E402
     select_sample,
     validate_frame,
 )
-from scripts.export_m4_sampling_frame import (  # noqa: E402
+from scripts.archive_m4.export_m4_sampling_frame import (  # noqa: E402
     API_URL,
     ExportError as TushareExportError,
     TushareApiClient,
@@ -44,7 +44,7 @@ from scripts.export_m4_sampling_frame import (  # noqa: E402
     _default_transport,
     _load_token,
 )
-from scripts.export_m4_sampling_frame_akshare import (  # noqa: E402
+from scripts.archive_m4.export_m4_sampling_frame_akshare import (  # noqa: E402
     AkshareRunner,
     CallResult,
     ExportError,
@@ -61,7 +61,7 @@ from scripts.export_m4_sampling_frame_akshare import (  # noqa: E402
     _validate_exchange_summaries,
     _write_new,
 )
-from scripts.export_m4_sampling_frame_akshare_szse_https import (  # noqa: E402
+from scripts.archive_m4.export_m4_sampling_frame_akshare_szse_https import (  # noqa: E402
     SZSE_ENDPOINT,
     _parse_szse_xlsx,
 )
@@ -78,9 +78,9 @@ PROTOCOL_PATH = (
 PROTOCOL_HASH_PATH = PROJECT_ROOT / "reviews" / "milestone-004-preregistration-v1.1" / "preregistration.sha256"
 BASE_GENERATORS = (
     Path(__file__),
-    PROJECT_ROOT / "scripts" / "export_m4_sampling_frame.py",
-    PROJECT_ROOT / "scripts" / "export_m4_sampling_frame_akshare.py",
-    PROJECT_ROOT / "scripts" / "export_m4_sampling_frame_akshare_szse_https.py",
+    PROJECT_ROOT / "scripts" / "archive_m4" / "export_m4_sampling_frame.py",
+    PROJECT_ROOT / "scripts" / "archive_m4" / "export_m4_sampling_frame_akshare.py",
+    PROJECT_ROOT / "scripts" / "archive_m4" / "export_m4_sampling_frame_akshare_szse_https.py",
 )
 CAPTURE_SCHEMA_VERSION = "m4-historical-capture-v1"
 AUTHORIZATION_SCHEMA_VERSION = "m4-capture-authorization-v1"

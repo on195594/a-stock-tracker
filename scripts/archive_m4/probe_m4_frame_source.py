@@ -7,11 +7,11 @@ import argparse
 import sys
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from a_stock_tracker.qualitative.m4.capability import (  # noqa: E402
+from a_stock_tracker.qualitative.archive_m4.capability import (  # noqa: E402
     DEFAULT_OUTPUT_ROOT,
     CapabilityAuthorizationError,
     CapabilityError,

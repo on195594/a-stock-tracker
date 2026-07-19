@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from a_stock_tracker.qualitative.audit import FrozenArtifactError, HashDriftError, canonical_json_bytes
-from a_stock_tracker.qualitative.audit_artifacts import AuditStore, FrozenStage
+from a_stock_tracker.qualitative.archive_m4.audit_artifacts import AuditStore, FrozenStage
 
 
 def _review_index_payload(corpus: FrozenStage, reviewer_a: FrozenStage, reviewer_b: FrozenStage) -> dict[str, str]:
@@ -117,7 +117,7 @@ def test_store_blob_does_not_replace_target_created_during_publish(
         Path(target_path).write_bytes(b"concurrent-winner")
         original_link(source_path, target_path)
 
-    monkeypatch.setattr("a_stock_tracker.qualitative.audit_artifacts.os.link", occupy_target_then_link)
+    monkeypatch.setattr("a_stock_tracker.qualitative.archive_m4.audit_artifacts.os.link", occupy_target_then_link)
     with pytest.raises(FrozenArtifactError, match="already exists"):
         store.store_blob(source, "race.txt", "text/plain")
     assert (tmp_path / "blobs" / "race.txt").read_bytes() == b"concurrent-winner"
@@ -136,7 +136,7 @@ def test_freeze_stage_does_not_replace_target_created_during_publish(
         occupied_targets.append(target)
         original_link(source_path, target)
 
-    monkeypatch.setattr("a_stock_tracker.qualitative.audit_artifacts.os.link", occupy_target_then_link)
+    monkeypatch.setattr("a_stock_tracker.qualitative.archive_m4.audit_artifacts.os.link", occupy_target_then_link)
     with pytest.raises(FrozenArtifactError, match="already exists"):
         store.freeze_stage("frame", {"x": 1})
     assert len(occupied_targets) == 1

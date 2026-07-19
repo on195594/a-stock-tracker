@@ -21,7 +21,7 @@ from a_stock_tracker.qualitative.audit import (
     canonical_json_bytes,
 )
 from a_stock_tracker.qualitative.audit import select_sample, validate_frame
-from a_stock_tracker.qualitative.m4.segmented_core import (
+from a_stock_tracker.qualitative.archive_m4.segmented_core import (
     CODE_RE,
     DATE_EVIDENCE_SCHEMA,
     HASH_RE,
