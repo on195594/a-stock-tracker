@@ -204,7 +204,7 @@ artifacts/tushare-ingestion/<run_id>/<endpoint>.jsonl.gz
 COALESCE(NULLIF(f_ann_date, ''), ann_date)
 ```
 
-空字符串必须在写入时规范为 `NULL`。给定 `score_date`，只能选择有效公告日 `<= score_date` 且存在 `prospective_observed.observed_at <= score cutoff` 的记录。选择流程：
+该表达式适用于 `income/balancesheet/cashflow`；TuShare 官方 `fina_indicator` 不提供 `f_ann_date`，其有效公告日只能使用 `ann_date`。空字符串必须在写入时规范为 `NULL`。给定 `score_date`，只能选择有效公告日 `<= score_date` 且存在 `prospective_observed.observed_at <= score cutoff` 的记录。选择流程：
 
 1. 从 `observation_events` 限定 score cutoff 当时已经真实观察到的 `record_key`；
 2. 再选择有效公告日最新的记录；
@@ -292,7 +292,8 @@ SOURCE_FAILED
 - 使用不高于 180 次/分钟的主动节流；
 - 每个 request 在 `ingestion_runs` 留 checkpoint；
 - 重跑按 deterministic `record_key` 幂等；
-- 权限/参数/schema 错误不重试，网络瞬态错误最多一次重试。
+- 权限/参数/schema 错误不重试，网络瞬态错误最多一次重试；
+- 重试合同测试仅在检测到 `a-stock-lib>=0.4.0` 时执行；tracker 仍锁定 0.2.0 的 Phase 0B 默认环境必须显式 skip，0.4.0 wheel shadow 环境必须实际执行并通过。
 
 ## 10. Readiness 与 shadow 门禁
 

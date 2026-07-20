@@ -11,6 +11,7 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
+from a_stock_lib import __version__ as A_STOCK_LIB_VERSION  # noqa: E402
 from a_stock_tracker.data import cache as cache_mod  # noqa: E402
 from a_stock_tracker.data.market_data import (  # noqa: E402
     AUTH_MISSING,
@@ -37,6 +38,11 @@ from a_stock_lib.providers.tushare_quotes import (  # noqa: E402
     TushareMarketDataProvider,
     to_tushare_index_code,
     to_tushare_stock_code,
+)
+
+REQUIRES_A_STOCK_LIB_040 = pytest.mark.skipif(
+    tuple(int(part) for part in A_STOCK_LIB_VERSION.split(".")[:2]) < (0, 4),
+    reason="requires a-stock-lib 0.4.0 retry contract",
 )
 
 
@@ -470,34 +476,41 @@ class _TransientFailureTushareClient:
         )
 
 
-def test_tushare_provider_retry_on_rate_limit(monkeypatch) -> None:
+@REQUIRES_A_STOCK_LIB_040
+def test_tushare_provider_does_not_retry_rate_limit() -> None:
     client = _TransientFailureTushareClient(failure_count=2)
     provider = TushareMarketDataProvider(token="token", client=client)
-
-    sleep_calls = []
-    monkeypatch.setattr("time.sleep", lambda x: sleep_calls.append(x))
-
-    result = provider.fetch_score_price("600036", "2026-06-09")
-
-    assert result.status == "ok"
-    assert result.value == pytest.approx(35.9)
-    assert client.calls == 3
-    assert len(sleep_calls) == 2
-
-
-def test_tushare_provider_retry_exhausted(monkeypatch) -> None:
-    client = _TransientFailureTushareClient(failure_count=3)
-    provider = TushareMarketDataProvider(token="token", client=client)
-
-    sleep_calls = []
-    monkeypatch.setattr("time.sleep", lambda x: sleep_calls.append(x))
 
     result = provider.fetch_score_price("600036", "2026-06-09")
 
     assert result.status == "failed"
     assert result.error_code == "RATE_LIMITED"
-    assert client.calls == 3
-    assert len(sleep_calls) == 2
+    assert client.calls == 1
+
+
+class _TimeoutOnceTushareClient(_TransientFailureTushareClient):
+    def __init__(self) -> None:
+        super().__init__(failure_count=0)
+        self.timed_out = False
+
+    def daily(self, **kwargs):
+        if not self.timed_out:
+            self.timed_out = True
+            self.calls += 1
+            raise TimeoutError("temporary read timeout")
+        return super().daily(**kwargs)
+
+
+@REQUIRES_A_STOCK_LIB_040
+def test_tushare_provider_retries_typed_timeout_once() -> None:
+    client = _TimeoutOnceTushareClient()
+    provider = TushareMarketDataProvider(token="token", client=client)
+
+    result = provider.fetch_score_price("600036", "2026-06-09")
+
+    assert result.status == "ok"
+    assert result.value == pytest.approx(35.9)
+    assert client.calls == 2
 
 
 def test_baostock_provider_context_manager() -> None:
