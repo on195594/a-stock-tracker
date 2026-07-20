@@ -521,7 +521,7 @@ def _append_framework_b_label_outcome_tracking(
     db: sqlite3.Connection,
     threshold_data: dict | None,
 ) -> dict:
-    lines.append("B provisional label outcome tracking（基于非金融质量候选，只读 A 框 outcome 代理）:")
+    lines.append("[UNFROZEN-PREVIEW] B provisional label preview（滚动 latest-A，不参与门禁）:")
     if threshold_data is None:
         lines.append("  暂无 provisional label：不能建立分标签 outcome 追踪。")
         lines.append("  样本不足：禁止解释命中率/胜率，只允许检查数据流是否可追踪。")
@@ -572,7 +572,9 @@ def _append_framework_b_label_outcome_tracking(
     total_closed = sum(group["closed"] for group in groups.values())
     overdue_risks: list[tuple[str, dict]] = []
     all_due_dates: list[date] = []
-    lines.append("  说明：B 标签来自非金融质量候选 dry-run；结案状态只读取同代码最新 A 框记录，不写 predictions。")
+    lines.append(
+        "  说明：本节仅预览当前候选；latest-A 会随 daily 滚动，不得解释结案率/命中率，也不参与 prospective 门禁。"
+    )
     for label in ("strong", "moderate", "light", "below"):
         group = groups[label]
         rows = group["rows"]
@@ -717,7 +719,7 @@ def append_phase6_readiness(
     lines: list[str],
     db: sqlite3.Connection,
     data_quality_summary: dict[str, int],
-    framework_b_summary: dict[str, int],
+    framework_b_summary: dict[str, Any],
 ) -> None:
     post_fix_closed = db.execute(
         """SELECT COUNT(*) FROM predictions
@@ -735,9 +737,10 @@ def append_phase6_readiness(
     )
     b_label_sample_count = framework_b_summary.get("b_label_sample_count", 0)
     b_label_closed_count = framework_b_summary.get("b_label_closed_count", 0)
+    b_label_closed_weeks = framework_b_summary.get("b_label_closed_weeks", 0)
     b_label_earliest_due = framework_b_summary.get("b_label_earliest_due")
     b_label_overdue_count = framework_b_summary.get("b_label_overdue_count", 0)
-    b_label_ready = b_label_closed_count >= 20 and b_label_overdue_count == 0
+    b_label_ready = bool(framework_b_summary.get("b_label_ready", False))
     outcome_ready = post_fix_closed >= 100
 
     lines.append("")
@@ -757,12 +760,12 @@ def append_phase6_readiness(
     )
     earliest_due_text = b_label_earliest_due or "N/A"
     lines.append(
-        "B label outcome 自然结案（非金融质量候选）："
+        "B label outcome 自然结案（prospective frozen cohort）："
         f"{'OK' if b_label_ready else 'WAIT'}"
-        f"（已结案={b_label_closed_count}/20, 候选={b_label_sample_count}, "
+        f"（已结案={b_label_closed_count}/20, 已结案周={b_label_closed_weeks}/3, 候选={b_label_sample_count}, "
         f"最早可评估={earliest_due_text}, overdue风险={b_label_overdue_count}）"
     )
-    if b_label_closed_count < 20:
+    if b_label_closed_count < 20 or b_label_closed_weeks < 3:
         lines.append(f"B label 阈值/命中率解释：禁止（样本未结案，需等待自然结案；最早可评估={earliest_due_text}）")
     elif b_label_overdue_count:
         lines.append(f"B label 阈值/命中率解释：禁止（存在 {b_label_overdue_count} 条到期但 outcome 为空风险）")
@@ -787,6 +790,8 @@ def append_phase6_readiness(
     if not b_label_ready:
         if b_label_closed_count < 20:
             blockers.append(f"B label 已结案样本不足（{b_label_closed_count}/20）")
+        if b_label_closed_weeks < 3:
+            blockers.append(f"B label 已结案 cohort 周不足（{b_label_closed_weeks}/3）")
         if b_label_overdue_count:
             blockers.append(f"B label 存在到期缺失 outcome 风险（{b_label_overdue_count}）")
     lines.append("Phase 6 生产化阻塞项：" + ("无" if not blockers else "；".join(blockers)))
@@ -800,6 +805,8 @@ def append_phase6_readiness(
         next_actions.append("修复 B 金融候选 dry-run 跳过原因")
     if b_label_closed_count < 20:
         next_actions.append(f"等待 B label 自然结案至 20 条（最早可评估={earliest_due_text}）")
+    if b_label_closed_weeks < 3:
+        next_actions.append("累计至少 3 个已结案 cohort 周")
     if b_label_overdue_count:
         next_actions.append("优先处理到期但 outcome 为空的 B label 样本")
     if not next_actions:

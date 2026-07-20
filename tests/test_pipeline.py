@@ -411,7 +411,7 @@ def assert_report_matches_db(output: str) -> None:
 FRAMEWORK_B_FINANCIAL_SECTION = "Framework B 金融候选 dry-run"
 FRAMEWORK_B_QUALITY_SECTION = "Framework B 非金融质量候选与 B label 研究"
 FRAMEWORK_B_THRESHOLDS_SECTION = "B provisional thresholds"
-FRAMEWORK_B_LABEL_TRACKING_SECTION = "B provisional label outcome tracking"
+FRAMEWORK_B_LABEL_TRACKING_SECTION = "[UNFROZEN-PREVIEW] B provisional label preview"
 
 
 def _framework_b_prediction_count() -> int:
@@ -1470,8 +1470,8 @@ def test_accuracy_report_framework_b_quality_expansion_report_only(
     )
 
 
-def test_accuracy_report_framework_b_label_outcome_tracking_report_only(tmp_db, capsys, fake_weights, monkeypatch):
-    """B 框 provisional label 只能按最新 A 记录做只读 outcome 追踪。"""
+def test_accuracy_report_separates_unfrozen_preview_from_prospective_gate(tmp_db, capsys, fake_weights, monkeypatch):
+    """滚动 latest-A 只能预览；Phase 6 门禁必须读取冻结 cohort。"""
     watchlist = [
         {"code": "000858", "name": "五粮液"},
         {"code": "600519", "name": "贵州茅台"},
@@ -1500,9 +1500,8 @@ def test_accuracy_report_framework_b_label_outcome_tracking_report_only(tmp_db, 
         [
             FRAMEWORK_B_THRESHOLDS_SECTION,
             FRAMEWORK_B_LABEL_TRACKING_SECTION,
-            "基于非金融质量候选",
-            "只读 A 框 outcome 代理",
-            "不写 predictions",
+            "滚动 latest-A，不参与门禁",
+            "latest-A 会随 daily 滚动",
             "已结案30d=",
             "未来可结案30d=",
             "30d可结案日期：最早=",
@@ -1512,9 +1511,12 @@ def test_accuracy_report_framework_b_label_outcome_tracking_report_only(tmp_db, 
             "A均分=",
             "B均分=",
             "行业=制造:",
-            "B label outcome 自然结案（非金融质量候选）：WAIT",
-            "最早可评估=2026-05-31",
-            "overdue风险=3",
+            "Framework B prospective frozen cohort（只读）",
+            "尚未创建 cohort 表",
+            "B label outcome 自然结案（prospective frozen cohort）：WAIT",
+            "已结案=0/20",
+            "最早可评估=N/A",
+            "overdue风险=0",
             "B label 阈值/命中率解释：禁止",
             "禁止解释命中率/胜率",
         ],
@@ -1548,7 +1550,7 @@ def test_accuracy_report_phase6_readiness_waits_for_data_quality(tmp_db, capsys,
     assert "Phase 6 readiness" in out
     assert "post-fix A框 30d 结案 ≥ 100：0/100 WAIT" in out
     assert "数据质量门槛：WAIT" in out
-    assert "B label outcome 自然结案（非金融质量候选）：WAIT" in out
+    assert "B label outcome 自然结案（prospective frozen cohort）：WAIT" in out
     assert "B label 阈值/命中率解释：禁止" in out
     assert "Phase 6 生产化阻塞项：" in out
     assert "post-fix A框 30d 结案不足（0/100）" in out

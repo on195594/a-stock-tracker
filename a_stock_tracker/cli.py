@@ -6,10 +6,12 @@ a-stock-tracker 主编排器
   daily           每日评分并写入 predictions 表（cron: 工作日 16:30）
   outcome-update  更新到期预测的实际收益（cron: 工作日 17:00）
   accuracy-report 输出 benchmark 相对命中率报告
+  framework-b-cohort-freeze  显式冻结每周 Framework B report-only cohort
 """
 
 import argparse
 from contextlib import contextmanager
+from dataclasses import asdict
 import hashlib
 import json
 import logging
@@ -49,6 +51,7 @@ from a_stock_tracker.signals.entry_signal import (
 )
 from a_stock_tracker.signals.l3_v2_pipeline import compute_l3_v2_from_daily_bars, now_isoformat as _l3v2_now
 from a_stock_tracker.reporting.accuracy_report import build_accuracy_report
+from a_stock_tracker.reporting.framework_b_cohort import freeze_weekly_cohort
 from a_stock_tracker.data.market_data import (
     MarketDataCacheService,
     MarketDataCoverage,
@@ -924,6 +927,21 @@ def cmd_accuracy_report() -> None:
         db.close()
 
 
+def cmd_framework_b_cohort_freeze(*, dry_run: bool, label_date: str | None = None) -> None:
+    """Explicitly freeze one weekly report-only cohort; never writes predictions."""
+    effective_date = label_date or _today()
+    if dry_run:
+        db_path = Path(config.DB_PATH).resolve()
+        db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    else:
+        db = get_db()
+    try:
+        result = freeze_weekly_cohort(db, _load_weights(), label_date=effective_date, dry_run=dry_run)
+        print(json.dumps(asdict(result), ensure_ascii=False, sort_keys=True))
+    finally:
+        db.close()
+
+
 # ──────────────────────────────────────────────
 # Phase 4 里程碑检测
 # ──────────────────────────────────────────────
@@ -1073,6 +1091,9 @@ def main() -> None:
     p_backfill.add_argument("--start", required=True, help="开始日期 YYYY-MM-DD")
     p_backfill.add_argument("--end", required=True, help="结束日期 YYYY-MM-DD")
     sub.add_parser("accuracy-report", help="输出命中率报告")
+    p_cohort = sub.add_parser("framework-b-cohort-freeze", help="显式冻结 Framework B 每周研究 cohort")
+    p_cohort.add_argument("--dry-run", action="store_true", help="只显示候选计数，不建表、不写数据库")
+    p_cohort.add_argument("--label-date", help="冻结日期 YYYY-MM-DD，默认今天")
     sub.add_parser("phase-check", help="手动触发 Phase 4 里程碑检测（自动在 outcome-update 后运行）")
     p_remove = sub.add_parser("remove", help="从 DB 删除一只股票的所有数据（先从 a_stock_tracker/config.py 移除）")
     p_remove.add_argument("code", help="股票代码，如 600036")
@@ -1091,6 +1112,8 @@ def main() -> None:
         cmd_market_data_backfill(args.start, args.end)
     elif args.cmd == "accuracy-report":
         cmd_accuracy_report()
+    elif args.cmd == "framework-b-cohort-freeze":
+        cmd_framework_b_cohort_freeze(dry_run=args.dry_run, label_date=args.label_date)
     elif args.cmd == "phase-check":
         _check_phase4_milestone()
     elif args.cmd == "remove":

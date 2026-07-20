@@ -6,6 +6,7 @@
 
 import os
 import sys
+from datetime import date, timedelta
 
 import pytest
 
@@ -13,7 +14,11 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from a_stock_tracker.reporting.framework_b_report import _has_roe_trend_warning, _score_framework_b_candidate
+from a_stock_tracker.reporting.framework_b_report import (
+    _has_roe_trend_warning,
+    _outcome_status,
+    _score_framework_b_candidate,
+)
 from a_stock_tracker.scoring import score_stock
 
 WEIGHTS = {
@@ -153,3 +158,12 @@ def test_score_framework_b_candidate_no_warning_when_trend_stable():
     result = _score_framework_b_candidate("600036", "招商银行", "银行", data, WEIGHTS)
 
     assert result["roe_trend_warning"] is False
+
+
+def test_outcome_status_covers_all_state_machine_branches() -> None:
+    today = date.today()
+
+    assert _outcome_status(today.isoformat(), 1.0) == "closed"
+    assert _outcome_status(None, None) == "no_a_record"
+    assert _outcome_status(today.isoformat(), None) == "future_closeable"
+    assert _outcome_status((today - timedelta(days=31)).isoformat(), None) == "missing_after_due"

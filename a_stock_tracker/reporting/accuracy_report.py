@@ -6,6 +6,10 @@ from datetime import date, datetime, timedelta
 import a_stock_tracker.config as config
 from a_stock_tracker.data.cache import get_fundamentals
 from a_stock_tracker.data.data_quality import FieldStatus, evaluate_data_quality
+from a_stock_tracker.reporting.framework_b_cohort import (
+    append_framework_b_cohort_report,
+    append_framework_b_legacy_report,
+)
 from a_stock_tracker.reporting.framework_b_report import (
     POST_FIX_DATE,
     append_framework_b_dry_run,
@@ -446,13 +450,19 @@ def _append_legacy_threshold_progress(
         lines.append("→ 生产写入继续等待；report-only 研究可按后续小节推进。")
 
 
-def _append_framework_b_sections(lines: list[str], db, weights: dict, data_quality_summary: dict) -> None:
+def _append_framework_b_sections(
+    lines: list[str],
+    db,
+    weights: dict,
+    weights_hash: str,
+    data_quality_summary: dict,
+) -> None:
+    append_framework_b_legacy_report(lines, db, weights_hash)
     framework_b_summary = append_framework_b_dry_run(lines, db, weights)
-    quality_summary = append_framework_b_quality_expansion(lines, db, weights)
+    append_framework_b_quality_expansion(lines, db, weights)
+    cohort_summary = append_framework_b_cohort_report(lines, db)
     readiness_summary = dict(framework_b_summary)
-    for key in ("b_label_sample_count", "b_label_closed_count", "b_label_earliest_due", "b_label_overdue_count"):
-        if key in quality_summary:
-            readiness_summary[key] = quality_summary[key]
+    readiness_summary.update(cohort_summary)
     append_phase6_readiness(lines, db, data_quality_summary, readiness_summary)
 
 
@@ -477,5 +487,5 @@ def build_accuracy_report(db: sqlite3.Connection, weights: dict, weights_hash: s
     _append_gemini_drift_section(lines, db)
     data_quality_summary = _append_data_quality_audit(lines, db)
     _append_legacy_threshold_progress(lines, db, weights_hash, rows)
-    _append_framework_b_sections(lines, db, weights, data_quality_summary)
+    _append_framework_b_sections(lines, db, weights, weights_hash, data_quality_summary)
     return "\n".join(lines)

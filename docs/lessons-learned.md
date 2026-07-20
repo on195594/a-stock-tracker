@@ -140,6 +140,18 @@
 
 ---
 
+### C-5｜滚动 latest 记录不能作为固定 horizon 的 outcome cohort
+
+**现象：** B provisional label 报告始终显示 `0/20`，且“最早可评估日期”随 daily 每天后移。
+
+**根因：** outcome 跟踪按代码查询最新 A prediction；daily 新增记录后，报告自动换绑新记录，30 日观察窗口被持续重置。当前候选只有 7 条，单批也不可能达到 20。
+
+**修复：** legacy B 记录单独回溯；prospective cohort 由显式命令按周冻结，保存规则/阈值/输入/分数快照并固定 `source_a_prediction_id`。accuracy-report 保持 cohort 数据只读，latest-A 只作为 `[UNFROZEN-PREVIEW]`。cohort 批量写入使用显式事务和异常回滚，写入连接启用 SQLite 外键约束。
+
+**防复发：** 任何固定 horizon 评估都必须冻结事件 ID 和基准日期；“取最新记录”只能用于状态预览，不能用于累计结案门禁。样本门槛同时约束事件数、时间批次数和 overdue，legacy 数据不得混入 prospective 门禁。门禁始终按唯一 `source_a_prediction_id` 去重，与 `weights_hash` 版本无关；同一 source 跨权重版本重复冻结也只能贡献一个 outcome 事件。
+
+---
+
 ## D. 外部 API 陷阱
 
 ### D-1｜东方财富 index_zh_a_hist 长期不稳定

@@ -27,7 +27,7 @@
 | 模块 | 状态 | 说明 |
 |------|------|------|
 | Framework A 评分 | ✅ 正常 | 生产写入框架仍仅 A；最近一次自然 `daily` 为 2026-07-17，live DB 共 1,786 条 A 记录 |
-| Framework B 评分 | ⏸ report-only | 73 条历史记录保留，`SUPPORTED_FRAMEWORKS={"A"}`；B label 自然结案样本不足 `0/20`，最早 2026-08-13 后复核，不启用生产写入 |
+| Framework B 评分 | ⏸ report-only | 73 条 legacy B 记录仅作回溯；prospective cohort 改为显式按周冻结并绑定固定 A prediction，不启用生产写入 |
 | 每日 PB 分位 | ✅ 正常 | current_pb = 收盘价/bps，ranked in pb_hist_monthly；当前 watchlist PB 日度可计算 35/35 |
 | 毛利率字段 | ✅ 正常 | 基本面缓存 35/35，金融行业 gross_margin 不适用按规则跳过 |
 | 定性评分 | ✅ v1 + v2 hybrid | v1 保持 30 天缓存与既有 fallback；v2 全局选择器已启用，6 股使用 source-grounded moat/market_pos，其余维度或股票回退 v1 |
@@ -46,7 +46,7 @@
 - Framework B 历史记录：73 条；生产写入暂停，仅 report-only 观察
 - L3 v1 记录：1078 条，其中通过 148 条、30d 已结案 350 条；L3 v2 记录 70 条且 70/70 pass，两天 strong 均为 18/18 通过门禁，选择性尚未得到证明
 - 最新 tracked accuracy report 生成于 2026-07-15；其中 post-fix A 30d 结案 735 条，L3 v1 pass 的 30d 已结案 71 条
-- Phase 6 当前阻塞：B label 已结案样本不足 `0/20`，最早可评估日期 `2026-08-13`
+- Phase 6 当前阻塞：2026-W30 首批 frozen cohort 已入组 7 条，当前结案 0/20、已结案周 0/3，7 条预计最早 2026-08-19 结案；门禁仍要求无 overdue
 - 定性评分 v2：独立表 6 行，000963/002050/600036/600900/601088/603606 的 moat/market_pos 来自 v2，sentiment 因证据不足为 `NULL` 并回退 v1；其余 29 股完整回退 v1
 
 ### 已知系统性偏差
@@ -154,20 +154,21 @@
 
 **目标：** 为不同行业激活对应框架，解决"白酒用 A 框架不合适"的问题。
 
-**当前状态（2026-07-15）：** Phase 6 仍为 report-only 深化期。最新 tracked `accuracy-report` 显示 B label `0/20`、最早 2026-08-13 可评估；`docs/plans/2026-06-26-phase6-report-only-next-steps.md` 仍是执行边界。Framework B 生产写入未启用。当日 probe/cron 已恢复 READY，weekly PM 误报和质量基线漂移已修复。
+**当前状态（2026-07-20）：** Phase 6 仍为 report-only 深化期。旧版 B label 跟踪因每次选择 latest-A 而让到期日随 daily 后移，`0/20` 不是有效倒计时。修复后采用双轨：73 条 legacy B 记录只做回溯；prospective cohort 通过显式命令按周冻结并绑定固定 `source_a_prediction_id`。Framework B 生产写入未启用。
 
 **本轮推进复盘：**
 - 行情链路已恢复并升级到 `a-stock-lib==0.2.0`：Tushare 主源 + 隔离 BaoStock degraded fallback；真实 probe/backfill/daily 均有成功记录。
 - cron 已恢复为 managed block；`READY_CRON` 是 daily/outcome-update 恢复门禁。2026-07-15 probe 全部通过，managed cron 已按 runbook 重新安装。
-- 已把 Phase 6 readiness 从单一结论扩展为可执行检查清单，明确展示 post-fix A 框 30d 结案、数据质量、Framework B 金融候选 dry-run 覆盖、B label 已结案样本和 overdue outcome 风险。
+- Phase 6 readiness 使用 prospective frozen cohort；滚动 latest-A 仅保留为 `[UNFROZEN-PREVIEW]`，不参与门禁。
+- legacy 回溯显示真实 B 历史表现，但必须披露同日样本相关性，永不计入 prospective 门禁。
 - 保持生产边界不变：未启用 `SUPPORTED_FRAMEWORKS` 的 B 写入，未新增 B predictions，未修改 `weights.json`，未改写历史 prediction/outcome 数据。
-- 当前阻塞：B label 自然结案样本不足 `0/20`，最早可评估日期 `2026-08-13`；在此之前只做 report-only 观察和 cron 稳定性复核。
+- 当前阻塞：2026-W30 首批 7 条已于 2026-07-20 显式冻结，全部绑定当日 A prediction；当前未来可结案 7、overdue 0，最早可评估 2026-08-19，仍需累计后续 cohort 周。
 
 **Phase 6 生产化前置条件：**
 - post-fix Framework A 30d 结案样本 ≥ 100。
 - watchlist 数据质量门槛通过：无缺失缓存、required 字段全部可接受、无 `cache_report_period` 缺失。
 - Framework B 金融候选 dry-run 全覆盖：`scored_count == candidate_count` 且候选数 > 0。
-- B label 非金融质量候选自然结案样本 ≥ 20，且不存在到期但 outcome 为空的 overdue 风险。
+- prospective B label 去重后自然结案样本 ≥ 20、覆盖至少 3 个已结案 cohort 周，且不存在 overdue/source 缺失风险。
 - 上述条件满足后，仍先进入人工 report-only 审阅；生产写入需要单独计划、测试和明确授权。
 
 **优先级：**
@@ -193,13 +194,14 @@
 > E/F 框架的主估值轴（PE/PS历史分位）尚无对应 AKShare 接口，需要先验证数据可获取性，再启动框架实现。这是 E/F 被列为低/中优先级的主要原因。
 
 **实施方案：**
-1. 继续运行 `daily` / `outcome-update`，让 post-fix A 框、L3 和 B label 样本自然结案。
-2. 每周查看 `accuracy-report` 的 Phase 6 readiness、阻塞项和下一步，不根据样本不足报告做生产化判断。
-3. 每周复核 cron 日志和 `READY_CRON`；若 readiness 返回 `HOLD_CRON`，先处理行情链路，暂停 Phase 6 深化。
-4. 若数据质量或 B dry-run 覆盖未满足，先修复字段来源、缓存或跳过原因。
-5. B label 已结案样本 ≥ 20 且 overdue 风险为 0 后，先写 `docs/reviews/YYYY-MM-DD-phase6-b-label-review.md`。
-6. 条件满足后，再为 Framework B 生产化单独写 spec/implementation plan；计划必须覆盖 `weights.json`、`SUPPORTED_FRAMEWORKS`、watchlist/framework 映射、历史断层解释、测试和回滚策略。
-7. 每个新框架上线前须通过完整测试用例（mock AKShare + 边界值覆盖）。
+1. 每周先运行 `framework-b-cohort-freeze --dry-run`；确认候选后显式冻结一次，同周重跑必须幂等。
+2. 继续运行 `daily` / `outcome-update`，让冻结 cohort 绑定的 A prediction 自然结案；禁止切换到 latest-A。
+3. 每周查看 `accuracy-report` 的 legacy 与 prospective 两轨、Phase 6 readiness、阻塞项和下一步。
+4. 每周复核 cron 日志和 `READY_CRON`；若 readiness 返回 `HOLD_CRON`，先处理行情链路，暂停 Phase 6 深化。
+5. 若数据质量或 B dry-run 覆盖未满足，先修复字段来源、缓存或跳过原因。
+6. prospective 已结案 ≥20、已结案周 ≥3 且 overdue=0 后，先写 `docs/reviews/YYYY-MM-DD-phase6-b-label-review.md`。
+7. 条件满足后，再为 Framework B 生产化单独写 spec/implementation plan；计划必须覆盖 `weights.json`、`SUPPORTED_FRAMEWORKS`、watchlist/framework 映射、历史断层解释、测试和回滚策略。
+8. 每个新框架上线前须通过完整测试用例（mock 外部行情源 + 边界值覆盖）。
 
 **注意：** 多框架激活后，不同框架的 total_score 不可跨框架直接比较（D框架高股息股天然比F框架科技股分数高），accuracy-report 须按 framework 分层。
 
