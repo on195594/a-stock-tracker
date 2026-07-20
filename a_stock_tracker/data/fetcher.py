@@ -26,6 +26,7 @@ from a_stock_tracker.data.cache import (
     set_fundamentals,
     list_codes,
 )
+from a_stock_tracker.data.market_data import get_default_market_data_provider
 
 logger = logging.getLogger(__name__)
 
@@ -169,10 +170,6 @@ def _fetch_fhps_detail(code: str) -> Any:
     return akshare_provider.stock_fhps_detail_em(code)
 
 
-def _fetch_price_history(code: str, start_date: str, end_date: str) -> Any:
-    return akshare_provider.stock_zh_a_hist(code, start_date, end_date)
-
-
 def _fetch_spot_em() -> Any:
     return akshare_provider.stock_zh_a_spot_em()
 
@@ -275,27 +272,15 @@ def _fetch_pb_hist_and_percentile(code: str) -> tuple[float | None, list[float] 
 
 
 def _fetch_latest_close(code: str, today: str) -> tuple[float | None, str | None]:
-    """spot_em 不可用时，退化为最近日线收盘价，供 PB 和股息率计算使用。"""
-    end_date = today.replace("-", "")
-    start_date = (datetime.fromisoformat(today) - timedelta(days=14)).strftime("%Y%m%d")
-    result = timed_call(_fetch_price_history, code, start_date, end_date, timeout=API_TIMEOUT)
-    if isinstance(result, str):
-        return None, "日线价格API超时"
-    if isinstance(result, tuple):
-        return None, f"日线价格API失败: {result[1]}"
-    if result is None or getattr(result, "empty", False):
-        return None, "日线价格为空"
+    """spot_em 不可用时，通过统一行情 provider 获取最近收盘价。"""
+    result = get_default_market_data_provider().fetch_score_price(code, today)
+    close = parse_float(result.value)
+    if result.status != "failed" and close is not None and close > 0:
+        return close, None
 
-    close_col = "收盘" if "收盘" in result.columns else "close" if "close" in result.columns else None
-    if close_col is None:
-        return None, f"日线价格缺少收盘列: {result.columns.tolist()}"
-    valid_closes = result[close_col].map(parse_float).dropna()
-    if valid_closes.empty:
-        return None, "日线收盘价无有效数据"
-    close = valid_closes.iloc[-1]
-    if close is None or close <= 0:
-        return None, f"日线收盘价无效: {close}"
-    return close, None
+    error_code = result.error_code or result.fallback_reason or "UNKNOWN_ERROR"
+    error_message = f": {result.error_message}" if result.error_message else ""
+    return None, f"{result.source}失败[{error_code}]{error_message}"
 
 
 _FINANCIAL_INDUSTRY_SKIP = frozenset({"银行", "保险", "证券", "信托", "期货", "多元金融", "非银金融", "券商"})

@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 import pandas as pd
 import pytest
+from a_stock_lib.market_data import MarketDataResult
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
@@ -194,8 +195,6 @@ def test_cmd_fetch_uses_recent_spot_snapshot_when_today_fetch_fails(monkeypatch)
             return {"股票简称": "东方电缆", "行业": "电力设备", "最新": "20.0"}
         if fn is fetcher_mod._fetch_dividends:
             return div_df
-        if fn is fetcher_mod._fetch_price_history:
-            raise AssertionError("recent snapshot has price, should not fetch latest close")
         return ("ERROR", "unexpected")
 
     def fake_set_fundamentals(code, name, industry, data, ttl=None, merge=False):
@@ -249,8 +248,6 @@ def test_cmd_fetch_roe_latest_null_when_financial_api_times_out(monkeypatch) -> 
             return {"股票简称": "东方电缆", "行业": "电力设备", "最新": "20.0"}
         if fn is fetcher_mod._fetch_dividends:
             return div_df
-        if fn is fetcher_mod._fetch_price_history:
-            raise AssertionError("recent snapshot has price, should not fetch latest close")
         return ("ERROR", "unexpected")
 
     def fake_set_fundamentals(code, name, industry, data, ttl=None, merge=False):
@@ -298,11 +295,14 @@ def test_cmd_fetch_falls_back_to_latest_close_for_pb_and_dividend(monkeypatch) -
     def fake_timed_call(fn, *args, **kwargs):
         if fn is fetcher_mod._fetch_info:
             return ("ERROR", "info failed")
-        if fn is fetcher_mod._fetch_price_history:
-            return pd.DataFrame({"收盘": [11.5, 12.0]})
         if fn is fetcher_mod._fetch_dividends:
             return div_df
         return ("ERROR", "unexpected")
+
+    class FakeMarketDataProvider:
+        def fetch_score_price(self, code: str, score_date: str) -> MarketDataResult[float]:
+            assert code == "603606"
+            return MarketDataResult(12.0, "ok", "tushare.daily", "2026-06-05T16:00:00")
 
     def fake_set_fundamentals(code, name, industry, data, ttl=None, merge=False):
         captured.update({"code": code, "name": name, "industry": industry, "data": data, "merge": merge})
@@ -316,6 +316,12 @@ def test_cmd_fetch_falls_back_to_latest_close_for_pb_and_dividend(monkeypatch) -
     monkeypatch.setattr(fetcher_mod, "_compute_gross_margin", lambda *a, **k: 25.0)
     monkeypatch.setattr(fetcher_mod, "_fetch_pb_hist_and_percentile", lambda *a, **k: (42.0, [1.0] * 24))
     monkeypatch.setattr(fetcher_mod, "set_fundamentals", fake_set_fundamentals)
+    monkeypatch.setattr(
+        fetcher_mod,
+        "get_default_market_data_provider",
+        lambda: FakeMarketDataProvider(),
+        raising=False,
+    )
 
     fetcher_mod.cmd_fetch(["603606"])
 
@@ -326,18 +332,66 @@ def test_cmd_fetch_falls_back_to_latest_close_for_pb_and_dividend(monkeypatch) -
     assert data["pe_ttm"] is None
 
 
-def test_fetch_latest_close_returns_reason_when_close_series_has_no_valid_values(monkeypatch) -> None:
-    """日线 fallback 有行但收盘列全无效时，应返回失败原因而不是抛 IndexError。"""
+def test_fetch_latest_close_uses_market_data_provider_on_weekend(monkeypatch) -> None:
+    """周末执行 weekly 时，应接受 Tushare 返回的最近交易日收盘价。"""
+    calls: list[tuple[str, str]] = []
 
-    def fake_timed_call(fn, *args, **kwargs):
-        return pd.DataFrame({"收盘": [None, "", "bad"]})
+    class FakeMarketDataProvider:
+        def fetch_score_price(self, code: str, score_date: str) -> MarketDataResult[float]:
+            calls.append((code, score_date))
+            return MarketDataResult(
+                35.9,
+                "degraded",
+                "tushare.daily",
+                "2026-07-18T10:00:00",
+                fallback_reason="NEAREST_AVAILABLE_PRICE",
+                freshness_days=1,
+            )
 
-    monkeypatch.setattr(fetcher_mod, "timed_call", fake_timed_call)
+    monkeypatch.setattr(
+        fetcher_mod,
+        "get_default_market_data_provider",
+        lambda: FakeMarketDataProvider(),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        fetcher_mod,
+        "timed_call",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("AKShare price API must not be called")),
+    )
 
-    close, reason = fetcher_mod._fetch_latest_close("603606", "2026-06-05")
+    close, reason = fetcher_mod._fetch_latest_close("600036", "2026-07-18")
+
+    assert close == 35.9
+    assert reason is None
+    assert calls == [("600036", "2026-07-18")]
+
+
+def test_fetch_latest_close_returns_structured_provider_failure(monkeypatch) -> None:
+    """Tushare 与降级源均失败时，应保留 provider 的来源和结构化错误。"""
+
+    class FakeMarketDataProvider:
+        def fetch_score_price(self, code: str, score_date: str) -> MarketDataResult[float]:
+            return MarketDataResult(
+                None,
+                "failed",
+                "tushare.daily",
+                "2026-07-18T10:00:00",
+                error_code="RATE_LIMITED",
+                error_message="API rate limit exceeded",
+            )
+
+    monkeypatch.setattr(
+        fetcher_mod,
+        "get_default_market_data_provider",
+        lambda: FakeMarketDataProvider(),
+        raising=False,
+    )
+
+    close, reason = fetcher_mod._fetch_latest_close("600036", "2026-07-18")
 
     assert close is None
-    assert reason == "日线收盘价无有效数据"
+    assert reason == "tushare.daily失败[RATE_LIMITED]: API rate limit exceeded"
 
 
 # ---------------------------------------------------------------------------
