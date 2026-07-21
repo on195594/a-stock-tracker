@@ -80,7 +80,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | Framework A 倒置诊断 | 已完成，结论：不调权重 | Q5 avg_alpha_30d=-9.91%；根因=截面校准偏差+11支伪复制；agy投资审查：Priority 1=延伸60d/90d；60d首批到期 2026-07-14 |
 | 定性评分 v2 | 全局 `on`；6/35 hybrid、29/35 v1 fallback | v2 表 6 行：000963/002050/600036/600900/601088/603606；全部为 moat/market_pos scored、sentiment NULL |
 | 定性评分 v2 研究审计 | M4 sample 与 M5 fixture-first/builder 完成；real bundle 未完成 | sample SHA `b278a7…d7635d`；不再作为当前生产读取阻塞项 |
-| 质量门禁 | 全部通过 | 当前全仓 1009 passed；Ruff、format、mypy 152 files、真实 module smoke、shell syntax、Markdown 链接、`git diff --check` PASS |
+| 质量门禁 | 全部通过 | 当前全仓 1010 passed；Ruff、format、mypy 152 files、真实 module smoke、shell syntax、Markdown 链接、`git diff --check` PASS |
 
 ## Spec Ledger
 

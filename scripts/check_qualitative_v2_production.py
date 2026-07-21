@@ -16,7 +16,11 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import a_stock_tracker.config as config  # noqa: E402
 from a_stock_tracker.qualitative.production import ProductionV2Error  # noqa: E402
-from a_stock_tracker.qualitative.production_acceptance import AcceptanceError, run_acceptance  # noqa: E402
+from a_stock_tracker.qualitative.production_acceptance import (  # noqa: E402
+    BASELINE_SCHEMA_VERSION,
+    AcceptanceError,
+    run_acceptance,
+)
 
 DEFAULT_BASELINE = PROJECT_ROOT / "config" / "qualitative" / "production_acceptance_baseline.json"
 
@@ -68,7 +72,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     except (AcceptanceError, ProductionV2Error, OSError, sqlite3.Error, ValueError) as exc:
         report = {
-            "schema_version": "qualitative-v2-production-acceptance-v1",
+            "schema_version": BASELINE_SCHEMA_VERSION,
             "decision": "ROLLBACK",
             "errors": [f"{type(exc).__name__}: {exc}"],
         }

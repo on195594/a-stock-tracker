@@ -34,9 +34,9 @@
   },
   "prediction_snapshot": {
     "row_count": 1859,
-    "sha256": "8e42f387831c2b304cc29e38a2da02ca99cc6978b89c6bb13782b48fea414516",
+    "sha256": "7678673eeeb64ea6e4d2a7963d666b9ae456f6725a4d6d90a9e7c92e55796ad2",
     "through_date": "2026-07-17"
   },
-  "schema_version": "qualitative-v2-production-acceptance-v1",
+  "schema_version": "qualitative-v2-production-acceptance-v2",
   "watchlist_count": 35
 }

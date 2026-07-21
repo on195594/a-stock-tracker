@@ -21,7 +21,7 @@ from a_stock_tracker.qualitative.production import (
     production_mode,
 )
 
-BASELINE_SCHEMA_VERSION = "qualitative-v2-production-acceptance-v1"
+BASELINE_SCHEMA_VERSION = "qualitative-v2-production-acceptance-v2"
 MAX_BASELINE_BYTES = 65_536
 MAX_ENV_BYTES = 1_048_576
 IMMUTABLE_PREDICTION_COLUMNS = (
@@ -34,7 +34,6 @@ IMMUTABLE_PREDICTION_COLUMNS = (
     "total_score",
     "weights_hash",
     "report_period",
-    "estimate_flag",
     "threshold_adjusted",
     "created_at",
     "entry_signal",

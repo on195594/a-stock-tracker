@@ -37,7 +37,7 @@
 | 定性评分 v2 | ✅ 全局生产读路径；覆盖扩展中 | `QUALITATIVE_V2_MODE=on`；35 股全部进入选择器，6 股 hybrid、29 股 v1 fallback。M5 36 股审计改为发布后独立研究，不阻塞安全读取 |
 | 行情数据源 | ⚠️ 运行正常，probe stale | 运行时 `a-stock-lib==0.4.1`；2026-07-15 market-data probe 已过 freshness 门禁，需真实刷新 |
 | cron | ✅ 新时序已安装 | 16:00 QFQ、17:15 TuShare valuation、17:30 daily、17:45 acceptance、18:00 outcome；周六 10:00 financial/dividend |
-| 质量门禁 | ✅ 全绿 | 当前全仓 `1009 passed`；Ruff、format、mypy、真实 module smoke、Markdown 链接与 `git diff --check` 通过 |
+| 质量门禁 | ✅ 全绿 | 当前全仓 `1010 passed`；Ruff、format、mypy、真实 module smoke、Markdown 链接与 `git diff --check` 通过 |
 
 ### 关键数据规模
 

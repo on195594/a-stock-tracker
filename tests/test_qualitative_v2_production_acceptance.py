@@ -161,6 +161,35 @@ def test_mode_or_immutable_prediction_drift_returns_rollback(tmp_path: Path) -> 
     assert "immutable historical predictions drift" in cast(list[str], report["errors"])
 
 
+def test_outcome_estimate_flag_change_does_not_drift_prediction_identity(tmp_path: Path) -> None:
+    database_path = _database(tmp_path)
+    baseline_path = tmp_path / "baseline.json"
+    _baseline(database_path, baseline_path)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """UPDATE predictions
+               SET outcome_30d=5.0, benchmark_30d=2.0, estimate_flag=1
+               WHERE code='600036'"""
+        )
+    env_path = tmp_path / ".env"
+    env_path.write_text("QUALITATIVE_V2_MODE=on\n", encoding="utf-8")
+
+    report = run_acceptance(
+        database_path=database_path,
+        env_path=env_path,
+        baseline_path=baseline_path,
+        daily_log_path=tmp_path / "daily.log",
+        watchlist=WATCHLIST,
+        canary_codes=frozenset({"600036"}),
+        environment={},
+        today=date(2026, 7, 19),
+        score_loader=_loader,
+    )
+
+    assert report["decision"] == "PASS"
+    assert "immutable historical predictions drift" not in cast(list[str], report["errors"])
+
+
 def test_loader_failure_is_redacted_and_returns_rollback(tmp_path: Path) -> None:
     def broken_loader(
         connection: sqlite3.Connection,

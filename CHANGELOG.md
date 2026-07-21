@@ -11,6 +11,7 @@
 - 真实生产 smoke 最终为 `run_id=215`、`row_count=5525`、`changed_count=35`、退出码 0；两库 `PRAGMA quick_check=ok`，来源/评分错误为 0。
 - 修复发布期间发现的完整提交依赖链、crontab 单行过长、脚本路径导入失败、`Path` JSON 序列化和验收器入口漂移问题；两次中间失败均自动回滚且无 rollback error。
 - 新增生产复盘和运行手册，并将 README、CLAUDE、project status、roadmap、TODO、spec 与数据源 registry 对齐到生产事实。
+- 修复 qualitative-v2 acceptance 假 `ROLLBACK`：`estimate_flag` 是 outcome 生命周期字段，不再进入 immutable prediction seal；baseline schema 升级到 v2，并保留真实评分/L3 字段漂移的 fail-closed 门禁。
 
 ## 2026-07-18 — MILESTONE-004 轻量化清理
 

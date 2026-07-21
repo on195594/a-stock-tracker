@@ -489,6 +489,18 @@ entry_signal_reason='SOURCE_STALE'
 - 入口重命名或封装时，同步更新 cron、runbook、验收器和测试；
 - “数据已写入”不等于“任务成功”，非零退出码必须先诊断实际持久化状态再决定回滚。
 
+---
+
+### G-10｜不可变 seal 不能包含生命周期内合法变化的字段
+
+**现象（2026-07-21 qualitative-v2 acceptance）：** 自然 daily、35 股完整性、6 股 hybrid adoption 和 off rollback 均正常，但 acceptance 返回 `immutable historical predictions drift` 并触发 exit 2 告警。
+
+**根因：** 历史 prediction seal 错把 `estimate_flag` 纳入 immutable identity；`outcome-update` 在到期价使用替代交易日时会合法将该字段从 0 改为 1。7月20日 acceptance 先 PASS，后续 outcome 更新后下一次验收必然误报。TuShare 强切前后 DB 快照 SHA 一致，排除了三域 materialization 和 daily 写入。
+
+**修复：** 从 immutable 列合同移除 `estimate_flag`，baseline schema 升级到 v2，并新增回归测试证明 outcome/estimate 变化保持 PASS、`total_score` 等真实不可变字段变化仍 ROLLBACK。
+
+**防复发：** 设计数据 seal 时先按生命周期分类：identity、append-only evidence、outcome enrichment 和 mutable operations metadata。只有第一类进入 immutable digest；更改列集合必须升级 schema，不能只刷新 SHA 掩盖合同错误。
+
 ## 附录：快速检索
 
 | 关键词 | 对应条目 |
@@ -527,6 +539,7 @@ entry_signal_reason='SOURCE_STALE'
 | shadow 跨模型复用 / 幂等键 / model | G-4 |
 | exit 2 / ROLLBACK 告警 / weekly PM 去重 | G-5 |
 | readiness 过期 / cron-setup 删除任务 / managed block | G-6 |
+| immutable seal / estimate_flag / outcome-update 假告警 | G-10 |
 | cron 重叠 / 时间顺序 / 完成依赖 | G-7 |
 | cherry-pick 依赖链 / 发布单元 / worktree | G-8 |
 | crontab 行长 / python -m / Path 序列化 / 精确 smoke | G-9 |
