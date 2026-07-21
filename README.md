@@ -27,6 +27,7 @@ A 股选股与方法论验证项目。当前定位是 **Framework A 定量评分
 - Telegram 推送：日报分为主推、候补和雷达；只有强分且 L3 v2 通过的股票进入主推，发送失败不阻断 daily。
 - Google Sheets 同步：展示层能力，失败只记录 warning，不是数据真相来源。
 - 数据治理：`docs/data-source-registry.yaml` 记录字段来源、缓存、刷新、fallback 和失败语义。
+- TuShare 生产主源治理：Phase 2 隔离影子库代码已完成，入口为 `python3 -m scripts.ingest_tushare_primary --help`；只允许显式 shadow DB，尚未执行真实采集或生产 cutover。
 - 只读 reviewer schema：`a_stock_tracker/integrations/agent_reviewer.py` 限制 reviewer 只能输出 commentary，不能覆盖分数、阈值、交易动作或 DB 写入。
 
 ## 安装

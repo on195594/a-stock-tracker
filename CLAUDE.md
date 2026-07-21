@@ -125,6 +125,13 @@ Framework B 重启：在 `a_stock_tracker/scoring.py` 加回 "B"，另写生产�
 
 运维门禁是动态状态，不以本快照替代实时检查。恢复或重装 `daily` / `outcome-update` cron 前必须重新运行 `scripts/check_market_data_readiness.py --scope cron`；2026-07-15 当天 probe 的 daily/index/calendar/close cross-check 全部 PASS，当前为 `READY_CRON`，managed cron 已重新安装。
 
+**TuShare 生产主源治理（2026-07-21）：** Phase 2 隔离影子库实现已完成：显式
+shadow DB、不可变 observation、checkpoint、gzip artifact 与 valuation/financial/
+dividend ingestion CLI 已接线；默认 0.2.0 与 0.4.0 shadow 测试均通过。尚未执行真实
+采集或生产 cutover，`tracker.db`、评分读路径、requirements、cron 和 registry 未修改。
+权威边界与后续 Phase 3 门禁见
+`docs/specs/2026-07-20-tushare-primary-data-governance.md`。
+
 ---
 
 ## Skill routing

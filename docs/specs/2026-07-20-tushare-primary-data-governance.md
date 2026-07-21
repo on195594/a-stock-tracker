@@ -1,7 +1,7 @@
 # TuShare 生产主源数据治理与切换规范
 
 创建时间：2026-07-20  
-状态：accepted for shadow implementation  
+状态：Phase 2 isolated shadow implementation complete; Phase 3 not started
 基线分支：`agent/qualitative-v2-shadow` at `3bee5b4`  
 共享合同：`a-stock-lib/docs/specs/2026-07-20-tushare-primary-data-contract.md`
 
@@ -81,7 +81,7 @@ Phase 2/3 只允许写显式 `--db-path` 指向的影子 SQLite。不得通过�
 
 采集 CLI 必须：
 
-- `--db-path` 可选，默认值仅在生产切换后讨论；
+- Phase 2/3 的 `--db-path` 必填；生产默认值仅在 cutover 计划中另行讨论；
 - shadow 命令必须显式提供隔离路径；
 - 启动日志打印解析后的绝对 DB 路径；
 - 拒绝空路径、目录路径和不可写父目录；
@@ -425,6 +425,13 @@ TDD 实现 Provider、分位计算器、测试隔离、节流和版本发布，�
 ### Phase 2：隔离影子库
 
 实现 schema、ingestion CLI、artifact、checkpoint 和幂等回填，只写显式 shadow DB。
+
+**2026-07-21 实施记录：** 已在隔离分支实现独立 shadow schema、不可变 canonical
+record、observation event、request checkpoint、gzip 原子 artifact 和四类显式 CLI 入口。
+`--db-path` 为必填项，并额外拒绝 `tracker.db` 文件名及含非 shadow 表的既有 SQLite；
+全市场日度响应完整归档，但 SQLite 只写 watchlist。默认 0.2.0 消费环境与 0.4.0
+shadow 环境均通过测试。未调用真实 TuShare、未写生产数据库、未修改评分读路径、依赖、
+cron 或数据源 registry；真实有界采集和两交易日观察仍属于 Phase 3。
 
 ### Phase 3：有界 shadow
 
