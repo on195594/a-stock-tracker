@@ -336,6 +336,61 @@ def test_financial_readiness_requires_report_period_and_effective_ann_date(tmp_p
     assert "MISSING_EFFECTIVE_ANN_DATE" in reasons
 
 
+def test_financial_readiness_rejects_announcement_after_as_of(tmp_path: Path) -> None:
+    db_path = tmp_path / "shadow.db"
+    with _build_shadow_db(db_path) as conn:
+        _write_financial(
+            conn,
+            "600036",
+            as_of="2026-07-21",
+            ann_date="2026-08-20",
+            end_date="2026-06-30",
+            f_ann_date="2026-08-20",
+        )
+
+    report = readiness.assess_readiness(
+        db_path=db_path,
+        as_of="2026-07-21",
+        scope="financial",
+        watchlist_codes=["600036"],
+    )
+
+    detail = report["domains"]["financial"]["details"]["600036"]
+    assert detail["status"] == "HOLD"
+    assert detail["reasons"] == ["FINANCIAL_ANNOUNCEMENT_AFTER_AS_OF"]
+
+
+def test_financial_readiness_falls_back_to_earlier_pit_valid_period(tmp_path: Path) -> None:
+    db_path = tmp_path / "shadow.db"
+    with _build_shadow_db(db_path) as conn:
+        _write_financial(
+            conn,
+            "600036",
+            as_of="2026-07-21",
+            ann_date="2026-08-20",
+            end_date="2026-06-30",
+            f_ann_date="2026-08-20",
+        )
+        _write_financial(
+            conn,
+            "600036",
+            as_of="2026-07-21",
+            ann_date="2026-04-20",
+            end_date="2025-12-31",
+            f_ann_date="2026-04-20",
+        )
+
+    report = readiness.assess_readiness(
+        db_path=db_path,
+        as_of="2026-07-21",
+        scope="financial",
+        watchlist_codes=["600036"],
+    )
+
+    detail = report["domains"]["financial"]["details"]["600036"]
+    assert detail == {"status": "READY", "reasons": []}
+
+
 def test_dividend_business_empty_is_allowed_with_explicit_completed_zero_row_run(tmp_path: Path) -> None:
     db_path = tmp_path / "shadow.db"
     with _build_shadow_db(db_path) as conn:

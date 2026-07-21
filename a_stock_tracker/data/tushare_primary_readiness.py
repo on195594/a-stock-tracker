@@ -71,15 +71,35 @@ def _valuation_detail(conn: sqlite3.Connection, code: str, as_of: str) -> dict[s
 
 
 def _financial_detail(conn: sqlite3.Connection, code: str, as_of: str) -> dict[str, Any]:
-    row = _latest_observation(conn, "financial_observations", code, "end_date", as_of, "fina_indicator")
-    if row is None:
+    rows = conn.execute(
+        """SELECT o.*, MAX(e.observed_at) AS observed_at,
+        MAX(r.source_as_of) AS run_source_as_of
+        FROM financial_observations o
+        JOIN observation_events e ON e.record_key=o.record_key
+        JOIN ingestion_runs r ON r.run_id=e.run_id AND r.status='completed'
+        WHERE o.code=? AND o.endpoint='fina_indicator' GROUP BY o.record_key
+        ORDER BY REPLACE(o.end_date, '-', '') DESC, observed_at DESC""",
+        (code,),
+    ).fetchall()
+    if not rows:
         return {"status": "HOLD", "reasons": ["MISSING_FINANCIAL_OBSERVATION"]}
-    reasons: list[str] = []
-    if not _compact(row["end_date"]):
-        reasons.append("MISSING_REPORT_PERIOD")
-    if not _compact(row["f_ann_date"] or row["ann_date"]):
-        reasons.append("MISSING_EFFECTIVE_ANN_DATE")
-    return {"status": "READY" if not reasons else "HOLD", "reasons": reasons}
+    cutoff = _compact(as_of)
+    eligible_periods: list[sqlite3.Row] = []
+    for row in rows:
+        period = _compact(row["end_date"])
+        if not period or period > cutoff:
+            continue
+        eligible_periods.append(row)
+        effective = _compact(row["f_ann_date"] or row["ann_date"])
+        if effective and effective <= cutoff:
+            return {"status": "READY", "reasons": []}
+    if not any(_compact(row["end_date"]) for row in rows):
+        return {"status": "HOLD", "reasons": ["MISSING_REPORT_PERIOD"]}
+    if not eligible_periods:
+        return {"status": "HOLD", "reasons": ["FINANCIAL_REPORT_PERIOD_AFTER_AS_OF"]}
+    if not any(_compact(row["f_ann_date"] or row["ann_date"]) for row in eligible_periods):
+        return {"status": "HOLD", "reasons": ["MISSING_EFFECTIVE_ANN_DATE"]}
+    return {"status": "HOLD", "reasons": ["FINANCIAL_ANNOUNCEMENT_AFTER_AS_OF"]}
 
 
 def _dividend_run(conn: sqlite3.Connection, code: str) -> sqlite3.Row | None:
