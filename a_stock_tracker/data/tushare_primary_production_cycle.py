@@ -122,5 +122,7 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         sys.stderr.write(json.dumps({"status": "failed", "error": str(exc)}, ensure_ascii=False) + "\n")
         return 1
-    sys.stdout.write(json.dumps({"status": "completed", **report}, ensure_ascii=False, sort_keys=True) + "\n")
+    sys.stdout.write(
+        json.dumps({"status": "completed", **report}, ensure_ascii=False, sort_keys=True, default=str) + "\n"
+    )
     return 0

@@ -75,3 +75,12 @@ def test_weekly_cycle_materializes_financial_and_dividend(monkeypatch) -> None:
         "changed_count": 1,
     }
     assert calls == ["financial", "dividend"]
+
+
+def test_main_serializes_path_values(monkeypatch: Any, capsys: Any) -> None:
+    monkeypatch.setattr(cycle, "run_daily_cycle", lambda as_of: {"artifact": Path("1/daily_basic.jsonl.gz")})
+
+    exit_code = cycle.main(["daily", "--as-of-date", "2026-07-21"])
+
+    assert exit_code == 0
+    assert '"artifact": "1/daily_basic.jsonl.gz"' in capsys.readouterr().out
