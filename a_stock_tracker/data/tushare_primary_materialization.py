@@ -335,6 +335,9 @@ def run_materialization(
     """Preview or atomically publish enabled TuShare domains."""
     if shadow_db_path.resolve() == target_db_path.resolve():
         raise MaterializationError("SHADOW_TARGET_COLLISION")
+    watchlist_codes = list(watchlist)
+    if not watchlist_codes:
+        raise MaterializationReadinessError("EMPTY_WATCHLIST")
     enabled = (
         _resolve_enabled(valuation_enabled, FEATURE_FLAG_VALUATION_DOMAIN),
         _resolve_enabled(financial_enabled, FEATURE_FLAG_FINANCIAL_DOMAIN),
@@ -345,7 +348,7 @@ def run_materialization(
     payload = build_stock_fundamentals_payload(
         shadow_db_path=shadow_db_path,
         as_of_date=as_of_date,
-        watchlist=watchlist,
+        watchlist=watchlist_codes,
         execute=False,
         target_db_path=target_db_path,
         valuation_enabled=enabled[0],

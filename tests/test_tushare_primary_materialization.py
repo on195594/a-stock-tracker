@@ -582,6 +582,18 @@ def test_preview_does_not_write_target_db_and_shows_patch(tmp_path: Path) -> Non
         assert data["pe_ttm"] == 8.0
 
 
+def test_execute_fails_with_empty_watchlist(tmp_path: Path) -> None:
+    with pytest.raises(tpm.MaterializationReadinessError):
+        tpm.run_materialization(
+            shadow_db_path=tmp_path / "shadow.db",
+            as_of_date="2026-07-21",
+            target_db_path=tmp_path / "tracker.db",
+            execute=True,
+            valuation_enabled=True,
+            watchlist=[],
+        )
+
+
 def test_execute_fails_and_rolls_back_if_required_field_missing(tmp_path: Path) -> None:
     shadow = tmp_path / "shadow.db"
     tracker = tmp_path / "tracker.db"

@@ -181,6 +181,15 @@ def assess_readiness(
     if scope not in SCOPES:
         raise ValueError(f"unsupported scope: {scope}")
     codes = list(dict.fromkeys(str(code) for code in watchlist_codes))
+    if not codes:
+        return {
+            "status": "HOLD",
+            "scope": scope,
+            "as_of_date": as_of,
+            "coverage": {"required": 0, "ready": 0},
+            "reasons": ["EMPTY_WATCHLIST"],
+            "domains": {},
+        }
     requested = SCOPES[:3] if scope == "all" else (scope,)
     checkers = {
         "valuation": _valuation_detail,

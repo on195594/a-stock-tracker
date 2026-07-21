@@ -257,6 +257,18 @@ def test_valuation_readiness_ready_with_valid_rows_for_all_requested_codes(tmp_p
     assert report["domains"]["valuation"]["details"][watchlist[0]]["pe_ttm_status"] == "NOT_APPLICABLE_LOSS"
 
 
+def test_readiness_holds_empty_watchlist(tmp_path: Path) -> None:
+    report = readiness.assess_readiness(
+        db_path=tmp_path / "shadow.db",
+        as_of="2026-07-21",
+        scope="valuation",
+        watchlist_codes=[],
+    )
+
+    assert report["status"] == "HOLD"
+    assert report["reasons"] == ["EMPTY_WATCHLIST"]
+
+
 def test_valuation_readiness_holds_stale_source_date(tmp_path: Path) -> None:
     db_path = tmp_path / "shadow.db"
     with _build_shadow_db(db_path) as conn:
