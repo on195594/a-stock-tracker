@@ -594,6 +594,82 @@ def test_execute_fails_with_empty_watchlist(tmp_path: Path) -> None:
         )
 
 
+def test_execute_fails_when_valuation_market_cap_ratio_is_missing(tmp_path: Path) -> None:
+    shadow = tmp_path / "shadow.db"
+    tracker = tmp_path / "tracker.db"
+    _build_tracker_db(tracker)
+    with tushare_primary_cache.open_shadow_store(shadow) as conn:
+        run_id = _create_shadow_run(shadow, "daily_basic")
+        _insert_valuation(
+            conn,
+            run_id,
+            "600036",
+            "2026-07-21",
+            close=25.0,
+            pe_ttm=10.0,
+            pb=2.0,
+            total_mv=0.0,
+            circ_mv=500.0,
+            dv_ttm=2.5,
+            source="tushare.daily_basic",
+            source_as_of="2026-07-21",
+            observed_at="2026-07-21T00:00:00",
+        )
+        conn.commit()
+
+    with pytest.raises(
+        tpm.MaterializationReadinessError,
+        match="^VALUATION_NOT_READY:600036$",
+    ):
+        tpm.run_materialization(
+            shadow_db_path=shadow,
+            as_of_date="2026-07-21",
+            target_db_path=tracker,
+            execute=True,
+            valuation_enabled=True,
+            watchlist=("600036",),
+        )
+
+
+def test_execute_accepts_valuation_with_market_cap_ratio(tmp_path: Path) -> None:
+    shadow = tmp_path / "shadow.db"
+    tracker = tmp_path / "tracker.db"
+    _build_tracker_db(tracker)
+    with tushare_primary_cache.open_shadow_store(shadow) as conn:
+        run_id = _create_shadow_run(shadow, "daily_basic")
+        _insert_valuation(
+            conn,
+            run_id,
+            "600036",
+            "2026-07-21",
+            close=25.0,
+            pe_ttm=10.0,
+            pb=2.0,
+            total_mv=1000.0,
+            circ_mv=500.0,
+            dv_ttm=2.5,
+            source="tushare.daily_basic",
+            source_as_of="2026-07-21",
+            observed_at="2026-07-21T00:00:00",
+        )
+        conn.commit()
+
+    result = tpm.run_materialization(
+        shadow_db_path=shadow,
+        as_of_date="2026-07-21",
+        target_db_path=tracker,
+        execute=True,
+        valuation_enabled=True,
+        watchlist=("600036",),
+    )
+
+    assert result.changed_count == 1
+    with sqlite3.connect(tracker) as conn:
+        row = conn.execute("SELECT data FROM stock_fundamentals WHERE code='600036'").fetchone()
+        assert row is not None
+        assert json.loads(row[0])["float_to_total_ratio"] == 50.0
+
+
 def test_execute_fails_and_rolls_back_if_required_field_missing(tmp_path: Path) -> None:
     shadow = tmp_path / "shadow.db"
     tracker = tmp_path / "tracker.db"

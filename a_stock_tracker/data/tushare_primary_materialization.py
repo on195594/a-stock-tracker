@@ -280,6 +280,7 @@ def _validate_payload(
             if (
                 not values
                 or any(not values.get(key) for key in ("pb", "valuation_source_as_of"))
+                or values.get("float_to_total_ratio") is None
                 or source_date != _compact(as_of_date)
                 or int(values.get("valuation_valid_months", 0)) <= 0
             ):
