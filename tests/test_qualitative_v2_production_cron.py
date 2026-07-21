@@ -22,12 +22,24 @@ def test_require_today_resolves_without_shell_date_expansion() -> None:
 def test_managed_cron_places_acceptance_between_daily_and_outcome() -> None:
     setup = (PROJECT_ROOT / "cron-setup.sh").read_text(encoding="utf-8")
 
-    assert 'DAILY_RULE="30 16 * * 1-5 ' in setup
-    assert 'ACCEPTANCE_RULE="45 16 * * 1-5 ' in setup
-    assert 'OUTCOME_RULE="00 17 * * 1-5 ' in setup
+    assert 'PRIMARY_DAILY_RULE="15 17 * * 1-5 ' in setup
+    assert 'DAILY_RULE="30 17 * * 1-5 ' in setup
+    assert 'ACCEPTANCE_RULE="45 17 * * 1-5 ' in setup
+    assert 'OUTCOME_RULE="00 18 * * 1-5 ' in setup
     assert "check_qualitative_v2_production.py --require-today" in setup
     assert "qualitative-v2-production-acceptance --alert-exit-2" in setup
-    assert setup.index("$DAILY_RULE\n") < setup.index("$ACCEPTANCE_RULE\n") < setup.index("$OUTCOME_RULE\n")
+    assert (
+        setup.index("$PRIMARY_DAILY_RULE\n")
+        < setup.index("$DAILY_RULE\n")
+        < setup.index("$ACCEPTANCE_RULE\n")
+        < setup.index("$OUTCOME_RULE\n")
+    )
+    assert "ingest_tushare_primary valuation-daily" in setup
+    assert "check_tushare_primary_readiness" in setup
+    assert "materialize_tushare_primary" in setup
+    assert 'PROJECT_DIR="${A_STOCK_PROJECT_DIR:-$SCRIPT_DIR}"' in setup
+    assert 'if [ "${1:-}" = "--rollback" ]' in setup
+    assert 'crontab "$CRON_BACKUP_PATH"' in setup
     assert "/check_qualitative_v2_production\\.py/ { next }" in setup
 
 

@@ -1,3 +1,5 @@
+import os
+
 from a_stock_tracker.paths import ACCURACY_REPORT_PATH as _ACCURACY_REPORT_PATH
 from a_stock_tracker.paths import LOG_DIR as _LOG_DIR
 from a_stock_tracker.paths import PROJECT_ROOT, WEIGHTS_PATH as _WEIGHTS_PATH
@@ -62,6 +64,27 @@ QUALITATIVE_V2_INDUSTRIES: dict[str, str] = {
 }
 
 DB_PATH = str(PROJECT_ROOT / "tracker.db")
+
+# Materialization feature flags are read at call time to avoid import-time
+# environment leakage during tests and test runners.
+FEATURE_FLAG_VALUATION_DOMAIN = "TUSHARE_PRIMARY_VALUATION"
+FEATURE_FLAG_FINANCIAL_DOMAIN = "TUSHARE_PRIMARY_FINANCIAL"
+FEATURE_FLAG_DIVIDEND_DOMAIN = "TUSHARE_PRIMARY_DIVIDEND"
+
+
+def get_materialization_feature_flag(name: str) -> bool:
+    """Return a boolean feature-flag state from ``os.environ``.
+
+    Allowed states are ``off`` and ``on`` (case-insensitive). Unknown values raise
+    ``ValueError`` to keep failures loud and fail-closed.
+    """
+
+    value = os.getenv(name, "off").strip().lower()
+    if value not in {"off", "on"}:
+        raise ValueError(f"Invalid feature flag value {value!r} for {name}")
+    return value == "on"
+
+
 LOG_DIR = str(_LOG_DIR)
 WEIGHTS_PATH = str(_WEIGHTS_PATH)
 ACCURACY_REPORT_PATH = str(_ACCURACY_REPORT_PATH)

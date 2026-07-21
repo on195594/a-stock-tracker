@@ -2,7 +2,7 @@ akshare
 tushare
 baostock
 --find-links ../a-stock-lib/dist
-a-stock-lib==0.2.0
+a-stock-lib==0.4.1
 pytest
 python-dotenv
 pypdf==6.14.2
