@@ -31,16 +31,20 @@ mkdir -p "$PROJECT_DIR/logs"
 
 # 获取现有 crontab，并在覆盖前保留可执行回滚快照
 CURRENT_CRONTAB=$(crontab -l 2>/dev/null || true)
+PRESERVE_EXISTING_DAILY=0
+case "$CURRENT_CRONTAB" in
+    *"pipeline.py daily"*) PRESERVE_EXISTING_DAILY=1 ;;
+esac
 CRON_BACKUP_DIR="${A_STOCK_CRON_BACKUP_DIR:-$PROJECT_DIR/backups/crontab}"
 mkdir -p "$CRON_BACKUP_DIR"
 CRON_BACKUP_PATH="$CRON_BACKUP_DIR/crontab-$(date +%Y%m%d-%H%M%S).txt"
 printf '%s\n' "$CURRENT_CRONTAB" > "$CRON_BACKUP_PATH"
 
 # cron 规则
-WEEKLY_RULE="00 10 * * 6 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python -m scripts.run_tushare_primary_batch --scope financial --db-path data/tushare-primary.db --artifact-root artifacts/tushare-ingestion --as-of-date \$(date +\%F) --execute && .venv/bin/python -m scripts.run_tushare_primary_batch --scope dividend --db-path data/tushare-primary.db --artifact-root artifacts/tushare-ingestion --as-of-date \$(date +\%F) --execute && .venv/bin/python -m scripts.check_tushare_primary_readiness --db-path data/tushare-primary.db --as-of-date \$(date +\%F) --scope financial && .venv/bin/python -m scripts.check_tushare_primary_readiness --db-path data/tushare-primary.db --as-of-date \$(date +\%F) --scope dividend && TUSHARE_PRIMARY_VALUATION=off TUSHARE_PRIMARY_FINANCIAL=on TUSHARE_PRIMARY_DIVIDEND=on .venv/bin/python -m scripts.materialize_tushare_primary --shadow-db-path data/tushare-primary.db --target-db-path tracker.db --as-of-date \$(date +\%F) --execute\" weekly >> $PROJECT_DIR/logs/weekly.log 2>&1"
+WEEKLY_RULE="00 10 * * 6 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python scripts/run_tushare_primary_production_cycle.py weekly\" weekly >> $PROJECT_DIR/logs/weekly.log 2>&1"
 PM_LOOP_RULE="30 09 * * 1 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python scripts/weekly_pm_loop.py\" weekly-pm-loop >> $PROJECT_DIR/logs/weekly-pm-loop.log 2>&1"
 QFQ_RULE="00 16 * * 1-5 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python scripts/fetch_qfq_daily_bars.py\" qfq-daily-bars >> $PROJECT_DIR/logs/qfq-daily-bars.log 2>&1"
-PRIMARY_DAILY_RULE="15 17 * * 1-5 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python -m scripts.ingest_tushare_primary valuation-daily --db-path data/tushare-primary.db --artifact-root artifacts/tushare-ingestion --trade-date \$(date +\%F) --pit-status prospective_observed && .venv/bin/python -m scripts.check_tushare_primary_readiness --db-path data/tushare-primary.db --as-of-date \$(date +\%F) --scope valuation && TUSHARE_PRIMARY_VALUATION=on TUSHARE_PRIMARY_FINANCIAL=off TUSHARE_PRIMARY_DIVIDEND=off .venv/bin/python -m scripts.materialize_tushare_primary --shadow-db-path data/tushare-primary.db --target-db-path tracker.db --as-of-date \$(date +\%F) --execute\" tushare-primary-daily >> $PROJECT_DIR/logs/tushare-primary-daily.log 2>&1"
+PRIMARY_DAILY_RULE="15 17 * * 1-5 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python scripts/run_tushare_primary_production_cycle.py daily\" tushare-primary-daily >> $PROJECT_DIR/logs/tushare-primary-daily.log 2>&1"
 DAILY_RULE="30 17 * * 1-5 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python pipeline.py daily\" daily >> $PROJECT_DIR/logs/daily.log 2>&1"
 ACCEPTANCE_RULE="45 17 * * 1-5 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python scripts/check_qualitative_v2_production.py --require-today\" qualitative-v2-production-acceptance --alert-exit-2 >> $PROJECT_DIR/logs/qualitative-v2-production-acceptance.log 2>&1"
 OUTCOME_RULE="00 18 * * 1-5 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python pipeline.py outcome-update\" outcome-update >> $PROJECT_DIR/logs/outcome.log 2>&1"
@@ -79,18 +83,19 @@ $PM_LOOP_RULE
 
 # a-stock-tracker QFQ 日线采集 (工作日 16:00，pipeline 前)
 $QFQ_RULE
+
+# a-stock-tracker TuShare primary daily (工作日 17:15)
+$PRIMARY_DAILY_RULE
 EOF
 )
 echo "✅ 已配置 weekly 任务"
 echo "✅ 已配置 weekly PM loop"
 echo "✅ 已配置 qfq-daily-bars 任务"
+echo "✅ 已配置 tushare-primary-daily 任务"
 
-if [ "$MARKET_DATA_READY" -eq 1 ]; then
+if [ "$MARKET_DATA_READY" -eq 1 ] || [ "$PRESERVE_EXISTING_DAILY" -eq 1 ]; then
     MANAGED_CRONTAB=$(cat <<EOF
 $MANAGED_CRONTAB
-
-# a-stock-tracker TuShare primary daily (工作日 17:15)
-$PRIMARY_DAILY_RULE
 
 # a-stock-tracker daily (工作日 17:30)
 $DAILY_RULE
@@ -103,11 +108,11 @@ $OUTCOME_RULE
 EOF
 )
     echo "✅ 已配置 daily 任务"
-    echo "✅ 已配置 tushare-primary-daily 任务"
+
     echo "✅ 已配置 qualitative-v2 production acceptance 任务"
     echo "✅ 已配置 outcome-update 任务"
 else
-    echo "⏸️  已移除 daily / production-acceptance / outcome-update cron；配置 TUSHARE_TOKEN 并通过 probe 后再运行本脚本"
+    echo "⏸️  未发现既有 daily，且行情恢复门禁未通过；不新增评分写任务"
 fi
 
 MANAGED_CRONTAB=$(cat <<EOF
@@ -132,7 +137,7 @@ echo "任务详情："
 echo "  • weekly:         每周六 10:00 刷新基本面缓存"
 echo "  • weekly-pm-loop: 每周一 09:30 复核 Phase 6 并发送 Telegram 摘要"
 echo "  • qfq-daily-bars: 每个工作日 16:00 采集 QFQ 前复权日线"
-if [ "$MARKET_DATA_READY" -eq 1 ]; then
+if [ "$MARKET_DATA_READY" -eq 1 ] || [ "$PRESERVE_EXISTING_DAILY" -eq 1 ]; then
     echo "  • primary-daily:  每个工作日 17:15 采集并物化 TuShare 估值"
     echo "  • daily:          每个工作日 17:30 评分 + Sheets 同步"
     echo "  • v2-acceptance:  每个工作日 17:45 只读验收；ROLLBACK 触发 Telegram 告警"
