@@ -34,8 +34,8 @@ def test_managed_cron_places_acceptance_between_daily_and_outcome() -> None:
         < setup.index("$ACCEPTANCE_RULE\n")
         < setup.index("$OUTCOME_RULE\n")
     )
-    assert "run_tushare_primary_production_cycle.py daily" in setup
-    assert "run_tushare_primary_production_cycle.py weekly" in setup
+    assert "-m scripts.run_tushare_primary_production_cycle daily" in setup
+    assert "-m scripts.run_tushare_primary_production_cycle weekly" in setup
     assert "PRESERVE_EXISTING_DAILY=0" in setup
     assert max(len(line) for line in setup.splitlines()) < 1000
     assert 'PROJECT_DIR="${A_STOCK_PROJECT_DIR:-$SCRIPT_DIR}"' in setup

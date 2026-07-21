@@ -41,10 +41,10 @@ CRON_BACKUP_PATH="$CRON_BACKUP_DIR/crontab-$(date +%Y%m%d-%H%M%S).txt"
 printf '%s\n' "$CURRENT_CRONTAB" > "$CRON_BACKUP_PATH"
 
 # cron 规则
-WEEKLY_RULE="00 10 * * 6 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python scripts/run_tushare_primary_production_cycle.py weekly\" weekly >> $PROJECT_DIR/logs/weekly.log 2>&1"
+WEEKLY_RULE="00 10 * * 6 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python -m scripts.run_tushare_primary_production_cycle weekly\" weekly >> $PROJECT_DIR/logs/weekly.log 2>&1"
 PM_LOOP_RULE="30 09 * * 1 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python scripts/weekly_pm_loop.py\" weekly-pm-loop >> $PROJECT_DIR/logs/weekly-pm-loop.log 2>&1"
 QFQ_RULE="00 16 * * 1-5 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python scripts/fetch_qfq_daily_bars.py\" qfq-daily-bars >> $PROJECT_DIR/logs/qfq-daily-bars.log 2>&1"
-PRIMARY_DAILY_RULE="15 17 * * 1-5 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python scripts/run_tushare_primary_production_cycle.py daily\" tushare-primary-daily >> $PROJECT_DIR/logs/tushare-primary-daily.log 2>&1"
+PRIMARY_DAILY_RULE="15 17 * * 1-5 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python -m scripts.run_tushare_primary_production_cycle daily\" tushare-primary-daily >> $PROJECT_DIR/logs/tushare-primary-daily.log 2>&1"
 DAILY_RULE="30 17 * * 1-5 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python pipeline.py daily\" daily >> $PROJECT_DIR/logs/daily.log 2>&1"
 ACCEPTANCE_RULE="45 17 * * 1-5 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python scripts/check_qualitative_v2_production.py --require-today\" qualitative-v2-production-acceptance --alert-exit-2 >> $PROJECT_DIR/logs/qualitative-v2-production-acceptance.log 2>&1"
 OUTCOME_RULE="00 18 * * 1-5 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python pipeline.py outcome-update\" outcome-update >> $PROJECT_DIR/logs/outcome.log 2>&1"
