@@ -179,6 +179,37 @@ def test_feature_flags_are_runtime_only_off_by_default() -> None:
     assert get_materialization_feature_flag(FEATURE_FLAG_DIVIDEND_DOMAIN) is False
 
 
+def test_materialization_connections_are_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    shadow = tmp_path / "shadow.db"
+    with tushare_primary_cache.open_shadow_store(shadow):
+        pass
+    tracker = tmp_path / "tracker.db"
+    _build_tracker_db(tracker)
+    connections: list[sqlite3.Connection] = []
+    original_connect = sqlite3.connect
+
+    def recording_connect(*args, **kwargs):
+        conn = original_connect(*args, **kwargs)
+        connections.append(conn)
+        return conn
+
+    monkeypatch.setattr(tpm.sqlite3, "connect", recording_connect)
+
+    tpm.build_stock_fundamentals_payload(
+        shadow_db_path=shadow,
+        as_of_date="2026-07-21",
+        watchlist=(),
+        execute=False,
+        target_db_path=tracker,
+    )
+    tpm._write_payload(tracker, {})
+
+    assert len(connections) == 2
+    for conn in connections:
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            conn.execute("SELECT 1")
+
+
 def test_load_rows_preserves_valuation_without_observation_event(tmp_path: Path) -> None:
     shadow = tmp_path / "shadow.db"
     with tushare_primary_cache.open_shadow_store(shadow) as conn:

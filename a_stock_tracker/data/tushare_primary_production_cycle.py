@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import traceback
 from dataclasses import asdict
 from datetime import date
 from typing import Any
@@ -75,7 +76,9 @@ def _run_batch(scope: str, as_of_date: str, codes: list[str]) -> dict[str, Any]:
         execute_mode=True,
     )
     if not report["success"]:
-        raise RuntimeError(f"{scope.upper()}_INGESTION_FAILED")
+        raise RuntimeError(
+            f"{scope.upper()}_INGESTION_FAILED: failed_count={report['failed_count']}, errors={report['errors']}"
+        )
     return report
 
 
@@ -122,7 +125,13 @@ def main(argv: list[str] | None = None) -> int:
     try:
         report = run_daily_cycle(args.as_of_date) if args.mode == "daily" else run_weekly_cycle(args.as_of_date)
     except Exception as exc:
-        sys.stderr.write(json.dumps({"status": "failed", "error": str(exc)}, ensure_ascii=False) + "\n")
+        sys.stderr.write(
+            json.dumps(
+                {"status": "failed", "error": str(exc), "traceback": traceback.format_exc()},
+                ensure_ascii=False,
+            )
+            + "\n"
+        )
         return 1
     sys.stdout.write(
         json.dumps({"status": "completed", **report}, ensure_ascii=False, sort_keys=True, default=str) + "\n"

@@ -6,6 +6,8 @@ import argparse
 import json
 import sqlite3
 import sys
+from contextlib import contextmanager
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -26,10 +28,14 @@ def _positive(value: Any) -> bool:
         return False
 
 
-def _connection(db_path: Path) -> sqlite3.Connection:
+@contextmanager
+def _connection(db_path: Path) -> Iterator[sqlite3.Connection]:
     conn = sqlite3.connect(f"file:{db_path.resolve()}?mode=ro", uri=True)
-    conn.row_factory = sqlite3.Row
-    return conn
+    try:
+        conn.row_factory = sqlite3.Row
+        yield conn
+    finally:
+        conn.close()
 
 
 def _latest_observation(

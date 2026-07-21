@@ -7,6 +7,7 @@ import json
 import math
 import sqlite3
 import sys
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -242,7 +243,7 @@ def build_stock_fundamentals_payload(
     )
     industries = watchlist_industries or {}
     payload: dict[str, dict[str, dict[str, Any]]] = {}
-    with sqlite3.connect(f"file:{shadow_db_path.resolve()}?mode=ro", uri=True) as conn:
+    with closing(sqlite3.connect(f"file:{shadow_db_path.resolve()}?mode=ro", uri=True)) as conn:
         conn.row_factory = sqlite3.Row
         for code in watchlist:
             domains: dict[str, dict[str, Any]] = {}
@@ -296,7 +297,7 @@ def _validate_payload(
 
 def _write_payload(target_db_path: Path, payload: dict[str, dict[str, dict[str, Any]]]) -> int:
     changed = 0
-    with sqlite3.connect(target_db_path) as conn:
+    with closing(sqlite3.connect(target_db_path)) as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
             for code, domains in payload.items():

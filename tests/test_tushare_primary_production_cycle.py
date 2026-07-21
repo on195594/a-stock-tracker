@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+
+import pytest
 
 from a_stock_tracker.data import tushare_primary_production_cycle as cycle
 
@@ -93,3 +96,41 @@ def test_main_serializes_path_values(monkeypatch: Any, capsys: Any) -> None:
 
     assert exit_code == 0
     assert '"artifact": "1/daily_basic.jsonl.gz"' in capsys.readouterr().out
+
+
+def test_run_batch_failure_preserves_report_details(monkeypatch: Any) -> None:
+    monkeypatch.setattr(
+        cycle,
+        "run_tushare_primary_batch",
+        lambda **kwargs: {
+            "success": False,
+            "failed_count": 2,
+            "errors": ["600036: timeout", "601288: permission denied"],
+            "request_results": [],
+        },
+    )
+
+    with pytest.raises(RuntimeError) as raised:
+        cycle._run_batch("financial", "2026-07-21", ["600036", "601288"])
+
+    message = str(raised.value)
+    assert "FINANCIAL_INGESTION_FAILED" in message
+    assert "failed_count=2" in message
+    assert "600036: timeout" in message
+    assert "601288: permission denied" in message
+
+
+def test_main_failure_includes_traceback(monkeypatch: Any, capsys: Any) -> None:
+    def fail(_as_of: str) -> dict[str, Any]:
+        raise RuntimeError("specific ingestion failure")
+
+    monkeypatch.setattr(cycle, "run_daily_cycle", fail)
+
+    exit_code = cycle.main(["daily", "--as-of-date", "2026-07-21"])
+
+    assert exit_code == 1
+    failure = json.loads(capsys.readouterr().err)
+    assert failure["status"] == "failed"
+    assert failure["error"] == "specific ingestion failure"
+    assert failure["traceback"]
+    assert "RuntimeError: specific ingestion failure" in failure["traceback"]

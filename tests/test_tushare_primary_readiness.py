@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -31,6 +32,18 @@ def _build_shadow_db(path: Path):
 
 def _now() -> str:
     return datetime(2026, 7, 21, 15, 0, 0).isoformat()
+
+
+def test_connection_closes_after_context_exit(tmp_path: Path) -> None:
+    db_path = tmp_path / "shadow.db"
+    with _build_shadow_db(db_path):
+        pass
+
+    with readiness._connection(db_path) as conn:
+        assert conn.execute("SELECT 1").fetchone()[0] == 1
+
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        conn.execute("SELECT 1")
 
 
 def _run_request_fingerprint(endpoint: str, code: str) -> str:
