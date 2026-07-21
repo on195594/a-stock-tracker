@@ -81,6 +81,7 @@ def _run_batch(scope: str, as_of_date: str, codes: list[str]) -> dict[str, Any]:
 
 def run_weekly_cycle(as_of_date: str) -> dict[str, Any]:
     codes = _codes()
+    industries = {str(item["code"]): str(item.get("industry", "")) for item in WATCHLIST}
     financial = _run_batch("financial", as_of_date, codes)
     dividend = _run_batch("dividend", as_of_date, codes)
     for scope in ("financial", "dividend"):
@@ -96,6 +97,7 @@ def run_weekly_cycle(as_of_date: str) -> dict[str, Any]:
         target_db_path=TRACKER_DB,
         as_of_date=as_of_date,
         watchlist=codes,
+        watchlist_industries=industries,
         valuation_enabled=False,
         financial_enabled=True,
         dividend_enabled=True,

@@ -52,6 +52,7 @@ def test_daily_cycle_ingests_checks_and_materializes_only_valuation(monkeypatch)
 
 def test_weekly_cycle_materializes_financial_and_dividend(monkeypatch) -> None:
     calls: list[str] = []
+    materialization_calls: dict[str, Any] = {}
     monkeypatch.setattr(cycle, "_codes", lambda: ["600036"])
     monkeypatch.setattr(
         cycle,
@@ -64,7 +65,12 @@ def test_weekly_cycle_materializes_financial_and_dividend(monkeypatch) -> None:
         return {"status": "READY"}
 
     monkeypatch.setattr(cycle, "assess_readiness", fake_readiness)
-    monkeypatch.setattr(cycle, "run_materialization", lambda **kwargs: SimpleNamespace(changed_count=1, kwargs=kwargs))
+
+    def fake_materialize(**kwargs: Any) -> SimpleNamespace:
+        materialization_calls.update(kwargs)
+        return SimpleNamespace(changed_count=1)
+
+    monkeypatch.setattr(cycle, "run_materialization", fake_materialize)
 
     report = cycle.run_weekly_cycle("2026-07-21")
 
@@ -75,6 +81,9 @@ def test_weekly_cycle_materializes_financial_and_dividend(monkeypatch) -> None:
         "changed_count": 1,
     }
     assert calls == ["financial", "dividend"]
+    assert materialization_calls["watchlist_industries"] == {
+        str(item["code"]): str(item.get("industry", "")) for item in cycle.WATCHLIST
+    }
 
 
 def test_main_serializes_path_values(monkeypatch: Any, capsys: Any) -> None:
