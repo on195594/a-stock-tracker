@@ -63,9 +63,11 @@ def _finite(value: Any) -> float | None:
 def _load_rows(conn: sqlite3.Connection, table: str, code: str) -> list[dict[str, Any]]:
     payload_column = "payload_json" if table != "valuation_observations" else "NULL"
     query = f"""SELECT o.*, {payload_column} AS raw_payload,
-        COALESCE(MAX(e.observed_at), '') AS observed_at
+        COALESCE(MAX(e.observed_at), '') AS observed_at,
+        MAX(CASE WHEN r.status='completed' THEN r.source_as_of END) AS run_source_as_of
         FROM {table} o
         LEFT JOIN observation_events e ON e.record_key=o.record_key
+        LEFT JOIN ingestion_runs r ON r.run_id=e.run_id
         WHERE o.code=? GROUP BY o.record_key"""
     rows: list[dict[str, Any]] = []
     for raw in conn.execute(query, (code,)).fetchall():
@@ -215,7 +217,7 @@ def _dividend_patch(rows: list[dict[str, Any]], as_of: str) -> dict[str, Any]:
         "dividend_ex_date": _iso_date(latest.get("ex_date")),
         "dividend_ann_date": _iso_date(latest.get("ann_date")),
         "dividend_source": latest.get("source"),
-        "dividend_source_as_of": latest.get("source_as_of"),
+        "dividend_source_as_of": latest.get("run_source_as_of"),
     }
 
 

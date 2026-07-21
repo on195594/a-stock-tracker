@@ -21,12 +21,14 @@ class DummyException(Exception):
     """Compatibility marker for expected failure paths."""
 
 
-def _create_shadow_run(db_path: Path, endpoint: str) -> int:
+def _create_shadow_run(db_path: Path, endpoint: str, source_as_of: str | None = None) -> int:
     with tushare_primary_cache.open_shadow_store(db_path) as conn:
         cur = conn.cursor()
         cur.execute(
-            "INSERT INTO ingestion_runs (endpoint, request_fingerprint, requested_at, status, row_count) VALUES (?, ?, ?, 'completed', 0)",
-            (endpoint, f"{endpoint}-fingerprint", datetime.now(UTC).isoformat()),
+            """INSERT INTO ingestion_runs
+            (endpoint, request_fingerprint, requested_at, status, row_count, source_as_of)
+            VALUES (?, ?, ?, 'completed', 0, ?)""",
+            (endpoint, f"{endpoint}-fingerprint", datetime.now(UTC).isoformat(), source_as_of),
         )
         run_id = cur.lastrowid
         assert run_id is not None
@@ -175,6 +177,43 @@ def test_feature_flags_are_runtime_only_off_by_default() -> None:
     assert get_materialization_feature_flag(FEATURE_FLAG_VALUATION_DOMAIN) is False
     assert get_materialization_feature_flag(FEATURE_FLAG_FINANCIAL_DOMAIN) is False
     assert get_materialization_feature_flag(FEATURE_FLAG_DIVIDEND_DOMAIN) is False
+
+
+def test_load_rows_preserves_valuation_without_observation_event(tmp_path: Path) -> None:
+    shadow = tmp_path / "shadow.db"
+    with tushare_primary_cache.open_shadow_store(shadow) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute(
+            """INSERT INTO valuation_observations
+            (record_key, code, trade_date, close, pe, pe_ttm, pb, ps, ps_ttm,
+             dv_ratio, dv_ttm, total_mv, circ_mv, source, source_as_of, payload_sha256)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                "unlinked-valuation",
+                "600036",
+                "20260721",
+                42.0,
+                8.0,
+                8.0,
+                1.0,
+                None,
+                None,
+                None,
+                None,
+                1000.0,
+                800.0,
+                "tushare.daily_basic",
+                "2026-07-21",
+                "payload-sha",
+            ),
+        )
+
+        rows = tpm._load_rows(conn, "valuation_observations", "600036")
+
+    assert len(rows) == 1
+    assert rows[0]["record_key"] == "unlinked-valuation"
+    assert rows[0]["observed_at"] == ""
+    assert rows[0]["run_source_as_of"] is None
 
 
 def test_feature_flags_can_toggle_without_reload(
@@ -436,7 +475,7 @@ def test_financial_gross_margin_allowed_empty_for_financial_industry(tmp_path: P
 def test_dividend_uses_cash_div_tax_when_implemented_and_ex_date_before_asof(tmp_path: Path) -> None:
     shadow = tmp_path / "shadow.db"
     with tushare_primary_cache.open_shadow_store(shadow) as conn:
-        run_id = _create_shadow_run(shadow, "dividend")
+        run_id = _create_shadow_run(shadow, "dividend", source_as_of="2026-07-14")
         _insert_dividend(
             conn,
             run_id,
@@ -493,6 +532,7 @@ def test_dividend_uses_cash_div_tax_when_implemented_and_ex_date_before_asof(tmp
     div = payload["600036"]["dividend"]
     assert div["dps"] == 12.0
     assert div["dividend_ex_date"] == "2026-05-01"
+    assert div["dividend_source_as_of"] == "2026-07-14"
 
 
 def test_preview_does_not_write_target_db_and_shows_patch(tmp_path: Path) -> None:
