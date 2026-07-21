@@ -111,7 +111,16 @@ def _latest_eligible_dividend_observation(conn: sqlite3.Connection, code: str, a
 
 
 def _has_dividend_observation(conn: sqlite3.Connection, code: str) -> bool:
-    return conn.execute("SELECT 1 FROM dividend_observations WHERE code=? LIMIT 1", (code,)).fetchone() is not None
+    return (
+        conn.execute(
+            """SELECT 1 FROM dividend_observations o
+            JOIN observation_events e ON e.record_key=o.record_key
+            JOIN ingestion_runs r ON r.run_id=e.run_id AND r.status='completed'
+            WHERE o.code=? LIMIT 1""",
+            (code,),
+        ).fetchone()
+        is not None
+    )
 
 
 def _dividend_detail(conn: sqlite3.Connection, code: str, as_of: str) -> dict[str, Any]:

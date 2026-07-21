@@ -415,6 +415,55 @@ def test_dividend_readiness_rejects_implemented_observation_without_ex_date(tmp_
     assert detail["reasons"] == ["DIVIDEND_NOT_YET_IMPLEMENTED"]
 
 
+def test_dividend_readiness_ignores_orphaned_observation(tmp_path: Path) -> None:
+    db_path = tmp_path / "shadow.db"
+    with _build_shadow_db(db_path) as conn:
+        run_id = cache.create_ingestion_run(
+            conn,
+            endpoint="dividend",
+            request_fingerprint=_run_request_fingerprint("dividend", "603606"),
+            requested_at=_now(),
+        )
+        cache.complete_ingestion_run(
+            conn=conn,
+            run_id=run_id,
+            status="completed",
+            completed_at=_now(),
+            row_count=1,
+            source_as_of="2026-07-21",
+        )
+        conn.execute(
+            """INSERT INTO dividend_observations
+            (record_key, code, ann_date, end_date, record_date, ex_date, div_proc,
+             source, payload_json, payload_sha256)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                "orphaned-dividend-record",
+                "603606",
+                "2026-07-18",
+                "2026-07-18",
+                "2026-07-18",
+                "2026-07-18",
+                "预案",
+                "tushare.dividend",
+                "{}",
+                "test",
+            ),
+        )
+        conn.commit()
+
+    report = readiness.assess_readiness(
+        db_path=db_path,
+        as_of="2026-07-21",
+        scope="dividend",
+        watchlist_codes=["603606"],
+    )
+
+    detail = report["domains"]["dividend"]["details"]["603606"]
+    assert detail["status"] == "HOLD"
+    assert detail["reasons"] == ["MISSING_DIVIDEND_OBSERVATION"]
+
+
 def test_batch_readiness_all_scope_merges_domain_reports_and_counts_watched_codes(tmp_path: Path) -> None:
     db_path = tmp_path / "shadow.db"
     watchlist = ["600036", "601288", "601939"]
