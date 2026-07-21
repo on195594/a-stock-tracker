@@ -1,7 +1,7 @@
 # Market Data Provider Recovery Runbook
 
 创建时间：2026-06-09
-最新状态：2026-07-01 起，tracker 通过 `a-stock-lib==0.2.0` 使用 Tushare/BaoStock 行情 provider；probe 的 BaoStock 参考源使用隔离版 provider 防止 SDK socket hang；`lib/market_data.py` 仅保留环境门禁、disabled provider 和 cache service。
+最新状态：2026-07-21 起，tracker 运行时为 `a-stock-lib==0.4.1`，继续使用 Tushare/BaoStock 行情 provider；probe 的 BaoStock 参考源使用隔离版 provider 防止 SDK socket hang；`a_stock_tracker/data/market_data.py` 保留 tracker 环境门禁和 cache service。2026-07-15 capability report 当前已 stale，必须真实刷新后才能再次声明 `READY_CRON`。
 
 ## 状态定义
 

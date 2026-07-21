@@ -27,7 +27,7 @@ A 股选股与方法论验证项目。当前定位是 **Framework A 定量评分
 - Telegram 推送：日报分为主推、候补和雷达；只有强分且 L3 v2 通过的股票进入主推，发送失败不阻断 daily。
 - Google Sheets 同步：展示层能力，失败只记录 warning，不是数据真相来源。
 - 数据治理：`docs/data-source-registry.yaml` 记录字段来源、缓存、刷新、fallback 和失败语义。
-- TuShare 生产主源治理：Phase 2 隔离影子库代码已完成，入口为 `python3 -m scripts.ingest_tushare_primary --help`；只允许显式 shadow DB，尚未执行真实采集或生产 cutover。
+- TuShare 三域生产主源：估值/市值、通用财务指标和分红事实已于 2026-07-21 强切完成；运行时为 `a-stock-lib==0.4.1`，35 股由独立 shadow/readiness 单事务物化。生产入口、日志与回滚见 `docs/runbooks/tushare-primary-production.md`。
 - 只读 reviewer schema：`a_stock_tracker/integrations/agent_reviewer.py` 限制 reviewer 只能输出 commentary，不能覆盖分数、阈值、交易动作或 DB 写入。
 
 ## 安装
@@ -68,8 +68,11 @@ QUALITATIVE_V2_MODE=off
 # 首次初始化或新增股票后补齐基本面缓存
 python3 pipeline.py init
 
-# 每周刷新基本面缓存
-python3 pipeline.py weekly
+# 每周刷新 TuShare 财务/分红并物化
+python3 -m scripts.run_tushare_primary_production_cycle weekly
+
+# 工作日采集当日估值并物化；默认使用本地日期
+python3 -m scripts.run_tushare_primary_production_cycle daily
 
 # 手动运行每日评分
 python3 pipeline.py daily
@@ -157,14 +160,16 @@ bash cron-setup.sh
 
 默认规则：
 
-- 每周六 10:00：运行 `weekly`
+- 每周六 10:00：运行 TuShare financial/dividend weekly cycle
 - 每周一 09:30：运行 Phase 6 weekly PM loop
 - 工作日 16:00：采集 QFQ 日线
-- 工作日 16:30：运行 `daily`
-- 工作日 16:45：只读运行 qualitative-v2 production acceptance；`ROLLBACK` 触发 Telegram 告警
-- 工作日 17:00：运行 `outcome-update`
+- 工作日 17:15：运行 TuShare valuation daily cycle
+- 工作日 17:30：运行 `daily`
+- 工作日 17:45：只读运行 qualitative-v2 production acceptance；`ROLLBACK` 触发 Telegram 告警
+- 工作日 18:00：运行 `outcome-update`
 
-`cron-setup.sh` 会先运行 `scripts/check_market_data_readiness.py --scope cron`。只有最新 Tushare probe 同时通过 daily 写入门禁与 index/calendar 能力门禁时，才新增 `daily` / qualitative-v2 production acceptance / `outcome-update`；否则不配置这三个相互依赖的工作日任务。
+`cron-setup.sh` 会独立安装 TuShare primary daily/weekly cycle。旧行情
+`scripts/check_market_data_readiness.py --scope cron` 仍负责 daily/index/calendar/close 门禁：READY 时安装评分链；报告 stale/HOLD 时不据此新启用旧行情能力，但若评分链在运行前已存在则保留并迁移到新时序。两套 readiness 不可互相替代。
 
 cron、Telegram、Gemini、Google Sheets 都不应在测试中真实触发。
 
@@ -188,7 +193,7 @@ python3 pipeline.py init
 
 - `pipeline.py`：向后兼容的薄入口；主编排实现在 `a_stock_tracker/cli.py`。
 - `a_stock_tracker/scoring.py`：Framework A 确定性评分，breakpoints 线性插值，PB 分位纯计算。
-- `a_stock_tracker/data/`：SQLite schema、基本面抓取、行情 provider 与缓存管理。
+- `a_stock_tracker/data/`：SQLite schema、行情 provider、TuShare shadow/ingestion/readiness/materialization 与 production cycle。
 - `a_stock_tracker/signals/`：L3 v1/v2 纯计算与生产包装层。
 - `a_stock_tracker/integrations/`：Gemini 定性评分与只读 reviewer 适配器。
 - `a_stock_tracker/reporting/`：Telegram、Google Sheets 和 Framework B report-only 输出。
@@ -272,6 +277,9 @@ git diff --check
 - `docs/plans/2026-05-30-phase5-l3-entry-signal-implementation-plan.md`：L3 买点层实施计划。
 - `docs/data-source-registry.yaml`：字段、数据源、缓存和 fallback registry。
 - `docs/runbooks/market-data-provider-recovery.md`：行情 provider 恢复 daily/outcome cron 的运行手册。
+- `docs/specs/2026-07-20-tushare-primary-data-governance.md`：TuShare 主源治理、PIT、shadow 与 consumer 边界。
+- `docs/specs/2026-07-21-tushare-three-domain-forced-cutover.md`：估值/财务/分红三域生产强切合同与实施结果。
+- `docs/runbooks/tushare-primary-production.md`：TuShare daily/weekly cycle、readiness、诊断与回滚手册。
 - `docs/lessons-learned.md`：历史修复、陷阱和跨期解释注意事项。
 - `docs/reviews/`：计划和实现审查记录。
 - `docs/design.md`、`docs/impl-plan.md`、`docs/test-plan.md`：早期架构、实施和测试计划。

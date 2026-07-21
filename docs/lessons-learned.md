@@ -1,6 +1,6 @@
 # a-stock-tracker 知识库：踩坑记录
 
-**最后更新：** 2026-07-19
+**最后更新：** 2026-07-21
 **范围：** 项目立项（2026-04）至今的技术坑、设计失误、调试经验。
 **用法：** 新功能开发前先检索本文档；每次踩到新坑立即补录。
 
@@ -432,7 +432,7 @@ entry_signal_reason='SOURCE_STALE'
 
 **根因：** “是否允许从零恢复 cron”和“是否允许修改现有 managed block”共用一个安装入口；readiness freshness 过期被正确解释为不能恢复，却容易被操作者误用成必须立即停掉现有调度。
 
-**修复：** 先更新版本控制中的标准 cron 源，再对现有 managed block 做去重插入；没有在 `HOLD_CRON` 状态运行全量安装器。runbook 明确：下次重装前先刷新 readiness，报告过期不等于 provider 已确认失效。
+**修复：** 当时先更新版本控制中的标准 cron 源，再对现有 managed block 做去重插入；没有在 `HOLD_CRON` 状态运行全量安装器。2026-07-21 后，安装器将独立 TuShare primary cycle 与旧行情评分链分开，并在 HOLD/stale 时保留切换前已存在的评分链。runbook 仍明确：报告过期不等于 provider 已确认失效，也不能据旧 PASS 从零恢复行情能力。
 
 **防复发：**
 
@@ -451,6 +451,43 @@ entry_signal_reason='SOURCE_STALE'
 **修复：** 当前先利用精确 35 股行数和 adoption 日志门禁保证安全，并把重叠风险记录为运维噪声风险；尚未用自动放宽规则掩盖未完成的 daily。
 
 **防复发：** 需要严格 happens-after 时，应使用成功完成标记、文件锁或由前序任务成功后链式触发；不要仅增加等待分钟数。任何链式改造仍须保证 daily 失败能独立告警，不能因 `&&` 跳过验收而静默。
+
+---
+
+### G-8｜顶层功能提交不一定是自包含发布单元
+
+**现象（2026-07-21 TuShare 强切）：** 只 cherry-pick 最新强切提交后，生产缺少其依赖的 shadow cache 和 ingestion 模块，定向测试在 import 阶段失败。
+
+**根因：** 部署按提交标题选择“功能完成”commit，没有先比较生产分支与 feature worktree 的完整提交差集和祖先链。
+
+**修复：** 列出 `production..feature` 的反向提交序列，补齐 Phase 2 前置提交后重新跑生产定向与全量门禁。
+
+**防复发：** 跨分支/worktree 发布前必须审阅完整 commit range、文件依赖和运行时依赖；单个顶层 commit 只有在验证为自包含时才能独立 cherry-pick。验收器、spec 和发布记录应明确发布单元，而不是只记录最后一个 hash。
+
+---
+
+### G-9｜生产 smoke 必须覆盖 cron 的精确入口和最终退出码
+
+**现象（2026-07-21 TuShare 强切）：**
+
+1. 内联周度 cron 超过 crontab 单行限制；
+2. 改成短脚本后，文件路径启动因项目根不在 `sys.path` 而 import 失败；
+3. 改成 module 启动后，业务采集/物化已经成功，但最终 JSON 含 `Path`，序列化失败并返回 1；
+4. cycle 已安装正确，一次性验收器却仍检查旧命令名称，制造假失败。
+
+**根因：** 测试分别证明了业务函数、底层 CLI 和 cron 文本，却没有从“crontab 中的精确命令”贯穿到最终 stdout/stderr/exit code；入口重构也没有同步验收断言。
+
+**修复：** 将长业务链收敛到受测试的 `daily|weekly` Python orchestration；cron 使用
+`python -m scripts.run_tushare_primary_production_cycle`；输出层用可序列化合同并补 `Path`
+回归；验收器改查真实 cycle 入口，最后执行一次精确生产命令 smoke。
+
+**防复发：**
+
+- cron 只承载时间、锁和告警，不内联长业务流程；
+- smoke 必须复制 crontab 中的精确 executable/module/arguments/environment；
+- 成功条件同时包括业务状态、持久化结果、输出合同和退出码 0；
+- 入口重命名或封装时，同步更新 cron、runbook、验收器和测试；
+- “数据已写入”不等于“任务成功”，非零退出码必须先诊断实际持久化状态再决定回滚。
 
 ## 附录：快速检索
 
@@ -491,3 +528,5 @@ entry_signal_reason='SOURCE_STALE'
 | exit 2 / ROLLBACK 告警 / weekly PM 去重 | G-5 |
 | readiness 过期 / cron-setup 删除任务 / managed block | G-6 |
 | cron 重叠 / 时间顺序 / 完成依赖 | G-7 |
+| cherry-pick 依赖链 / 发布单元 / worktree | G-8 |
+| crontab 行长 / python -m / Path 序列化 / 精确 smoke | G-9 |

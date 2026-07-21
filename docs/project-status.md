@@ -1,14 +1,14 @@
 # a-stock-tracker Project Status
 
 创建时间：2026-06-26
-最近更新：2026-07-19
+最近更新：2026-07-21
 状态：active PM control page
 
 ## 当前结论
 
-主业务仍处于 **Phase 6 report-only 观察**，Framework B 不得生产写入；Phase 5 L3 v2 已完成 QFQ 生产接入和 Telegram 主推切换。定性评分 v2 的生产读路径已于 2026-07-19 切换为全局 `on`：35 股全部进入 v2 选择器，独立表中 6 股使用 moat/market_pos v2 与 sentiment v1，其余 29 股在合法 v2 行就绪前逐股回退 v1。该切换不修改历史 predictions，也不代表 35 股 v2 覆盖或预测有效性已经完成。
+主业务仍处于 **Phase 6 report-only 观察**，Framework B 不得生产写入；Phase 5 L3 v2 已完成 QFQ 生产接入和 Telegram 主推切换。定性评分 v2 继续保持全局 `on` 和逐股/逐维 fallback。2026-07-21 另完成 TuShare 估值/市值、通用财务和分红三域生产强切：35 股经独立 shadow/readiness 单事务物化，运行时为 `a-stock-lib==0.4.1`，历史 predictions 未改写。该数据换源不代表 Framework A 有效性、Framework B 生产化或下游 consumer 迁移已完成。
 
-M4/M5 研究路线继续保留，但已从生产上线关键路径拆出。36 股 sample、real bundle、Claude blind reference、Gemini shadow 和 support audit 用于研究代表性与 agreement，不再阻塞具备 validator、独立表、逐股 fallback 和 `off` 回滚的生产读取。当前生产下一动作是下一交易日自然 cron 确认；研究下一动作才是按独立范围继续 real bundle/审计。
+M4/M5 研究路线继续保留，但已从生产上线关键路径拆出。36 股 sample、real bundle、Claude blind reference、Gemini shadow 和 support audit 用于研究代表性与 agreement，不再阻塞具备 validator、独立表、逐股 fallback 和 `off` 回滚的生产读取。定性评分 v2 已有 2026-07-20 自然 daily/acceptance PASS；当前生产下一动作是观察 2026-07-21 新 17:15→17:30→17:45 时序和首个周六 TuShare weekly cycle。研究下一动作才是按独立范围继续 real bundle/审计。
 
 2026-07-18 曾执行一次非 v1.3.2-compliant 的 `index_classify` 直连探测：HTTP 200、provider code 0、31 rows，未持久化原始响应。该探测不构成 frame、authorization、freeze、attestation 或生产采用证据。
 
@@ -52,10 +52,11 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 |---|---|---|---|---|
 | Phase 4 验证基础 | 已完成，持续观察 | weekly PM loop 自动检查 accuracy-report；不在此阶段顺手调权重 | 每周一自动摘要 | 若要调权重，另开 spec |
 | Phase 5 L3 买点层 | v1 保留审计；v2 Phase 2+3 已完成 | 观察 v2 信号分布与自然 outcome；不改 L1/L2 分数 | readiness 已恢复，继续自然运行 | 足量 v2 30/60d 样本和独立复核后再讨论规则变化 |
+| TuShare 三域生产主源 | 已完成并验证 | 观察 17:15 daily 与周六 10:00 weekly 自然日志；保持 registry/runbook 同步 | 下一次自然 daily/weekly cycle | 35/35 readiness、原子物化、来源审计、回滚与真实 cron smoke 均通过 |
 | 定性评分 v2 MILESTONE-002 | 已完成 | 保持合同稳定和本地 validator fail-closed | MILESTONE-003 已独立完成 | REQ-001~035 对应本地合同齐全 |
 | 定性评分 v2 MILESTONE-003 | 已完成 | 使用独立 CLI/JSONL artifact；不接 pipeline 或生产 DB | M4 sample 已完成；转 M5 数据 Sprint | REQ-036~039 文件持久化、错误分类、脱敏、去重和隔离测试及 AGY 最终只读审查通过 |
 | 定性评分 v2 MILESTONE-004 | 轻量 frame/sample 完成 | 35/35 调用、4,694 frame、36 sample、12 cells 完整 | 在新授权下构建 corpus/coverage | sample 固定且不替换；八层 coverage 决定能否进入 real bundle |
-| 定性评分 v2 生产读路径 | 全局 `on`，自动预检 PASS，待自然 cron 确认 | 验收器复验 6 股 hybrid、29 股 fallback、历史 seal 与 `off` 回滚 | 下一交易日 16:30 `daily` 后运行 `--require-score-date` | 35/35 正常完成；无批量异常、历史改写或错误 v2 采用 |
+| 定性评分 v2 生产读路径 | 全局 `on`；2026-07-20 自然 acceptance PASS | 继续由 managed acceptance 复验 6 股 hybrid、29 股 fallback、历史 seal 与 `off` 回滚 | 新 17:30 时序首次自然运行 | 35/35 正常完成；无批量异常、历史改写或错误 v2 采用 |
 | 定性评分 v2 MILESTONE-005 | fixture-first 与离线 builder 完成；发布后研究 | real bundle/blind reference/support audit 与生产解耦 | 独立安排研究批次 | 只形成研究证据，不静默改变生产合同、权重或 fallback |
 | Phase 6 多框架激活 | report-only 观察 | 自动化 weekly PM loop 只读观察 B label / dry-run / cron 日志 | 2026-08-13 后首次 B label 自然结案复核 | B label 已结案 ≥20、overdue=0、数据质量门槛 OK、独立审查通过、另写生产化 spec |
 | Phase 7 选股宇宙扩展 | 未启动 | 等 Phase 6 或明确降级策略 | 暂无 | 单独设计动态池和 API 压测 |
@@ -64,13 +65,14 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 
 | 项目 | 当前状态 | 证据 |
 |---|---|---|
-| 行情 provider | Tushare 主源 + 隔离 BaoStock degraded fallback | `a-stock-lib==0.2.0`；2026-07-15 回归测试 `373 passed` |
-| readiness | **`READY_CRON`** | 2026-07-15 probe 的 daily/index/calendar/close cross-check 全部 PASS |
-| cron | weekly / weekly-PM / QFQ / daily / outcome-update 五项已按门禁重新安装 | `00 16` QFQ、`30 16` daily、`00 17` outcome；managed block 已核对 |
-| 真实 probe | 当天已刷新并通过 | `docs/reviews/2026-07-15-tushare-capability-probe.md` |
+| 运行依赖 | `a-stock-lib==0.4.1` | 实际 import 0.4.1，`pip check` 无破损依赖 |
+| 行情 provider | Tushare 主源 + 隔离 BaoStock degraded fallback | 2026-07-15 probe 曾通过，但当前已过 freshness 门禁 |
+| readiness | market-data probe stale；TuShare 三域 35/35 READY | 两套 readiness 独立，旧报告不得冒充当前 `READY_CRON` |
+| cron | weekly / weekly-PM / QFQ / primary-daily / daily / acceptance / outcome 已安装 | `00 16` QFQ、`15 17` primary、`30 17` daily、`45 17` acceptance、`00 18` outcome |
+| TuShare 三域生产 | 已完成 | shadow 215 completed/0 failed；35 行物化；来源/评分错误 0；两库 quick_check=ok |
 | 真实 backfill | 已完成 | 2026-07-12 35/35 行情刷新成功（ok=35, degraded=0, failed=0） |
-| 真实 daily | 最近一次自然运行成功；全局 v2 尚待自然运行 | 2026-07-17 写入 35 条，L3 覆盖 35/35，Telegram 与 Sheets 成功；全局 `on` 于非交易日 2026-07-19 启用 |
-| 生产数据规模 | predictions 1,859 条（A 1,786、B 73） | 2026-07-19 对 `tracker.db` 只读查询；最新 score_date=2026-07-17 |
+| 真实 daily | 2026-07-20 自然运行成功 | 写入 35 条；17:45 acceptance `PASS`，6 hybrid/29 fallback，`rollback_verified=true` |
+| 生产数据规模 | predictions 1,894 条 | 2026-07-21 强切前后 canonical hash `fc60e1f…f6979e5` 不变 |
 | Framework B | report-only | `SUPPORTED_FRAMEWORKS={"A"}`，不写 B 生产 predictions |
 | Phase 6 阻塞 | B label 已结案样本不足 | 数据质量门槛 OK；B label `0/20`，最早可评估日期 `2026-08-13`（accuracy-report 生成于 2026-07-15） |
 | L3 v2 QFQ / 生产写入 | 已完成，选择性待观察 | `daily_bars.adjusted='qfq'` 覆盖 35 个代码、4585 行（至 2026-07-13）；v2 记录 70 条且 70/70 pass，两天 strong 均为 18/18 通过门禁 |
@@ -78,13 +80,15 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | Framework A 倒置诊断 | 已完成，结论：不调权重 | Q5 avg_alpha_30d=-9.91%；根因=截面校准偏差+11支伪复制；agy投资审查：Priority 1=延伸60d/90d；60d首批到期 2026-07-14 |
 | 定性评分 v2 | 全局 `on`；6/35 hybrid、29/35 v1 fallback | v2 表 6 行：000963/002050/600036/600900/601088/603606；全部为 moat/market_pos scored、sentiment NULL |
 | 定性评分 v2 研究审计 | M4 sample 与 M5 fixture-first/builder 完成；real bundle 未完成 | sample SHA `b278a7…d7635d`；不再作为当前生产读取阻塞项 |
-| 质量门禁 | 全部通过 | P2 修复后文档入口 `.venv/bin/pytest tests/ -q` 全仓 938 passed；Ruff lint/format、mypy 127 files、CLI smoke、shell syntax、`git diff --check` PASS |
+| 质量门禁 | 全部通过 | 当前全仓 1009 passed；Ruff、format、mypy 152 files、真实 module smoke、shell syntax、Markdown 链接、`git diff --check` PASS |
 
 ## Spec Ledger
 
 | Spec / Plan | 状态 | Owner | 下一动作 | Exit criteria |
 |---|---|---|---|---|
-| `docs/evolution-roadmap.md` | v1.29 当前基线 | Hermes PM | 随 Phase 状态变化更新 | 和真实系统状态一致 |
+| `docs/evolution-roadmap.md` | v1.30 当前基线 | Hermes PM | 随 Phase 状态变化更新 | 和真实系统状态一致 |
+| `docs/specs/2026-07-21-tushare-three-domain-forced-cutover.md` | implemented；三域生产合同 | Hermes PM + codex | 观察自然 cycle；字段/时序变化同步 registry/runbook | 35/35、原子物化、回滚和真实 smoke 均可复验 |
+| `docs/runbooks/tushare-primary-production.md` | active | 运维 | daily/weekly 故障与回滚按本手册执行 | 命令与 cron/代码保持一致 |
 | `docs/reviews/2026-07-19-qualitative-v2-production-retrospective.md` | final；当前生产复盘 | codex | 下一交易日自然 cron 确认 | 把上线安全、数据覆盖和研究有效性分开管理 |
 | `qualitative_v2_production_acceptance_baseline.json` | active；生产验收基线 | codex | v2 adoption 变化时随同审查更新 | checker 只读复验，不自动学习或覆盖基线 |
 | `docs/plans/2026-07-18-m5-two-sprint-execution.md` | historical research plan；D1 授权已执行/后续路线已演化 | user + codex | 仅在继续 36 股研究审计时引用 | 不再作为生产上线或扩大预计算覆盖的串行前置 |
@@ -92,7 +96,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | `docs/specs/2026-07-02-weekly-pm-loop-automation-spec.md` | implemented；2026-07-15 parser 误报已修复 | Hermes PM + agy review | 观察下一次自然摘要 | 每周一自动 Telegram 摘要可信，不重复告警，不越权启用生产化 |
 | `/home/lin/a-stock-lib/docs/plans/2026-07-01-three-project-next-work-plan.md` | active cross-project plan | Hermes PM | 按 P0/P1/P2 顺序推进共享包、tracker、research 联动事项 | 三项目版本/文档/任务边界一致 |
 | `docs/runbooks/market-data-provider-recovery.md` | active | Hermes PM | 若 readiness/cron 语义变更则同步 | HOLD/READY 行为与 `cron-setup.sh` 一致 |
-| `docs/reviews/2026-07-15-tushare-capability-probe.md` | latest probe evidence，全部 PASS | 系统探测 | 按 freshness 门禁定期刷新 | `check_market_data_readiness.py --scope cron` 当前 READY |
+| `docs/reviews/2026-07-15-tushare-capability-probe.md` | latest historical probe evidence；当前 stale | 系统探测 | 刷新真实 probe 后再评估 | 不引用过期 PASS；以实时 `check_market_data_readiness.py --scope cron` 为准 |
 | `artifacts/reports/accuracy-report.txt` | ignored runtime report | pipeline | 按周更新 | Phase 6 仍明确 report-only，运行后不污染 Git 状态 |
 | `docs/specs/2026-07-08-l3-v2-entry-signal-spec.md` | draft 历史父 spec；其 Phase 2/3 子 spec 已实施 | Hermes PM + agy review | 观察 v2 生产数据，不再执行旧 NEED_QFQ 下一步 | 规则变更需另开审查，不回写历史分数 |
 | `docs/specs/2026-07-14-source-grounded-structured-qualitative-scoring-spec.md` | approved；生产 hybrid/global read 已实施 | Hermes PM + codex + AGY review | 保持合同稳定；覆盖扩展走预计算批次 | 不得把 fallback 冒充 v2，不得把结构有效性冒充预测有效性 |
@@ -115,8 +119,8 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 |---|---|---|---|
 | B label 已结案样本不足 `0/20` | 阻止 Framework B 生产化 | 已结案 ≥20 且 overdue=0 | 最早 2026-08-13 后 |
 | qualitative v2 仅 6/35 有合法 partial 行 | 不阻断安全读取，但限制 v2 实际覆盖 | 分批复用官方 PDF/离线提取/validator 路线补齐其余 29 股 | P1，按批次推进 |
-| 全局 `on` 尚无自然 daily 证据 | 自动预检 PASS，但运维闭环未最终确认 | 2026-07-20 由 16:30 daily 后的 16:45 managed acceptance 自动验收并告警；异常则切 `off` | 下一交易日 |
-| market-data cron readiness 报告已过期 | 当前 managed cron 继续保留，但直接重跑 `cron-setup.sh` 会 fail closed 并移除 daily/acceptance/outcome-update | 下次重装 cron 前刷新 capability probe 并恢复 `READY_CRON` | 下次重装前 |
+| 新 TuShare 时序尚缺完整自然运行证据 | 手动 daily cycle 已 PASS，但 17:15→17:30→17:45 尚未由 cron 自然走完 | 查看三份日志和 acceptance 决策；异常按各自 runbook 回滚 | 下一交易日 |
+| market-data cron readiness 报告已过期 | 当前 managed cron 继续保留；不能引用旧 PASS 新启用行情能力 | 刷新 capability probe 并按真实结果恢复 `READY_CRON` | 下次行情控制面变更前 |
 | M5 real bundle/blind-reference/support audit 未完成 | 限制研究代表性与 agreement 结论 | 作为发布后独立研究执行 | P2，不阻断当前生产读取 |
 | Framework A strong 层级尚未证明优于基准 | 不宜调权重或宣称模型有效 | 另开权重复核 spec | 待更多样本与独立审查 |
 | L3 v2 当前未体现过滤选择性 | 2026-07-13/14 共 70/70 pass，strong 18/18 每日全部通过 | 先增加 v2 状态/门禁分布报告并积累 30/60d outcome；不据两天样本改规则 | P2 |
@@ -148,6 +152,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | 2026-07-19 | 自动化生产验收与回滚检查 | tracked baseline 封存历史评分字段；真实只读预检 PASS；`off` 证明 35 股均走 v1 且不访问 v2 DB | 下一交易日以 `--require-score-date` 验收 daily 行数和 adoption 日志 |
 | 2026-07-19 | 自动化验收 managed cron 与告警 | 工作日 16:45 在 daily/outcome-update 之间执行 `--require-today`；真实 crontab 已去重安装 1 条；验收 exit 2 显式发送 `ROLLBACK` Telegram 告警，weekly PM 的 exit 2 去重语义不变；全仓 937 passed | 观察 2026-07-20 首次自然 cron 日志与告警链路；重跑 `cron-setup.sh` 前刷新已过期的 readiness |
 | 2026-07-19 | P2 pytest/shadow 幂等修复 | pytest 项目根路径由 `pyproject.toml` 固定；shadow record/request key 均增加 model；跨模型回归用例通过；文档入口全仓 938 passed | 关闭两个 P2；不同模型可共享 artifact 文件但不会复用彼此结果 |
+| 2026-07-21 | TuShare 估值/财务/分红三域生产强切 | 0.4.1；35/35 readiness；35 行原子物化；两库 quick_check=ok；predictions 1,894 行/hash 不变；真实 cycle run 215 成功；两次中间回滚均无错误 | 切换完成；观察新 cron 自然时序，刷新 stale market-data probe；下游 consumer 仍独立迁移 |
 | 2026-08-13 后 | B label 30d 结案、overdue、行业覆盖、B-A delta | 待执行 | 满足门槛后写 `phase6-b-label-review.md`，不直接上线 |
 
 ## 每周自动复核

@@ -9,7 +9,7 @@ a-stock-tracker/
 │   ├── config.py             # watchlist 与运行配置
 │   ├── paths.py              # 项目路径的单一来源
 │   ├── scoring.py            # Framework A 确定性评分
-│   ├── data/                 # SQLite、基本面、行情与缓存
+│   ├── data/                 # SQLite、行情、TuShare shadow/readiness/materialization 与缓存
 │   ├── signals/              # L3 v1/v2 信号
 │   ├── integrations/         # Gemini 与 reviewer 外部适配器
 │   ├── reporting/            # Telegram、Sheets 与报告层
@@ -29,7 +29,7 @@ a-stock-tracker/
 
 ## 依赖方向
 
-- `data/` 与 `signals/` 提供底层能力，不依赖通知或展示层。
+- `data/` 与 `signals/` 提供底层能力，不依赖通知或展示层；TuShare production cycle 只编排 data 层采集、readiness 和原子物化。
 - `integrations/` 封装外部服务；测试必须 mock 网络。
 - `reporting/` 可以读取数据与评分结果，但不能成为数据真相来源。
 - `qualitative/` 内部按稳定合同、生产路径、M4/M5 研究路径分层。

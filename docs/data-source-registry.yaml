@@ -5,21 +5,32 @@ fields:
   - field: roe_3y_avg
     owner: scorer_input
     requirement: required
-    source_primary: akshare.stock_financial_abstract_ths
+    source_primary: tushare.fina_indicator.roe_waa_three_disclosed_annual_periods
     source_fallback: none
     cache: stock_fundamentals.data.roe_3y_avg
-    refresh: weekly
+    refresh: weekly_materialized
     affects_scoring: true
     affects_outcome: false
     failure_behavior: mark_missing; data_quality_degrades
 
+  - field: roe_latest
+    owner: report_only_support
+    requirement: degradable
+    source_primary: tushare.fina_indicator.roe_waa_latest_disclosed_annual_period
+    source_fallback: none
+    cache: stock_fundamentals.data.roe_latest
+    refresh: weekly_materialized
+    affects_scoring: false
+    affects_outcome: false
+    failure_behavior: omit_roe_trend_warning_when_missing
+
   - field: net_profit_growth
     owner: scorer_input
     requirement: required
-    source_primary: akshare.stock_financial_abstract_ths
+    source_primary: tushare.fina_indicator.netprofit_yoy_three_disclosed_annual_periods
     source_fallback: none
     cache: stock_fundamentals.data.net_profit_growth
-    refresh: weekly
+    refresh: weekly_materialized
     affects_scoring: true
     affects_outcome: false
     failure_behavior: mark_missing; data_quality_degrades
@@ -27,10 +38,10 @@ fields:
   - field: debt_ratio
     owner: scorer_input
     requirement: required
-    source_primary: akshare.stock_financial_abstract_ths
+    source_primary: tushare.fina_indicator.debt_to_assets_latest_effective_announcement
     source_fallback: none
     cache: stock_fundamentals.data.debt_ratio
-    refresh: weekly
+    refresh: weekly_materialized
     affects_scoring: true
     affects_outcome: false
     failure_behavior: mark_missing; data_quality_degrades
@@ -38,10 +49,10 @@ fields:
   - field: gross_margin
     owner: scorer_input
     requirement: required
-    source_primary: sina_profit_statement_annual_average
+    source_primary: tushare.fina_indicator.grossprofit_margin_latest_effective_announcement
     source_fallback: none
     cache: stock_fundamentals.data.gross_margin
-    refresh: weekly
+    refresh: weekly_materialized
     affects_scoring: true
     affects_outcome: false
     failure_behavior: mark_missing; data_quality_degrades; financial_industry_can_be_missing
@@ -49,13 +60,68 @@ fields:
   - field: pb_percentile_10y
     owner: scorer_input
     requirement: required
-    source_primary: derived_from_price_at_score_bps_pb_hist_monthly
-    source_fallback: cached_value_visibility_only
+    source_primary: derived_from_tushare_daily_basic_pb_history_and_fina_indicator_bps
+    source_fallback: none
     cache: stock_fundamentals.data.pb_percentile_10y
-    refresh: daily_in_memory
+    refresh: daily_materialized_then_recomputed_in_memory
     affects_scoring: true
     affects_outcome: false
-    failure_behavior: mark_missing_or_stale; data_quality_degrades
+    failure_behavior: full_10y_only; insufficient_history_writes_null; data_quality_degrades
+
+  - field: pe_ttm
+    owner: scorer_input
+    requirement: degradable
+    source_primary: tushare.daily_basic.pe_ttm
+    source_fallback: none
+    cache: stock_fundamentals.data.pe_ttm
+    refresh: weekday_1715_materialized
+    affects_scoring: false
+    affects_outcome: false
+    failure_behavior: loss_company_can_be_null_with_NOT_APPLICABLE_LOSS; source_failure_blocks_materialization
+
+  - field: pb
+    owner: valuation_support
+    requirement: required
+    source_primary: tushare.daily_basic.pb
+    source_fallback: none
+    cache: stock_fundamentals.data.pb
+    refresh: weekday_1715_materialized
+    affects_scoring: true
+    affects_outcome: false
+    failure_behavior: missing_or_zero_blocks_materialization
+
+  - field: dividend_yield
+    owner: valuation_support
+    requirement: degradable
+    source_primary: tushare.daily_basic.dv_ttm
+    source_fallback: none
+    cache: stock_fundamentals.data.dividend_yield
+    refresh: weekday_1715_materialized
+    affects_scoring: false
+    affects_outcome: false
+    failure_behavior: legal_null_is_visible; source_failure_blocks_materialization
+
+  - field: float_to_total_ratio
+    owner: valuation_support
+    requirement: degradable
+    source_primary: tushare.daily_basic.circ_mv_div_total_mv
+    source_fallback: none
+    cache: stock_fundamentals.data.float_to_total_ratio
+    refresh: weekday_1715_materialized
+    affects_scoring: false
+    affects_outcome: false
+    failure_behavior: invalid_denominator_writes_null; source_failure_blocks_materialization
+
+  - field: dps
+    owner: dividend_fact
+    requirement: degradable
+    source_primary: tushare.dividend.cash_div_tax_latest_implemented_event
+    source_fallback: none
+    cache: stock_fundamentals.data.dps
+    refresh: weekly_materialized
+    affects_scoring: false
+    affects_outcome: false
+    failure_behavior: no_implemented_event_is_business_empty; source_failure_is_not_business_empty
 
   - field: moat_fixed
     owner: scorer_input
@@ -93,10 +159,10 @@ fields:
   - field: bps
     owner: derived_support
     requirement: derived
-    source_primary: akshare.stock_financial_abstract_ths
+    source_primary: tushare.fina_indicator.bps_latest_effective_announcement
     source_fallback: none
     cache: stock_fundamentals.data.bps
-    refresh: weekly
+    refresh: weekly_materialized
     affects_scoring: true
     affects_outcome: false
     failure_behavior: mark_pb_percentile_missing_or_stale
@@ -104,10 +170,10 @@ fields:
   - field: pb_hist_monthly
     owner: derived_support
     requirement: derived
-    source_primary: baidu_valuation_pb_history
+    source_primary: tushare.daily_basic.pb_month_end_history
     source_fallback: none
     cache: stock_fundamentals.data.pb_hist_monthly
-    refresh: weekly
+    refresh: weekday_1715_materialized
     affects_scoring: true
     affects_outcome: false
     failure_behavior: mark_pb_percentile_missing_or_stale
@@ -115,7 +181,7 @@ fields:
   - field: report_period
     owner: audit_contract
     requirement: degradable
-    source_primary: stock_fundamentals.data.report_period
+    source_primary: tushare.fina_indicator.end_date_selected_by_effective_announcement
     source_fallback: unknown_period_marker
     cache: predictions.report_period
     refresh: per_score

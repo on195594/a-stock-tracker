@@ -102,15 +102,15 @@ python scripts/check_qualitative_v2_production.py \
   --require-score-date 2026-07-20
 ```
 
-managed cron 会在工作日 16:45（`daily` 16:30 之后、`outcome-update` 17:00 之前）自动执行等价的动态日期检查：
+managed cron 会在工作日 17:45（TuShare primary 17:15、`daily` 17:30 之后，`outcome-update` 18:00 之前）自动执行等价的动态日期检查：
 
 ```cron
-45 16 * * 1-5 /home/lin/a-stock-tracker/cron-alert-wrap.sh "cd /home/lin/a-stock-tracker && .venv/bin/python scripts/check_qualitative_v2_production.py --require-today" qualitative-v2-production-acceptance --alert-exit-2 >> /home/lin/a-stock-tracker/logs/qualitative-v2-production-acceptance.log 2>&1
+45 17 * * 1-5 /home/lin/a-stock-tracker/cron-alert-wrap.sh "cd /home/lin/a-stock-tracker && .venv/bin/python scripts/check_qualitative_v2_production.py --require-today" qualitative-v2-production-acceptance --alert-exit-2 >> /home/lin/a-stock-tracker/logs/qualitative-v2-production-acceptance.log 2>&1
 ```
 
 验收仍原样返回 exit 2；该任务单独启用 `--alert-exit-2`，因此现有 Telegram 包装器会发送带 `ROLLBACK` 标识的告警。其他任务默认仍抑制 exit 2，weekly PM loop 的“摘要已发送、不重复告警”语义不变。cron 不会自行修改 `.env` 或数据库；收到告警后按下述 `off` 路径回滚。
 
-2026-07-19 已把上述规则实际安装到用户 crontab，managed block 中恰好一条验收任务，首次自然运行是 2026-07-20。安装时行情 readiness 因最新 capability report 停留在 2026-07-15 而返回 `HOLD_CRON`；为避免 `cron-setup.sh` 按既定 fail-closed 语义删除仍在运行的 daily/outcome-update，本次只对现有 managed block 做了去重插入。再次运行 `cron-setup.sh` 前必须先刷新并通过 market-data readiness；报告过期不等于 provider 已确认失效。
+2026-07-20 首次自然验收已返回 `PASS`：35 股完整，6 股 hybrid、29 股 fallback，`rollback_verified=true`。2026-07-21 TuShare 三域强切后，验收任务迁移到 17:45。行情 capability report 仍停留在 2026-07-15 并已 stale；报告过期不等于 provider 已确认失效，也不得被引用为当前 PASS。当前 `cron-setup.sh` 会独立安装 TuShare primary cycle，并保留切换前已存在的评分链；若要从零恢复行情依赖任务，仍须先刷新并通过 market-data readiness。
 
 本阶段关于测试入口、跨模型幂等、exit 2 告警语义、readiness 安装副作用和 cron 重叠的长期规则，已归档到 [`lessons-learned.md`](../lessons-learned.md) G-3～G-7。
 

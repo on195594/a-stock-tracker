@@ -1,8 +1,8 @@
 # TuShare 生产主源数据治理与切换规范
 
 创建时间：2026-07-20  
-状态：Phase 2 isolated shadow implementation complete; Phase 3 not started
-基线分支：`agent/qualitative-v2-shadow` at `3bee5b4`  
+状态：valuation/financial/dividend Phase 5 production cutover complete; broader domain migration remains
+基线分支：`agent/qualitative-v2-shadow` at `0f8c8b8`
 共享合同：`a-stock-lib/docs/specs/2026-07-20-tushare-primary-data-contract.md`
 
 ## 1. 目标
@@ -40,9 +40,12 @@ a-stock-research:     a-stock-lib 0.3.0, tushare 1.4.29
 a-stock-lib source:   0.3.0
 ```
 
-消费者不做无业务收益的 0.3.0 中间升级；待 0.4.0 构建后分别在隔离环境直接验证。
+消费者未做无业务收益的 0.3.0 中间升级。2026-07-21 tracker 已直接切换并实际导入
+`a-stock-lib==0.4.1`；上表保留为切换前基线，不再代表当前运行状态。
 
-### 3.2 当前 35 股缓存覆盖
+### 3.2 切换前 35 股缓存覆盖（historical snapshot）
+
+以下数据是 2026-07-20 方案冻结时的 pre-cutover 基线，不代表 2026-07-21 强切后的生产现状。
 
 ```text
 pe_ttm:              0/35
@@ -68,7 +71,7 @@ debt_ratio:          35/35
 ```text
 TuShare
   ↓
-a-stock-lib 0.4.0 Provider + contract + pure calculators
+a-stock-lib 0.4.1 Provider + contract + pure calculators
   ↓
 a-stock-tracker ingestion/application cache
 ```
@@ -280,10 +283,10 @@ SOURCE_FAILED
 
 ### 日常增量
 
-- 17:15 后按 `trade_date` 调用一次全市场 `daily_basic`；
+- 工作日 17:15 后按 `trade_date` 调用一次全市场 `daily_basic`，完成 valuation readiness 与估值物化；
 - 过滤并写入 watchlist，完整响应保存审计 artifact；
 - 当天响应日期不匹配时标记 stale，不覆盖 `source_as_of`；
-- 不在本规范阶段修改 cron。
+- 周六 10:00 执行财务/分红批量采集、独立 readiness 与联合物化；当前 cron 入口见生产 runbook。
 
 ### 历史回填
 
@@ -293,7 +296,8 @@ SOURCE_FAILED
 - 每个 request 在 `ingestion_runs` 留 checkpoint；
 - 重跑按 deterministic `record_key` 幂等；
 - 权限/参数/schema 错误不重试，网络瞬态错误最多一次重试；
-- 重试合同测试仅在检测到 `a-stock-lib>=0.4.0` 时执行；tracker 仍锁定 0.2.0 的 Phase 0B 默认环境必须显式 skip，0.4.0 wheel shadow 环境必须实际执行并通过。
+- 重试合同测试在 `a-stock-lib>=0.4.0` 时执行；当前 tracker 生产环境锁定并验证
+  `a-stock-lib==0.4.1`。0.2.0 只保留为经校验的回滚 wheel，不再是默认运行环境。
 
 ## 10. Readiness 与 shadow 门禁
 
@@ -418,7 +422,7 @@ ALL_PROXY
 
 本规范与共享 lib 合同经审查后冻结，作为 Phase 1 的实现依据。
 
-### Phase 1：a-stock-lib 0.4.0
+### Phase 1：a-stock-lib 0.4.1
 
 TDD 实现 Provider、分位计算器、测试隔离、节流和版本发布，不写 tracker DB。
 
@@ -429,13 +433,18 @@ TDD 实现 Provider、分位计算器、测试隔离、节流和版本发布，�
 **2026-07-21 实施记录：** 已在隔离分支实现独立 shadow schema、不可变 canonical
 record、observation event、request checkpoint、gzip 原子 artifact 和四类显式 CLI 入口。
 `--db-path` 为必填项，并额外拒绝 `tracker.db` 文件名及含非 shadow 表的既有 SQLite；
-全市场日度响应完整归档，但 SQLite 只写 watchlist。默认 0.2.0 消费环境与 0.4.0
-shadow 环境均通过测试。未调用真实 TuShare、未写生产数据库、未修改评分读路径、依赖、
-cron 或数据源 registry；真实有界采集和两交易日观察仍属于 Phase 3。
+全市场日度响应完整归档，但 SQLite 只写 watchlist。默认 0.2.0 消费环境与 0.4.0 shadow 环境均通过了当时的 Phase 2 测试；该段仅记录
+隔离实现完成时的边界。后续真实采集、0.4.1 运行时、生产 materialization、cron 和
+registry 已按独立强切合同实施，不应继续用本段描述当前生产状态。
 
 ### Phase 3：有界 shadow
 
 完成日度两交易日 + 财务更正回放 + 评分差异解释，不建立持续评测项目。
+
+**2026-07-21 实施记录：** 用户明确授权三域强切后，采用 35 股真实历史估值、财务、分红
+shadow 与当日 `daily_basic` 做有界验证；readiness 35/35、来源审计和评分 smoke 通过。
+本次强切授权以真实当日估值 + 历史完整回填替代原计划的两个自然交易日等待，不将
+backfilled data 冒充历史评分时点可见数据。
 
 ### Phase 4：消费方 shadow
 
@@ -444,6 +453,12 @@ tracker → research → monitor/QA → east-cable，旧主源仍可回退。
 ### Phase 5：生产 cutover
 
 另行确认后，备份、按域切换、修改 cron、验证并保留独立回滚。
+
+**2026-07-21 三域终态：** 估值、通用财务与分红已按
+`docs/specs/2026-07-21-tushare-three-domain-forced-cutover.md` 完成生产强切；运行时为
+`a-stock-lib==0.4.1`，35 股单事务物化，历史 predictions 未改写。股票基础信息/行业、
+research、monitor/QA 和 east-cable 等其他 consumer 仍按本规范后续顺序独立治理，不能因
+tracker 三域完成而宣称全部迁移完成。
 
 ## 16. Phase 0B 验收
 

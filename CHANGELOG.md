@@ -2,6 +2,16 @@
 
 所有重大变更按时间倒序记录。
 
+## 2026-07-21 — TuShare 估值/财务/分红三域生产强切
+
+- 将生产运行时升级到 `a-stock-lib==0.4.1`，新增隔离 shadow schema、不可变 observation、checkpoint、gzip artifact、35 股批量采集、独立 readiness 和三域 feature flags。
+- 估值/市值、通用财务指标和分红事实经 35/35 readiness 后，以单事务物化到 `tracker.db.stock_fundamentals`；历史 `predictions` 保持 1,894 行且 canonical hash 未变化。
+- PB 历史覆盖明确分为 28 个 `FULL_10Y`、5 个 `SINCE_LISTING`、2 个 `INSUFFICIENT_HISTORY`；不足十年不再沿用旧源十年分位。
+- 新增 `daily|weekly` production cycle，cron 调整为工作日 17:15 TuShare valuation、17:30 daily、17:45 acceptance、18:00 outcome，周六 10:00 financial/dividend。
+- 真实生产 smoke 最终为 `run_id=215`、`row_count=5525`、`changed_count=35`、退出码 0；两库 `PRAGMA quick_check=ok`，来源/评分错误为 0。
+- 修复发布期间发现的完整提交依赖链、crontab 单行过长、脚本路径导入失败、`Path` JSON 序列化和验收器入口漂移问题；两次中间失败均自动回滚且无 rollback error。
+- 新增生产复盘和运行手册，并将 README、CLAUDE、project status、roadmap、TODO、spec 与数据源 registry 对齐到生产事实。
+
 ## 2026-07-18 — MILESTONE-004 轻量化清理
 
 - 从当前树退役 v1.3.2 的 authorization、freeze、golden、oracle、attestation 和多角色审批实现；更早的 v1.3.1 实现与全部 Git 历史保持可恢复。

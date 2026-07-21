@@ -43,7 +43,7 @@ Phase 6 当前仍处于 report-only 观察期。现有手工 weekly PM loop 每�
 选择周一 09:30 的理由：
 
 - 周六 10:00 的 `weekly` 已完成，有足够时间暴露卡死或失败。
-- 工作日 16:30/17:00 的 `daily`/`outcome-update` 不会与该检查重叠。
+- 当前工作日 17:30/18:00 的 `daily`/`outcome-update` 不会与该检查重叠。
 - PM 能在周一盘前/盘中看到告警，不影响周末基本面刷新。
 
 `cron-setup.sh` 应把该规则纳入 managed block，并保留 readiness 行为：

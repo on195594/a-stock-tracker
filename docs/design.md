@@ -110,6 +110,10 @@ Phase 1 只做一件事：**证明闭环可以跑通**。
 
 ### 整体架构（Phase 1）
 
+> **历史快照：** 本节保留 Phase 1 当时的 16:30 cron、`lib/fetcher.py` 和旧行情路径，
+> 不代表当前生产接线。当前入口与时序以 `README.md`、`docs/architecture.md` 和
+> `docs/runbooks/tushare-primary-production.md` 为准。
+
 ```
 【一次性初始化】
 pipeline.py init

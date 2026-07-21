@@ -22,8 +22,8 @@ cd ~/a-stock-tracker          # ← 项目在 home 根，不在 ~/code/project/w
 source .venv/bin/activate
 
 python pipeline.py init           # 首次初始化（预填 watchlist 数据）
-python pipeline.py daily          # 每日手动触发（cron: 工作日 16:30）
-python pipeline.py outcome-update # 更新到期预测（cron: 工作日 17:00）
+python pipeline.py daily          # 每日手动触发（cron: 工作日 17:30）
+python pipeline.py outcome-update # 更新到期预测（cron: 工作日 18:00）
 python pipeline.py accuracy-report
 
 pytest tests/ -v                  # 修改前必须全通过
@@ -42,10 +42,11 @@ pytest tests/ -v                  # 修改前必须全通过
 | `config/weights.json` | 模型权重（阈值 buy_strong=44/moderate=35/light=26）|
 | `a_stock_tracker/config.py` | watchlist / DB_PATH / LOG_DIR（禁止硬编码股票代码或路径）|
 | `.env` | GEMINI_API_KEY / TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID |
-| `a_stock_tracker/data/fetcher.py` | AKShare 封装，仅用于基本面/估值/财报缓存 |
+| `a_stock_tracker/data/fetcher.py` | 旧 AKShare/Sina 基本面抓取入口；已切三域的生产 cron 不再调用它 |
 | `a_stock_tracker/data/market_data.py` | 行情数据 provider 兼容入口 |
-| `a_stock_lib.providers.tushare_quotes` | 行情主源（需 `TUSHARE_TOKEN`），probe 通过后启用 |
+| `a_stock_lib.providers.tushare_quotes` | 行情主源（`a-stock-lib==0.4.1`，需 `TUSHARE_TOKEN`） |
 | `a_stock_lib.providers.baostock_quotes` | 行情 degraded fallback，仅 Tushare 失败后或显式 backfill 使用 |
+| `a_stock_tracker/data/tushare_primary_*` | 三域 shadow、采集、readiness、物化与 daily/weekly production cycle |
 | `a_stock_tracker/data/cache.py` | SQLite 管理（predictions / index_prices / qualitative_scores 表）|
 
 ---
@@ -83,14 +84,19 @@ pytest tests/ -v                  # 修改前必须全通过
 **跨期评分比较注意**：2026-05-14 前（gross_margin/pb_percentile 旧算法）vs 2026-05-15 后
 avg_score 有约 4-5 分系统性偏移，Phase 4 optimizer 训练需按 score_date 分层。详见 `docs/lessons-learned.md`。
 
-**行情数据源（2026-06-09 起迁移，与基本面数据源分离）**：AKShare/东方财富**行情**入口已禁用，
-`a_stock_tracker/data/market_data.py` 默认 provider 返回 `SOURCE_DISABLED`。当前行情主源是 `a-stock-lib==0.2.0`
-中的 Tushare provider（需 `TUSHARE_TOKEN`），失败后降级到同包 BaoStock provider（degraded）。`_ensure_index_prices` 走同一套 provider，不再直连
+**行情数据源（2026-06-09 起迁移）**：AKShare/东方财富**行情**入口已禁用。
+当前运行时是 `a-stock-lib==0.4.1`；行情主源为 Tushare provider（需 `TUSHARE_TOKEN`），
+失败后降级到同包 BaoStock provider（degraded）。`_ensure_index_prices` 走同一套 provider，不再直连
 新浪/腾讯接口。成组恢复 `daily` / `outcome-update` 前必须 `python3 scripts/check_market_data_readiness.py --scope cron` 返回 `READY_CRON`
 （最新探测报告见 `docs/reviews/*-tushare-capability-probe.md`）。详见
 `docs/runbooks/market-data-provider-recovery.md` 和
 `docs/plans/2026-06-09-market-data-provider-replacement-plan.md`。
-基本面/估值/财报抓取（`a_stock_tracker/data/fetcher.py`）仍用 AKShare，未受此次迁移影响。
+
+**估值/财务/分红主源（2026-07-21 强切）**：35 股估值/市值、通用财务指标和分红事实
+已由 TuShare shadow/readiness 单事务物化到 `stock_fundamentals`。工作日 17:15 运行 valuation
+cycle，周六 10:00 运行 financial/dividend cycle。旧 `fetcher.py` 不再是这些字段的生产 cron
+主源。三域 readiness 与上述行情 `READY_CRON` 是独立门禁。运行手册：
+`docs/runbooks/tushare-primary-production.md`。
 
 ---
 
@@ -105,7 +111,7 @@ avg_score 有约 4-5 分系统性偏移，Phase 4 optimizer 训练需按 score_d
 
 ---
 
-## Phase 状态快照（2026-07-19）
+## Phase 状态快照（2026-07-21）
 
 | Phase | 状态 | 说明 |
 |-------|------|------|
@@ -113,6 +119,7 @@ avg_score 有约 4-5 分系统性偏移，Phase 4 optimizer 训练需按 score_d
 | Phase 4 验证基础 | ✅ 完成，持续观察 | A框架 30d 结案 953 条，其中 post-fix 735 条；hit_rate 待验证 |
 | Phase 5 L3 买点层 v1 | ✅ 完成，保留审计 | 最新 tracked report 中 v1 pass 的 30d 已结案 71 条、命中率 2.8%；不再作为生产主推门禁 |
 | Phase 5 L3 v2（QFQ）| ✅ Phase 2+3 完成 | Phase 2: QFQ 35/35×130 行回填，pass_strong 激活，cron 16:00；Phase 3: 推送触发切换至 l3_v2_signal=1（commit e080f15） |
+| TuShare 三域生产主源 | ✅ 强切完成 | 35/35 估值、通用财务、分红物化；运行时 0.4.1；PB 历史覆盖 28 FULL_10Y / 5 SINCE_LISTING / 2 INSUFFICIENT_HISTORY；predictions 未改写 |
 | 定性评分 v2 MILESTONE-002 | ✅ fixture-first 完成 | contract/types/taxonomy/schema/prompt/validator 与 145 项本地合同测试已完成，AGY 边界加固复审 PASS |
 | 定性评分 v2 MILESTONE-003 | ✅ 文件 shadow seam 完成 | 独立 client/CLI、JSONL artifact、错误分类、重试和同 hash 去重已完成，AGY 最终只读审查 PASS；该研究 shadow 与后续生产 canary 物理隔离 |
 | 定性评分 v2 生产读路径 | ✅ 全局 `on` | 35 股全部进入 v2 选择器；独立 v2 表 6 行。603606 及 000963/002050/600036/600900/601088 使用 moat/market_pos v2 与 sentiment v1 fallback，其余 29 股逐股回退 v1；只读生产验收当前 PASS |
@@ -120,17 +127,16 @@ avg_score 有约 4-5 分系统性偏移，Phase 4 optimizer 训练需按 score_d
 | Phase 6 多框架激活 | 🔶 report-only | Framework B 仍不写生产；73 条 legacy 仅回溯；2026-W30 首批 7 条 prospective cohort 已冻结并绑定 2026-07-20 A prediction，最早 2026-08-19 结案 |
 | Phase 7 选股宇宙 | ⏸ 未启动 | 待 Phase 6 完成或明确降级策略 |
 
-optimizer.py 启动门槛：Framework A 30d 结案 ≥ 100（已满足） AND `hit_rate_vs_300 > 55%`（待验证）。  
+optimizer.py 启动门槛：Framework A 30d 结案 ≥ 100（已满足） AND `hit_rate_vs_300 > 55%`（待验证）。
 Framework B 重启：在 `a_stock_tracker/scoring.py` 加回 "B"，另写生产化 spec 并经独立审查。
 
-运维门禁是动态状态，不以本快照替代实时检查。恢复或重装 `daily` / `outcome-update` cron 前必须重新运行 `scripts/check_market_data_readiness.py --scope cron`；2026-07-15 当天 probe 的 daily/index/calendar/close cross-check 全部 PASS，当前为 `READY_CRON`，managed cron 已重新安装。
+运维门禁是动态状态，不以本快照替代实时检查。旧 market-data probe 当前已 stale；恢复或新启用行情依赖任务前必须重新运行 `scripts/check_market_data_readiness.py --scope cron`，不得引用 2026-07-15 报告冒充当前 PASS。TuShare 三域任务使用独立 readiness。
 
-**TuShare 生产主源治理（2026-07-21）：** Phase 2 隔离影子库实现已完成：显式
-shadow DB、不可变 observation、checkpoint、gzip artifact 与 valuation/financial/
-dividend ingestion CLI 已接线；默认 0.2.0 与 0.4.0 shadow 测试均通过。尚未执行真实
-采集或生产 cutover，`tracker.db`、评分读路径、requirements、cron 和 registry 未修改。
-权威边界与后续 Phase 3 门禁见
-`docs/specs/2026-07-20-tushare-primary-data-governance.md`。
+**TuShare 生产主源治理（2026-07-21）：** 估值/市值、通用财务指标和分红事实已完成
+真实采集、35/35 readiness、单事务生产 materialization、cron 安装与回滚验证；运行时实际
+导入 `a-stock-lib==0.4.1`。shadow DB/artifact 保留审计，历史 predictions 不重算。
+权威边界见 `docs/specs/2026-07-20-tushare-primary-data-governance.md`，生产复盘见
+`docs/reviews/2026-07-21-tushare-three-domain-cutover-retrospective.md`。
 
 ---
 

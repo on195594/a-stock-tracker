@@ -1,7 +1,7 @@
 # TuShare 估值、财务、分红三域生产强切合同
 
 创建时间：2026-07-21
-状态：approved for implementation
+状态：implemented and production-verified
 授权：用户明确允许备份、安装 `a-stock-lib==0.4.1`、写生产 shadow 与 `stock_fundamentals`、修改 cron；失败按本合同回滚。
 
 ## 1. 目标
@@ -15,7 +15,7 @@
 - 三域各有独立 `off|on` 环境开关，默认 `off`；只有 readiness PASS 才允许 `on` 写入。
 - 任一股票的必需字段或来源审计失败，整批 `stock_fundamentals` 写入 rollback。
 - 生产代码不使用 `shell=True`，不硬编码 Token，不打印 `.env` 或凭据。
-- `a-stock-lib` 必须实际导入版本 `0.4.0`。
+- `a-stock-lib` 必须实际导入版本 `0.4.1`。
 
 ## 3. 数据映射
 
@@ -81,7 +81,7 @@ TuShare 官方文档 `doc_id=103`：
 
 ## 7. Cron
 
-- 工作日 17:15：三域增量采集、readiness、materialization。
+- 工作日 17:15：估值增量采集、valuation readiness、估值 materialization。
 - 工作日 17:30：`pipeline.py daily`。
 - 工作日 17:45：定性评分生产验收。
 - 工作日 18:00：`outcome-update`。
@@ -89,16 +89,35 @@ TuShare 官方文档 `doc_id=103`：
 
 ## 8. 回滚
 
-- 三域开关全部设为 `off`，旧 AKShare 路径恢复为读主源。
-- 恢复原 crontab。
-- 必要时恢复 `tracker.db` 备份和 `a-stock-lib==0.2.0`。
+- 先恢复原 crontab，停止后续 `daily|weekly` production cycle；scheduled cycle 会按 mode
+  显式启用对应域，不能只靠环境开关停用。
+- 三域环境开关全部设为 `off`，阻止通用 materialization CLI 被手工误执行；这些开关不
+  会自动把已经物化的 `stock_fundamentals` 改回旧源。
+- 恢复切换前 `tracker.db` 备份后，旧字段值/来源才真正恢复；同时按需恢复
+  `a-stock-lib==0.2.0`。
 - 不删除 shadow DB 或 artifact，以保留审计证据。
 
 ## 9. 验收
 
 - 新增单元测试先 RED 后 GREEN；默认测试不访问网络或生产 DB。
-- tracker 默认环境和 `a-stock-lib==0.4.0` 环境全量测试通过。
+- tracker 生产环境和 `a-stock-lib==0.4.1` 环境全量测试通过。
 - Ruff、format、mypy、结构测试、`git diff --check` 通过。
 - 独立代码审查无 P0/P1。
 - 生产 materialization 后 `tracker.db PRAGMA quick_check == ok`。
-- 生产运行时实际导入 `a-stock-lib==0.4.0`。
+- 生产运行时实际导入 `a-stock-lib==0.4.1`。
+
+## 10. 实施结果（2026-07-21）
+
+- 35/35 三域 readiness 为 `READY`，单事务物化 35 行；
+- `tracker.db` 与 `data/tushare-primary.db` 的 `PRAGMA quick_check` 均为 `ok`；
+- 35 股来源审计和评分 smoke 错误均为 0；
+- `predictions` 保持 1,894 行且 canonical SHA-256 未变化；
+- 估值覆盖为 `FULL_10Y=28`、`SINCE_LISTING=5`、`INSUFFICIENT_HISTORY=2`；
+- daily/weekly 已收敛到 `python -m scripts.run_tushare_primary_production_cycle`；
+- cron 时序按第 7 节安装并真实执行 daily cycle，最终 `run_id=215`、`changed_count=35`、退出码 0；
+- 两次中间失败均自动恢复 DB、crontab 和 `a-stock-lib==0.2.0`，最终回滚错误为 0。
+
+完整复盘与运维命令见：
+
+- `docs/reviews/2026-07-21-tushare-three-domain-cutover-retrospective.md`
+- `docs/runbooks/tushare-primary-production.md`

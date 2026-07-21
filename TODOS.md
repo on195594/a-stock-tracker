@@ -1,23 +1,35 @@
 # TODOS
 
-## 当前有效计划来源（2026-07-18）
+## 当前有效计划来源（2026-07-21）
 
 当前阶段、门槛和边界以 `docs/evolution-roadmap.md` 为准。`docs/impl-plan.md` 已归档为
 Phase 1-3.6 历史实施记录，不再作为后续计划来源。
 
 当前工作重心：
 
-1. **P1 定性评分 v2：** v1.2 离线 capability probe 已将传输、全文语义、证据质量拆分；CNINFO 是当前唯一已证明的官方全文路线，SSE/SZSE/CNIPA 为局部降级。六股结构质量 pilot 已按 SHA `c565f6bf8af84d057f250c99faef5ab5aab9dffa58b95251189f06c7ba21801e` 批准并封存，等待 2026-07-20 窗口开启后执行；语义质量仍需后续独立授权，完成后才能冻结新采集协议。
-2. **P2 L3 v2 选择性：** 2026-07-13/14 的 70 条 v2 记录全部为 pass，18/18 strong 每日均未被 L3 过滤；先在 report 中增加 v2 状态/门禁分布并积累 outcome，不据两天样本直接改规则。
-3. **P2 模型验证：** 基于已自然结案的 60d 数据，执行 Framework A 五分位 60d/90d 延伸评估；不据此顺手调权重。
-4. **P3 Phase 6：** Framework B 继续 report-only，等待 B label 30d 自然结案至 20 条；生产化必须另写实施计划并获得明确授权。
+1. **P0 TuShare 运维闭环：** 观察新 17:15→17:30→17:45 自然 cron 和首个周六 10:00 weekly cycle；刷新已 stale 的 market-data capability probe。两套 readiness 独立，不伪造 PASS。
+2. **P1 定性评分 v2：** 2026-07-20 窗口已过去；先核对六股结构质量 pilot 的实际执行证据和授权终态，不自动复用旧授权。语义质量仍需后续独立授权，完成后才能冻结新采集协议。
+3. **P2 L3 v2 选择性：** 2026-07-13/14 的 70 条 v2 记录全部为 pass，18/18 strong 每日均未被 L3 过滤；先在 report 中增加 v2 状态/门禁分布并积累 outcome，不据两天样本直接改规则。
+4. **P2 模型验证：** 基于已自然结案的 60d 数据，执行 Framework A 五分位 60d/90d 延伸评估；不据此顺手调权重。
+5. **P3 Phase 6：** Framework B 继续 report-only，等待 B label 30d 自然结案至 20 条；生产化必须另写实施计划并获得明确授权。
+
+## TuShare 估值/财务/分红三域强切（2026-07-21 已完成）
+
+- 生产运行时已切换为 `a-stock-lib==0.4.1`。
+- 35/35 shadow readiness、单事务 materialization、来源审计、评分 smoke 与 SQLite quick check 均通过。
+- `predictions` 保持 1,894 行，切换前后 canonical hash 不变。
+- production cycle 已收敛为 `python -m scripts.run_tushare_primary_production_cycle daily|weekly`。
+- cron 已迁移到 17:15 primary、17:30 daily、17:45 acceptance、18:00 outcome；周六 10:00 财务/分红。
+- 两次中间失败均真实恢复 DB、crontab 和 0.2.0 依赖，最终回滚错误为 0。
+- 复盘：`docs/reviews/2026-07-21-tushare-three-domain-cutover-retrospective.md`。
+- 运行手册：`docs/runbooks/tushare-primary-production.md`。
 
 ## 2026-07-15 运维与质量基线修复（已完成）
 
 - 当天 Tushare probe 的 daily/index/calendar/close cross-check 全部 PASS，readiness 恢复 `READY_CRON`，managed cron 已重新安装并确认五项任务齐全。
 - weekly PM loop 不再把中文“失败 0 只”判为失败；降级 `WARNING ... fallback失败` 归为 WARN，明确 ERROR/非零失败仍为 FAIL。真实 dry-run 从错误的 FAIL 恢复为符合现状的 WARN。
 - mypy 从 24 errors 修复后保持零错误；Ruff format 基线持续有效。
-- 当前完整质量基线：`866 passed`，Ruff lint/format、mypy、CLI help、`git diff --check` 全部通过。
+- 当前完整质量基线：`1009 passed`，Ruff lint/format、mypy、结构/registry、Markdown 链接和 `git diff --check` 全部通过。
 
 ## 定性评分 v2 MILESTONE-002~003（已完成）
 

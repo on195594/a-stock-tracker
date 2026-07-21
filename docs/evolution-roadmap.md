@@ -1,7 +1,7 @@
 # a-stock-tracker 进化路线图
 
-**版本：** v1.29
-**基线日期：** 2026-07-19
+**版本：** v1.30
+**基线日期：** 2026-07-21
 **文档定位：** 系统演化的顶层规划文档。所有后续 Phase 的修改、补丁、设计决策均以本文档为基线。若实施中发现偏差，先更新本文档，再改代码。
 
 ---
@@ -13,41 +13,42 @@
 | 层次 | 问题 | 当前状态 |
 |------|------|---------|
 | L1 好公司 | 这家公司值不值得持有？ | ✅ 已成型（ROE/增速/负债率/毛利率/Gemini定性） |
-| L2 好价格 | 当前估值有没有安全边际？ | 🔶 部分成型（PB分位日度化，PE分位缺失） |
+| L2 好价格 | 当前估值有没有安全边际？ | ✅ TuShare PB/PE/PB历史生产物化；PB 十年覆盖不足时 fail-closed，PE 分位暂不计权 |
 | L3 合适买点 | 现在是不是好的入场时机？ | ✅ v1 保留审计；v2 已完成 QFQ 生产接入并成为 Telegram 主推门禁 |
 
 **系统不追踪价格动量**：框架是价值投资逻辑，股价下跌+基本面不变 = 估值改善 = 评分可能上升。这是设计决策，不是缺陷。
 
 ---
 
-## 二、当前系统基线（2026-07-19 快照）
+## 二、当前系统基线（2026-07-21 快照）
 
 ### 能力盘点
 
 | 模块 | 状态 | 说明 |
 |------|------|------|
-| Framework A 评分 | ✅ 正常 | 生产写入框架仍仅 A；最近一次自然 `daily` 为 2026-07-17，live DB 共 1,786 条 A 记录 |
+| Framework A 评分 | ✅ 正常 | 生产写入框架仍仅 A；最近一次自然 `daily` 为 2026-07-20，live DB 共 1,821 条 A 记录 |
 | Framework B 评分 | ⏸ report-only | 73 条 legacy B 记录仅作回溯；prospective cohort 改为显式按周冻结并绑定固定 A prediction，不启用生产写入 |
-| 每日 PB 分位 | ✅ 正常 | current_pb = 收盘价/bps，ranked in pb_hist_monthly；当前 watchlist PB 日度可计算 35/35 |
-| 毛利率字段 | ✅ 正常 | 基本面缓存 35/35，金融行业 gross_margin 不适用按规则跳过 |
+| 每日 PB 分位 | ✅ TuShare 主源 | 35/35 已物化；28 FULL_10Y、5 SINCE_LISTING、2 INSUFFICIENT_HISTORY，历史不足不沿用旧源十年分位 |
+| 通用财务/分红 | ✅ TuShare 主源 | 35/35 单事务物化；财务按有效公告日和三个已披露年度选择，分红仅取最新已实施税前事件 |
 | 定性评分 | ✅ v1 + v2 hybrid | v1 保持 30 天缓存与既有 fallback；v2 全局选择器已启用，6 股使用 source-grounded moat/market_pos，其余维度或股票回退 v1 |
 | Telegram 推送 | ✅ v2 门禁已上线 | 主推条件为 ≥ buy_strong 且 `l3_v2_signal=1`；v2 为 0/NULL 的高分股进入候补 |
 | Outcome 追踪 | ✅ 最近运行正常 | live DB 中 Framework A 30d/60d 结案 953/253；90d 尚无结案 |
 | L3 买点层 | ✅ v2 Phase 2+3 完成；选择性待观察 | QFQ 覆盖 35/35 codes、4585 行；2026-07-13/14 共写入 70 条 v2 记录且全部 pass；cron 工作日 16:00 采集 |
 | 定性评分 v2 | ✅ 全局生产读路径；覆盖扩展中 | `QUALITATIVE_V2_MODE=on`；35 股全部进入选择器，6 股 hybrid、29 股 v1 fallback。M5 36 股审计改为发布后独立研究，不阻塞安全读取 |
-| 行情数据源 | ✅ `READY_CRON` | `a-stock-lib==0.2.0`；2026-07-15 probe 的 daily/index/calendar/close cross-check 全部 PASS |
-| cron | ✅ 已按门禁重新安装 | weekly/weekly-PM/QFQ/daily/outcome 五项 managed cron 均已确认 |
-| 质量门禁 | ✅ 全绿 | 自动验收实现后全仓 `933 passed`、生产定向 `25 passed`；Ruff lint/format、mypy、CLI smoke、`git diff --check` 全部通过 |
+| 行情数据源 | ⚠️ 运行正常，probe stale | 运行时 `a-stock-lib==0.4.1`；2026-07-15 market-data probe 已过 freshness 门禁，需真实刷新 |
+| cron | ✅ 新时序已安装 | 16:00 QFQ、17:15 TuShare valuation、17:30 daily、17:45 acceptance、18:00 outcome；周六 10:00 financial/dividend |
+| 质量门禁 | ✅ 全绿 | 当前全仓 `1009 passed`；Ruff、format、mypy、真实 module smoke、Markdown 链接与 `git diff --check` 通过 |
 
 ### 关键数据规模
 
 - watchlist：35只（手动维护，固定池）
-- Framework A 记录：1,786 条；predictions 合计 1,859 条（2026-07-19 只读查询）
-- Framework B 历史记录：73 条；生产写入暂停，仅 report-only 观察
+- Framework A 记录 1,821 条、Framework B 历史记录 73 条；predictions 合计 1,894 条（2026-07-21 只读查询），强切前后 canonical hash 不变
+- Framework B 生产写入暂停，仅 report-only 观察
 - L3 v1 记录：1078 条，其中通过 148 条、30d 已结案 350 条；L3 v2 记录 70 条且 70/70 pass，两天 strong 均为 18/18 通过门禁，选择性尚未得到证明
 - 最新 tracked accuracy report 生成于 2026-07-15；其中 post-fix A 30d 结案 735 条，L3 v1 pass 的 30d 已结案 71 条
 - Phase 6 当前阻塞：2026-W30 首批 frozen cohort 已入组 7 条，当前结案 0/20、已结案周 0/3，7 条预计最早 2026-08-19 结案；门禁仍要求无 overdue
 - 定性评分 v2：独立表 6 行，000963/002050/600036/600900/601088/603606 的 moat/market_pos 来自 v2，sentiment 因证据不足为 `NULL` 并回退 v1；其余 29 股完整回退 v1
+- TuShare 三域 shadow：215 个 completed runs、0 failed；最新 daily cycle `run_id=215`、`source_as_of=2026-07-21`、`changed_count=35`
 
 ### 已知系统性偏差
 
@@ -157,8 +158,8 @@
 **当前状态（2026-07-20）：** Phase 6 仍为 report-only 深化期。旧版 B label 跟踪因每次选择 latest-A 而让到期日随 daily 后移，`0/20` 不是有效倒计时。修复后采用双轨：73 条 legacy B 记录只做回溯；prospective cohort 通过显式命令按周冻结并绑定固定 `source_a_prediction_id`。Framework B 生产写入未启用。
 
 **本轮推进复盘：**
-- 行情链路已恢复并升级到 `a-stock-lib==0.2.0`：Tushare 主源 + 隔离 BaoStock degraded fallback；真实 probe/backfill/daily 均有成功记录。
-- cron 已恢复为 managed block；`READY_CRON` 是 daily/outcome-update 恢复门禁。2026-07-15 probe 全部通过，managed cron 已按 runbook 重新安装。
+- 行情链路当前运行于 `a-stock-lib==0.4.1`：Tushare 主源 + 隔离 BaoStock degraded fallback；历史 probe/backfill/daily 均有成功记录。
+- cron 已迁移到新 managed block；`READY_CRON` 仍是从零恢复行情依赖任务的门禁，但 2026-07-15 probe 当前已 stale，不得继续描述为实时 READY。
 - Phase 6 readiness 使用 prospective frozen cohort；滚动 latest-A 仅保留为 `[UNFROZEN-PREVIEW]`，不参与门禁。
 - legacy 回溯显示真实 B 历史表现，但必须披露同日样本相关性，永不计入 prospective 门禁。
 - 保持生产边界不变：未启用 `SUPPORTED_FRAMEWORKS` 的 B 写入，未新增 B predictions，未修改 `weights.json`，未改写历史 prediction/outcome 数据。
