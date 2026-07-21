@@ -140,11 +140,19 @@ def _write_financial(
     )
 
 
-def _write_dividend_observed(conn, code: str, *, as_of: str, ex_date: str = "2026-07-18") -> None:
+def _write_dividend_observed(
+    conn,
+    code: str,
+    *,
+    as_of: str,
+    ex_date: str | None = "2026-07-18",
+    div_proc: str = "实施",
+) -> None:
+    observation_date = ex_date or "2026-07-18"
     run_id = cache.create_ingestion_run(
         conn,
         endpoint="dividend",
-        request_fingerprint=f"dividend:{code}:{as_of}",
+        request_fingerprint=_run_request_fingerprint("dividend", code),
         requested_at=_now(),
     )
     cache.persist_observations(
@@ -153,11 +161,11 @@ def _write_dividend_observed(conn, code: str, *, as_of: str, ex_date: str = "202
         rows=[
             {
                 "ts_code": f"{code}.SH",
-                "ann_date": ex_date,
-                "end_date": ex_date,
-                "record_date": ex_date,
+                "ann_date": observation_date,
+                "end_date": observation_date,
+                "record_date": observation_date,
                 "ex_date": ex_date,
-                "div_proc": "实施",
+                "div_proc": div_proc,
             }
         ],
         run_id=run_id,
@@ -359,6 +367,52 @@ def test_dividend_fetch_failure_is_not_allowed(tmp_path: Path) -> None:
     assert report["status"] == "HOLD"
     reasons = report["domains"]["dividend"]["details"]["603606"]["reasons"]
     assert "DIVIDEND_FETCH_FAILED" in reasons
+
+
+def test_dividend_readiness_rejects_not_implemented_observation(tmp_path: Path) -> None:
+    db_path = tmp_path / "shadow.db"
+    with _build_shadow_db(db_path) as conn:
+        _write_dividend_observed(
+            conn,
+            "603606",
+            as_of="2026-07-21",
+            ex_date="2026-07-18",
+            div_proc="预案",
+        )
+
+    report = readiness.assess_readiness(
+        db_path=db_path,
+        as_of="2026-07-21",
+        scope="dividend",
+        watchlist_codes=["603606"],
+    )
+
+    detail = report["domains"]["dividend"]["details"]["603606"]
+    assert detail["status"] == "HOLD"
+    assert detail["reasons"] == ["DIVIDEND_NOT_YET_IMPLEMENTED"]
+
+
+def test_dividend_readiness_rejects_implemented_observation_without_ex_date(tmp_path: Path) -> None:
+    db_path = tmp_path / "shadow.db"
+    with _build_shadow_db(db_path) as conn:
+        _write_dividend_observed(
+            conn,
+            "603606",
+            as_of="2026-07-21",
+            ex_date=None,
+            div_proc="实施",
+        )
+
+    report = readiness.assess_readiness(
+        db_path=db_path,
+        as_of="2026-07-21",
+        scope="dividend",
+        watchlist_codes=["603606"],
+    )
+
+    detail = report["domains"]["dividend"]["details"]["603606"]
+    assert detail["status"] == "HOLD"
+    assert detail["reasons"] == ["DIVIDEND_NOT_YET_IMPLEMENTED"]
 
 
 def test_batch_readiness_all_scope_merges_domain_reports_and_counts_watched_codes(tmp_path: Path) -> None:

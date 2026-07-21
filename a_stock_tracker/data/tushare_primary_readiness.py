@@ -91,8 +91,31 @@ def _dividend_run(conn: sqlite3.Connection, code: str) -> sqlite3.Row | None:
     ).fetchone()
 
 
+def _latest_eligible_dividend_observation(conn: sqlite3.Connection, code: str, as_of: str) -> sqlite3.Row | None:
+    rows = conn.execute(
+        """SELECT o.*, MAX(e.observed_at) AS observed_at,
+        MAX(r.source_as_of) AS run_source_as_of
+        FROM dividend_observations o
+        JOIN observation_events e ON e.record_key=o.record_key
+        JOIN ingestion_runs r ON r.run_id=e.run_id AND r.status='completed'
+        WHERE o.code=? GROUP BY o.record_key
+        ORDER BY REPLACE(o.ex_date, '-', '') DESC, observed_at DESC""",
+        (code,),
+    ).fetchall()
+    cutoff = _compact(as_of)
+    for row in rows:
+        ex_date = _compact(row["ex_date"])
+        if row["div_proc"] == "实施" and ex_date and ex_date <= cutoff:
+            return row
+    return None
+
+
+def _has_dividend_observation(conn: sqlite3.Connection, code: str) -> bool:
+    return conn.execute("SELECT 1 FROM dividend_observations WHERE code=? LIMIT 1", (code,)).fetchone() is not None
+
+
 def _dividend_detail(conn: sqlite3.Connection, code: str, as_of: str) -> dict[str, Any]:
-    row = _latest_observation(conn, "dividend_observations", code, "ex_date", as_of)
+    row = _latest_eligible_dividend_observation(conn, code, as_of)
     if row is not None:
         return {"status": "READY", "reasons": [], "source_as_of": row["run_source_as_of"]}
     run = _dividend_run(conn, code)
@@ -102,6 +125,8 @@ def _dividend_detail(conn: sqlite3.Connection, code: str, as_of: str) -> dict[st
         return {"status": "HOLD", "reasons": ["DIVIDEND_FETCH_FAILED"]}
     if int(run["row_count"]) == 0:
         return {"status": "BUSINESS_EMPTY", "reasons": [], "source_as_of": run["source_as_of"]}
+    if _has_dividend_observation(conn, code):
+        return {"status": "HOLD", "reasons": ["DIVIDEND_NOT_YET_IMPLEMENTED"]}
     return {"status": "HOLD", "reasons": ["MISSING_DIVIDEND_OBSERVATION"]}
 
 
