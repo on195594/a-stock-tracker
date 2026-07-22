@@ -7,6 +7,7 @@ import urllib.request
 import urllib.error
 
 from a_stock_tracker.data.cache import get_db
+from a_stock_tracker.integrations.agent_reviewer import ReviewInput, ReviewOutput, gemini_review
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +96,8 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
     db = get_db()
     primary = db.execute(
         """SELECT p.code, p.name, p.total_score, p.quant_score, p.entry_signal,
-                  p.entry_signal_version, q.moat, q.market_pos, p.l3_v2_signal
+                  p.entry_signal_version, q.moat, q.market_pos, p.l3_v2_signal,
+                  p.weights_hash, p.report_period
            FROM predictions p
            LEFT JOIN qualitative_scores q
              ON p.code = q.code
@@ -139,10 +141,59 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
 
     if primary:
         lines = [f"🟢 主推（买点触发，总分>={threshold:.0f}）"]
-        for code, name, total, quant, entry_signal, entry_version, moat, market_pos, v2_signal in primary:
-            lines.append(
-                _format_stock_line(code, name, total, quant, entry_signal, entry_version, moat, market_pos, v2_signal)
+        for rank, (
+            code,
+            name,
+            total,
+            quant,
+            entry_signal,
+            entry_version,
+            moat,
+            market_pos,
+            v2_signal,
+            weights_hash,
+            report_period,
+        ) in enumerate(primary):
+            stock_line = _format_stock_line(
+                code, name, total, quant, entry_signal, entry_version, moat, market_pos, v2_signal
             )
+            lines.append(stock_line)
+            if rank >= 3:
+                continue
+
+            try:
+                missing_fields = tuple(
+                    field_name for field_name, value in (("moat", moat), ("market_pos", market_pos)) if value is None
+                )
+                review_input = ReviewInput(
+                    code=code,
+                    name=name,
+                    score_result={
+                        "total_score": total,
+                        "quant_score": quant,
+                        "moat": moat,
+                        "market_pos": market_pos,
+                        "l3_v2_signal": v2_signal,
+                    },
+                    data_quality_result={
+                        "moat_available": moat is not None,
+                        "market_pos_available": market_pos is not None,
+                    },
+                    missing_fields=missing_fields,
+                    risk_flags=(),
+                    policy_version="framework-a-primary-push-v1",
+                    weights_hash=weights_hash,
+                    report_period=report_period,
+                )
+                review: ReviewOutput = gemini_review(review_input)
+                review_lines = [f"    🤖 审查: {review.explanation}"]
+                if review.objections:
+                    review_lines.append(f"    ⚠️ 异议: {'; '.join(review.objections)}")
+                if review.human_questions:
+                    review_lines.append(f"    ❓ 待核实: {'; '.join(review.human_questions)}")
+                lines.append("\n".join(review_lines))
+            except Exception as e:
+                logger.warning("%s reviewer block omitted: %s", code, e)
         sections.append("\n".join(lines))
 
     if backup:
