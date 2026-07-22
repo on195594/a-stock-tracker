@@ -87,6 +87,24 @@ def test_permission_error_fails_fast_without_retry(monkeypatch) -> None:
     assert pro_bar.call_count == 1
 
 
+def test_permission_error_aborts_remaining_batch_codes(isolated_db, monkeypatch) -> None:
+    pro_bar = Mock(side_effect=RuntimeError("40203: permission denied"))
+    monkeypatch.setattr(script.ts, "pro_bar", pro_bar)
+
+    with sqlite3.connect(isolated_db) as conn:
+        failures, latest_dates = script._collect_codes(
+            conn,
+            object(),
+            ["600036", "000001"],
+            "20260101",
+            "20260722",
+        )
+
+    assert failures == {"600036": "RuntimeError: 40203: permission denied"}
+    assert latest_dates == []
+    assert pro_bar.call_count == 1
+
+
 def test_transient_error_retries_to_cap_then_gives_up(monkeypatch) -> None:
     pro_bar = Mock(side_effect=ConnectionError("connection timeout"))
     monkeypatch.setattr(script.ts, "pro_bar", pro_bar)
@@ -98,6 +116,10 @@ def test_transient_error_retries_to_cap_then_gives_up(monkeypatch) -> None:
 
     assert pro_bar.call_count == script.MAX_ATTEMPTS
     assert script.time.sleep.call_count == script.MAX_ATTEMPTS - 1
+
+
+def test_hyphenated_rate_limit_error_is_transient() -> None:
+    assert script._is_transient_error(RuntimeError("API rate-limit exceeded"))
 
 
 def test_stuck_call_is_bounded_by_per_code_budget(monkeypatch) -> None:
@@ -133,6 +155,23 @@ def test_batch_failure_returns_nonzero_and_names_failed_code(isolated_db, monkey
     assert "QFQ_TUSHARE_BATCH_FAILED" in captured.err
     assert "000001" in captured.err
     assert "600036" not in captured.err
+
+
+def test_client_initialization_failure_names_every_requested_code(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(script, "WATCHLIST", [{"code": "600036"}, {"code": "000001"}])
+
+    def fail_create_api():
+        raise RuntimeError("client unavailable")
+
+    monkeypatch.setattr(script, "_create_api", fail_create_api)
+
+    exit_code = script.run(script.Args(backfill_days=200, code=None))
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "QFQ_TUSHARE_BATCH_FAILED: client initialization: client unavailable" in captured.err
+    assert "  600036: client initialization failed" in captured.err
+    assert "  000001: client initialization failed" in captured.err
 
 
 def test_bse_style_code_pins_shared_converter_current_behavior() -> None:

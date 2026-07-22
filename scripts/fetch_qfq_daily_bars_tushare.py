@@ -41,6 +41,7 @@ _TRANSIENT_MARKERS = (
     "timed out",
     "connection",
     "rate limit",
+    "rate-limit",
     "too many requests",
     "429",
     "频率",
@@ -200,6 +201,8 @@ def _collect_codes(
             conn.rollback()
             failures[code] = f"{type(exc).__name__}: {exc}"
             logger.error("QFQ_TUSHARE_CODE_FAILED code=%s detail=%s", code, failures[code])
+            if _is_permission_error(exc):
+                break
     return failures, latest_dates
 
 
@@ -218,6 +221,8 @@ def run(args: Args) -> int:
     except Exception as exc:
         logger.error("QFQ_TUSHARE_CLIENT_FAILED detail=%s", exc)
         print(f"QFQ_TUSHARE_BATCH_FAILED: client initialization: {exc}", file=sys.stderr)
+        for code in codes:
+            print(f"  {code}: client initialization failed", file=sys.stderr)
         return 1
 
     with sqlite3.connect(DB_PATH) as conn:
