@@ -40,6 +40,32 @@ def _response(trade_date: str | None = None, volume: float = 123.45) -> pd.DataF
     )
 
 
+def test_create_api_prefers_environment_token(monkeypatch) -> None:
+    api = object()
+    pro_api = Mock(return_value=api)
+    read_token = Mock(return_value="dotenv-token")
+    monkeypatch.setenv("TUSHARE_TOKEN", "environment-token")
+    monkeypatch.setattr(script, "read_tushare_token", read_token)
+    monkeypatch.setattr(script.ts, "pro_api", pro_api)
+
+    assert script._create_api() is api
+    pro_api.assert_called_once_with("environment-token")
+    read_token.assert_not_called()
+
+
+def test_create_api_uses_shared_token_reader_when_environment_token_is_absent(monkeypatch) -> None:
+    api = object()
+    pro_api = Mock(return_value=api)
+    read_token = Mock(return_value="dotenv-token")
+    monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
+    monkeypatch.setattr(script, "read_tushare_token", read_token)
+    monkeypatch.setattr(script.ts, "pro_api", pro_api)
+
+    assert script._create_api() is api
+    read_token.assert_called_once_with()
+    pro_api.assert_called_once_with("dotenv-token")
+
+
 def test_happy_path_converts_and_writes_only_shadow_partition(isolated_db, monkeypatch) -> None:
     with sqlite3.connect(isolated_db) as conn:
         cache_mod.upsert_daily_bars(

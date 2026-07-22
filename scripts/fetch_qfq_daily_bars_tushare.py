@@ -24,6 +24,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from a_stock_lib.providers.tushare_fundamentals import read_tushare_token
 from a_stock_lib.providers.tushare_quotes import to_tushare_stock_code
 from a_stock_tracker.config import WATCHLIST
 from a_stock_tracker.data.cache import DB_PATH, upsert_daily_bars
@@ -207,7 +208,7 @@ def _collect_codes(
 
 
 def _create_api() -> Any:
-    token = os.environ.get("TUSHARE_TOKEN")
+    token = os.environ.get("TUSHARE_TOKEN") or read_tushare_token()
     return ts.pro_api(token) if token else ts.pro_api()
 
 
