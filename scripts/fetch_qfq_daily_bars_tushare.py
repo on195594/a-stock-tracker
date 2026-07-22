@@ -221,6 +221,7 @@ def _detect_drift(
                 trade_date,
                 existing_close,
             )
+            ratios.append((trade_date, None))
             continue
         ratio_diff = abs(new_closes[trade_date] - existing_close) / abs(existing_close)
         if not math.isfinite(ratio_diff):
