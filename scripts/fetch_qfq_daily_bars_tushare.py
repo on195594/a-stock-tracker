@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 import os
 import queue
 import random
@@ -222,6 +223,13 @@ def _detect_drift(
             )
             continue
         ratio_diff = abs(new_closes[trade_date] - existing_close) / abs(existing_close)
+        if not math.isfinite(ratio_diff):
+            logger.warning(
+                "QFQ_TUSHARE_DRIFT_SKIP code=%s trade_date=%s reason=non_finite_ratio",
+                code,
+                trade_date,
+            )
+            continue
         ratios.append((trade_date, ratio_diff))
 
     best_run: tuple[str, str, int] | None = None
