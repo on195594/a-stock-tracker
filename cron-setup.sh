@@ -60,16 +60,17 @@ fi
 # 删除旧版散落规则和新版 managed block，避免旧时间、注释行或路径变化造成误判。
 BASE_CRONTAB=$(printf '%s\n' "$CURRENT_CRONTAB" | awk \
     -v start="$MANAGED_START" \
-    -v end="$MANAGED_END" '
+    -v end="$MANAGED_END" \
+    -v project_dir="$PROJECT_DIR" '
     $0 == start { in_block = 1; next }
     $0 == end { in_block = 0; next }
     in_block { next }
     /# a-stock-tracker/ { next }
-    /a-stock-tracker\/cron-alert-wrap\.sh/ && /pipeline\.py (weekly|daily|outcome-update)/ { next }
-    /a-stock-tracker\/cron-alert-wrap\.sh/ && /check_qualitative_v2_production\.py/ { next }
-    /a-stock-tracker\/cron-alert-wrap\.sh/ && /weekly_pm_loop\.py/ { next }
-    /a-stock-tracker\/cron-alert-wrap\.sh/ && /fetch_qfq_daily_bars/ { next }
-    /a-stock-tracker\/cron-alert-wrap\.sh/ && /tushare_primary/ { next }
+    index($0, project_dir "/cron-alert-wrap.sh") > 0 && /pipeline\.py (weekly|daily|outcome-update)/ { next }
+    index($0, project_dir "/cron-alert-wrap.sh") > 0 && /check_qualitative_v2_production\.py/ { next }
+    index($0, project_dir "/cron-alert-wrap.sh") > 0 && /weekly_pm_loop\.py/ { next }
+    index($0, project_dir "/cron-alert-wrap.sh") > 0 && /fetch_qfq_daily_bars/ { next }
+    index($0, project_dir "/cron-alert-wrap.sh") > 0 && /tushare_primary/ { next }
     { print }
 ')
 
