@@ -98,6 +98,15 @@ cycle，周六 10:00 运行 financial/dividend cycle。旧 `fetcher.py` 不再�
 主源。三域 readiness 与上述行情 `READY_CRON` 是独立门禁。运行手册：
 `docs/runbooks/tushare-primary-production.md`。
 
+**QFQ 日线主源（2026-07-22 切换）**：工作日 16:00 QFQ 采集已从 BaoStock 切换到
+`scripts/fetch_qfq_daily_bars_tushare.py`（`tushare.pro_bar(adj="qfq")`），写入的
+`daily_bars.adjusted='qfq'` 表结构/下游消费方式不变。新脚本自带增量抓取 + 重叠窗口
+漂移检测（连续 ≥5 交易日一致偏移才判定漂移，避免单日噪声误报）+ 事务化全量重刷。
+切换前已用真实 TuShare 数据对账（35 股/4550 重叠交易日 0 超容差）并在隔离库和真实
+生产库各完成一次端到端模拟漂移演练。旧 `scripts/fetch_qfq_daily_bars.py`（BaoStock）
+保留≥1 个月作为代码级回退，配合 `backups/tracker-pre-qfq-tushare-cutover-2026-07-22.db`
+数据库快照作为数据级回退。详见 `CHANGELOG.md` 2026-07-22 条目。
+
 ---
 
 ## 常见陷阱
@@ -111,14 +120,14 @@ cycle，周六 10:00 运行 financial/dividend cycle。旧 `fetcher.py` 不再�
 
 ---
 
-## Phase 状态快照（2026-07-21）
+## Phase 状态快照（2026-07-22）
 
 | Phase | 状态 | 说明 |
 |-------|------|------|
 | Phase 3 Gemini/Telegram | ✅ 上线 | v1 定性评分保持生产；主推由 ≥44 分 AND `l3_v2_signal=1` 触发 |
 | Phase 4 验证基础 | ✅ 完成，持续观察 | A框架 30d 结案 953 条，其中 post-fix 735 条；hit_rate 待验证 |
 | Phase 5 L3 买点层 v1 | ✅ 完成，保留审计 | 最新 tracked report 中 v1 pass 的 30d 已结案 71 条、命中率 2.8%；不再作为生产主推门禁 |
-| Phase 5 L3 v2（QFQ）| ✅ Phase 2+3 完成 | Phase 2: QFQ 35/35×130 行回填，pass_strong 激活，cron 16:00；Phase 3: 推送触发切换至 l3_v2_signal=1（commit e080f15） |
+| Phase 5 L3 v2（QFQ）| ✅ Phase 2+3 完成，采集源已切换 | Phase 2: QFQ 35/35×130 行回填，pass_strong 激活，cron 16:00；Phase 3: 推送触发切换至 l3_v2_signal=1（commit e080f15）；2026-07-22 采集源由 BaoStock 切换到 TuShare，`adjusted='qfq'` 表结构/下游不变 |
 | TuShare 三域生产主源 | ✅ 强切完成 | 35/35 估值、通用财务、分红物化；运行时 0.4.1；PB 历史覆盖 28 FULL_10Y / 5 SINCE_LISTING / 2 INSUFFICIENT_HISTORY；predictions 未改写 |
 | 定性评分 v2 MILESTONE-002 | ✅ fixture-first 完成 | contract/types/taxonomy/schema/prompt/validator 与 145 项本地合同测试已完成，AGY 边界加固复审 PASS |
 | 定性评分 v2 MILESTONE-003 | ✅ 文件 shadow seam 完成 | 独立 client/CLI、JSONL artifact、错误分类、重试和同 hash 去重已完成，AGY 最终只读审查 PASS；该研究 shadow 与后续生产 canary 物理隔离 |

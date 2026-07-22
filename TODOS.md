@@ -60,9 +60,11 @@ Phase 1-3.6 历史实施记录，不再作为后续计划来源。
 
 **边界：** 当前 M5 模型 CLI 仍只能执行 synthetic transport。v1.2 capability report 是零调用离线结果，不授权质量 pilot、36 股采集、Reviewer、Claude 或 Gemini。生产 cache/schema、pipeline、cron、Telegram、权重、M6 和 cutover 始终不在两 Sprint 授权内。
 
-## L3 v2 qfq 覆盖修复（2026-07-12 已完成）
+## L3 v2 qfq 覆盖修复（2026-07-12 已完成，采集源已于 2026-07-22 切换）
 
 原 `NEED_QFQ` 已由 BaoStock QFQ 采集与 `daily_bars.adjusted='qfq'` 缓存方案解除。当前 35/35 代码有 QFQ 覆盖，工作日 16:00 cron 已安装，daily 与 Telegram 主推已使用 `l3_v2_signal`。历史离线 gate 和限频问题保留在 `docs/reviews/2026-07-10-l3-v2-backtest-retro.md` 供追溯，不再是当前 TODO。
+
+**2026-07-22 更新：** 底层采集源已从 BaoStock 切换到 TuShare（`scripts/fetch_qfq_daily_bars_tushare.py`），`daily_bars.adjusted='qfq'` 这一物化结果的表结构/字段/下游消费方式不变。详见 `CHANGELOG.md` 2026-07-22 条目。旧 BaoStock 脚本 `scripts/fetch_qfq_daily_bars.py` 保留至少 1 个月作为回退方案，清理前需满足：连续多个交易日 cron 正常完成 + 已做过模拟漂移演练 + 已做过真实/模拟数据回滚演练。
 
 ## Phase 6 生产化门槛（当前有效）
 

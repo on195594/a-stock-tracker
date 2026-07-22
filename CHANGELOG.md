@@ -2,6 +2,14 @@
 
 所有重大变更按时间倒序记录。
 
+## 2026-07-22 — QFQ 日线数据源从 BaoStock 切换到 TuShare
+
+- 新增 `scripts/fetch_qfq_daily_bars_tushare.py`，用 `tushare.pro_bar(adj="qfq")` 替代原 BaoStock 采集，复用 `a_stock_lib.providers.tushare_quotes.to_tushare_stock_code()`；TuShare `vol`（手）换算为股（×100）后写入既有 `daily_bars` 表。
+- 分四阶段推进并逐阶段验收：①新脚本先写入隔离 `adjusted='qfq_tushare_shadow'` 分区，不触碰生产 `adjusted='qfq'`；②只读对账脚本 `scripts/reconcile_qfq_shadow.py` 验证 35 股、4550 个重叠交易日 0 处超容差（价格 `abs<=max(0.01, 0.1%)`，volume `abs<=1`），实测两数据源 close 相对噪声 P99≈0.0816%；③新增增量抓取 + 重叠窗口漂移检测（最近 20 个交易日，阈值取噪声 P99 的 4 倍即 0.35%，连续 ≥5 天一致偏移才判定漂移，避免单日噪声误报）+ 事务化全量重刷（完整性校验不通过则零写入）；④写入目标正式切换到生产 `adjusted='qfq'` 分区。
+- 复审共发现并修复 5 处真实缺陷：脚本无 `.env` token 回退（会导致 cron 静默失败，PM 自查发现）；权限错误未在整批内 fail-fast；客户端初始化失败清单不完整；`rate-limit` 连字符拼写未识别为瞬时错误；漂移检测的"连续"判定按列表相邻而非日历相邻，跳过缺失/非有限比率的交易日时会错误桥接两段独立数据（2 处对称分支）。
+- 切换 cron 前对 `tracker.db` 做文件级快照备份（`backups/tracker-pre-qfq-tushare-cutover-2026-07-22.db`，SHA-256 校验一致），并完成两次端到端模拟漂移演练（隔离测试库 + 真实生产库，均用真实 TuShare API 调用）：人为破坏招商银行(600036)最近 20 个交易日 QFQ 值，脚本正确识别漂移、触发全量重刷，20/20 天数值精确恢复到破坏前原值。
+- 工作日 16:00 QFQ cron 正式切换为新脚本；旧 `scripts/fetch_qfq_daily_bars.py`（BaoStock）保留不删除，作为代码级回退方案，与数据库快照共同构成完整回滚能力。清理条件：连续多个交易日 cron 正常完成 + 已完成模拟漂移演练 + 已完成真实/模拟数据回滚演练，三者齐备后再评估清理（保留至少 1 个月）。
+
 ## 2026-07-21 — TuShare 估值/财务/分红三域生产强切
 
 - 将生产运行时升级到 `a-stock-lib==0.4.1`，新增隔离 shadow schema、不可变 observation、checkpoint、gzip artifact、35 股批量采集、独立 readiness 和三域 feature flags。
