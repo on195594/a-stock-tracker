@@ -40,6 +40,54 @@ def _response(trade_date: str | None = None, volume: float = 123.45) -> pd.DataF
     )
 
 
+def _responses(dates: list[str], closes: list[float]) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "ts_code": "600036.SH",
+                "trade_date": trade_date.replace("-", ""),
+                "open": close,
+                "high": close,
+                "low": close,
+                "close": close,
+                "vol": 100.0,
+            }
+            for trade_date, close in zip(dates, closes, strict=True)
+        ]
+    )
+
+
+def _seed_shadow(db_path: str, code: str, dates: list[str], closes: list[float]) -> None:
+    bars = pd.DataFrame(
+        [
+            {"date": trade_date, "open": close, "high": close, "low": close, "close": close, "volume": 1.0}
+            for trade_date, close in zip(dates, closes, strict=True)
+        ]
+    )
+    with sqlite3.connect(db_path) as conn:
+        cache_mod.upsert_daily_bars(
+            conn,
+            code,
+            bars,
+            source="seed.shadow",
+            adjusted=script.SHADOW_ADJUSTED,
+            volume_unit="share",
+            fetched_at="2026-01-01T00:00:00",
+        )
+        conn.commit()
+
+
+def _history_dates() -> tuple[list[str], list[str]]:
+    existing = [stamp.date().isoformat() for stamp in pd.bdate_range(end=date.today() - timedelta(days=3), periods=35)]
+    new = [
+        stamp.date().isoformat()
+        for stamp in pd.bdate_range(start=date.fromisoformat(existing[-1]) + timedelta(days=1), end=date.today())
+    ]
+    if not new:
+        new = [(date.fromisoformat(existing[-1]) + timedelta(days=1)).isoformat()]
+    return existing, new
+
+
 def test_create_api_prefers_environment_token(monkeypatch) -> None:
     api = object()
     pro_api = Mock(return_value=api)
@@ -101,6 +149,121 @@ def test_happy_path_converts_and_writes_only_shadow_partition(isolated_db, monke
         "adj": "qfq",
         "api": ANY,
     }
+
+
+def test_incremental_fetch_writes_only_new_dates_without_drift(isolated_db, monkeypatch) -> None:
+    existing_dates, new_dates = _history_dates()
+    _seed_shadow(isolated_db, "600036", existing_dates, [100.0] * len(existing_dates))
+    overlap_dates = existing_dates[-20:]
+    fetched_dates = overlap_dates + new_dates
+    fetched_closes = [100.01] * len(overlap_dates) + [101.0] * len(new_dates)
+    pro_bar = Mock(return_value=_responses(fetched_dates, fetched_closes))
+    monkeypatch.setattr(script.ts, "pro_bar", pro_bar)
+
+    with sqlite3.connect(isolated_db) as conn:
+        count, latest = script._fetch_one(conn, object(), "600036", "20200101", date.today().strftime("%Y%m%d"))
+        rows = conn.execute(
+            "SELECT trade_date, close, source, fetched_at FROM daily_bars "
+            "WHERE code = ? AND adjusted = ? ORDER BY trade_date",
+            ("600036", script.SHADOW_ADJUSTED),
+        ).fetchall()
+
+    expected_start = (date.fromisoformat(existing_dates[-1]) - timedelta(days=40)).strftime("%Y%m%d")
+    assert pro_bar.call_count == 1
+    assert pro_bar.call_args.kwargs["start_date"] == expected_start
+    assert count == len(new_dates)
+    assert latest == new_dates[-1]
+    assert rows[: len(existing_dates)] == [
+        (trade_date, 100.0, "seed.shadow", "2026-01-01T00:00:00") for trade_date in existing_dates
+    ]
+    assert [(row[0], row[1], row[2]) for row in rows[len(existing_dates) :]] == [
+        (trade_date, 101.0, script.SOURCE) for trade_date in new_dates
+    ]
+
+
+def test_consistent_overlap_drift_triggers_complete_full_reprocess(isolated_db, monkeypatch, caplog) -> None:
+    caplog.set_level("INFO")
+    existing_dates, new_dates = _history_dates()
+    _seed_shadow(isolated_db, "600036", existing_dates, [120.0] * len(existing_dates))
+    overlap_dates = existing_dates[-20:]
+    incremental = _responses(overlap_dates + new_dates, [99.96] * len(overlap_dates) + [100.0] * len(new_dates))
+    full_dates = existing_dates + new_dates
+    full = _responses(full_dates, [99.96] * len(existing_dates) + [100.0] * len(new_dates))
+    pro_bar = Mock(side_effect=[incremental, full])
+    monkeypatch.setattr(script.ts, "pro_bar", pro_bar)
+
+    with sqlite3.connect(isolated_db) as conn:
+        count, latest = script._fetch_one(conn, object(), "600036", "20200101", date.today().strftime("%Y%m%d"))
+        rows = conn.execute(
+            "SELECT trade_date, close, source FROM daily_bars WHERE code = ? AND adjusted = ? ORDER BY trade_date",
+            ("600036", script.SHADOW_ADJUSTED),
+        ).fetchall()
+
+    assert pro_bar.call_count == 2
+    assert pro_bar.call_args_list[1].kwargs["start_date"] == existing_dates[0].replace("-", "")
+    assert count == len(full_dates)
+    assert latest == new_dates[-1]
+    assert rows == [
+        (trade_date, 99.96 if trade_date in existing_dates else 100.0, script.SOURCE) for trade_date in full_dates
+    ]
+    assert "QFQ_TUSHARE_DRIFT_DETECTED code=600036" in caplog.text
+    assert "run_length=20" in caplog.text
+    assert "QFQ_TUSHARE_REPROCESS_OK code=600036" in caplog.text
+
+
+def test_single_day_overlap_noise_does_not_trigger_reprocess(isolated_db, monkeypatch, caplog) -> None:
+    existing_dates, new_dates = _history_dates()
+    _seed_shadow(isolated_db, "600036", existing_dates, [100.0] * len(existing_dates))
+    overlap_dates = existing_dates[-20:]
+    overlap_closes = [100.0] * len(overlap_dates)
+    overlap_closes[8] = 80.0
+    pro_bar = Mock(return_value=_responses(overlap_dates + new_dates, overlap_closes + [101.0] * len(new_dates)))
+    monkeypatch.setattr(script.ts, "pro_bar", pro_bar)
+
+    with sqlite3.connect(isolated_db) as conn:
+        count, _latest = script._fetch_one(conn, object(), "600036", "20200101", date.today().strftime("%Y%m%d"))
+        noisy_close = conn.execute(
+            "SELECT close FROM daily_bars WHERE code = ? AND adjusted = ? AND trade_date = ?",
+            ("600036", script.SHADOW_ADJUSTED, overlap_dates[8]),
+        ).fetchone()[0]
+
+    assert count == len(new_dates)
+    assert pro_bar.call_count == 1
+    assert noisy_close == 100.0
+    assert "QFQ_TUSHARE_DRIFT_DETECTED" not in caplog.text
+
+
+def test_incomplete_full_reprocess_writes_nothing_and_fails_batch(isolated_db, monkeypatch, capsys, caplog) -> None:
+    existing_dates, new_dates = _history_dates()
+    _seed_shadow(isolated_db, "600036", existing_dates, [120.0] * len(existing_dates))
+    with sqlite3.connect(isolated_db) as conn:
+        before = conn.execute(
+            "SELECT * FROM daily_bars WHERE code = ? AND adjusted = ? ORDER BY trade_date",
+            ("600036", script.SHADOW_ADJUSTED),
+        ).fetchall()
+
+    overlap_dates = existing_dates[-20:]
+    incremental = _responses(overlap_dates + new_dates, [99.96] * len(overlap_dates) + [100.0] * len(new_dates))
+    missing_date = existing_dates[0]
+    incomplete_dates = existing_dates[1:] + new_dates
+    incomplete = _responses(incomplete_dates, [99.96] * (len(existing_dates) - 1) + [100.0] * len(new_dates))
+    monkeypatch.setattr(script, "_create_api", lambda: object())
+    monkeypatch.setattr(script.ts, "pro_bar", Mock(side_effect=[incremental, incomplete]))
+
+    exit_code = script.run(script.Args(backfill_days=200, code="600036"))
+
+    with sqlite3.connect(isolated_db) as conn:
+        after = conn.execute(
+            "SELECT * FROM daily_bars WHERE code = ? AND adjusted = ? ORDER BY trade_date",
+            ("600036", script.SHADOW_ADJUSTED),
+        ).fetchall()
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert before == after
+    assert "QFQ_TUSHARE_BATCH_FAILED" in captured.err
+    assert "600036" in captured.err
+    assert "QFQ_TUSHARE_REPROCESS_INCOMPLETE code=600036" in caplog.text
+    assert missing_date in caplog.text
 
 
 def test_permission_error_fails_fast_without_retry(monkeypatch) -> None:

@@ -35,6 +35,10 @@ SHADOW_ADJUSTED = "qfq_tushare_shadow"
 SOURCE = "tushare.pro_bar.qfq"
 MAX_ATTEMPTS = 3
 RETRY_BUDGET_SECONDS = 60.0
+OVERLAP_BUFFER_DAYS = 40
+OVERLAP_TRADING_DAYS = 20
+DRIFT_RATIO_THRESHOLD = 0.0035
+DRIFT_MIN_RUN_LENGTH = 5
 _CODE_RE = re.compile(r"^\d{6}$")
 _PERMISSION_MARKERS = ("40203", "权限", "permission")
 _TRANSIENT_MARKERS = (
@@ -170,9 +174,81 @@ def _query_qfq(api: Any, code: str, start_date: str, end_date: str) -> pd.DataFr
     raise AssertionError("unreachable")
 
 
-def _fetch_one(conn: sqlite3.Connection, api: Any, code: str, start_date: str, end_date: str) -> tuple[int, str]:
-    frame = _query_qfq(api, code, start_date, end_date)
-    count = upsert_daily_bars(
+def _partition_date_bounds(conn: sqlite3.Connection, code: str) -> tuple[str | None, str | None]:
+    row = conn.execute(
+        "SELECT MIN(trade_date), MAX(trade_date) FROM daily_bars WHERE code = ? AND adjusted = ?",
+        (code, SHADOW_ADJUSTED),
+    ).fetchone()
+    return row[0], row[1]
+
+
+def _partition_dates(conn: sqlite3.Connection, code: str) -> set[str]:
+    return {
+        row[0]
+        for row in conn.execute(
+            "SELECT trade_date FROM daily_bars WHERE code = ? AND adjusted = ?",
+            (code, SHADOW_ADJUSTED),
+        )
+    }
+
+
+def _detect_drift(
+    conn: sqlite3.Connection,
+    code: str,
+    frame: pd.DataFrame,
+    existing_max_date: str,
+) -> tuple[str, str, int] | None:
+    overlap = frame.loc[frame["date"] <= existing_max_date, ["date", "close"]]
+    if overlap.empty:
+        return None
+
+    new_closes = {str(row.date): float(row.close) for row in overlap.itertuples(index=False)}
+    placeholders = ",".join("?" for _ in new_closes)
+    rows = conn.execute(
+        f"SELECT trade_date, close FROM daily_bars "
+        f"WHERE code = ? AND adjusted = ? AND trade_date IN ({placeholders}) "
+        "ORDER BY trade_date DESC LIMIT ?",
+        (code, SHADOW_ADJUSTED, *new_closes, OVERLAP_TRADING_DAYS),
+    ).fetchall()
+
+    ratios: list[tuple[str, float]] = []
+    for trade_date, existing_close in reversed(rows):
+        if existing_close is None or existing_close == 0:
+            logger.warning(
+                "QFQ_TUSHARE_DRIFT_SKIP code=%s trade_date=%s existing_close=%s",
+                code,
+                trade_date,
+                existing_close,
+            )
+            continue
+        ratio_diff = abs(new_closes[trade_date] - existing_close) / abs(existing_close)
+        ratios.append((trade_date, ratio_diff))
+
+    best_run: tuple[str, str, int] | None = None
+    for start_index, (run_start, first_ratio) in enumerate(ratios):
+        if first_ratio <= DRIFT_RATIO_THRESHOLD:
+            continue
+        run_min = first_ratio
+        run_max = first_ratio
+        for end_index in range(start_index, len(ratios)):
+            run_end, ratio = ratios[end_index]
+            if ratio <= DRIFT_RATIO_THRESHOLD:
+                break
+            run_min = min(run_min, ratio)
+            run_max = max(run_max, ratio)
+            if run_max - run_min > DRIFT_RATIO_THRESHOLD:
+                break
+            run_length = end_index - start_index + 1
+            if best_run is None or run_length > best_run[2]:
+                best_run = (run_start, run_end, run_length)
+
+    if best_run is not None and best_run[2] >= DRIFT_MIN_RUN_LENGTH:
+        return best_run
+    return None
+
+
+def _upsert_frame(conn: sqlite3.Connection, code: str, frame: pd.DataFrame) -> int:
+    return upsert_daily_bars(
         conn,
         code,
         frame,
@@ -180,8 +256,53 @@ def _fetch_one(conn: sqlite3.Connection, api: Any, code: str, start_date: str, e
         adjusted=SHADOW_ADJUSTED,
         volume_unit="share",
     )
-    conn.commit()
-    return count, str(frame["date"].max())
+
+
+def _fetch_one(conn: sqlite3.Connection, api: Any, code: str, start_date: str, end_date: str) -> tuple[int, str]:
+    existing_min_date, existing_max_date = _partition_date_bounds(conn, code)
+    fetch_start = start_date
+    if existing_max_date is not None:
+        fetch_start = (date.fromisoformat(existing_max_date) - timedelta(days=OVERLAP_BUFFER_DAYS)).strftime("%Y%m%d")
+
+    frame = _query_qfq(api, code, fetch_start, end_date)
+    latest_date = str(frame["date"].max())
+    if existing_max_date is None:
+        with conn:
+            count = _upsert_frame(conn, code, frame)
+        return count, latest_date
+
+    drift_run = _detect_drift(conn, code, frame, existing_max_date)
+    if drift_run is None:
+        incremental = frame.loc[frame["date"] > existing_max_date]
+        with conn:
+            count = _upsert_frame(conn, code, incremental)
+        return count, latest_date
+
+    run_start, run_end, run_length = drift_run
+    logger.warning(
+        "QFQ_TUSHARE_DRIFT_DETECTED code=%s run_start=%s run_end=%s run_length=%d",
+        code,
+        run_start,
+        run_end,
+        run_length,
+    )
+    baseline_dates = _partition_dates(conn, code)
+    assert existing_min_date is not None
+    reprocessed = _query_qfq(api, code, existing_min_date.replace("-", ""), end_date)
+    reprocessed_dates = set(reprocessed["date"].astype(str))
+    missing_dates = sorted(baseline_dates - reprocessed_dates)
+    if missing_dates:
+        logger.error(
+            "QFQ_TUSHARE_REPROCESS_INCOMPLETE code=%s missing_dates=%s",
+            code,
+            missing_dates,
+        )
+        raise RuntimeError(f"full reprocess missing existing dates: {', '.join(missing_dates)}")
+
+    with conn:
+        count = _upsert_frame(conn, code, reprocessed)
+    logger.info("QFQ_TUSHARE_REPROCESS_OK code=%s rows=%d", code, count)
+    return count, str(reprocessed["date"].max())
 
 
 def _collect_codes(
