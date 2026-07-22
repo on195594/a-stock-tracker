@@ -49,6 +49,7 @@ TELEGRAM_BOT_TOKEN=你的_Bot_Token
 TELEGRAM_CHAT_ID=你的_Chat_ID
 TUSHARE_TOKEN=你的_Tushare_Pro_Token
 MARKET_DATA_ALLOW_BAOSTOCK_ONLY=0
+# 新部署安全默认 off；当前生产实际为 on。复制此模板会让所有股票走 v1，决定取值前请阅读 CLAUDE.md“Phase 状态快照”中的“定性评分 v2 生产读路径”。
 QUALITATIVE_V2_MODE=off
 ```
 
@@ -121,7 +122,7 @@ python3 scripts/run_qualitative_v2_m5.py preview \
   --sample tests/fixtures/milestone005/sample.csv \
   --bundle path/to/synthetic/bundle-manifest.json
 
-# 删除某只股票的本地历史数据
+# 删除某只股票在 predictions 和 stock_fundamentals 表中的记录
 python3 pipeline.py remove 601857
 
 # M4 轻量 probe（5 次请求）与同 run build（仅补采另外 30 个行业）
@@ -187,7 +188,7 @@ python3 pipeline.py init
 删除股票：
 
 - 如果只是停止后续跟踪，从 `WATCHLIST` 删除即可，历史记录保留。
-- 如果要删除本地历史数据，运行 `python3 pipeline.py remove <股票代码>`。该命令会删除 `stock_fundamentals` 和 `predictions` 中对应记录，执行前需要确认目标代码。
+- 如果要删除 `predictions` 和 `stock_fundamentals` 中该股票的记录，运行 `python3 pipeline.py remove <股票代码>`；其他表不受影响，执行前需要确认目标代码。
 
 ## 核心模块
 

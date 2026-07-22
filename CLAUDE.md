@@ -8,7 +8,8 @@ A 股自动评分管道。每日盘后对 watchlist 运行 Framework A 定量评
 追踪 30/60/90 天收益率及 benchmark 相对 alpha。
 
 **文档指针**（详细逻辑优先读这里，不要靠 CLAUDE.md）：
-- 架构 / 数据模型 → `docs/design.md`
+- 架构 / 数据模型 → `docs/architecture.md` 与 `AGENTS.md`
+- 历史设计 → `docs/design.md`
 - 已知陷阱 / 历史修复 → `docs/lessons-learned.md`
 - 演进路线图 → `docs/evolution-roadmap.md`
 - 测试计划 → `docs/test-plan.md`
@@ -132,7 +133,7 @@ cycle，周六 10:00 运行 financial/dividend cycle。旧 `fetcher.py` 不再�
 | 定性评分 v2 MILESTONE-002 | ✅ fixture-first 完成 | contract/types/taxonomy/schema/prompt/validator 与 145 项本地合同测试已完成，AGY 边界加固复审 PASS |
 | 定性评分 v2 MILESTONE-003 | ✅ 文件 shadow seam 完成 | 独立 client/CLI、JSONL artifact、错误分类、重试和同 hash 去重已完成，AGY 最终只读审查 PASS；该研究 shadow 与后续生产 canary 物理隔离 |
 | 定性评分 v2 生产读路径 | ✅ 全局 `on` | 35 股全部进入 v2 选择器；独立 v2 表 6 行。603606 及 000963/002050/600036/600900/601088 使用 moat/market_pos v2 与 sentiment v1 fallback，其余 29 股逐股回退 v1；只读生产验收当前 PASS |
-| 定性评分 v2 MILESTONE-004 | ⛔ `NO_QUALIFIED_FRAME_SOURCE` | v1.1 技术关闭；v1.2 三调用完整执行但均为 Tushare `40203`，capability FAIL；attempt 已消费，禁止重试/回退，继续须另开 v1.3 |
+| 定性评分 v2 MILESTONE-004 | ✅ v1.3.1 工程实现、轻量 frame/sample 完成 | 后续轻量路线已完成 35/35 调用、4,694 行 frame 和 36 股 sample，仍仅限本地研究；最新状态与边界以 `docs/project-status.md` 为准 |
 | Phase 6 多框架激活 | 🔶 report-only | Framework B 仍不写生产；73 条 legacy 仅回溯；2026-W30 首批 7 条 prospective cohort 已冻结并绑定 2026-07-20 A prediction，最早 2026-08-19 结案 |
 | Phase 7 选股宇宙 | ⏸ 未启动 | 待 Phase 6 完成或明确降级策略 |
 

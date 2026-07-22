@@ -256,7 +256,7 @@
 
 ## 五、跨阶段约束（所有 Phase 必须遵守）
 
-1. **predictions 表历史数据不可改写**：任何评分逻辑变更只影响新记录，旧记录保留原始值
+1. **predictions 核心评分字段历史数据不可改写**：评分逻辑变更只影响新记录，不得改写既有行的 `quant_score`、`total_score`、`weights_hash` 等核心评分字段；L3 / `entry_signal` 等衍生信号 metadata 会随其自身逻辑演进对既有行回填或修正，这是有意设计，不属于评分口径改写
 2. **weights_hash 完整性**：weights.json 的 frameworks 子树变更必须被 pipeline 检测到（hash 变更会退出）
 3. **alpha_*d 不直接写入**：Generated Column，任何 INSERT/UPDATE 都不能包含此列
 4. **AKShare mock 原则**：所有测试用 monkeypatch，不发真实网络请求

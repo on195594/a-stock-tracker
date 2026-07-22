@@ -1095,7 +1095,10 @@ def main() -> None:
     p_cohort.add_argument("--dry-run", action="store_true", help="只显示候选计数，不建表、不写数据库")
     p_cohort.add_argument("--label-date", help="冻结日期 YYYY-MM-DD，默认今天")
     sub.add_parser("phase-check", help="手动触发 Phase 4 里程碑检测（自动在 outcome-update 后运行）")
-    p_remove = sub.add_parser("remove", help="从 DB 删除一只股票的所有数据（先从 a_stock_tracker/config.py 移除）")
+    p_remove = sub.add_parser(
+        "remove",
+        help="删除一只股票在 predictions 和 stock_fundamentals 表中的记录（先从 a_stock_tracker/config.py 移除）",
+    )
     p_remove.add_argument("code", help="股票代码，如 600036")
 
     args = parser.parse_args()
