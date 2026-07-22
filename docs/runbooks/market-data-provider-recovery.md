@@ -62,9 +62,10 @@ python3 scripts/check_market_data_readiness.py --scope daily
 - 严禁执行 `bash cron-setup.sh` 恢复成组 cron。
 - 严禁添加 `outcome-update` cron。
 - 只有 PM 明确授权 staged daily 恢复后，才可手工添加单条 `daily` cron：
+- staged daily 仍须遵循当前生产时序：先让 17:15 的 TuShare valuation cycle 完成，再于 17:30 启动 daily。
 
 ```bash
-(crontab -l 2>/dev/null | grep -v "pipeline.py daily" || true; echo "30 16 * * 1-5 /home/lin/a-stock-tracker/cron-alert-wrap.sh \"cd /home/lin/a-stock-tracker && .venv/bin/python pipeline.py daily\" daily >> /home/lin/a-stock-tracker/logs/daily.log 2>&1") | crontab -
+(crontab -l 2>/dev/null | grep -v "pipeline.py daily" || true; echo "30 17 * * 1-5 /home/lin/a-stock-tracker/cron-alert-wrap.sh \"cd /home/lin/a-stock-tracker && .venv/bin/python pipeline.py daily\" daily >> /home/lin/a-stock-tracker/logs/daily.log 2>&1") | crontab -
 ```
 
 ## BaoStock 边界

@@ -1,5 +1,7 @@
 # Phase 3 Engineering Spec：L3 v2 推送触发条件切换
 
+历史路径说明：本文是实施记录，正文保留当时的 `lib/l3_v2_pipeline.py` 引用；当前实际路径为 `a_stock_tracker/signals/l3_v2_pipeline.py`，仓库已不存在 `lib/` 目录。
+
 ## 1. 背景与现状
 
 ### 1.1 当前推送触发

@@ -2,7 +2,7 @@
 
 创建时间：2026-06-05
 目标项目：`/home/lin/a-stock-tracker`
-状态：plan-only，尚未执行
+状态：已实施并由后续 provider 替代方案承接（见 `CLAUDE.md`「行情数据源」章节及 `a_stock_tracker/data/market_data.py`）
 执行原则：先文档化工程方案；后续实现必须 TDD、小步提交、外部 API 全部 mock。
 
 ## 0. 改写后的请求

@@ -2,6 +2,8 @@
 
 Status: live probe completed 2026-07-17; capability failed; terminal state `NO_QUALIFIED_FRAME_SOURCE`.
 
+Archive note: this runbook describes frozen, retired M4 tooling under `scripts/archive_m4/`; it is not an actively maintained operational entrypoint.
+
 ## Boundary
 
 This command probes whether Tushare can support a later sampling-frame capture. It does not capture a formal frame.
@@ -24,7 +26,7 @@ The execution tool cannot create or renew an authorization. For the fixed author
 run only inside its inclusive window:
 
 ```bash
-.venv/bin/python scripts/probe_m4_frame_source.py probe \
+.venv/bin/python scripts/archive_m4/probe_m4_frame_source.py probe \
   --authorization reviews/milestone-004-preregistration-v1.2/capability-authorization-2026-07-16-01.json \
   --authorization-sha256 reviews/milestone-004-preregistration-v1.2/capability-authorization-2026-07-16-01.sha256 \
   --attempt-id m4-v1.2-capability-20260716-01
@@ -43,7 +45,7 @@ Do not run pipeline, cron, Telegram, Gemini, Reviewer, or any production databas
 Verification requires no token and creates no transport:
 
 ```bash
-.venv/bin/python scripts/probe_m4_frame_source.py verify \
+.venv/bin/python scripts/archive_m4/probe_m4_frame_source.py verify \
   --attempt-dir artifacts/milestone-004/v1.2/capability-probes/probe-m4-v1.2-capability-20260716-01
 ```
 

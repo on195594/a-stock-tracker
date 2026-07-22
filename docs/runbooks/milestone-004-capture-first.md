@@ -2,6 +2,8 @@
 
 Status: implementation ready; no real capture authorized by this document.
 
+Archive note: this runbook describes frozen, retired M4 tooling under `scripts/archive_m4/`; it is not an actively maintained operational entrypoint.
+
 The historical-frame exporter now has three separate operations:
 
 - `capture` is the only network-capable operation. It requires a canonical, pre-existing authorization JSON and a matching SHA-256 manifest bound to one attempt ID, the `2026-07-15` sampling date, an active time window, and the exact frozen 33-call matrix.
@@ -15,17 +17,17 @@ The tool does not create authorization records. An external approval record must
 After a new, machine-verifiable authorization exists, the bounded commands are:
 
 ```bash
-python3 scripts/export_m4_sampling_frame_historical_hybrid.py capture \
+python3 scripts/archive_m4/export_m4_sampling_frame_historical_hybrid.py capture \
   --attempt-id <approved-attempt-id> \
   --authorization <authorization.json> \
   --authorization-sha256 <authorization.sha256> \
   --szse-package artifacts/milestone-004/incoming/manual-szse
 
-python3 scripts/export_m4_sampling_frame_historical_hybrid.py recover \
+python3 scripts/archive_m4/export_m4_sampling_frame_historical_hybrid.py recover \
   --attempt-id <crashed-attempt-id> \
   --szse-package artifacts/milestone-004/incoming/manual-szse
 
-python3 scripts/export_m4_sampling_frame_historical_hybrid.py assemble \
+python3 scripts/archive_m4/export_m4_sampling_frame_historical_hybrid.py assemble \
   --attempt-dir <sealed-complete-attempt-dir>
 ```
 

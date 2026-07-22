@@ -1,7 +1,7 @@
 # Market Data Provider 替代方案研究与迁移计划
 
 创建时间：2026-06-09
-状态：implementation in progress + phase-1/2 provider scaffolds + phase-3 backfill scaffold
+状态：已实施（见 `CLAUDE.md`「行情数据源」章节及 `a_stock_tracker/data/market_data.py`）
 范围：行情数据入口（`price_at_score`、`daily_bars`、`outcome_price`、`index_prices`）
 
 ## 0. 改写后的请求

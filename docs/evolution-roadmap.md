@@ -136,10 +136,10 @@
 **2026-07-12 Phase 2（QFQ 采集）完成：**
 
 - QFQ spec：`docs/specs/phase2-qfq-daily-bars-collector.md`
-- 实现：`scripts/fetch_qfq_daily_bars.py`（BaoStock `adjustflag="2"`，`daily_bars` 表 `adjusted='qfq'`）
+- 当前采集入口（2026-07-22 已从 BaoStock 切换至 TuShare）：`scripts/fetch_qfq_daily_bars_tushare.py`（`tushare.pro_bar(adj="qfq")`，`daily_bars` 表 `adjusted='qfq'`）
 - 采集结果：35/35 codes × 130 行回填（≥ 120 行门槛），全量验证 pass_strong
 - cron：`00 16 * * 1-5` 每工作日 16:00 自动采集
-- pipeline 变更：`lib/l3_v2_pipeline.py` 新增 `_select_daily_rows()`，QFQ 优先（≥120 行 → pass_strong），回退 none-adjusted（→ pass_weak/QFQ_UNAVAILABLE）
+- pipeline 变更：`a_stock_tracker/signals/l3_v2_pipeline.py` 新增 `_select_daily_rows()`，QFQ 优先（≥120 行 → pass_strong），回退 none-adjusted（→ pass_weak/QFQ_UNAVAILABLE）
 - Decision gate：已清除 `NEED_QFQ`；v2 信号从下个工作日起写入生产
 
 **2026-07-12 Phase 3（推送触发切换）完成：**

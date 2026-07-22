@@ -14,7 +14,8 @@ These instructions apply to the entire repository. Read this file and
   - `a_stock_tracker/integrations/`: external service adapters;
   - `a_stock_tracker/reporting/`: notifications and presentation;
   - `a_stock_tracker/qualitative/`: qualitative contracts and workflows;
-  - `a_stock_tracker/qualitative/m4/` and `m5/`: milestone-specific workflows.
+  - `a_stock_tracker/qualitative/archive_m4/` and
+    `a_stock_tracker/qualitative/m5/`: milestone-specific workflows.
 - Put tracked configuration in `config/`. Put runtime output in the ignored
   `data/`, `logs/`, or `artifacts/` directories.
 - Never track credentials, private keys, tokens, or service-account JSON.

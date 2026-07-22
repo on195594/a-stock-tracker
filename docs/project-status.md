@@ -1,7 +1,7 @@
 # a-stock-tracker Project Status
 
 创建时间：2026-06-26
-最近更新：2026-07-21
+最近更新：2026-07-22
 状态：active PM control page
 
 ## 当前结论
@@ -34,13 +34,13 @@ M4/M5 研究路线继续保留，但已从生产上线关键路径拆出。36 �
 
 2026-07-15 至 2026-07-16 的七次旧 frame 导出均在 publication 前 fail closed；13:34 的 5,525 行旧响应不可恢复。17:15 的 capture-first attempt 首次将已收的 Tushare/SSE 原始响应即时落盘，manifest SHA-256 为 `905fda74cae7a3b916e430e2554c1bce69aee7538cf638cea9d3415b62eb535d`；但因 Tushare 响应 raw-only 且 31 项 SWS missing，该 attempt 只能保持 incomplete，frame/sample 尚未冻结。
 
-2026-07-10 的 `NEED_QFQ` 是历史离线 gate。2026-07-12 已通过 BaoStock QFQ 采集解除：当前 `daily_bars` 中 QFQ 覆盖 35/35 代码，生产 daily 在 2026-07-13/14 写入 70 条 v2 记录，Telegram 主推使用 `l3_v2_signal=1`。
+2026-07-10 的 `NEED_QFQ` 是历史离线 gate。2026-07-12 最初通过 BaoStock QFQ 采集解除；2026-07-22 当前采集入口已切换为 TuShare `scripts/fetch_qfq_daily_bars_tushare.py`：`daily_bars` 中 QFQ 覆盖 35/35 代码，生产 daily 在 2026-07-13/14 写入 70 条 v2 记录，Telegram 主推使用 `l3_v2_signal=1`。
 
 2026-07-01 已完成共享包版本对齐：本项目锁定并验证 `a-stock-lib==0.2.0`，继续只保留 tracker 专属的环境门禁、SQLite 缓存、cron 编排和评分管道。
 
 2026-07-02 weekly PM loop 已完成：daily/outcome 自然运行正常，`probe_tushare_market_data.py` 已刷新当天 report，`READY_CRON` 恢复。随后已定向补齐 watchlist 后 14 支股票的基本面缓存并重跑 `accuracy-report`；数据质量门槛恢复 OK，Phase 6 仍因 B label 已结案样本不足保持 report-only。
 
-2026-07-02 同步 a-stock-research v2.5.0"历史分位极低须做反向解读检验"教训到 Framework B dry-run 报告：新增 `roe_latest`（最新单年ROE，同花顺年度数据，非季度）字段抓取，`lib/framework_b_report.py` 在 `roe_3y_avg` 显著高于 `roe_latest` 时给候选行追加 `⚠️ROE趋势预警` 文本标注。**纯报告层展示，不改变任何打分数值/权重/排序**（不碰 `weights.json`，不改 `score_stock` 调用参数），符合本文档"禁止事项"里"不修改 weights.json"、"不顺手调评分权重"的边界。Framework B 仍 report-only，不受影响。
+2026-07-02 同步 a-stock-research v2.5.0"历史分位极低须做反向解读检验"教训到 Framework B dry-run 报告：新增 `roe_latest`（最新单年ROE，同花顺年度数据，非季度）字段抓取，`a_stock_tracker/reporting/framework_b_report.py` 在 `roe_3y_avg` 显著高于 `roe_latest` 时给候选行追加 `⚠️ROE趋势预警` 文本标注。**纯报告层展示，不改变任何打分数值/权重/排序**（不碰 `weights.json`，不改 `score_stock` 调用参数），符合本文档"禁止事项"里"不修改 weights.json"、"不顺手调评分权重"的边界。Framework B 仍 report-only，不受影响。
 
 P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外部行情调用中，进程残留到 2026-07-02，导致后 14 支股票缓存停留在 2026-06-20 并超过 168h TTL。`fetcher`/`weekly` 的进程级超时保护已完成（commit `89fd7c5`，验证 `208 passed`），后续通过自然 cron 观察是否复发。
 
