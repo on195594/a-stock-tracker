@@ -53,20 +53,7 @@ def _fetcher(url: str, _hosts: tuple[str, ...]) -> OfficialFetchResult:
     parsed = urllib.parse.urlsplit(url)
     if parsed.hostname != "www.cninfo.com.cn":
         return OfficialFetchResult(url, url, 200, "application/pdf", b"fixture-pdf")
-    query = urllib.parse.parse_qs(parsed.query)["searchkey"][0]
-    name, keyword = query.split(" ", 1)
-    code = next(code for code, identity in selected.COMPANIES.items() if identity[0] == name)
     announcements: list[dict[str, object]] = []
-    if keyword == "2025年年度报告":
-        announcements.append(
-            {
-                "secCode": code,
-                "secName": name,
-                "announcementTitle": f"{name}2025年年度报告",
-                "announcementTime": "2026-03-31",
-                "adjunctUrl": f"finalpage/2026-03-31/{code}.PDF",
-            }
-        )
     body = json.dumps({"announcements": announcements}, ensure_ascii=False).encode()
     return OfficialFetchResult(url, url, 200, "application/json", body)
 

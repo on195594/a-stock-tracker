@@ -76,11 +76,6 @@ class AttemptStatus(StrEnum):
     BLOCKED_TECHNICAL_ERROR = "blocked_technical_error"
 
 
-class Decision(StrEnum):
-    ACCEPT = "accept"
-    REJECT = "reject"
-
-
 class AuditError(RuntimeError):
     """Base class for fail-closed audit errors."""
 
@@ -933,7 +928,6 @@ __all__ = [
     "CandidateDocument",
     "CoverageReport",
     "CoverageRow",
-    "Decision",
     "DuplicateRecord",
     "FrameRow",
     "FrameValidationError",

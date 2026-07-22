@@ -16,7 +16,6 @@ import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
-from html.parser import HTMLParser
 from pathlib import Path
 from typing import cast
 
@@ -211,83 +210,6 @@ def load_prior_pdf_attempts(project_root: Path) -> int:
         if payload.get("label") == "annual-report":
             total += 1
     return total
-
-
-class _LinkParser(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__()
-        self.links: list[tuple[str, str]] = []
-        self._href: str | None = None
-        self._text: list[str] = []
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag.lower() == "a":
-            self._href = dict(attrs).get("href")
-            self._text = []
-
-    def handle_data(self, data: str) -> None:
-        if self._href is not None:
-            self._text.append(data)
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag.lower() == "a" and self._href is not None:
-            self.links.append((" ".join("".join(self._text).split()), self._href))
-            self._href = None
-            self._text = []
-
-
-def _annual_report_url(raw_html: bytes, base_url: str, allowed_hosts: tuple[str, ...]) -> str:
-    try:
-        text = raw_html.decode("utf-8")
-    except UnicodeDecodeError:
-        text = raw_html.decode("gb18030")
-    parser = _LinkParser()
-    parser.feed(text)
-    candidates: list[str] = []
-    for label, href in parser.links:
-        normalized = label.replace(" ", "")
-        if "2025" in normalized and "年度报告" in normalized and "摘要" not in normalized:
-            candidate = urllib.parse.urljoin(base_url, href)
-            _validated_url(candidate, allowed_hosts)
-            candidates.append(candidate)
-    if len(set(candidates)) != 1:
-        raise ContextCollectionError(f"expected one official 2025 annual report link, found {len(set(candidates))}")
-    return candidates[0]
-
-
-def _annual_download_id(raw_html: bytes) -> str:
-    try:
-        text = raw_html.decode("utf-8")
-    except UnicodeDecodeError:
-        text = raw_html.decode("gb18030")
-    normalized = re.sub(r"\s+", "", text)
-    report = re.search(r"2025年?年度报告(?!摘要)", normalized)
-    if report is None:
-        raise ContextCollectionError("official announcement list has no 2025 annual report")
-    prefix = normalized[max(0, report.start() - 1000) : report.start()]
-    identifiers = re.findall(r"download\(['\"]?([A-Za-z0-9_-]+)", prefix)
-    if not identifiers:
-        suffix = normalized[report.end() : report.end() + 1000]
-        identifiers = re.findall(r"download\(['\"]?([A-Za-z0-9_-]+)", suffix)
-    if not identifiers:
-        raise ContextCollectionError("official annual report download identity is missing")
-    return identifiers[-1]
-
-
-def _download_url(raw_json: bytes, base_url: str, allowed_hosts: tuple[str, ...]) -> str:
-    try:
-        value = json.loads(raw_json)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ContextCollectionError("official download response is not JSON") from exc
-    if (
-        not isinstance(value, dict)
-        or value.get("err") not in {"", "0", 0, None}
-        or not isinstance(value.get("pUrl"), str)
-    ):
-        raise ContextCollectionError("official download response contract drift")
-    url = urllib.parse.urljoin(base_url, cast(str, value["pUrl"]))
-    _validated_url(url, allowed_hosts)
-    return url
 
 
 def _clean_html(raw: bytes) -> str:

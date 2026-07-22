@@ -343,27 +343,6 @@ def _payload(raw: bytes, *, label: str) -> list[dict[str, object]]:
     return [cast(dict[str, object], item) for item in announcements if isinstance(item, dict)]
 
 
-def _annual_report(raw: bytes, *, code: str, name: str) -> tuple[str, date]:
-    candidates: list[tuple[str, date]] = []
-    for item in _payload(raw, label="annual-report search"):
-        if str(item.get("secCode") or "").strip() != code or _clean(item.get("secName")) != name:
-            continue
-        title = _clean(item.get("announcementTitle")).replace(" ", "")
-        if "2025年年度报告" not in title or "摘要" in title or "英文" in title:
-            continue
-        adjunct = item.get("adjunctUrl")
-        if not isinstance(adjunct, str) or not adjunct.strip().lower().endswith(".pdf"):
-            continue
-        url = urllib.parse.urljoin(STATIC_CNINFO_ROOT, adjunct.strip().lstrip("/"))
-        if urllib.parse.urlsplit(url).hostname != "static.cninfo.com.cn":
-            raise ContextCollectionError("annual report PDF host drift")
-        candidates.append((url, _announcement_date(item.get("announcementTime"))))
-    unique = sorted(set(candidates))
-    if len(unique) != 1:
-        raise ContextCollectionError(f"expected one 2025 annual report for {code}, found {len(unique)}")
-    return unique[0]
-
-
 def _excerpt(pages: list[str], patterns: tuple[str, ...]) -> tuple[int, str] | None:
     matches: list[tuple[int, int, str]] = []
     for page_number, page in enumerate(pages, start=1):
