@@ -424,6 +424,83 @@ def test_reviewer_output_only_appears_for_reviewed_primary_stocks(tmp_db, telegr
         assert f"explanation-{code}" not in text
         assert f"objection-{code}" not in text
         assert f"question-{code}" not in text
+    assert telegram_push.MESSAGE_TRUNCATION_MARKER not in text
+
+
+def test_reviewer_output_visibly_distinguishes_fallback(tmp_db, telegram_env, monkeypatch):
+    sent: list[tuple[Any, ...]] = []
+    monkeypatch.setattr(telegram_push, "_send", lambda *args: sent.append(args))
+
+    def review(review_input):
+        return telegram_push.ReviewOutput(
+            explanation=f"review-{review_input.code}",
+            is_fallback=review_input.code == "600051",
+        )
+
+    monkeypatch.setattr(telegram_push, "gemini_review", review)
+    _insert_prediction("600050", 80.0, 1, l3_v2_signal=1)
+    _insert_prediction("600051", 70.0, 1, l3_v2_signal=1)
+
+    telegram_push.push_daily_signals("2026-05-30", threshold=44.0)
+
+    text = sent[0][2]
+    assert "🤖 审查: review-600050" in text
+    assert "📋 说明(降级，未调用真实LLM): review-600051" in text
+    assert "🤖 审查: review-600051" not in text
+
+
+def test_reviewer_fields_are_bounded_without_truncating_whole_message(tmp_db, telegram_env, monkeypatch):
+    sent: list[tuple[Any, ...]] = []
+    monkeypatch.setattr(telegram_push, "_send", lambda *args: sent.append(args))
+    monkeypatch.setattr(
+        telegram_push,
+        "gemini_review",
+        lambda _review_input: telegram_push.ReviewOutput(
+            explanation="解" * 1000,
+            objections=("异" * 1000,),
+            human_questions=("问" * 1000,),
+        ),
+    )
+    _insert_prediction("600052", 80.0, 1, l3_v2_signal=1)
+
+    telegram_push.push_daily_signals("2026-05-30", threshold=44.0)
+
+    text = sent[0][2]
+    assert telegram_push.MESSAGE_TRUNCATION_MARKER not in text
+    assert "解" * (telegram_push.REVIEW_EXPLANATION_LIMIT - 1) + "…" in text
+    assert "异" * (telegram_push.REVIEW_OBJECTIONS_LIMIT - 1) + "…" in text
+    assert "问" * (telegram_push.REVIEW_QUESTIONS_LIMIT - 1) + "…" in text
+    assert "解" * telegram_push.REVIEW_EXPLANATION_LIMIT not in text
+
+
+def test_pathological_message_is_truncated_to_telegram_limit(tmp_db, telegram_env, monkeypatch, caplog):
+    sent: list[tuple[Any, ...]] = []
+    monkeypatch.setattr(telegram_push, "_send", lambda *args: sent.append(args))
+    monkeypatch.setattr(
+        telegram_push,
+        "gemini_review",
+        lambda _review_input: telegram_push.ReviewOutput(
+            explanation="超长说明" * 1000,
+            objections=("超长异议" * 1000,),
+            human_questions=("超长问题" * 1000,),
+        ),
+    )
+
+    for index in range(3):
+        _insert_prediction(f"61{index:04d}", 80.0 - index, 1, l3_v2_signal=1)
+    for index in range(45):
+        _insert_prediction(f"62{index:04d}", 70.0 - index / 10, 0, l3_v2_signal=0)
+    for index in range(45):
+        _insert_prediction(f"63{index:04d}", 40.0 - index / 100, 0)
+
+    with caplog.at_level("WARNING"):
+        telegram_push.push_daily_signals("2026-05-30", threshold=44.0, radar_min=35.0)
+
+    assert len(sent) == 1
+    text = sent[0][2]
+    assert len(text) <= telegram_push.TELEGRAM_TEXT_LIMIT
+    assert text.endswith(telegram_push.MESSAGE_TRUNCATION_MARKER)
+    assert "Telegram 消息过长" in caplog.text
 
 
 def test_reviewer_exception_omits_one_block_without_interrupting_push(tmp_db, telegram_env, monkeypatch):

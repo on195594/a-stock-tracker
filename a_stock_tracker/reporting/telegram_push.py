@@ -12,6 +12,20 @@ from a_stock_tracker.integrations.agent_reviewer import ReviewInput, ReviewOutpu
 logger = logging.getLogger(__name__)
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
+TELEGRAM_TEXT_LIMIT = 4096
+MESSAGE_TRUNCATION_MARKER = "\n\n⚠️ 消息过长已截断，请查看日志获取完整内容"
+
+# Keep one stock's complete reviewer block below roughly 300 characters,
+# including labels, indentation, and line breaks.
+REVIEW_EXPLANATION_LIMIT = 110
+REVIEW_OBJECTIONS_LIMIT = 60
+REVIEW_QUESTIONS_LIMIT = 60
+
+
+def _truncate_with_ellipsis(value: str, limit: int) -> str:
+    if len(value) <= limit:
+        return value
+    return value[: limit - 1] + "…"
 
 
 def _send(token: str, chat_id: str, text: str) -> None:
@@ -186,11 +200,15 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
                     report_period=report_period,
                 )
                 review: ReviewOutput = gemini_review(review_input)
-                review_lines = [f"    🤖 审查: {review.explanation}"]
+                review_label = "📋 说明(降级，未调用真实LLM):" if review.is_fallback else "🤖 审查:"
+                explanation = _truncate_with_ellipsis(review.explanation, REVIEW_EXPLANATION_LIMIT)
+                review_lines = [f"    {review_label} {explanation}"]
                 if review.objections:
-                    review_lines.append(f"    ⚠️ 异议: {'; '.join(review.objections)}")
+                    objections = _truncate_with_ellipsis("; ".join(review.objections), REVIEW_OBJECTIONS_LIMIT)
+                    review_lines.append(f"    ⚠️ 异议: {objections}")
                 if review.human_questions:
-                    review_lines.append(f"    ❓ 待核实: {'; '.join(review.human_questions)}")
+                    questions = _truncate_with_ellipsis("; ".join(review.human_questions), REVIEW_QUESTIONS_LIMIT)
+                    review_lines.append(f"    ❓ 待核实: {questions}")
                 lines.append("\n".join(review_lines))
             except Exception as e:
                 logger.warning("%s reviewer block omitted: %s", code, e)
@@ -216,6 +234,10 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
 
     sections.append(f"\n共评估{total_counted}只股票（{score_date}盘后）")
     text = "\n\n".join(section for section in sections if section)
+    original_length = len(text)
+    if original_length > TELEGRAM_TEXT_LIMIT:
+        text = text[: TELEGRAM_TEXT_LIMIT - len(MESSAGE_TRUNCATION_MARKER)] + MESSAGE_TRUNCATION_MARKER
+        logger.warning("Telegram 消息过长，已从 %d 字符截断至 %d 字符", original_length, len(text))
 
     try:
         _send(token, chat_id, text)

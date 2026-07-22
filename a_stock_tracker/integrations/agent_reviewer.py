@@ -54,6 +54,7 @@ class ReviewOutput:
     missing_data_comment: str = ""
     human_questions: tuple[str, ...] = field(default_factory=tuple)
     confidence_note: str = ""
+    is_fallback: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -62,6 +63,7 @@ class ReviewOutput:
             "missing_data_comment": self.missing_data_comment,
             "human_questions": list(self.human_questions),
             "confidence_note": self.confidence_note,
+            "is_fallback": self.is_fallback,
         }
 
 
@@ -81,6 +83,7 @@ def _fake_review_fallback(input_data: ReviewInput) -> ReviewOutput:
         missing_data_comment=missing_comment,
         human_questions=(),
         confidence_note="fake reviewer；未调用真实 LLM；不得覆盖 deterministic score/decision。",
+        is_fallback=True,
     )
 
 
