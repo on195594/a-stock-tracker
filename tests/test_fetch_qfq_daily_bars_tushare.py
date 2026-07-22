@@ -57,7 +57,7 @@ def _responses(dates: list[str], closes: list[float]) -> pd.DataFrame:
     )
 
 
-def _seed_shadow(db_path: str, code: str, dates: list[str], closes: list[float]) -> None:
+def _seed_target(db_path: str, code: str, dates: list[str], closes: list[float]) -> None:
     bars = pd.DataFrame(
         [
             {"date": trade_date, "open": close, "high": close, "low": close, "close": close, "volume": 1.0}
@@ -69,8 +69,8 @@ def _seed_shadow(db_path: str, code: str, dates: list[str], closes: list[float])
             conn,
             code,
             bars,
-            source="seed.shadow",
-            adjusted=script.SHADOW_ADJUSTED,
+            source="seed.target",
+            adjusted=script.PRODUCTION_ADJUSTED,
             volume_unit="share",
             fetched_at="2026-01-01T00:00:00",
         )
@@ -114,14 +114,14 @@ def test_create_api_uses_shared_token_reader_when_environment_token_is_absent(mo
     pro_api.assert_called_once_with("dotenv-token")
 
 
-def test_happy_path_converts_and_writes_only_shadow_partition(isolated_db, monkeypatch) -> None:
+def test_happy_path_converts_and_writes_only_production_partition(isolated_db, monkeypatch) -> None:
     with sqlite3.connect(isolated_db) as conn:
         cache_mod.upsert_daily_bars(
             conn,
             "600036",
             pd.DataFrame([{"date": "2026-07-20", "close": 99.0, "volume": 1.0}]),
-            source="baostock.qfq",
-            adjusted="qfq",
+            source="seed.shadow",
+            adjusted=script.SHADOW_ADJUSTED,
             volume_unit="share",
         )
         conn.commit()
@@ -139,8 +139,8 @@ def test_happy_path_converts_and_writes_only_shadow_partition(isolated_db, monke
     assert count == 1
     assert latest == "2026-07-20"
     assert rows == [
-        ("2026-07-20", 99.0, 1.0, "baostock.qfq", "qfq", "share"),
-        ("2026-07-20", 10.5, 143_361_015.0, script.SOURCE, script.SHADOW_ADJUSTED, "share"),
+        ("2026-07-20", 10.5, 143_361_015.0, script.SOURCE, script.PRODUCTION_ADJUSTED, "share"),
+        ("2026-07-20", 99.0, 1.0, "seed.shadow", script.SHADOW_ADJUSTED, "share"),
     ]
     assert pro_bar.call_args.kwargs == {
         "ts_code": "600036.SH",
@@ -153,7 +153,7 @@ def test_happy_path_converts_and_writes_only_shadow_partition(isolated_db, monke
 
 def test_incremental_fetch_writes_only_new_dates_without_drift(isolated_db, monkeypatch) -> None:
     existing_dates, new_dates = _history_dates()
-    _seed_shadow(isolated_db, "600036", existing_dates, [100.0] * len(existing_dates))
+    _seed_target(isolated_db, "600036", existing_dates, [100.0] * len(existing_dates))
     overlap_dates = existing_dates[-20:]
     fetched_dates = overlap_dates + new_dates
     fetched_closes = [100.01] * len(overlap_dates) + [101.0] * len(new_dates)
@@ -165,7 +165,7 @@ def test_incremental_fetch_writes_only_new_dates_without_drift(isolated_db, monk
         rows = conn.execute(
             "SELECT trade_date, close, source, fetched_at FROM daily_bars "
             "WHERE code = ? AND adjusted = ? ORDER BY trade_date",
-            ("600036", script.SHADOW_ADJUSTED),
+            ("600036", script.PRODUCTION_ADJUSTED),
         ).fetchall()
 
     expected_start = (date.fromisoformat(existing_dates[-1]) - timedelta(days=40)).strftime("%Y%m%d")
@@ -174,7 +174,7 @@ def test_incremental_fetch_writes_only_new_dates_without_drift(isolated_db, monk
     assert count == len(new_dates)
     assert latest == new_dates[-1]
     assert rows[: len(existing_dates)] == [
-        (trade_date, 100.0, "seed.shadow", "2026-01-01T00:00:00") for trade_date in existing_dates
+        (trade_date, 100.0, "seed.target", "2026-01-01T00:00:00") for trade_date in existing_dates
     ]
     assert [(row[0], row[1], row[2]) for row in rows[len(existing_dates) :]] == [
         (trade_date, 101.0, script.SOURCE) for trade_date in new_dates
@@ -184,7 +184,7 @@ def test_incremental_fetch_writes_only_new_dates_without_drift(isolated_db, monk
 def test_consistent_overlap_drift_triggers_complete_full_reprocess(isolated_db, monkeypatch, caplog) -> None:
     caplog.set_level("INFO")
     existing_dates, new_dates = _history_dates()
-    _seed_shadow(isolated_db, "600036", existing_dates, [120.0] * len(existing_dates))
+    _seed_target(isolated_db, "600036", existing_dates, [120.0] * len(existing_dates))
     overlap_dates = existing_dates[-20:]
     incremental = _responses(overlap_dates + new_dates, [99.96] * len(overlap_dates) + [100.0] * len(new_dates))
     full_dates = existing_dates + new_dates
@@ -196,7 +196,7 @@ def test_consistent_overlap_drift_triggers_complete_full_reprocess(isolated_db, 
         count, latest = script._fetch_one(conn, object(), "600036", "20200101", date.today().strftime("%Y%m%d"))
         rows = conn.execute(
             "SELECT trade_date, close, source FROM daily_bars WHERE code = ? AND adjusted = ? ORDER BY trade_date",
-            ("600036", script.SHADOW_ADJUSTED),
+            ("600036", script.PRODUCTION_ADJUSTED),
         ).fetchall()
 
     assert pro_bar.call_count == 2
@@ -213,7 +213,7 @@ def test_consistent_overlap_drift_triggers_complete_full_reprocess(isolated_db, 
 
 def test_single_day_overlap_noise_does_not_trigger_reprocess(isolated_db, monkeypatch, caplog) -> None:
     existing_dates, new_dates = _history_dates()
-    _seed_shadow(isolated_db, "600036", existing_dates, [100.0] * len(existing_dates))
+    _seed_target(isolated_db, "600036", existing_dates, [100.0] * len(existing_dates))
     overlap_dates = existing_dates[-20:]
     overlap_closes = [100.0] * len(overlap_dates)
     overlap_closes[8] = 80.0
@@ -224,7 +224,7 @@ def test_single_day_overlap_noise_does_not_trigger_reprocess(isolated_db, monkey
         count, _latest = script._fetch_one(conn, object(), "600036", "20200101", date.today().strftime("%Y%m%d"))
         noisy_close = conn.execute(
             "SELECT close FROM daily_bars WHERE code = ? AND adjusted = ? AND trade_date = ?",
-            ("600036", script.SHADOW_ADJUSTED, overlap_dates[8]),
+            ("600036", script.PRODUCTION_ADJUSTED, overlap_dates[8]),
         ).fetchone()[0]
 
     assert count == len(new_dates)
@@ -236,7 +236,7 @@ def test_single_day_overlap_noise_does_not_trigger_reprocess(isolated_db, monkey
 def test_non_finite_overlap_ratio_is_excluded_from_drift_run(isolated_db, caplog) -> None:
     existing_dates, _new_dates = _history_dates()
     overlap_dates = existing_dates[-20:]
-    _seed_shadow(isolated_db, "600036", overlap_dates, [100.0] * len(overlap_dates))
+    _seed_target(isolated_db, "600036", overlap_dates, [100.0] * len(overlap_dates))
     fresh_closes = [99.0] * 4 + [float("nan")] + [100.0] * 15
     frame = pd.DataFrame({"date": overlap_dates, "close": fresh_closes})
 
@@ -250,7 +250,7 @@ def test_non_finite_overlap_ratio_is_excluded_from_drift_run(isolated_db, caplog
 def test_non_finite_overlap_ratio_breaks_drift_run(isolated_db, caplog) -> None:
     existing_dates, _new_dates = _history_dates()
     overlap_dates = existing_dates[-20:]
-    _seed_shadow(isolated_db, "600036", overlap_dates, [100.0] * len(overlap_dates))
+    _seed_target(isolated_db, "600036", overlap_dates, [100.0] * len(overlap_dates))
     fresh_closes = [99.0] * 4 + [float("nan")] + [99.0] + [100.0] * 14
     frame = pd.DataFrame({"date": overlap_dates, "close": fresh_closes})
 
@@ -265,7 +265,7 @@ def test_zero_existing_close_breaks_drift_run(isolated_db, caplog) -> None:
     existing_dates, _new_dates = _history_dates()
     overlap_dates = existing_dates[-20:]
     existing_closes = [100.0] * 4 + [0.0] + [100.0] * 15
-    _seed_shadow(isolated_db, "600036", overlap_dates, existing_closes)
+    _seed_target(isolated_db, "600036", overlap_dates, existing_closes)
     fresh_closes = [99.0] * 6 + [100.0] * 14
     frame = pd.DataFrame({"date": overlap_dates, "close": fresh_closes})
 
@@ -278,11 +278,11 @@ def test_zero_existing_close_breaks_drift_run(isolated_db, caplog) -> None:
 
 def test_incomplete_full_reprocess_writes_nothing_and_fails_batch(isolated_db, monkeypatch, capsys, caplog) -> None:
     existing_dates, new_dates = _history_dates()
-    _seed_shadow(isolated_db, "600036", existing_dates, [120.0] * len(existing_dates))
+    _seed_target(isolated_db, "600036", existing_dates, [120.0] * len(existing_dates))
     with sqlite3.connect(isolated_db) as conn:
         before = conn.execute(
             "SELECT * FROM daily_bars WHERE code = ? AND adjusted = ? ORDER BY trade_date",
-            ("600036", script.SHADOW_ADJUSTED),
+            ("600036", script.PRODUCTION_ADJUSTED),
         ).fetchall()
 
     overlap_dates = existing_dates[-20:]
@@ -298,7 +298,7 @@ def test_incomplete_full_reprocess_writes_nothing_and_fails_batch(isolated_db, m
     with sqlite3.connect(isolated_db) as conn:
         after = conn.execute(
             "SELECT * FROM daily_bars WHERE code = ? AND adjusted = ? ORDER BY trade_date",
-            ("600036", script.SHADOW_ADJUSTED),
+            ("600036", script.PRODUCTION_ADJUSTED),
         ).fetchall()
     captured = capsys.readouterr()
     assert exit_code == 1

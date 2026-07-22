@@ -33,6 +33,7 @@ from a_stock_tracker.data.cache import DB_PATH, upsert_daily_bars
 logger = logging.getLogger(__name__)
 
 SHADOW_ADJUSTED = "qfq_tushare_shadow"
+PRODUCTION_ADJUSTED = "qfq"
 SOURCE = "tushare.pro_bar.qfq"
 MAX_ATTEMPTS = 3
 RETRY_BUDGET_SECONDS = 60.0
@@ -178,7 +179,7 @@ def _query_qfq(api: Any, code: str, start_date: str, end_date: str) -> pd.DataFr
 def _partition_date_bounds(conn: sqlite3.Connection, code: str) -> tuple[str | None, str | None]:
     row = conn.execute(
         "SELECT MIN(trade_date), MAX(trade_date) FROM daily_bars WHERE code = ? AND adjusted = ?",
-        (code, SHADOW_ADJUSTED),
+        (code, PRODUCTION_ADJUSTED),
     ).fetchone()
     return row[0], row[1]
 
@@ -188,7 +189,7 @@ def _partition_dates(conn: sqlite3.Connection, code: str) -> set[str]:
         row[0]
         for row in conn.execute(
             "SELECT trade_date FROM daily_bars WHERE code = ? AND adjusted = ?",
-            (code, SHADOW_ADJUSTED),
+            (code, PRODUCTION_ADJUSTED),
         )
     }
 
@@ -209,7 +210,7 @@ def _detect_drift(
         f"SELECT trade_date, close FROM daily_bars "
         f"WHERE code = ? AND adjusted = ? AND trade_date IN ({placeholders}) "
         "ORDER BY trade_date DESC LIMIT ?",
-        (code, SHADOW_ADJUSTED, *new_closes, OVERLAP_TRADING_DAYS),
+        (code, PRODUCTION_ADJUSTED, *new_closes, OVERLAP_TRADING_DAYS),
     ).fetchall()
 
     ratios: list[tuple[str, float | None]] = []
@@ -263,7 +264,7 @@ def _upsert_frame(conn: sqlite3.Connection, code: str, frame: pd.DataFrame) -> i
         code,
         frame,
         source=SOURCE,
-        adjusted=SHADOW_ADJUSTED,
+        adjusted=PRODUCTION_ADJUSTED,
         volume_unit="share",
     )
 
