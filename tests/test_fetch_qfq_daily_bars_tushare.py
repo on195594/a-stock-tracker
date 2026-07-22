@@ -247,6 +247,20 @@ def test_non_finite_overlap_ratio_is_excluded_from_drift_run(isolated_db, caplog
     assert f"QFQ_TUSHARE_DRIFT_SKIP code=600036 trade_date={overlap_dates[4]} reason=non_finite_ratio" in caplog.text
 
 
+def test_non_finite_overlap_ratio_breaks_drift_run(isolated_db, caplog) -> None:
+    existing_dates, _new_dates = _history_dates()
+    overlap_dates = existing_dates[-20:]
+    _seed_shadow(isolated_db, "600036", overlap_dates, [100.0] * len(overlap_dates))
+    fresh_closes = [99.0] * 4 + [float("nan")] + [99.0] + [100.0] * 14
+    frame = pd.DataFrame({"date": overlap_dates, "close": fresh_closes})
+
+    with sqlite3.connect(isolated_db) as conn:
+        drift_run = script._detect_drift(conn, "600036", frame, overlap_dates[-1])
+
+    assert drift_run is None
+    assert f"QFQ_TUSHARE_DRIFT_SKIP code=600036 trade_date={overlap_dates[4]} reason=non_finite_ratio" in caplog.text
+
+
 def test_incomplete_full_reprocess_writes_nothing_and_fails_batch(isolated_db, monkeypatch, capsys, caplog) -> None:
     existing_dates, new_dates = _history_dates()
     _seed_shadow(isolated_db, "600036", existing_dates, [120.0] * len(existing_dates))

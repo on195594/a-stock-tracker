@@ -212,7 +212,7 @@ def _detect_drift(
         (code, SHADOW_ADJUSTED, *new_closes, OVERLAP_TRADING_DAYS),
     ).fetchall()
 
-    ratios: list[tuple[str, float]] = []
+    ratios: list[tuple[str, float | None]] = []
     for trade_date, existing_close in reversed(rows):
         if existing_close is None or existing_close == 0:
             logger.warning(
@@ -229,18 +229,19 @@ def _detect_drift(
                 code,
                 trade_date,
             )
+            ratios.append((trade_date, None))
             continue
         ratios.append((trade_date, ratio_diff))
 
     best_run: tuple[str, str, int] | None = None
     for start_index, (run_start, first_ratio) in enumerate(ratios):
-        if first_ratio <= DRIFT_RATIO_THRESHOLD:
+        if first_ratio is None or first_ratio <= DRIFT_RATIO_THRESHOLD:
             continue
         run_min = first_ratio
         run_max = first_ratio
         for end_index in range(start_index, len(ratios)):
             run_end, ratio = ratios[end_index]
-            if ratio <= DRIFT_RATIO_THRESHOLD:
+            if ratio is None or ratio <= DRIFT_RATIO_THRESHOLD:
                 break
             run_min = min(run_min, ratio)
             run_max = max(run_max, ratio)
