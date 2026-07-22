@@ -43,7 +43,7 @@ printf '%s\n' "$CURRENT_CRONTAB" > "$CRON_BACKUP_PATH"
 # cron 规则
 WEEKLY_RULE="00 10 * * 6 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python -m scripts.run_tushare_primary_production_cycle weekly\" weekly >> $PROJECT_DIR/logs/weekly.log 2>&1"
 PM_LOOP_RULE="30 09 * * 1 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python scripts/weekly_pm_loop.py\" weekly-pm-loop >> $PROJECT_DIR/logs/weekly-pm-loop.log 2>&1"
-QFQ_RULE="00 16 * * 1-5 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python scripts/fetch_qfq_daily_bars.py\" qfq-daily-bars >> $PROJECT_DIR/logs/qfq-daily-bars.log 2>&1"
+QFQ_RULE="00 16 * * 1-5 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python scripts/fetch_qfq_daily_bars_tushare.py\" qfq-daily-bars >> $PROJECT_DIR/logs/qfq-daily-bars.log 2>&1"
 PRIMARY_DAILY_RULE="15 17 * * 1-5 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python -m scripts.run_tushare_primary_production_cycle daily\" tushare-primary-daily >> $PROJECT_DIR/logs/tushare-primary-daily.log 2>&1"
 DAILY_RULE="30 17 * * 1-5 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python pipeline.py daily\" daily >> $PROJECT_DIR/logs/daily.log 2>&1"
 ACCEPTANCE_RULE="45 17 * * 1-5 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python scripts/check_qualitative_v2_production.py --require-today\" qualitative-v2-production-acceptance --alert-exit-2 >> $PROJECT_DIR/logs/qualitative-v2-production-acceptance.log 2>&1"
@@ -68,7 +68,7 @@ BASE_CRONTAB=$(printf '%s\n' "$CURRENT_CRONTAB" | awk \
     /a-stock-tracker\/cron-alert-wrap\.sh/ && /pipeline\.py (weekly|daily|outcome-update)/ { next }
     /a-stock-tracker\/cron-alert-wrap\.sh/ && /check_qualitative_v2_production\.py/ { next }
     /a-stock-tracker\/cron-alert-wrap\.sh/ && /weekly_pm_loop\.py/ { next }
-    /a-stock-tracker\/cron-alert-wrap\.sh/ && /fetch_qfq_daily_bars\.py/ { next }
+    /a-stock-tracker\/cron-alert-wrap\.sh/ && /fetch_qfq_daily_bars/ { next }
     /a-stock-tracker\/cron-alert-wrap\.sh/ && /tushare_primary/ { next }
     { print }
 ')
@@ -81,7 +81,7 @@ $WEEKLY_RULE
 # a-stock-tracker Phase 6 weekly PM loop (每周一 09:30)
 $PM_LOOP_RULE
 
-# a-stock-tracker QFQ 日线采集 (工作日 16:00，pipeline 前)
+# a-stock-tracker QFQ 日线采集 (TuShare, 工作日 16:00，pipeline 前)
 $QFQ_RULE
 
 # a-stock-tracker TuShare primary daily (工作日 17:15)
