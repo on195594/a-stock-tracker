@@ -10,6 +10,8 @@
 
 2026-07-23 修复 prediction 解释链路的数据一致性：新 prediction 原子保存实际采用的定性分值、逐维 `v1/v2` 来源和 `v1/v2/hybrid_v2` 模式；Telegram 展示与 reviewer 只使用该行快照，旧行缺失或快照损坏时 reviewer fail-closed，不再用最新 legacy 定性分值解释历史/混合总分。迁移只增加 nullable 列，不回填或改写历史 prediction。
 
+同日完成 cron/reviewer 可靠性加固：`cron-alert-wrap.sh` 对 label 与 `--alert-exit-2` 采用顺序无关且拒绝重复/未知参数的解析；`cron-setup.sh` 只按活动、本项目、去除行尾注释后的命令语义识别和清理 daily 变体，保留其他项目任务及 managed block 外注释；Gemini reviewer 对直接 timeout 与 `URLError(timeout)` 复用既有 3 次/2s+4s 有界重试，非 timeout、鉴权和解析错误继续立即 fallback。测试全程使用 fake crontab/curl/urlopen，无真实网络。
+
 M4/M5 研究路线继续保留，但已从生产上线关键路径拆出。36 股 sample、real bundle、Claude blind reference、Gemini shadow 和 support audit 用于研究代表性与 agreement，不再阻塞具备 validator、独立表、逐股 fallback 和 `off` 回滚的生产读取。定性评分 v2 已有 2026-07-20 自然 daily/acceptance PASS；当前生产下一动作是观察 2026-07-21 新 17:15→17:30→17:45 时序和首个周六 TuShare weekly cycle。研究下一动作才是按独立范围继续 real bundle/审计。
 
 2026-07-18 曾执行一次非 v1.3.2-compliant 的 `index_classify` 直连探测：HTTP 200、provider code 0、31 rows，未持久化原始响应。该探测不构成 frame、authorization、freeze、attestation 或生产采用证据。
@@ -82,7 +84,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | Framework A 倒置诊断 | 已完成，结论：不调权重 | Q5 avg_alpha_30d=-9.91%；根因=截面校准偏差+11支伪复制；agy投资审查：Priority 1=延伸60d/90d；60d首批到期 2026-07-14 |
 | 定性评分 v2 | 全局 `on`；6/35 hybrid、29/35 v1 fallback | v2 表 6 行：000963/002050/600036/600900/601088/603606；全部为 moat/market_pos scored、sentiment NULL |
 | 定性评分 v2 研究审计 | M4 sample 与 M5 fixture-first/builder 完成；real bundle 未完成 | sample SHA `b278a7…d7635d`；不再作为当前生产读取阻塞项 |
-| 质量门禁 | 全部通过 | 2026-07-23 当前全仓 1067 passed；Ruff、format、mypy 154 files、结构测试、迁移副本 smoke、`git diff --check` PASS |
+| 质量门禁 | 全部通过 | 2026-07-23 当前全仓 1080 passed；Ruff、format、mypy 154 files、结构测试、shell syntax、`git diff --check` PASS |
 
 ## Spec Ledger
 
@@ -91,6 +93,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | `docs/evolution-roadmap.md` | v1.30 当前基线 | Hermes PM | 随 Phase 状态变化更新 | 和真实系统状态一致 |
 | `docs/specs/2026-07-21-tushare-three-domain-forced-cutover.md` | implemented；三域生产合同 | Hermes PM + codex | 观察自然 cycle；字段/时序变化同步 registry/runbook | 35/35、原子物化、回滚和真实 smoke 均可复验 |
 | `docs/specs/2026-07-23-prediction-qualitative-snapshot-reviewer-fix.md` | implemented；prediction 解释快照合同 | Hermes PM | 观察下一次自然 daily；旧行继续 fail-closed | 新行快照与 total_score 同事务；历史行不回填；reviewer 不再拼接最新 legacy 值 |
+| `docs/specs/2026-07-23-cron-reviewer-reliability-fix.md` | implemented；cron 语义去重与 reviewer timeout 合同 | Hermes PM | 安装后观察下一次自然 cron；不真实触发 Gemini | 安装幂等且不改无关 crontab；timeout 最多 3 次；非 timeout 立即 fallback |
 | `docs/runbooks/tushare-primary-production.md` | active | 运维 | daily/weekly 故障与回滚按本手册执行 | 命令与 cron/代码保持一致 |
 | `docs/reviews/2026-07-19-qualitative-v2-production-retrospective.md` | final；当前生产复盘 | codex | 下一交易日自然 cron 确认 | 把上线安全、数据覆盖和研究有效性分开管理 |
 | `qualitative_v2_production_acceptance_baseline.json` | active；生产验收基线 | codex | v2 adoption 变化时随同审查更新 | checker 只读复验，不自动学习或覆盖基线 |

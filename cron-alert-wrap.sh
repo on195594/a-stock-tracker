@@ -13,15 +13,39 @@ set -uo pipefail
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$PROJECT_DIR/.env"
 
-CMD="$1"
-LABEL="${2:-$CMD}"
-ALERT_EXIT_2=0
-if [ "${3:-}" = "--alert-exit-2" ]; then
-    ALERT_EXIT_2=1
-elif [ -n "${3:-}" ]; then
-    echo "unsupported option: $3" >&2
+if [ "$#" -lt 1 ]; then
+    echo "usage: $0 <command> [label] [--alert-exit-2]" >&2
     exit 64
 fi
+
+CMD="$1"
+shift
+LABEL="$CMD"
+LABEL_SET=0
+ALERT_EXIT_2=0
+for ARG in "$@"; do
+    case "$ARG" in
+        --alert-exit-2)
+            if [ "$ALERT_EXIT_2" -eq 1 ]; then
+                echo "duplicate option: $ARG" >&2
+                exit 64
+            fi
+            ALERT_EXIT_2=1
+            ;;
+        --*)
+            echo "unsupported option: $ARG" >&2
+            exit 64
+            ;;
+        *)
+            if [ "$LABEL_SET" -eq 1 ]; then
+                echo "duplicate label: $ARG" >&2
+                exit 64
+            fi
+            LABEL="$ARG"
+            LABEL_SET=1
+            ;;
+    esac
+done
 
 bash -c "$CMD"
 EXIT_CODE=$?

@@ -87,6 +87,32 @@ def _fake_review_fallback(input_data: ReviewInput) -> ReviewOutput:
     )
 
 
+def _is_retryable_timeout(error: BaseException) -> bool:
+    if isinstance(error, TimeoutError):
+        return True
+    return isinstance(error, urllib.error.URLError) and isinstance(error.reason, TimeoutError)
+
+
+def _retry_timeout(input_data: ReviewInput, attempt: int) -> bool:
+    if attempt >= MAX_RETRIES - 1:
+        logger.warning(
+            "%s gemini_review timeout exhausted after %d attempts, using fallback",
+            input_data.code,
+            MAX_RETRIES,
+        )
+        return False
+    delay = RETRY_DELAYS[min(attempt, len(RETRY_DELAYS) - 1)]
+    logger.warning(
+        "%s gemini_review timeout, retry in %ss (%d/%d)",
+        input_data.code,
+        delay,
+        attempt + 1,
+        MAX_RETRIES,
+    )
+    time.sleep(delay)
+    return True
+
+
 def gemini_review(input_data: ReviewInput) -> ReviewOutput:
     """Call Gemini to review a stock scoring result. Falls back to _fake_review_fallback on any error."""
     api_key = os.environ.get("GEMINI_API_KEY", "")
@@ -137,9 +163,6 @@ def gemini_review(input_data: ReviewInput) -> ReviewOutput:
                 human_questions=tuple(raw.get("human_questions", [])),
                 confidence_note=str(raw.get("confidence_note", "")),
             )
-        except TimeoutError:
-            logger.warning("%s gemini_review timeout (>%ss), using fallback", input_data.code, GEMINI_TIMEOUT_S)
-            return _fake_review_fallback(input_data)
         except urllib.error.HTTPError as e:
             if e.code in (401, 403):
                 logger.error("%s gemini_review auth error (%s), using fallback", input_data.code, e.code)
@@ -159,6 +182,13 @@ def gemini_review(input_data: ReviewInput) -> ReviewOutput:
             else:
                 logger.warning("%s gemini_review HTTP error %s, using fallback", input_data.code, e.code)
                 return _fake_review_fallback(input_data)
+        except (TimeoutError, urllib.error.URLError) as e:
+            if not _is_retryable_timeout(e):
+                logger.warning("%s gemini_review transport error: %s, using fallback", input_data.code, e)
+                return _fake_review_fallback(input_data)
+            if _retry_timeout(input_data, attempt):
+                continue
+            return _fake_review_fallback(input_data)
         except (json.JSONDecodeError, KeyError, IndexError, ValueError) as e:
             logger.warning("%s gemini_review parse/validation error: %s, using fallback", input_data.code, e)
             return _fake_review_fallback(input_data)

@@ -518,6 +518,18 @@ entry_signal_reason='SOURCE_STALE'
 - 旧记录缺少 provenance 时应明确降级或跳过解释，禁止静默猜测。
 - 幂等冲突可更新运行元数据，但不得用重算值覆盖既有决策快照。
 
+---
+
+### G-12｜cron 去重必须匹配受管命令语义，不能搜索全行子串
+
+**现象（2026-07-23）：** `cron-setup.sh` 曾用 `pipeline.py daily` 全行子串判断是否保留 daily，并用宽泛的 `# a-stock-tracker` 文本清理旧行。注释或其他项目任务可能误触发 preserve，路径、空白和 `python -m pipeline daily` 变体又可能漏判；无关同名注释也会被删除。
+
+**根因：** 把 crontab 当作普通文本片段而不是“活动行 + 项目身份 + 命令语义 + managed block”四层合同；匹配时还把行尾注释算进命令，导致其他项目命令仅因注释提及本项目路径就可能被误删。
+
+**修复：** 先规范化项目物理路径；排除注释行并去掉活动行的行尾注释，再同时要求项目路径和 `pipeline.py daily` / `-m pipeline daily` 语义。清理仅删除精确 managed block 与本项目任务签名，保留其他项目任务和 block 外注释。wrapper 同时改为顺序无关解析 label/`--alert-exit-2`，重复或未知参数在执行前返回 64。
+
+**防复发：** cron 安装测试必须使用 fake crontab 覆盖命令变体、注释、其他项目、行尾注释反例和连续两次安装幂等；生产安装前后保存快照并比较无关行，不以静态字符串断言替代真实 installer 输出。
+
 ## 附录：快速检索
 
 | 关键词 | 对应条目 |
@@ -561,3 +573,4 @@ entry_signal_reason='SOURCE_STALE'
 | cherry-pick 依赖链 / 发布单元 / worktree | G-8 |
 | crontab 行长 / python -m / Path 序列化 / 精确 smoke | G-9 |
 | prediction 输入快照 / reviewer v2-v1 错配 / provenance | G-11 |
+| cron 语义去重 / managed block / 行尾注释 / 参数顺序 | G-12 |

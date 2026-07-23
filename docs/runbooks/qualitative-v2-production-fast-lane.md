@@ -110,9 +110,11 @@ managed cron 会在工作日 17:45（TuShare primary 17:15、`daily` 17:30 之�
 
 验收仍原样返回 exit 2；该任务单独启用 `--alert-exit-2`，因此现有 Telegram 包装器会发送带 `ROLLBACK` 标识的告警。其他任务默认仍抑制 exit 2，weekly PM loop 的“摘要已发送、不重复告警”语义不变。cron 不会自行修改 `.env` 或数据库。收到告警后必须先读 JSON `errors` 定位失败门禁；只有 mode、v2 分数、adoption 或真实不可变字段漂移才进入下述 `off` 回滚，不能仅凭告警标题盲目关闭 v2。
 
+wrapper 允许 label 与 `--alert-exit-2` 交换顺序，但 managed cron 始终生成上面的规范顺序；重复 label、重复 option 或未知 option 会在业务命令执行前返回 64。`cron-setup.sh` 安装前会把项目路径规范为物理路径，并只从活动、本项目、去除行尾注释后的命令部分识别 `pipeline.py daily` / `-m pipeline daily`。HOLD 时已有评分链可被保留，注释和其他项目的同名任务不会冒充本项目 daily；重装会删除本项目 legacy daily 变体并只生成一条 managed daily。
+
 2026-07-20 首次自然验收已返回 `PASS`：35 股完整，6 股 hybrid、29 股 fallback，`rollback_verified=true`。2026-07-21 TuShare 三域强切后，验收任务迁移到 17:45。行情 capability report 仍停留在 2026-07-15 并已 stale；报告过期不等于 provider 已确认失效，也不得被引用为当前 PASS。当前 `cron-setup.sh` 会独立安装 TuShare primary cycle，并保留切换前已存在的评分链；若要从零恢复行情依赖任务，仍须先刷新并通过 market-data readiness。
 
-本阶段关于测试入口、跨模型幂等、exit 2 告警语义、readiness 安装副作用和 cron 重叠的长期规则，已归档到 [`lessons-learned.md`](../lessons-learned.md) G-3～G-7。
+本阶段关于测试入口、跨模型幂等、exit 2 告警语义、readiness 安装副作用、cron 重叠和语义去重的长期规则，已归档到 [`lessons-learned.md`](../lessons-learned.md) G-3～G-7、G-12。
 
 附加门禁要求该日期恰好存在 watchlist 35 股 Framework A prediction，并在 `logs/daily.log` 中找到当前所有 v2 adoption 的 `hybrid_v2`/`source-grounded v2` 证据。若确认是 v2 生产合同失败，再将 `.env` 的 `QUALITATIVE_V2_MODE` 设置为 `off`；后续新 pipeline 进程会完整使用 v1。不要删除 v2 表或修改历史 predictions。
 

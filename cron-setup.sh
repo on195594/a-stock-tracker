@@ -6,6 +6,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="${A_STOCK_PROJECT_DIR:-$SCRIPT_DIR}"
+PROJECT_DIR="$(cd "$PROJECT_DIR" && pwd -P)"
 MANAGED_START="# >>> a-stock-tracker cron >>>"
 MANAGED_END="# <<< a-stock-tracker cron <<<"
 
@@ -32,9 +33,20 @@ mkdir -p "$PROJECT_DIR/logs"
 # 获取现有 crontab，并在覆盖前保留可执行回滚快照
 CURRENT_CRONTAB=$(crontab -l 2>/dev/null || true)
 PRESERVE_EXISTING_DAILY=0
-case "$CURRENT_CRONTAB" in
-    *"pipeline.py daily"*) PRESERVE_EXISTING_DAILY=1 ;;
-esac
+if printf '%s\n' "$CURRENT_CRONTAB" | awk -v project_dir="$PROJECT_DIR" '
+    function is_project_daily(line, command) {
+        if (line ~ /^[[:space:]]*#/) return 0
+        command = line
+        sub(/[[:space:]]+#.*/, "", command)
+        if (index(command, project_dir) == 0) return 0
+        if (command ~ /pipeline\.py[[:space:]]+daily([[:space:]"#]|$)/) return 1
+        return command ~ /-m[[:space:]]+pipeline(\.py)?[[:space:]]+daily([[:space:]"#]|$)/
+    }
+    is_project_daily($0) { found = 1 }
+    END { exit found ? 0 : 1 }
+'; then
+    PRESERVE_EXISTING_DAILY=1
+fi
 CRON_BACKUP_DIR="${A_STOCK_CRON_BACKUP_DIR:-$PROJECT_DIR/backups/crontab}"
 mkdir -p "$CRON_BACKUP_DIR"
 CRON_BACKUP_PATH="$CRON_BACKUP_DIR/crontab-$(date +%Y%m%d-%H%M%S).txt"
@@ -62,10 +74,18 @@ BASE_CRONTAB=$(printf '%s\n' "$CURRENT_CRONTAB" | awk \
     -v start="$MANAGED_START" \
     -v end="$MANAGED_END" \
     -v project_dir="$PROJECT_DIR" '
+    function is_project_daily(line, command) {
+        command = line
+        sub(/[[:space:]]+#.*/, "", command)
+        if (index(command, project_dir) == 0) return 0
+        if (command ~ /pipeline\.py[[:space:]]+daily([[:space:]"#]|$)/) return 1
+        return command ~ /-m[[:space:]]+pipeline(\.py)?[[:space:]]+daily([[:space:]"#]|$)/
+    }
     $0 == start { in_block = 1; next }
     $0 == end { in_block = 0; next }
     in_block { next }
-    /# a-stock-tracker/ { next }
+    /^[[:space:]]*#/ { print; next }
+    is_project_daily($0) { next }
     index($0, project_dir "/cron-alert-wrap.sh") > 0 && /pipeline\.py (weekly|daily|outcome-update)/ { next }
     index($0, project_dir "/cron-alert-wrap.sh") > 0 && /check_qualitative_v2_production\.py/ { next }
     index($0, project_dir "/cron-alert-wrap.sh") > 0 && /weekly_pm_loop\.py/ { next }
