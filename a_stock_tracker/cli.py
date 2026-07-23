@@ -61,7 +61,10 @@ from a_stock_tracker.data.market_data import (
     get_market_data_backfill_provider,
 )
 from a_stock_tracker.integrations.gemini_scorer import get_qualitative_score
-from a_stock_tracker.qualitative.production import get_production_qualitative_score
+from a_stock_tracker.qualitative.production import (
+    ProductionQualitativeSelection,
+    get_production_qualitative_selection,
+)
 from a_stock_tracker.scoring import (
     SUPPORTED_FRAMEWORKS,
     InsufficientDataError,
@@ -419,19 +422,38 @@ def _inject_daily_pb_percentile(data: dict, price_at_score: float | None, code: 
             logger.debug(f"  {code} 无法计算实时PB分位（bps/hist缺失），使用缓存值")
 
 
-def _apply_qualitative_scores(db, code: str, name: str, data: dict) -> None:
+def _apply_qualitative_scores(db, code: str, name: str, data: dict) -> ProductionQualitativeSelection:
     # v2 仅消费预先验证并写入独立表的结果；off/非 canary/缺数/损坏
     # 均逐股回退既有 v1，不在 daily 内新增外部调用类型。
-    qual = get_production_qualitative_score(
+    selection = get_production_qualitative_selection(
         db,
         code,
         name,
         canary_codes=config.QUALITATIVE_V2_CANARY_CODES | config.QUALITATIVE_V2_PILOT_CODES,
         legacy_getter=get_qualitative_score,
     )
-    data["moat_fixed"] = qual["moat"]
-    data["market_pos_fixed"] = qual["market_pos"]
-    data["sentiment_fixed"] = qual["sentiment"]
+    data["moat_fixed"] = selection.scores["moat"]
+    data["market_pos_fixed"] = selection.scores["market_pos"]
+    data["sentiment_fixed"] = selection.scores["sentiment"]
+    return selection
+
+
+def _qualitative_snapshot_fields(selection: ProductionQualitativeSelection) -> dict[str, str]:
+    return {
+        "qualitative_snapshot_json": json.dumps(
+            selection.scores,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ),
+        "qualitative_sources_json": json.dumps(
+            selection.sources,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ),
+        "qualitative_mode": selection.mode,
+    }
 
 
 def _prepare_stock_scoring_input(
@@ -456,7 +478,7 @@ def _prepare_stock_scoring_input(
     report_period = data.get("report_period")
     price_at_score = score_prices.get(code)
     _inject_daily_pb_percentile(data, price_at_score, code)
-    _apply_qualitative_scores(db, code, name, data)
+    qualitative_selection = _apply_qualitative_scores(db, code, name, data)
     return {
         "code": code,
         "name": name,
@@ -467,6 +489,7 @@ def _prepare_stock_scoring_input(
         "entry_signal_result": _compute_stock_entry_signal(db, code, today),
         "l3_v2_result": compute_l3_v2_from_daily_bars(db, code, today),
         "l3_v2_fetched_at": _l3v2_now(),
+        **_qualitative_snapshot_fields(qualitative_selection),
     }
 
 
@@ -482,8 +505,9 @@ def _upsert_one_framework_prediction(
                                 entry_signal_status, entry_signal_reason, entry_signal_source,
                                 entry_signal_fetched_at,
                                 l3_v2_signal, l3_v2_version, l3_v2_status, l3_v2_reason,
-                                l3_v2_fetched_at, created_at)
-                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                l3_v2_fetched_at, qualitative_snapshot_json,
+                                qualitative_sources_json, qualitative_mode, created_at)
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             prep["code"], prep["name"], framework, today, prep["price_at_score"],
             result["quant_score"], result["total_score"], weights_hash, prep["report_period"],
@@ -492,7 +516,9 @@ def _upsert_one_framework_prediction(
             prep["entry_signal_result"].reason, prep["entry_signal_result"].source,
             prep["entry_signal_result"].fetched_at, prep["l3_v2_result"].signal,
             prep["l3_v2_result"].version, prep["l3_v2_result"].status,
-            prep["l3_v2_result"].reason, prep["l3_v2_fetched_at"], datetime.now().isoformat(),
+            prep["l3_v2_result"].reason, prep["l3_v2_fetched_at"],
+            prep["qualitative_snapshot_json"], prep["qualitative_sources_json"],
+            prep["qualitative_mode"], datetime.now().isoformat(),
         ),
     )
     if cursor.rowcount == 0:

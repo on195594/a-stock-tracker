@@ -467,10 +467,20 @@ L3_AUDIT_COLUMNS = {
     "entry_signal_fetched_at",
 }
 
+QUALITATIVE_SNAPSHOT_COLUMNS = {
+    "qualitative_snapshot_json",
+    "qualitative_sources_json",
+    "qualitative_mode",
+}
+
 
 def test_predictions_schema_includes_l3_entry_signal_columns(tmp_db):
     """新库 predictions 建表时包含 L3 entry_signal 字段。"""
     assert L3_AUDIT_COLUMNS.issubset(_prediction_columns())
+
+
+def test_predictions_schema_includes_qualitative_snapshot_columns(tmp_db):
+    assert QUALITATIVE_SNAPSHOT_COLUMNS.issubset(_prediction_columns())
 
 
 def test_get_db_adds_l3_entry_signal_columns_to_legacy_predictions(tmp_path, monkeypatch):
@@ -523,7 +533,100 @@ def test_get_db_adds_l3_entry_signal_columns_to_legacy_predictions(tmp_path, mon
     db.close()
 
     assert L3_AUDIT_COLUMNS.issubset(columns)
+    assert QUALITATIVE_SNAPSHOT_COLUMNS.issubset(columns)
     assert row == ("600036", 66.0, None, None, None, None, None, None)
+
+    migrated = cache_mod.get_db()
+    snapshot_row = migrated.execute(
+        """SELECT qualitative_snapshot_json, qualitative_sources_json, qualitative_mode
+           FROM predictions WHERE code='600036'"""
+    ).fetchone()
+    migrated.close()
+    assert snapshot_row == (None, None, None)
+
+
+def test_prediction_insert_persists_snapshot_and_conflict_does_not_overwrite(tmp_db):
+    signal = types.SimpleNamespace(
+        signal=1,
+        version="v1",
+        status="pass",
+        reason="fixture",
+        source="fixture",
+        fetched_at="2026-05-30T15:00:00",
+    )
+    prep = {
+        "code": "600036",
+        "name": "招商银行",
+        "price_at_score": 10.0,
+        "report_period": "2026-03-31",
+        "threshold_adjusted": 0,
+        "entry_signal_result": signal,
+        "l3_v2_result": signal,
+        "l3_v2_fetched_at": "2026-05-30T15:00:00",
+        "qualitative_snapshot_json": '{"market_pos":4,"moat":7,"sentiment":3}',
+        "qualitative_sources_json": '{"market_pos":"v2","moat":"v2","sentiment":"v1"}',
+        "qualitative_mode": "hybrid_v2",
+    }
+    result = {"quant_score": 40.0, "total_score": 54.0}
+    db = cache_mod.get_db()
+
+    assert pipeline._upsert_one_framework_prediction(db, prep, "2026-05-30", "hash", "A", result)
+    prep["qualitative_snapshot_json"] = '{"market_pos":1,"moat":1,"sentiment":1}'
+    prep["qualitative_sources_json"] = '{"market_pos":"v1","moat":"v1","sentiment":"v1"}'
+    prep["qualitative_mode"] = "v1"
+    assert not pipeline._upsert_one_framework_prediction(db, prep, "2026-05-30", "hash", "A", result)
+    row = db.execute(
+        """SELECT qualitative_snapshot_json, qualitative_sources_json, qualitative_mode
+           FROM predictions WHERE code='600036' AND framework='A'"""
+    ).fetchone()
+    db.close()
+
+    assert row == (
+        '{"market_pos":4,"moat":7,"sentiment":3}',
+        '{"market_pos":"v2","moat":"v2","sentiment":"v1"}',
+        "hybrid_v2",
+    )
+
+
+def test_stock_savepoint_rolls_back_snapshot_if_second_framework_write_fails(tmp_db, monkeypatch):
+    signal = types.SimpleNamespace(
+        signal=1,
+        version="v1",
+        status="pass",
+        reason="fixture",
+        source="fixture",
+        fetched_at="2026-05-30T15:00:00",
+    )
+    prep = {
+        "code": "600036",
+        "name": "招商银行",
+        "data": {},
+        "price_at_score": 10.0,
+        "report_period": "2026-03-31",
+        "threshold_adjusted": 0,
+        "entry_signal_result": signal,
+        "l3_v2_result": signal,
+        "l3_v2_fetched_at": "2026-05-30T15:00:00",
+        "qualitative_snapshot_json": '{"market_pos":4,"moat":7,"sentiment":3}',
+        "qualitative_sources_json": '{"market_pos":"v2","moat":"v2","sentiment":"v1"}',
+        "qualitative_mode": "hybrid_v2",
+    }
+    result = {"quant_score": 40.0, "total_score": 54.0, "data_quality": 1.0}
+    db = cache_mod.get_db()
+    original_upsert = pipeline._upsert_one_framework_prediction
+
+    def fail_second_write(db_arg, prep_arg, today, weights_hash, framework, result_arg):
+        if framework == "B":
+            raise sqlite3.OperationalError("synthetic second-framework failure")
+        return original_upsert(db_arg, prep_arg, today, weights_hash, framework, result_arg)
+
+    monkeypatch.setattr(pipeline, "SUPPORTED_FRAMEWORKS", {"A", "B"})
+    monkeypatch.setattr(pipeline, "score_stock", lambda *_args, **_kwargs: result)
+    monkeypatch.setattr(pipeline, "_upsert_one_framework_prediction", fail_second_write)
+
+    assert pipeline._write_stock_predictions(db, prep, "2026-05-30", "hash", {}, []) == 0
+    assert db.execute("SELECT COUNT(*) FROM predictions WHERE code='600036'").fetchone()[0] == 0
+    db.close()
 
 
 # ---------------------------------------------------------------------------

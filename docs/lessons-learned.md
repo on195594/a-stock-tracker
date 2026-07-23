@@ -501,6 +501,23 @@ entry_signal_reason='SOURCE_STALE'
 
 **防复发：** 设计数据 seal 时先按生命周期分类：identity、append-only evidence、outcome enrichment 和 mutable operations metadata。只有第一类进入 immutable digest；更改列集合必须升级 schema，不能只刷新 SHA 掩盖合同错误。
 
+---
+
+### G-11｜解释 prediction 必须读取同一行的输入快照
+
+**现象（2026-07-23 Telegram reviewer）：** `total_score` 已可能使用 v2/hybrid 定性分值，但推送层仍读取最新 legacy `qualitative_scores` 的 moat/market_pos。结果是 reviewer 可能用 v1 的 `7/3` 解释由 v2 的 `9/5` 生成的总分。
+
+**根因：** prediction 只持久化输出分数，没有持久化实际采用的定性输入及逐维来源；展示层在事后用“当前最新值”重建历史输入，跨越了 scorer 和 reporting 的时间一致性边界。
+
+**修复：** 新 prediction 与 `total_score` 同一写入路径保存定性分值快照、逐维 `v1/v2` 来源和采用模式。Telegram 展示与 reviewer 只使用该行合法快照；旧行缺失或快照损坏时 reviewer fail-closed，不回填、不用当前值冒充历史输入。
+
+**防复发：**
+
+- 任何解释、审计或归因组件必须消费决策时不可变输入快照，不能查询当前最新维表重建历史。
+- 混合 rollout 必须保存逐字段来源，单一全局版本号不能表达 hybrid 输入。
+- 旧记录缺少 provenance 时应明确降级或跳过解释，禁止静默猜测。
+- 幂等冲突可更新运行元数据，但不得用重算值覆盖既有决策快照。
+
 ## 附录：快速检索
 
 | 关键词 | 对应条目 |
@@ -543,3 +560,4 @@ entry_signal_reason='SOURCE_STALE'
 | cron 重叠 / 时间顺序 / 完成依赖 | G-7 |
 | cherry-pick 依赖链 / 发布单元 / worktree | G-8 |
 | crontab 行长 / python -m / Path 序列化 / 精确 smoke | G-9 |
+| prediction 输入快照 / reviewer v2-v1 错配 / provenance | G-11 |

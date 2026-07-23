@@ -126,10 +126,10 @@ fields:
   - field: moat_fixed
     owner: scorer_input
     requirement: fixed
-    source_primary: gemini_qualitative_score_or_phase1_fixed
+    source_primary: production_qualitative_selector.v2_or_v1
     source_fallback: weights.frameworks.A.fundamental.moat_fixed.phase1_fixed
-    cache: qualitative_scores.moat_or_weights_json
-    refresh: 30d_cache_or_static
+    cache: qualitative_scores_v2_or_qualitative_scores; snapshot=predictions.qualitative_snapshot_json
+    refresh: precomputed_v2_30d_or_v1_30d_or_static
     affects_scoring: true
     affects_outcome: false
     failure_behavior: fallback_to_phase1_fixed
@@ -137,10 +137,10 @@ fields:
   - field: market_pos_fixed
     owner: scorer_input
     requirement: fixed
-    source_primary: gemini_qualitative_score_or_phase1_fixed
+    source_primary: production_qualitative_selector.v2_or_v1
     source_fallback: weights.frameworks.A.fundamental.market_pos_fixed.phase1_fixed
-    cache: qualitative_scores.market_pos_or_weights_json
-    refresh: 30d_cache_or_static
+    cache: qualitative_scores_v2_or_qualitative_scores; snapshot=predictions.qualitative_snapshot_json
+    refresh: precomputed_v2_30d_or_v1_30d_or_static
     affects_scoring: true
     affects_outcome: false
     failure_behavior: fallback_to_phase1_fixed
@@ -148,10 +148,10 @@ fields:
   - field: sentiment_fixed
     owner: scorer_input
     requirement: fixed
-    source_primary: gemini_qualitative_score_or_phase1_fixed
+    source_primary: production_qualitative_selector.v2_or_v1
     source_fallback: weights.frameworks.A.valuation.sentiment_fixed.phase1_fixed
-    cache: qualitative_scores.sentiment_or_weights_json
-    refresh: 30d_cache_or_static
+    cache: qualitative_scores_v2_or_qualitative_scores; snapshot=predictions.qualitative_snapshot_json
+    refresh: precomputed_v2_30d_or_v1_30d_or_static
     affects_scoring: true
     affects_outcome: false
     failure_behavior: fallback_to_phase1_fixed

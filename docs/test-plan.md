@@ -121,7 +121,7 @@ Branch: master
 - `pytest` with `tmp_path` fixture for DB isolation
 - Mock AKShare API calls (do not make real network calls in tests)
 - Mock Gemini API calls (`patch.object(gemini_scorer, "_call_gemini", ...)`)
-- Test files（截至 2026-07-19 的历史快照：938 passed；2026-07-22 当前收集：1055 tests）：
+- Test files（截至 2026-07-19 的历史快照：938 passed；2026-07-23 当前全仓：1067 passed）：
   - `tests/test_scorer.py`
   - `tests/test_pipeline.py`（含 cmd_init/cmd_weekly/cmd_outcome_update 覆盖，Batch A+B 新增）
   - `tests/test_gemini_scorer.py`（含 retry backoff / stale cache 路径，Batch B 更新）

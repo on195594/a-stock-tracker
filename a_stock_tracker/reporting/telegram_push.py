@@ -5,9 +5,11 @@ import logging
 import os
 import urllib.request
 import urllib.error
+from dataclasses import dataclass
 
 from a_stock_tracker.data.cache import get_db
 from a_stock_tracker.integrations.agent_reviewer import ReviewInput, ReviewOutput, gemini_review
+from a_stock_tracker.qualitative.contract import DIMENSION_NAMES, SCORE_RANGES
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +22,66 @@ MESSAGE_TRUNCATION_MARKER = "\n\n⚠️ 消息过长已截断，请查看日志�
 REVIEW_EXPLANATION_LIMIT = 110
 REVIEW_OBJECTIONS_LIMIT = 60
 REVIEW_QUESTIONS_LIMIT = 60
+
+
+@dataclass(frozen=True)
+class PredictionQualitativeSnapshot:
+    scores: dict[str, int]
+    sources: dict[str, str]
+    mode: str
+
+
+def _parse_json_object(raw: object) -> dict[str, object] | None:
+    if not isinstance(raw, str):
+        return None
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _sources_match_mode(sources: dict[str, str], mode: str) -> bool:
+    unique_sources = set(sources.values())
+    return (
+        (mode == "v1" and unique_sources == {"v1"})
+        or (mode == "v2" and unique_sources == {"v2"})
+        or (mode == "hybrid_v2" and unique_sources == {"v1", "v2"})
+    )
+
+
+def _prediction_qualitative_snapshot(
+    code: str,
+    snapshot_json: object,
+    sources_json: object,
+    mode: object,
+) -> PredictionQualitativeSnapshot | None:
+    scores_raw = _parse_json_object(snapshot_json)
+    sources_raw = _parse_json_object(sources_json)
+    if scores_raw is None or sources_raw is None or not isinstance(mode, str):
+        logger.warning("%s prediction 缺少合法定性快照，reviewer 已跳过", code)
+        return None
+    if set(scores_raw) != set(DIMENSION_NAMES) or set(sources_raw) != set(DIMENSION_NAMES):
+        logger.warning("%s prediction 定性快照字段漂移，reviewer 已跳过", code)
+        return None
+    scores: dict[str, int] = {}
+    sources: dict[str, str] = {}
+    for dimension in DIMENSION_NAMES:
+        score = scores_raw[dimension]
+        source = sources_raw[dimension]
+        minimum, maximum = SCORE_RANGES[dimension]
+        if isinstance(score, bool) or not isinstance(score, int) or not minimum <= score <= maximum:
+            logger.warning("%s prediction 定性快照分值无效，reviewer 已跳过", code)
+            return None
+        if not isinstance(source, str) or source not in {"v1", "v2"}:
+            logger.warning("%s prediction 定性快照来源无效，reviewer 已跳过", code)
+            return None
+        scores[dimension] = score
+        sources[dimension] = source
+    if not _sources_match_mode(sources, mode):
+        logger.warning("%s prediction 定性快照模式不一致，reviewer 已跳过", code)
+        return None
+    return PredictionQualitativeSnapshot(scores=scores, sources=sources, mode=mode)
 
 
 def _truncate_with_ellipsis(value: str, limit: int) -> str:
@@ -111,7 +173,8 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
     primary = db.execute(
         """SELECT p.code, p.name, p.total_score, p.quant_score, p.entry_signal,
                   p.entry_signal_version, q.moat, q.market_pos, p.l3_v2_signal,
-                  p.weights_hash, p.report_period
+                  p.weights_hash, p.report_period, p.qualitative_snapshot_json,
+                  p.qualitative_sources_json, p.qualitative_mode
            FROM predictions p
            LEFT JOIN qualitative_scores q
              ON p.code = q.code
@@ -124,7 +187,9 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
     ).fetchall()
     backup = db.execute(
         """SELECT p.code, p.name, p.total_score, p.quant_score, p.entry_signal,
-                  p.entry_signal_version, q.moat, q.market_pos, p.l3_v2_signal
+                  p.entry_signal_version, q.moat, q.market_pos, p.l3_v2_signal,
+                  p.qualitative_snapshot_json, p.qualitative_sources_json,
+                  p.qualitative_mode
            FROM predictions p
            LEFT JOIN qualitative_scores q
              ON p.code = q.code
@@ -138,7 +203,9 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
     ).fetchall()
     radar = db.execute(
         """SELECT p.code, p.name, p.total_score, p.quant_score, p.entry_signal,
-                  p.entry_signal_version, q.moat, q.market_pos, p.l3_v2_signal
+                  p.entry_signal_version, q.moat, q.market_pos, p.l3_v2_signal,
+                  p.qualitative_snapshot_json, p.qualitative_sources_json,
+                  p.qualitative_mode
            FROM predictions p
            LEFT JOIN qualitative_scores q
              ON p.code = q.code
@@ -167,35 +234,51 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
             v2_signal,
             weights_hash,
             report_period,
+            snapshot_json,
+            sources_json,
+            qualitative_mode,
         ) in enumerate(primary):
+            snapshot = _prediction_qualitative_snapshot(code, snapshot_json, sources_json, qualitative_mode)
+            display_moat = snapshot.scores["moat"] if snapshot else moat
+            display_market_pos = snapshot.scores["market_pos"] if snapshot else market_pos
             stock_line = _format_stock_line(
-                code, name, total, quant, entry_signal, entry_version, moat, market_pos, v2_signal
+                code,
+                name,
+                total,
+                quant,
+                entry_signal,
+                entry_version,
+                display_moat,
+                display_market_pos,
+                v2_signal,
             )
             lines.append(stock_line)
-            if rank >= 3:
+            if rank >= 3 or snapshot is None:
                 continue
 
             try:
-                missing_fields = tuple(
-                    field_name for field_name, value in (("moat", moat), ("market_pos", market_pos)) if value is None
-                )
                 review_input = ReviewInput(
                     code=code,
                     name=name,
                     score_result={
                         "total_score": total,
                         "quant_score": quant,
-                        "moat": moat,
-                        "market_pos": market_pos,
+                        "moat": snapshot.scores["moat"],
+                        "market_pos": snapshot.scores["market_pos"],
+                        "sentiment": snapshot.scores["sentiment"],
+                        "qualitative_sources": snapshot.sources,
+                        "qualitative_mode": snapshot.mode,
                         "l3_v2_signal": v2_signal,
                     },
                     data_quality_result={
-                        "moat_available": moat is not None,
-                        "market_pos_available": market_pos is not None,
+                        "moat_available": True,
+                        "market_pos_available": True,
+                        "sentiment_available": True,
+                        "prediction_snapshot_available": True,
                     },
-                    missing_fields=missing_fields,
+                    missing_fields=(),
                     risk_flags=(),
-                    policy_version="framework-a-primary-push-v1",
+                    policy_version="framework-a-primary-push-v2",
                     weights_hash=weights_hash,
                     report_period=report_period,
                 )
@@ -216,15 +299,71 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
 
     if backup:
         lines = [f"🟡 候补（高分等待买点，总分>={threshold:.0f}）"]
-        for code, name, total, quant, _entry_signal, entry_version, moat, market_pos, v2_signal in backup:
-            lines.append(_format_stock_line(code, name, total, quant, 0, entry_version, moat, market_pos, v2_signal))
+        for row in backup:
+            (
+                code,
+                name,
+                total,
+                quant,
+                _entry_signal,
+                entry_version,
+                moat,
+                market_pos,
+                v2_signal,
+                snapshot_json,
+                sources_json,
+                qualitative_mode,
+            ) = row
+            snapshot = _prediction_qualitative_snapshot(code, snapshot_json, sources_json, qualitative_mode)
+            display_moat = snapshot.scores["moat"] if snapshot else moat
+            display_market_pos = snapshot.scores["market_pos"] if snapshot else market_pos
+            lines.append(
+                _format_stock_line(
+                    code,
+                    name,
+                    total,
+                    quant,
+                    0,
+                    entry_version,
+                    display_moat,
+                    display_market_pos,
+                    v2_signal,
+                )
+            )
         sections.append("\n".join(lines))
 
     if radar:
         lines = [f"🔵 雷达（{radar_min:.0f}~{threshold:.0f}分，关注）"]
-        for code, name, total, quant, entry_signal, entry_version, moat, market_pos, v2_signal in radar:
+        for row in radar:
+            (
+                code,
+                name,
+                total,
+                quant,
+                entry_signal,
+                entry_version,
+                moat,
+                market_pos,
+                v2_signal,
+                snapshot_json,
+                sources_json,
+                qualitative_mode,
+            ) = row
+            snapshot = _prediction_qualitative_snapshot(code, snapshot_json, sources_json, qualitative_mode)
+            display_moat = snapshot.scores["moat"] if snapshot else moat
+            display_market_pos = snapshot.scores["market_pos"] if snapshot else market_pos
             lines.append(
-                _format_stock_line(code, name, total, quant, entry_signal, entry_version, moat, market_pos, v2_signal)
+                _format_stock_line(
+                    code,
+                    name,
+                    total,
+                    quant,
+                    entry_signal,
+                    entry_version,
+                    display_moat,
+                    display_market_pos,
+                    v2_signal,
+                )
             )
         sections.append("\n".join(lines))
 

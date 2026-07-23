@@ -242,6 +242,42 @@ def test_partial_row_preserves_v2_dimensions_and_composes_with_v1(db, caplog: py
     assert "'sentiment': 'v1'" in caplog.text
 
 
+def test_production_selection_exposes_hybrid_dimension_sources(db) -> None:
+    assert promote_shadow_record(db, _record(partial=True), expected_codes=frozenset({"600036"}))
+    db.commit()
+    legacy = lambda _code, _name: {"moat": 5, "market_pos": 2, "sentiment": 3}
+
+    selection = production_mod.get_production_qualitative_selection(
+        db,
+        "600036",
+        "招商银行",
+        canary_codes=frozenset({"600036"}),
+        legacy_getter=legacy,
+        mode="canary",
+    )
+
+    assert selection.scores == {"moat": 7, "market_pos": 4, "sentiment": 3}
+    assert selection.sources == {"moat": "v2", "market_pos": "v2", "sentiment": "v1"}
+    assert selection.mode == "hybrid_v2"
+
+
+def test_production_selection_exposes_pure_v1_sources(db) -> None:
+    legacy = lambda _code, _name: {"moat": 5, "market_pos": 2, "sentiment": 3}
+
+    selection = production_mod.get_production_qualitative_selection(
+        db,
+        "600036",
+        "招商银行",
+        canary_codes=frozenset({"600036"}),
+        legacy_getter=legacy,
+        mode="off",
+    )
+
+    assert selection.scores == {"moat": 5, "market_pos": 2, "sentiment": 3}
+    assert selection.sources == {"moat": "v1", "market_pos": "v1", "sentiment": "v1"}
+    assert selection.mode == "v1"
+
+
 def test_full_v2_does_not_call_legacy(db) -> None:
     promote_shadow_record(db, _record(), expected_codes=frozenset({"600036"}))
     db.commit()

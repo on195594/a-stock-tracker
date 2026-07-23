@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 from typing import Any
@@ -36,14 +37,19 @@ def _insert_prediction(
     l3_v2_signal: int | None = None,
     weights_hash: str = "hash",
     report_period: str = "2024-09-30",
+    with_snapshot: bool = True,
 ) -> None:
+    snapshot_json = json.dumps({"moat": 7, "market_pos": 3, "sentiment": 3}) if with_snapshot else None
+    sources_json = json.dumps({"moat": "v1", "market_pos": "v1", "sentiment": "v1"}) if with_snapshot else None
+    mode = "v1" if with_snapshot else None
     db = cache_mod.get_db()
     db.execute(
         """INSERT INTO predictions
            (code, name, framework, score_date, price_at_score, quant_score,
             total_score, weights_hash, report_period, entry_signal,
-            entry_signal_version, l3_v2_signal, created_at)
-           VALUES (?, ?, 'A', ?, 10.0, ?, ?, ?, ?, ?, 'v1', ?, ?)""",
+            entry_signal_version, l3_v2_signal, qualitative_snapshot_json,
+            qualitative_sources_json, qualitative_mode, created_at)
+           VALUES (?, ?, 'A', ?, 10.0, ?, ?, ?, ?, ?, 'v1', ?, ?, ?, ?, ?)""",
         (
             code,
             f"N{code}",
@@ -54,6 +60,9 @@ def _insert_prediction(
             report_period,
             entry_signal,
             l3_v2_signal,
+            snapshot_json,
+            sources_json,
+            mode,
             score_date + "T15:00:00",
         ),
     )
@@ -69,8 +78,40 @@ def _insert_qualitative_scores(code: str, moat: int, market_pos: int) -> None:
            VALUES (?, ?, ?, 3, '2026-05-30')""",
         (code, moat, market_pos),
     )
+    db.execute(
+        """UPDATE predictions
+           SET qualitative_snapshot_json=?, qualitative_sources_json=?, qualitative_mode='v1'
+           WHERE code=?""",
+        (
+            json.dumps({"moat": moat, "market_pos": market_pos, "sentiment": 3}),
+            json.dumps({"moat": "v1", "market_pos": "v1", "sentiment": "v1"}),
+            code,
+        ),
+    )
     db.commit()
     db.close()
+
+
+def test_prediction_snapshot_validation_rejects_invalid_values_and_modes():
+    valid_sources = json.dumps({"moat": "v1", "market_pos": "v1", "sentiment": "v1"})
+    assert (
+        telegram_push._prediction_qualitative_snapshot(
+            "600036",
+            json.dumps({"moat": True, "market_pos": 3, "sentiment": 3}),
+            valid_sources,
+            "v1",
+        )
+        is None
+    )
+    assert (
+        telegram_push._prediction_qualitative_snapshot(
+            "600036",
+            json.dumps({"moat": 7, "market_pos": 3, "sentiment": 3}),
+            valid_sources,
+            "hybrid_v2",
+        )
+        is None
+    )
 
 
 def test_push_daily_signals_sends_only_when_score_and_l3_pass(tmp_db, telegram_env, monkeypatch):
@@ -213,7 +254,7 @@ def test_tiered_push_interpretation_includes_moat(tmp_db, telegram_env, monkeypa
 def test_tiered_push_no_duplicate_when_multiple_qualitative_dates(tmp_db, telegram_env, monkeypatch):
     sent = []
     monkeypatch.setattr(telegram_push, "_send", lambda *args: sent.append(args))
-    _insert_prediction("600036", 66.0, 1, l3_v2_signal=1)
+    _insert_prediction("600036", 66.0, 1, l3_v2_signal=1, with_snapshot=False)
     # Insert two qualitative_scores rows for same code, different scored_date
     db = cache_mod.get_db()
     db.execute(
@@ -360,6 +401,74 @@ def test_reviewer_only_receives_top_three_primary_stocks_with_row_metadata(tmp_d
     assert len(reviewed_inputs) == 3
     assert reviewed_inputs[0].weights_hash == "weights-600004"
     assert reviewed_inputs[0].report_period == "period-600004"
+    assert reviewed_inputs[0].score_result["qualitative_mode"] == "v1"
+    assert reviewed_inputs[0].score_result["qualitative_sources"] == {
+        "moat": "v1",
+        "market_pos": "v1",
+        "sentiment": "v1",
+    }
+
+
+def test_reviewer_and_display_use_prediction_hybrid_snapshot_not_latest_legacy(tmp_db, telegram_env, monkeypatch):
+    sent: list[tuple[Any, ...]] = []
+    reviewed_inputs = []
+    monkeypatch.setattr(telegram_push, "_send", lambda *args: sent.append(args))
+    monkeypatch.setattr(
+        telegram_push,
+        "gemini_review",
+        lambda review_input: (
+            reviewed_inputs.append(review_input) or telegram_push.ReviewOutput(explanation="snapshot-review")
+        ),
+    )
+    _insert_prediction("600036", 66.0, 1, l3_v2_signal=1)
+    _insert_qualitative_scores("600036", 7, 3)
+    db = cache_mod.get_db()
+    db.execute(
+        """UPDATE predictions
+           SET qualitative_snapshot_json=?, qualitative_sources_json=?, qualitative_mode='hybrid_v2'
+           WHERE code='600036'""",
+        (
+            json.dumps({"moat": 9, "market_pos": 5, "sentiment": 3}),
+            json.dumps({"moat": "v2", "market_pos": "v2", "sentiment": "v1"}),
+        ),
+    )
+    db.commit()
+    db.close()
+
+    telegram_push.push_daily_signals("2026-05-30", threshold=44.0)
+
+    assert len(reviewed_inputs) == 1
+    assert reviewed_inputs[0].score_result["moat"] == 9
+    assert reviewed_inputs[0].score_result["market_pos"] == 5
+    assert reviewed_inputs[0].score_result["qualitative_mode"] == "hybrid_v2"
+    assert reviewed_inputs[0].score_result["qualitative_sources"] == {
+        "moat": "v2",
+        "market_pos": "v2",
+        "sentiment": "v1",
+    }
+    assert "护城河9/10(强)" in sent[0][2]
+
+
+def test_reviewer_fails_closed_when_prediction_snapshot_is_missing(tmp_db, telegram_env, monkeypatch):
+    sent: list[tuple[Any, ...]] = []
+    reviewed_inputs = []
+    monkeypatch.setattr(telegram_push, "_send", lambda *args: sent.append(args))
+    monkeypatch.setattr(telegram_push, "gemini_review", lambda value: reviewed_inputs.append(value))
+    _insert_prediction("600010", 66.0, 1, l3_v2_signal=1, with_snapshot=False)
+    _insert_qualitative_scores("600010", 7, 3)
+    db = cache_mod.get_db()
+    db.execute(
+        """UPDATE predictions
+           SET qualitative_snapshot_json=NULL, qualitative_sources_json=NULL, qualitative_mode=NULL
+           WHERE code='600010'"""
+    )
+    db.commit()
+    db.close()
+
+    telegram_push.push_daily_signals("2026-05-30", threshold=44.0)
+
+    assert reviewed_inputs == []
+    assert "护城河7/10" in sent[0][2]
 
 
 def test_reviewer_handles_fewer_than_three_primary_stocks(tmp_db, telegram_env, monkeypatch):

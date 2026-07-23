@@ -12,6 +12,7 @@ import logging
 import os
 import sqlite3
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import cast
 
@@ -39,6 +40,15 @@ _CONTEXT_FIELDS = frozenset(
 )
 
 LegacyGetter = Callable[[str, str], dict[str, int]]
+
+
+@dataclass(frozen=True)
+class ProductionQualitativeSelection:
+    """Qualitative values and provenance actually selected for one prediction."""
+
+    scores: dict[str, int]
+    sources: dict[str, str]
+    mode: str
 
 
 class ProductionV2Error(ValueError):
@@ -337,6 +347,61 @@ def _validated_legacy_scores(scores: Mapping[str, int]) -> dict[str, int]:
     return validated
 
 
+def _legacy_selection(code: str, name: str, legacy_getter: LegacyGetter) -> ProductionQualitativeSelection:
+    return ProductionQualitativeSelection(
+        scores=legacy_getter(code, name),
+        sources={dimension: "v1" for dimension in DIMENSION_NAMES},
+        mode="v1",
+    )
+
+
+def get_production_qualitative_selection(
+    conn: sqlite3.Connection,
+    code: str,
+    name: str,
+    *,
+    canary_codes: frozenset[str],
+    legacy_getter: LegacyGetter,
+    mode: str | None = None,
+) -> ProductionQualitativeSelection:
+    """Return the values and per-dimension sources selected for production."""
+    try:
+        selected_mode = production_mode() if mode is None else mode
+        if not is_v2_eligible(code, mode=selected_mode, canary_codes=canary_codes):
+            return _legacy_selection(code, name, legacy_getter)
+        score = load_usable_v2_score(conn, code, name)
+    except Exception as exc:
+        logger.error("%s 定性评分 v2 fail-closed，逐股回退 v1：%s", code, exc)
+        return _legacy_selection(code, name, legacy_getter)
+    if score is None:
+        return _legacy_selection(code, name, legacy_getter)
+    v2_dimensions = tuple(dimension for dimension in DIMENSION_NAMES if score[dimension] is not None)
+    if len(v2_dimensions) == len(DIMENSION_NAMES):
+        logger.info("%s 定性评分使用 source-grounded v2", code)
+        return ProductionQualitativeSelection(
+            scores={dimension: cast(int, score[dimension]) for dimension in DIMENSION_NAMES},
+            sources={dimension: "v2" for dimension in DIMENSION_NAMES},
+            mode="v2",
+        )
+    legacy_raw = legacy_getter(code, name)
+    try:
+        legacy = _validated_legacy_scores(legacy_raw)
+    except ProductionV2Error as exc:
+        logger.error("%s hybrid_v2 的 v1 维度无效，整股保留原 v1：%s", code, exc)
+        return ProductionQualitativeSelection(
+            scores=legacy_raw,
+            sources={dimension: "v1" for dimension in DIMENSION_NAMES},
+            mode="v1",
+        )
+    combined = {
+        dimension: cast(int, score[dimension]) if score[dimension] is not None else legacy[dimension]
+        for dimension in DIMENSION_NAMES
+    }
+    sources = {dimension: "v2" if dimension in v2_dimensions else "v1" for dimension in DIMENSION_NAMES}
+    logger.info("%s 定性评分使用 hybrid_v2，维度来源=%s", code, sources)
+    return ProductionQualitativeSelection(scores=combined, sources=sources, mode="hybrid_v2")
+
+
 def get_production_qualitative_score(
     conn: sqlite3.Connection,
     code: str,
@@ -346,41 +411,24 @@ def get_production_qualitative_score(
     legacy_getter: LegacyGetter,
     mode: str | None = None,
 ) -> dict[str, int]:
-    """Return full or dimension-level hybrid v2, otherwise preserve the v1 path."""
-    try:
-        selected_mode = production_mode() if mode is None else mode
-        if not is_v2_eligible(code, mode=selected_mode, canary_codes=canary_codes):
-            return legacy_getter(code, name)
-        score = load_usable_v2_score(conn, code, name)
-    except Exception as exc:
-        logger.error("%s 定性评分 v2 fail-closed，逐股回退 v1：%s", code, exc)
-        return legacy_getter(code, name)
-    if score is None:
-        return legacy_getter(code, name)
-    v2_dimensions = tuple(dimension for dimension in DIMENSION_NAMES if score[dimension] is not None)
-    if len(v2_dimensions) == len(DIMENSION_NAMES):
-        logger.info("%s 定性评分使用 source-grounded v2", code)
-        return {dimension: cast(int, score[dimension]) for dimension in DIMENSION_NAMES}
-    legacy_raw = legacy_getter(code, name)
-    try:
-        legacy = _validated_legacy_scores(legacy_raw)
-    except ProductionV2Error as exc:
-        logger.error("%s hybrid_v2 的 v1 维度无效，整股保留原 v1：%s", code, exc)
-        return legacy_raw
-    combined = {
-        dimension: cast(int, score[dimension]) if score[dimension] is not None else legacy[dimension]
-        for dimension in DIMENSION_NAMES
-    }
-    sources = {dimension: "v2" if dimension in v2_dimensions else "v1" for dimension in DIMENSION_NAMES}
-    logger.info("%s 定性评分使用 hybrid_v2，维度来源=%s", code, sources)
-    return combined
+    """Compatibility wrapper returning only the selected score values."""
+    return get_production_qualitative_selection(
+        conn,
+        code,
+        name,
+        canary_codes=canary_codes,
+        legacy_getter=legacy_getter,
+        mode=mode,
+    ).scores
 
 
 __all__ = [
     "MODE_ENV",
+    "ProductionQualitativeSelection",
     "ProductionV2Error",
     "context_missing_score_dimensions",
     "get_production_qualitative_score",
+    "get_production_qualitative_selection",
     "is_v2_eligible",
     "load_usable_v2_score",
     "production_mode",
