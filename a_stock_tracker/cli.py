@@ -65,6 +65,11 @@ from a_stock_tracker.data.outcome_shadow import (
     inspect_frozen_cohort,
     write_shadow_report,
 )
+from a_stock_tracker.data.outcome_shadow_migration import (
+    apply_shadow_import,
+    inspect_shadow_import,
+    revert_shadow_import,
+)
 from a_stock_tracker.integrations.gemini_scorer import get_qualitative_score
 from a_stock_tracker.qualitative.production import (
     ProductionQualitativeSelection,
@@ -1000,6 +1005,60 @@ def cmd_outcome_shadow_report(*, candidate_db: str, run_id: str, output: str) ->
     print(json.dumps(asdict(result), ensure_ascii=False, sort_keys=True, default=str))
 
 
+def cmd_outcome_shadow_import(
+    *,
+    production_db: str,
+    candidate_db: str,
+    expected_run: str,
+    expected_manifest: str,
+    mode: str,
+    backup_db: str | None = None,
+    evidence_json: str | None = None,
+) -> None:
+    """Inspect or explicitly apply one additive outcome-shadow migration."""
+    if mode == "inspect":
+        if backup_db or evidence_json:
+            raise ValueError("backup_db and evidence_json are not accepted in inspect mode")
+        result = inspect_shadow_import(production_db, candidate_db, expected_run, expected_manifest)
+    elif mode == "apply":
+        if not backup_db or not evidence_json:
+            raise ValueError("backup_db and evidence_json are required in apply mode")
+        result = apply_shadow_import(
+            production_db,
+            candidate_db,
+            expected_run,
+            expected_manifest,
+            backup_db,
+            evidence_json,
+        )
+    else:
+        raise ValueError(f"unsupported import mode: {mode}")
+    print(json.dumps(asdict(result), ensure_ascii=False, sort_keys=True, default=str))
+
+
+def cmd_outcome_shadow_revert(
+    *,
+    production_db: str,
+    expected_run: str,
+    expected_manifest: str,
+    evidence_json: str | None,
+    mode: str,
+) -> None:
+    """Inspect or explicitly apply a bounded drop-only shadow rollback."""
+    if mode not in {"inspect", "apply"}:
+        raise ValueError(f"unsupported revert mode: {mode}")
+    if mode == "apply" and not evidence_json:
+        raise ValueError("evidence_json is required in apply mode")
+    result = revert_shadow_import(
+        production_db,
+        expected_run,
+        expected_manifest,
+        evidence_json,
+        apply=mode == "apply",
+    )
+    print(json.dumps(asdict(result), ensure_ascii=False, sort_keys=True, default=str))
+
+
 # ──────────────────────────────────────────────
 # Phase 4 里程碑检测
 # ──────────────────────────────────────────────
@@ -1162,6 +1221,20 @@ def main() -> None:
     p_shadow_report.add_argument("--candidate-db", required=True, help="隔离候选 SQLite 路径")
     p_shadow_report.add_argument("--run-id", required=True, help="immutable shadow run ID")
     p_shadow_report.add_argument("--output", required=True, help="新建 .json 报告路径；同时生成同名 .md")
+    p_shadow_import = sub.add_parser("outcome-shadow-import", help="检查或原子导入一个历史 outcome shadow run")
+    p_shadow_import.add_argument("--production-db", required=True, help="显式生产 SQLite 路径")
+    p_shadow_import.add_argument("--candidate-db", required=True, help="只读候选 SQLite 路径")
+    p_shadow_import.add_argument("--expected-run", required=True, help="预期 immutable run ID")
+    p_shadow_import.add_argument("--expected-manifest", required=True, help="预期 manifest hash")
+    p_shadow_import.add_argument("--mode", required=True, choices=("inspect", "apply"))
+    p_shadow_import.add_argument("--backup-db", help="apply 必填：新建 online backup 路径")
+    p_shadow_import.add_argument("--evidence-json", help="apply 必填：新建证据 JSON 路径")
+    p_shadow_revert = sub.add_parser("outcome-shadow-revert", help="检查或执行受限 drop-only shadow 回滚")
+    p_shadow_revert.add_argument("--production-db", required=True, help="显式生产 SQLite 路径")
+    p_shadow_revert.add_argument("--expected-run", required=True, help="预期 immutable run ID")
+    p_shadow_revert.add_argument("--expected-manifest", required=True, help="预期 manifest hash")
+    p_shadow_revert.add_argument("--evidence-json", help="apply 必填：新建证据 JSON 路径")
+    p_shadow_revert.add_argument("--mode", required=True, choices=("inspect", "apply"))
     sub.add_parser("phase-check", help="手动触发 Phase 4 里程碑检测（自动在 outcome-update 后运行）")
     p_remove = sub.add_parser(
         "remove",
@@ -1195,6 +1268,24 @@ def main() -> None:
         )
     elif args.cmd == "outcome-shadow-report":
         cmd_outcome_shadow_report(candidate_db=args.candidate_db, run_id=args.run_id, output=args.output)
+    elif args.cmd == "outcome-shadow-import":
+        cmd_outcome_shadow_import(
+            production_db=args.production_db,
+            candidate_db=args.candidate_db,
+            expected_run=args.expected_run,
+            expected_manifest=args.expected_manifest,
+            mode=args.mode,
+            backup_db=args.backup_db,
+            evidence_json=args.evidence_json,
+        )
+    elif args.cmd == "outcome-shadow-revert":
+        cmd_outcome_shadow_revert(
+            production_db=args.production_db,
+            expected_run=args.expected_run,
+            expected_manifest=args.expected_manifest,
+            evidence_json=args.evidence_json,
+            mode=args.mode,
+        )
     elif args.cmd == "phase-check":
         _check_phase4_milestone()
     elif args.cmd == "remove":
