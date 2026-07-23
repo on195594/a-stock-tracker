@@ -60,6 +60,11 @@ from a_stock_tracker.data.market_data import (
     get_default_market_data_provider,
     get_market_data_backfill_provider,
 )
+from a_stock_tracker.data.outcome_shadow import (
+    build_shadow_candidate,
+    inspect_frozen_cohort,
+    write_shadow_report,
+)
 from a_stock_tracker.integrations.gemini_scorer import get_qualitative_score
 from a_stock_tracker.qualitative.production import (
     ProductionQualitativeSelection,
@@ -968,6 +973,33 @@ def cmd_framework_b_cohort_freeze(*, dry_run: bool, label_date: str | None = Non
         db.close()
 
 
+def cmd_outcome_shadow_build(
+    *,
+    source_db: str,
+    as_of_date: str,
+    dry_run: bool,
+    candidate_db: str | None = None,
+    benchmark_snapshot: str | None = None,
+) -> None:
+    """Inspect or build an explicit candidate-only historical outcome shadow."""
+    if dry_run:
+        if candidate_db or benchmark_snapshot:
+            raise ValueError("candidate_db and benchmark_snapshot are not accepted with --dry-run")
+        inspection = inspect_frozen_cohort(source_db, as_of_date)
+        print(json.dumps(asdict(inspection), ensure_ascii=False, sort_keys=True, default=str))
+        return
+    if not candidate_db or not benchmark_snapshot:
+        raise ValueError("candidate_db and benchmark_snapshot are required without --dry-run")
+    build = build_shadow_candidate(source_db, candidate_db, benchmark_snapshot, as_of_date=as_of_date)
+    print(json.dumps(asdict(build), ensure_ascii=False, sort_keys=True, default=str))
+
+
+def cmd_outcome_shadow_report(*, candidate_db: str, run_id: str, output: str) -> None:
+    """Generate a DB-read-only outcome shadow reconciliation report."""
+    result = write_shadow_report(candidate_db, run_id, output)
+    print(json.dumps(asdict(result), ensure_ascii=False, sort_keys=True, default=str))
+
+
 # ──────────────────────────────────────────────
 # Phase 4 里程碑检测
 # ──────────────────────────────────────────────
@@ -1120,6 +1152,16 @@ def main() -> None:
     p_cohort = sub.add_parser("framework-b-cohort-freeze", help="显式冻结 Framework B 每周研究 cohort")
     p_cohort.add_argument("--dry-run", action="store_true", help="只显示候选计数，不建表、不写数据库")
     p_cohort.add_argument("--label-date", help="冻结日期 YYYY-MM-DD，默认今天")
+    p_shadow = sub.add_parser("outcome-shadow-build", help="只读检查或构建隔离历史 outcome shadow")
+    p_shadow.add_argument("--source-db", required=True, help="显式源 SQLite 路径")
+    p_shadow.add_argument("--as-of-date", required=True, help="冻结日期 YYYY-MM-DD")
+    p_shadow.add_argument("--dry-run", action="store_true", help="只读检查 cohort，不创建文件或 schema")
+    p_shadow.add_argument("--candidate-db", help="新建隔离候选 SQLite 路径")
+    p_shadow.add_argument("--benchmark-snapshot", help="TuShare index_daily 标准化 JSON 快照")
+    p_shadow_report = sub.add_parser("outcome-shadow-report", help="生成只读 shadow 差异报告")
+    p_shadow_report.add_argument("--candidate-db", required=True, help="隔离候选 SQLite 路径")
+    p_shadow_report.add_argument("--run-id", required=True, help="immutable shadow run ID")
+    p_shadow_report.add_argument("--output", required=True, help="新建 .json 报告路径；同时生成同名 .md")
     sub.add_parser("phase-check", help="手动触发 Phase 4 里程碑检测（自动在 outcome-update 后运行）")
     p_remove = sub.add_parser(
         "remove",
@@ -1143,6 +1185,16 @@ def main() -> None:
         cmd_accuracy_report()
     elif args.cmd == "framework-b-cohort-freeze":
         cmd_framework_b_cohort_freeze(dry_run=args.dry_run, label_date=args.label_date)
+    elif args.cmd == "outcome-shadow-build":
+        cmd_outcome_shadow_build(
+            source_db=args.source_db,
+            as_of_date=args.as_of_date,
+            dry_run=args.dry_run,
+            candidate_db=args.candidate_db,
+            benchmark_snapshot=args.benchmark_snapshot,
+        )
+    elif args.cmd == "outcome-shadow-report":
+        cmd_outcome_shadow_report(candidate_db=args.candidate_db, run_id=args.run_id, output=args.output)
     elif args.cmd == "phase-check":
         _check_phase4_milestone()
     elif args.cmd == "remove":
