@@ -2,6 +2,16 @@
 
 所有重大变更按时间倒序记录。
 
+## 2026-07-23 — 行情链路强切 TuShare-only
+
+- 默认与 backfill 行情 provider 均收敛为 TuShare 或 fail-closed；旧 `MARKET_DATA_ALLOW_BAOSTOCK_ONLY` 不再生效，TuShare 失败时不再实例化第二行情源。
+- 在隔离候选库通过 `tushare.pro_bar(adj="qfq")` 为 35/35 股票补齐各 139 行 QFQ，删除 2,385 条非 TuShare 活动日线并替换旧 QFQ；生产库原子切换后 `PRAGMA quick_check=ok`。
+- 删除旧 BaoStock QFQ 采集、文件缓存采集和双源对账入口；live 16:00 cron 已确认指向 `scripts/fetch_qfq_daily_bars_tushare.py`。2026-07-22 条目中的“旧脚本暂留回滚”已由数据库快照和隔离回滚演练取代。
+- L3 v2 增加 QFQ 来源硬门禁，只有 `tushare.pro_bar.qfq` 可进入 strong path；非 TuShare 或 mixed source 返回 `QFQ_SOURCE_MISMATCH`。
+- 切换前后 1,999 条 predictions canonical SHA-256 均为 `158cbc0e…6e3`；隔离演练验证 production → before → candidate 三阶段 `quick_check=ok` 且 hash 不变。
+- 历史 outcome 仅做只读影响评估：可证明 14 次成功 BaoStock outcome fallback；当前 TuShare shadow 的 1,767 个可比标签中 450 个不一致，但因 provenance 不足不得全部归因于 BaoStock，也不得就地覆盖。
+- 全量门禁为 1,069 tests、Ruff、format、mypy、pip check、shell syntax 和 diff check 全绿；AGY 因个人配额耗尽未运行，改由 Claude Code 独立只读复审，结论 `APPROVE`、P0/P1 none。
+
 ## 2026-07-22 — QFQ 日线数据源从 BaoStock 切换到 TuShare
 
 - 新增 `scripts/fetch_qfq_daily_bars_tushare.py`，用 `tushare.pro_bar(adj="qfq")` 替代原 BaoStock 采集，复用 `a_stock_lib.providers.tushare_quotes.to_tushare_stock_code()`；TuShare `vol`（手）换算为股（×100）后写入既有 `daily_bars` 表。

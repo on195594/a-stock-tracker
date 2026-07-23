@@ -21,6 +21,7 @@ from a_stock_tracker.data.market_data import (  # noqa: E402
     PERMISSION_DENIED,
     MarketDataCacheService,
     MarketDataResult,
+    RemovedMarketDataProvider,
     SOURCE_DISABLED,
     get_default_market_data_provider,
     get_market_data_backfill_provider,
@@ -29,7 +30,6 @@ from a_stock_tracker.data.market_data import (  # noqa: E402
 from a_stock_lib.providers.baostock_quotes import (  # noqa: E402
     BAOSTOCK_SOURCE,
     BaoStockMarketDataProvider,
-    IsolatedBaoStockMarketDataProvider,
     to_baostock_index_code,
     to_baostock_stock_code,
 )
@@ -320,9 +320,7 @@ def test_default_market_data_provider_uses_tushare_when_token_present(monkeypatc
 
     provider = get_default_market_data_provider()
 
-    assert isinstance(provider, CompositeMarketDataProvider)
-    assert isinstance(provider.primary, TushareMarketDataProvider)
-    assert isinstance(provider.fallback, IsolatedBaoStockMarketDataProvider)
+    assert isinstance(provider, TushareMarketDataProvider)
 
 
 def test_baostock_code_conversion() -> None:
@@ -443,13 +441,13 @@ def test_composite_provider_uses_baostock_fallback_as_degraded() -> None:
     assert result.value == pytest.approx(35.9)
 
 
-def test_backfill_provider_allows_explicit_baostock_only(monkeypatch) -> None:
+def test_backfill_provider_rejects_explicit_baostock_only(monkeypatch) -> None:
     monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
     monkeypatch.setenv("MARKET_DATA_ALLOW_BAOSTOCK_ONLY", "1")
 
     provider = get_market_data_backfill_provider()
 
-    assert isinstance(provider, IsolatedBaoStockMarketDataProvider)
+    assert isinstance(provider, RemovedMarketDataProvider)
 
 
 class _TransientFailureTushareClient:

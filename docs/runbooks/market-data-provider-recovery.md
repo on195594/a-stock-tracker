@@ -1,13 +1,13 @@
 # Market Data Provider Recovery Runbook
 
 创建时间：2026-06-09
-最新状态：2026-07-21 起，tracker 运行时为 `a-stock-lib==0.4.1`，继续使用 Tushare/BaoStock 行情 provider；probe 的 BaoStock 参考源使用隔离版 provider 防止 SDK socket hang；`a_stock_tracker/data/market_data.py` 保留 tracker 环境门禁和 cache service。2026-07-15 capability report 当前已 stale，必须真实刷新后才能再次声明 `READY_CRON`。
+最新状态：2026-07-23 起，tracker 行情运行时强制为 TuShare-only；默认与 backfill provider 均 fail-closed，不再实例化第二行情源。生产 `daily_bars` 仅保留 TuShare，QFQ 由 `tushare.pro_bar(adj="qfq")` 提供。2026-07-15 capability report 当前已 stale，必须真实刷新后才能再次声明 `READY_CRON`。
 
 ## 状态定义
 
 - `SOURCE_DISABLED`：行情 provider 未启用，不是停牌或临时无行情。
 - `AUTH_MISSING`：缺少 `TUSHARE_TOKEN` 或 token 无法认证。
-- `degraded`：主源 Tushare 失败后，fallback 源返回了可用数据。
+- `failed`：TuShare 失败后保持失败，不允许第二行情源补写。
 
 ## 恢复 daily / outcome 成组 cron 前置条件
 
@@ -68,12 +68,12 @@ python3 scripts/check_market_data_readiness.py --scope daily
 (crontab -l 2>/dev/null | grep -v "pipeline.py daily" || true; echo "30 17 * * 1-5 /home/lin/a-stock-tracker/cron-alert-wrap.sh \"cd /home/lin/a-stock-tracker && .venv/bin/python pipeline.py daily\" daily >> /home/lin/a-stock-tracker/logs/daily.log 2>&1") | crontab -
 ```
 
-## BaoStock 边界
+## TuShare-only 边界
 
-- BaoStock fallback 只在 Tushare 主源失败后以 `degraded` 形式使用。
-- `MARKET_DATA_ALLOW_BAOSTOCK_ONLY=1` 只允许 `market-data-backfill` 使用 BaoStock-only。
-- BaoStock-only 不允许 `daily` 写入新 `predictions`。
-- 若要把 BaoStock-only 用于生产写入，必须另行授权，并至少连续 5 个交易日与 Tushare 或人工行情页面对账。
+- `get_default_market_data_provider()` 与 `get_market_data_backfill_provider()` 只返回 TuShare 或 disabled provider。
+- 旧 `MARKET_DATA_ALLOW_BAOSTOCK_ONLY` 环境变量不再生效。
+- QFQ 强来源合同为 `tushare.pro_bar.qfq`；出现其他来源时 L3 v2 返回 `QFQ_SOURCE_MISMATCH`。
+- probe 只读取本地 `tushare.daily` 缓存作同源一致性检查；参考缺失或数据库损坏时返回 `MANUAL_REQUIRED`，不联网降级。
 
 ## 停止与恢复边界
 
@@ -84,4 +84,4 @@ python3 scripts/check_market_data_readiness.py --scope daily
 - `price_at_score` 覆盖率连续两个交易日低于 95%。
 - L3 覆盖率低于 90%。
 - 任一 L3 窗口出现 mixed source / mixed adjustment / unknown volume unit。
-- BaoStock fallback 与 Tushare 同日 close 偏差超过 0.5%，且样本超过 3 只。
+- `daily_bars` 出现任一非 TuShare source，或 `market_data_audit` 出现已禁用来源记录。

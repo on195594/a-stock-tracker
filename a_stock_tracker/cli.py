@@ -341,7 +341,7 @@ def cmd_weekly() -> None:
 def _backfill_null_prices(db: sqlite3.Connection, today: str, provider: MarketDataProvider | None = None) -> int:
     """回填近 15 天内 price_at_score=NULL 的记录（不含今日）。
 
-    只在今日价格抓取成功后调用，用历史日线数据（如 Tushare/BaoStock）补齐存量缺失。
+    只在今日价格抓取成功后调用，用 TuShare 历史日线数据补齐存量缺失。
     不修改 total_score / weights_hash，仅补 price_at_score。
     """
     cutoff = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=15)).strftime("%Y-%m-%d")

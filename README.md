@@ -48,7 +48,6 @@ GEMINI_API_KEY=你的_Gemini_API_Key
 TELEGRAM_BOT_TOKEN=你的_Bot_Token
 TELEGRAM_CHAT_ID=你的_Chat_ID
 TUSHARE_TOKEN=你的_Tushare_Pro_Token
-MARKET_DATA_ALLOW_BAOSTOCK_ONLY=0
 # 新部署安全默认 off；当前生产实际为 on。复制此模板会让所有股票走 v1，决定取值前请阅读 CLAUDE.md“Phase 状态快照”中的“定性评分 v2 生产读路径”。
 QUALITATIVE_V2_MODE=off
 ```
@@ -59,7 +58,7 @@ QUALITATIVE_V2_MODE=off
 - 未配置 Gemini 时，定性评分使用固定 fallback。
 - 未配置 Telegram 时，推送静默跳过，不影响评分和写库。
 - 启用 Tushare 前先运行 `python3 scripts/probe_tushare_market_data.py`，确认 `daily`、`index_daily`、`trade_cal` 权限和字段可用。
-- `MARKET_DATA_ALLOW_BAOSTOCK_ONLY=1` 只允许 `market-data-backfill` 使用 BaoStock；不会让 `daily` 写入新评分。
+- 行情 provider 为 TuShare-only；缺 token、权限不足或请求失败时 fail-closed，不使用第二行情源补写。
 - `QUALITATIVE_V2_MODE` 仅接受 `off`、`canary`、`on`。当前生产使用 `on`；合法 partial v2 记录逐维回退 v1，整行不存在、过期、损坏或全维不足时逐股回退 v1。
 - `.env` 必须保持在 git 外，不要提交真实密钥。
 
@@ -200,7 +199,7 @@ python3 pipeline.py init
 - `a_stock_tracker/reporting/`：Telegram、Google Sheets 和 Framework B report-only 输出。
 - `a_stock_tracker/qualitative/`：定性评分 v2 合同、校验、生产路径及 M4/M5 研究工作流。
 - `a_stock_lib.providers.tushare_quotes`：Tushare Pro 行情 provider，覆盖评分价、L3 日线、outcome 和沪深 300 指数日线。
-- `a_stock_lib.providers.baostock_quotes`：BaoStock 行情 provider，仅作为 Tushare fallback 或显式 backfill 源。
+- `scripts/fetch_qfq_daily_bars_tushare.py`：TuShare `pro_bar(adj="qfq")` QFQ 采集入口。
 - `config/weights.json`：评分权重与阈值。
 - `config/qualitative/`：生产授权账本与只读验收基线。
 - `docs/data-source-registry.yaml`：字段级数据源 registry。

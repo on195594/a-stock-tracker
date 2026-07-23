@@ -20,7 +20,7 @@ import pandas as pd
 
 LOGGER = logging.getLogger(__name__)
 SCHEMA_VERSION = 1
-SOURCE = "baostock"
+OFFLINE_TUSHARE_DAILY_ADJ_FACTOR_SOURCE = "tushare.daily+adj_factor"
 MIN_ADJ_FACTOR_INTERVAL_SECONDS = 61.0
 CODE_RE = re.compile(r"^[0-9]{6}$")
 CSV_COLUMNS = (
@@ -136,7 +136,7 @@ def build_cache_frame(
     merged = daily_copy.merge(factor_copy, on="trade_date", how="inner", validate="one_to_one")
     merged["code"] = code
     merged["ts_code"] = to_tushare_code(code)
-    merged["source"] = SOURCE
+    merged["source"] = OFFLINE_TUSHARE_DAILY_ADJ_FACTOR_SOURCE
     merged["fetched_at"] = fetched_at or datetime.now(timezone.utc).isoformat()
     merged = merged[list(CSV_COLUMNS)].sort_values("trade_date", kind="stable").reset_index(drop=True)
     return validate_cache_frame(merged, expected_code=code)
@@ -176,7 +176,7 @@ def validate_cache_frame(frame: pd.DataFrame, expected_code: str | None = None) 
             raise CacheInvalidError(f"NON_NUMERIC_{column.upper()}")
     if (normalized["adj_factor"] <= 0).any():
         raise CacheInvalidError("NON_POSITIVE_ADJ_FACTOR")
-    if set(normalized["source"].astype(str)) != {SOURCE}:
+    if set(normalized["source"].astype(str)) != {OFFLINE_TUSHARE_DAILY_ADJ_FACTOR_SOURCE}:
         raise CacheInvalidError("SOURCE_MISMATCH")
     expected_ts_code = to_tushare_code(code)
     if set(normalized["ts_code"].astype(str)) != {expected_ts_code}:
@@ -213,7 +213,7 @@ def write_cache(
         "min_trade_date": str(normalized["trade_date"].iloc[0]),
         "max_trade_date": str(normalized["trade_date"].iloc[-1]),
         "row_count": len(normalized),
-        "source": SOURCE,
+        "source": OFFLINE_TUSHARE_DAILY_ADJ_FACTOR_SOURCE,
         "fetched_at": max(fetched_values),
         "status": "complete",
         "sha256": checksum,
@@ -282,7 +282,7 @@ def read_cache(
         raise CacheInvalidError("STATUS_NOT_COMPLETE")
     if metadata["code"] != code or metadata["ts_code"] != to_tushare_code(code):
         raise CacheInvalidError("METADATA_CODE_MISMATCH")
-    if metadata["source"] != SOURCE:
+    if metadata["source"] != OFFLINE_TUSHARE_DAILY_ADJ_FACTOR_SOURCE:
         raise CacheInvalidError("METADATA_SOURCE_MISMATCH")
     try:
         csv_payload = csv_path.read_bytes()

@@ -1,7 +1,7 @@
 # a-stock-tracker 进化路线图
 
 **版本：** v1.30
-**基线日期：** 2026-07-21
+**基线日期：** 2026-07-23
 **文档定位：** 系统演化的顶层规划文档。所有后续 Phase 的修改、补丁、设计决策均以本文档为基线。若实施中发现偏差，先更新本文档，再改代码。
 
 ---
@@ -33,18 +33,18 @@
 | 定性评分 | ✅ v1 + v2 hybrid | v1 保持 30 天缓存与既有 fallback；v2 全局选择器已启用，6 股使用 source-grounded moat/market_pos，其余维度或股票回退 v1 |
 | Telegram 推送 | ✅ v2 门禁已上线 | 主推条件为 ≥ buy_strong 且 `l3_v2_signal=1`；v2 为 0/NULL 的高分股进入候补 |
 | Outcome 追踪 | ✅ 最近运行正常 | live DB 中 Framework A 30d/60d 结案 953/253；90d 尚无结案 |
-| L3 买点层 | ✅ v2 Phase 2+3 完成；选择性待观察 | QFQ 覆盖 35/35 codes、4585 行；2026-07-13/14 共写入 70 条 v2 记录且全部 pass；cron 工作日 16:00 采集 |
+| L3 买点层 | ✅ v2 Phase 2+3 完成；选择性待观察 | TuShare QFQ 覆盖 35/35 codes、4,865 行；非 TuShare/mixed source fail-closed；cron 工作日 16:00 采集 |
 | 定性评分 v2 | ✅ 全局生产读路径；覆盖扩展中 | `QUALITATIVE_V2_MODE=on`；35 股全部进入选择器，6 股 hybrid、29 股 v1 fallback。M5 36 股审计改为发布后独立研究，不阻塞安全读取 |
-| 行情数据源 | ⚠️ 运行正常，probe stale | 运行时 `a-stock-lib==0.4.1`；2026-07-15 market-data probe 已过 freshness 门禁，需真实刷新 |
+| 行情数据源 | ⚠️ TuShare-only，probe stale | 运行时 `a-stock-lib==0.4.1`；provider 失败即关闭；2026-07-15 market-data probe 已过 freshness 门禁，需真实刷新 |
 | cron | ✅ 新时序已安装 | 16:00 QFQ、17:15 TuShare valuation、17:30 daily、17:45 acceptance、18:00 outcome；周六 10:00 financial/dividend |
-| 质量门禁 | ✅ 全绿 | 当前全仓 `1010 passed`；Ruff、format、mypy、真实 module smoke、Markdown 链接与 `git diff --check` 通过 |
+| 质量门禁 | ✅ 全绿 | 当前全仓 `1069 passed`；Ruff、format、mypy、pip check、shell syntax 与 `git diff --check` 通过 |
 
 ### 关键数据规模
 
 - watchlist：35只（手动维护，固定池）
 - Framework A 记录 1,821 条、Framework B 历史记录 73 条；predictions 合计 1,894 条（2026-07-21 只读查询），强切前后 canonical hash 不变
 - Framework B 生产写入暂停，仅 report-only 观察
-- L3 v1 记录：1078 条，其中通过 148 条、30d 已结案 350 条；L3 v2 记录 70 条且 70/70 pass，两天 strong 均为 18/18 通过门禁，选择性尚未得到证明
+- L3 v1 记录：1078 条，其中通过 148 条、30d 已结案 350 条；L3 v2 历史记录 70 条且 70/70 pass；当前 QFQ 已由 TuShare-only 补至 35×139 行，选择性仍待自然数据证明
 - 最新 tracked accuracy report 生成于 2026-07-15；其中 post-fix A 30d 结案 735 条，L3 v1 pass 的 30d 已结案 71 条
 - Phase 6 当前阻塞：2026-W30 首批 frozen cohort 已入组 7 条，当前结案 0/20、已结案周 0/3，7 条预计最早 2026-08-19 结案；门禁仍要求无 overdue
 - 定性评分 v2：独立表 6 行，000963/002050/600036/600900/601088/603606 的 moat/market_pos 来自 v2，sentiment 因证据不足为 `NULL` 并回退 v1；其余 29 股完整回退 v1
@@ -159,7 +159,7 @@
 **当前状态（2026-07-20）：** Phase 6 仍为 report-only 深化期。旧版 B label 跟踪因每次选择 latest-A 而让到期日随 daily 后移，`0/20` 不是有效倒计时。修复后采用双轨：73 条 legacy B 记录只做回溯；prospective cohort 通过显式命令按周冻结并绑定固定 `source_a_prediction_id`。Framework B 生产写入未启用。
 
 **本轮推进复盘：**
-- 行情链路当前运行于 `a-stock-lib==0.4.1`：Tushare 主源 + 隔离 BaoStock degraded fallback；历史 probe/backfill/daily 均有成功记录。
+- 行情链路当前运行于 `a-stock-lib==0.4.1`：2026-07-23 已强切为 TuShare-only、失败即关闭；旧 fallback 仅保留在历史记录中。
 - cron 已迁移到新 managed block；`READY_CRON` 仍是从零恢复行情依赖任务的门禁，但 2026-07-15 probe 当前已 stale，不得继续描述为实时 READY。
 - Phase 6 readiness 使用 prospective frozen cohort；滚动 latest-A 仅保留为 `[UNFROZEN-PREVIEW]`，不参与门禁。
 - legacy 回溯显示真实 B 历史表现，但必须披露同日样本相关性，永不计入 prospective 门禁。
@@ -300,3 +300,4 @@
 | v1.27 | 2026-07-18 | M5 synthetic fixture-first 编排、blind-reference seal、Gemini early-stop、support audit 和可复验 aggregate report 完成；路线压缩为数据就绪 Sprint + 模型执行 Sprint，D1 来源授权待批准。 |
 | v1.28 | 2026-07-19 | 定性评分 v2 完成可回滚生产闭环：东方电缆和指定五股形成 6 行合法 partial v2，全局模式切到 `on`，35 股选择器只读验证为 6 股 hybrid + 29 股 v1 fallback；M5 代表性/agreement 审计改为发布后独立研究。 |
 | v1.29 | 2026-07-19 | 新增只读生产验收与回滚检查：tracked baseline 绑定 6 股逐维分数和截至 2026-07-17 的历史评分 seal；自动输出 PASS/ROLLBACK，并可在自然 daily 后复验 35 股 prediction 与 v2 adoption 日志。 |
+| v1.30 | 2026-07-23 | 行情链路强切 TuShare-only：默认/backfill provider 失败即关闭；35 股 QFQ 通过 TuShare API 全量补至各 139 行；生产活动行情与历史审计清除非 TuShare 数据；删除旧采集/双源对账入口，predictions 完整 hash 不变。 |

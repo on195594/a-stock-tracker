@@ -21,6 +21,9 @@ from a_stock_tracker.signals.l3_v2 import (
 
 logger = logging.getLogger(__name__)
 
+QFQ_TUSHARE_SOURCE = "tushare.pro_bar.qfq"
+QFQ_SOURCE_MISMATCH = "QFQ_SOURCE_MISMATCH"
+
 _UNAVAILABLE_CONTRACT = DataContractState(
     adjusted="none",
     source="daily_bars",
@@ -38,10 +41,21 @@ def _select_daily_rows(
     today: str,
 ) -> tuple[list[dict[str, Any]], DataContractState]:
     qfq_rows = load_daily_bars(db, code, today, 120, adjusted="qfq")
+    qfq_sources = {str(row["source"]) for row in qfq_rows}
+    if qfq_sources - {QFQ_TUSHARE_SOURCE}:
+        return qfq_rows, DataContractState(
+            adjusted="qfq",
+            source=",".join(sorted(qfq_sources)),
+            volume_unit=qfq_rows[-1]["volume_unit"] if qfq_rows else "unknown",
+            is_stale=False,
+            stale_reason=None,
+            unavailable_reason=QFQ_SOURCE_MISMATCH,
+            alignment_reason=None,
+        )
     if len(qfq_rows) >= 120:
         return qfq_rows, DataContractState(
             adjusted="qfq",
-            source="baostock.qfq",
+            source=QFQ_TUSHARE_SOURCE,
             volume_unit=qfq_rows[-1]["volume_unit"],
             is_stale=False,
             stale_reason=None,
@@ -104,6 +118,8 @@ def compute_l3_v2_from_daily_bars(
         rows, contract = _select_daily_rows(db, code, today)
         if not rows:
             return SignalResult(None, V2_VERSION, "unavailable", "NO_DAILY_BARS", empty_metrics())
+        if contract.unavailable_reason == QFQ_SOURCE_MISMATCH:
+            return SignalResult(None, V2_VERSION, "unavailable", QFQ_SOURCE_MISMATCH, empty_metrics())
         panel = _build_price_panel(code, rows, contract)
         return compute_l3_v2_candidate(panel, contract)
     except Exception as exc:

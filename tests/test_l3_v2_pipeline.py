@@ -43,7 +43,7 @@ def _make_db(bars: list[dict]) -> sqlite3.Connection:
                 None,
                 float(bar["close"]),
                 bar.get("volume", 100.0),
-                "baostock",
+                "tushare.daily",
                 "none",
                 "lot",
                 "2026-01-01T00:00:00+00:00",

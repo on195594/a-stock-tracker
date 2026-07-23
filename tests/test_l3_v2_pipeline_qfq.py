@@ -62,7 +62,7 @@ def _insert_bars(
 
 def test_pass_strong_when_120_qfq_bars_available() -> None:
     db = _make_db()
-    _insert_bars(db, adjusted="qfq", closes=[100.0] * 120, source="baostock.qfq")
+    _insert_bars(db, adjusted="qfq", closes=[100.0] * 120, source="tushare.pro_bar.qfq")
 
     result = compute_l3_v2_from_daily_bars(db, CODE, END_DATE)
 
@@ -74,7 +74,7 @@ def test_pass_strong_when_120_qfq_bars_available() -> None:
 
 def test_fallback_to_pass_weak_when_only_119_qfq_bars() -> None:
     db = _make_db()
-    _insert_bars(db, adjusted="qfq", closes=[100.0] * 119, source="baostock.qfq")
+    _insert_bars(db, adjusted="qfq", closes=[100.0] * 119, source="tushare.pro_bar.qfq")
     _insert_bars(db, adjusted="none", closes=[90.0] * 120, source="tushare.daily")
 
     result = compute_l3_v2_from_daily_bars(db, CODE, END_DATE)
@@ -99,7 +99,7 @@ def test_fallback_to_pass_weak_when_no_qfq_bars() -> None:
 
 def test_qfq_takes_priority_over_unadjusted() -> None:
     db = _make_db()
-    _insert_bars(db, adjusted="qfq", closes=[100.0] * 120, source="baostock.qfq")
+    _insert_bars(db, adjusted="qfq", closes=[100.0] * 120, source="tushare.pro_bar.qfq")
     _insert_bars(
         db,
         adjusted="none",
@@ -113,3 +113,30 @@ def test_qfq_takes_priority_over_unadjusted() -> None:
     assert result.status == "pass_strong"
     assert result.reason == "PASS_STRONG"
     assert result.metrics["close"] == 100.0
+
+
+def test_non_tushare_qfq_source_fails_closed() -> None:
+    db = _make_db()
+    _insert_bars(db, adjusted="qfq", closes=[100.0] * 120, source="baostock.qfq")
+
+    result = compute_l3_v2_from_daily_bars(db, CODE, END_DATE)
+
+    assert result.signal is None
+    assert result.status == "unavailable"
+    assert result.reason == "QFQ_SOURCE_MISMATCH"
+
+
+def test_mixed_qfq_sources_fail_closed() -> None:
+    db = _make_db()
+    _insert_bars(db, adjusted="qfq", closes=[100.0] * 120, source="tushare.pro_bar.qfq")
+    db.execute(
+        "UPDATE daily_bars SET source='baostock.qfq' WHERE code=? AND adjusted='qfq' AND trade_date=?",
+        (CODE, START_DATE.isoformat()),
+    )
+    db.commit()
+
+    result = compute_l3_v2_from_daily_bars(db, CODE, END_DATE)
+
+    assert result.signal is None
+    assert result.status == "unavailable"
+    assert result.reason == "QFQ_SOURCE_MISMATCH"

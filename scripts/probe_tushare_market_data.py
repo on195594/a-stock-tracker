@@ -130,7 +130,7 @@ def _load_reference_close(code: str, trade_date: str) -> ReferenceClose | None:
                 row = conn.execute(
                     """SELECT close, source
                        FROM daily_bars
-                       WHERE code=? AND trade_date=? AND adjusted='none' AND source != 'tushare.daily'
+                       WHERE code=? AND trade_date=? AND adjusted='none' AND source='tushare.daily'
                        ORDER BY fetched_at DESC
                        LIMIT 1""",
                     (code, trade_date),
@@ -141,25 +141,7 @@ def _load_reference_close(code: str, trade_date: str) -> ReferenceClose | None:
             row = None
         if row is not None:
             return ReferenceClose(float(row[0]), str(row[1]), trade_date)
-
-    try:
-        from a_stock_lib.providers.baostock_quotes import IsolatedBaoStockMarketDataProvider
-
-        provider = IsolatedBaoStockMarketDataProvider()
-        result = provider.fetch_daily_bars_range(code, trade_date, trade_date)
-        if result.value is not None and not result.value.empty:
-            row = result.value.iloc[-1]
-            return ReferenceClose(float(row["close"]), result.source, str(row["date"])[:10])
-
-        result = provider.fetch_score_price(code, trade_date)
-    except Exception:
-        return None
-    if result.value is None or result.status == "failed":
-        return None
-    reference_date = trade_date
-    if result.freshness_days is not None:
-        reference_date = (date.fromisoformat(trade_date) - timedelta(days=result.freshness_days)).isoformat()
-    return ReferenceClose(float(result.value), result.source, reference_date)
+    return None
 
 
 def _close_cross_checks(checks: list[dict[str, Any] | ProbeCheck]) -> tuple[str, list[str]]:

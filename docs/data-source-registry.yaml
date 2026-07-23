@@ -193,7 +193,7 @@ fields:
     owner: score_snapshot
     requirement: required
     source_primary: tushare.daily_when_TUSHARE_TOKEN_configured
-    source_fallback: baostock.query_history_k_data_plus_as_degraded_or_disabled
+    source_fallback: none
     cache: predictions.price_at_score
     refresh: daily
     affects_scoring: true
@@ -259,34 +259,34 @@ fields:
     owner: outcome_contract
     requirement: degradable
     source_primary: tushare.daily_due_date_close
-    source_fallback: baostock.query_history_k_data_plus_nearest_available_price_within_10_calendar_days
+    source_fallback: none
     cache: predictions.outcome_30d
     refresh: outcome_update
     affects_scoring: false
     affects_outcome: true
-    failure_behavior: fallback_estimate_or_leave_null
+    failure_behavior: leave_null_with_structured_failure
 
   - field: outcome_60d
     owner: outcome_contract
     requirement: degradable
     source_primary: tushare.daily_due_date_close
-    source_fallback: baostock.query_history_k_data_plus_nearest_available_price_within_10_calendar_days
+    source_fallback: none
     cache: predictions.outcome_60d
     refresh: outcome_update
     affects_scoring: false
     affects_outcome: true
-    failure_behavior: fallback_estimate_or_leave_null
+    failure_behavior: leave_null_with_structured_failure
 
   - field: outcome_90d
     owner: outcome_contract
     requirement: degradable
     source_primary: tushare.daily_due_date_close
-    source_fallback: baostock.query_history_k_data_plus_nearest_available_price_within_10_calendar_days
+    source_fallback: none
     cache: predictions.outcome_90d
     refresh: outcome_update
     affects_scoring: false
     affects_outcome: true
-    failure_behavior: fallback_estimate_or_leave_null
+    failure_behavior: leave_null_with_structured_failure
 
   - field: gemini_qualitative_score
     owner: qualitative_support
@@ -303,14 +303,14 @@ fields:
     owner: market_data_cache
     requirement: required_for_signal
     source_primary: tushare.daily_when_TUSHARE_TOKEN_configured
-    source_fallback: baostock.query_history_k_data_plus_for_degraded_fallback_or_explicit_backfill_only
+    source_fallback: none
     cache: daily_bars
     refresh: daily_incremental
     freshness_sla: latest_trade_day_or_previous_trade_day
     affects_scoring: true
     affects_signal: true
     affects_outcome: true
-    failure_behavior: degraded_or_failed_with_structured_reason
+    failure_behavior: failed_with_structured_reason
     user_visible_impact: l3_coverage_drop_or_score_price_missing
 
   - field: daily_bars_volume_unit

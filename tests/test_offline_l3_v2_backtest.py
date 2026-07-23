@@ -30,7 +30,7 @@ def _make_bar(close: float, date_: date | None = None) -> DailyBar:
         low=close,
         close=close,
         volume=100.0,
-        source="baostock",
+        source="tushare.daily+adj_factor",
         adjusted="qfq",
         volume_unit="lot",
         fetched_at=None,
@@ -44,7 +44,7 @@ def _make_panel(closes: list[float]) -> PricePanel:
         code="000001",
         adjusted="qfq",
         bars=bars,
-        source="baostock",
+        source="tushare.daily+adj_factor",
         volume_unit="lot",
         preload_start=date(2025, 1, 1),
         stale_reason=None,
@@ -55,7 +55,7 @@ def _make_panel(closes: list[float]) -> PricePanel:
 def _qfq_contract() -> DataContractState:
     return DataContractState(
         adjusted="qfq",
-        source="baostock",
+        source="tushare.daily+adj_factor",
         volume_unit="lot",
         is_stale=False,
         stale_reason=None,
@@ -107,7 +107,7 @@ def test_v2_unavailable_when_data_contract_is_stale() -> None:
     panel = _make_panel([100.0] * 120)
     contract = DataContractState(
         adjusted="qfq",
-        source="baostock",
+        source="tushare.daily+adj_factor",
         volume_unit="lot",
         is_stale=True,
         stale_reason="CACHE_EXPIRED",
@@ -183,7 +183,7 @@ def test_v2_pass_strong_ignores_volume_ratio() -> None:
         code="000001",
         adjusted="qfq",
         bars=tuple(bars),
-        source="baostock",
+        source="tushare.daily+adj_factor",
         volume_unit="lot",
         preload_start=date(2025, 1, 1),
         stale_reason=None,
@@ -211,7 +211,7 @@ def test_v2_pass_weak_when_alignment_reason_present() -> None:
     panel = _make_panel(closes)
     contract = DataContractState(
         adjusted="qfq",
-        source="baostock",
+        source="tushare.daily+adj_factor",
         volume_unit="lot",
         is_stale=False,
         stale_reason=None,
@@ -294,7 +294,7 @@ def _make_oversold_panel(
         code="000001",
         adjusted="qfq",
         bars=tuple(early_bars + last_bars),
-        source="baostock",
+        source="tushare.daily+adj_factor",
         volume_unit="lot",
         preload_start=date(2025, 1, 1),
         stale_reason=None,
