@@ -1,7 +1,7 @@
 # Historical outcome shadow Phase 2：生产加法迁移规范
 
 日期：2026-07-24
-状态：阶段 A 已批准；生产执行未授权
+状态：implemented；阶段 B production additive import 已完成
 依赖：Phase 1 commit `c301792`
 
 ## 1. 目标
@@ -86,6 +86,19 @@ apply 前必须创建 timestamped SQLite online backup，并验证：
 
 阶段 A 完成后再次向用户报告 commit、review stamp、artifact dir 和建议执行窗口。只有用户明确批准生产导入，且执行前 writer/锁、时间窗、candidate、production、backup 全部复验通过，才允许 apply。
 
-## 10. 停止条件
+## 10. 阶段 B 执行结果
+
+2026-07-24 经用户显式授权，在 commit `1ad2016` 上执行 production additive import。执行前生产状态为 `absent`、无打开句柄、`quick_check=ok`；导入返回 `imported`，独立 post-commit inspect 返回 `already_present`。
+
+- Run：`outcome-shadow-a38b36b1092589bf7b0a6326`
+- Manifest：`a38b36b1092589bf7b0a632651eaf6f1c5bb5277a2ec68e3ab4dba0f4005510b`
+- 生产对象：3 tables / 6 immutable triggers
+- 数据：1,776 results / 2,520 observations
+- Predictions：1,999；保护 hash `05e8d5569edf4948c3ef3828ce43e5284a0e1a218a32b03a233d41e38070f1ce`
+- Production/backup：`quick_check=ok`；non-shadow 逻辑快照一致
+- 生产证据：`backups/outcome-shadow-phase2-production-20260724-003955/`
+- 边界：legacy outcome、accuracy-report、Sheets、Telegram、cron 均未切换
+
+## 11. 停止条件
 
 Candidate/生产合同漂移、partial/diverged、writer或锁、处于工作日16:00–18:15、backup验证失败、事务核验失败、生产保护hash变化或独立复审存在P0/P1时立即停止。

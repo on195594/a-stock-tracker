@@ -1,7 +1,7 @@
 # a-stock-tracker 进化路线图
 
-**版本：** v1.30
-**基线日期：** 2026-07-23
+**版本：** v1.31
+**基线日期：** 2026-07-24
 **文档定位：** 系统演化的顶层规划文档。所有后续 Phase 的修改、补丁、设计决策均以本文档为基线。若实施中发现偏差，先更新本文档，再改代码。
 
 ---
@@ -20,35 +20,36 @@
 
 ---
 
-## 二、当前系统基线（2026-07-21 快照）
+## 二、当前系统基线（2026-07-24 快照）
 
 ### 能力盘点
 
 | 模块 | 状态 | 说明 |
 |------|------|------|
-| Framework A 评分 | ✅ 正常 | 生产写入框架仍仅 A；最近一次自然 `daily` 为 2026-07-20，live DB 共 1,821 条 A 记录 |
+| Framework A 评分 | ✅ 正常 | 生产写入框架仍仅 A；live DB 共 1,926 条 A 记录，另有 73 条 legacy B |
 | Framework B 评分 | ⏸ report-only | 73 条 legacy B 记录仅作回溯；prospective cohort 改为显式按周冻结并绑定固定 A prediction，不启用生产写入 |
 | 每日 PB 分位 | ✅ TuShare 主源 | 35/35 已物化；28 FULL_10Y、5 SINCE_LISTING、2 INSUFFICIENT_HISTORY，历史不足不沿用旧源十年分位 |
 | 通用财务/分红 | ✅ TuShare 主源 | 35/35 单事务物化；财务按有效公告日和三个已披露年度选择，分红仅取最新已实施税前事件 |
 | 定性评分 | ✅ v1 + v2 hybrid | v1 保持 30 天缓存与既有 fallback；v2 全局选择器已启用，6 股使用 source-grounded moat/market_pos，其余维度或股票回退 v1 |
 | Telegram 推送 | ✅ v2 门禁已上线 | 主推条件为 ≥ buy_strong 且 `l3_v2_signal=1`；v2 为 0/NULL 的高分股进入候补 |
-| Outcome 追踪 | ✅ 最近运行正常 | live DB 中 Framework A 30d/60d 结案 953/253；90d 尚无结案 |
+| Outcome 追踪 | ✅ legacy 正常；versioned shadow 已物化 | live DB 中 Framework A 30d/60d/90d 结案 1,198/428/4；另有不可变 shadow 1 run、1,776 results、2,520 observations。报告仍读取 legacy outcome |
 | L3 买点层 | ✅ v2 Phase 2+3 完成；选择性待观察 | TuShare QFQ 覆盖 35/35 codes、4,865 行；非 TuShare/mixed source fail-closed；cron 工作日 16:00 采集 |
 | 定性评分 v2 | ✅ 全局生产读路径；覆盖扩展中 | `QUALITATIVE_V2_MODE=on`；35 股全部进入选择器，6 股 hybrid、29 股 v1 fallback。M5 36 股审计改为发布后独立研究，不阻塞安全读取 |
 | 行情数据源 | ⚠️ TuShare-only，probe stale | 运行时 `a-stock-lib==0.4.1`；provider 失败即关闭；2026-07-15 market-data probe 已过 freshness 门禁，需真实刷新 |
 | cron | ✅ 新时序已安装 | 16:00 QFQ、17:15 TuShare valuation、17:30 daily、17:45 acceptance、18:00 outcome；周六 10:00 financial/dividend |
-| 质量门禁 | ✅ 全绿 | 当前全仓 `1069 passed`；Ruff、format、mypy、pip check、shell syntax 与 `git diff --check` 通过 |
+| 质量门禁 | ✅ 全绿 | Phase 2 最终全仓 `1112 passed`；Ruff、format、mypy、pip check、shell syntax 与 `git diff --check` 通过 |
 
 ### 关键数据规模
 
 - watchlist：35只（手动维护，固定池）
-- Framework A 记录 1,821 条、Framework B 历史记录 73 条；predictions 合计 1,894 条（2026-07-21 只读查询），强切前后 canonical hash 不变
+- Framework A 记录 1,926 条、Framework B 历史记录 73 条；predictions 合计 1,999 条（2026-07-24 只读查询），outcome shadow 导入前后保护 hash `05e8d556…0f1ce` 不变
 - Framework B 生产写入暂停，仅 report-only 观察
 - L3 v1 记录：1078 条，其中通过 148 条、30d 已结案 350 条；L3 v2 历史记录 70 条且 70/70 pass；当前 QFQ 已由 TuShare-only 补至 35×139 行，选择性仍待自然数据证明
 - 最新 tracked accuracy report 生成于 2026-07-15；其中 post-fix A 30d 结案 735 条，L3 v1 pass 的 30d 已结案 71 条
 - Phase 6 当前阻塞：2026-W30 首批 frozen cohort 已入组 7 条，当前结案 0/20、已结案周 0/3，7 条预计最早 2026-08-19 结案；门禁仍要求无 overdue
 - 定性评分 v2：独立表 6 行，000963/002050/600036/600900/601088/603606 的 moat/market_pos 来自 v2，sentiment 因证据不足为 `NULL` 并回退 v1；其余 29 股完整回退 v1
 - TuShare 三域 shadow：215 个 completed runs、0 failed；最新 daily cycle `run_id=215`、`source_as_of=2026-07-21`、`changed_count=35`
+- 历史 outcome versioned shadow：生产 1 个 immutable run、1,776 results（1,767 computed / 9 missing）、2,520 observations、3 表 6 触发器；legacy outcome 和 consumer 未切换
 
 ### 已知系统性偏差
 

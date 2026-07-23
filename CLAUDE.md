@@ -121,7 +121,7 @@ cycle，周六 10:00 运行 financial/dividend cycle。旧 `fetcher.py` 不再�
 
 ---
 
-## Phase 状态快照（2026-07-22）
+## Phase 状态快照（2026-07-24）
 
 | Phase | 状态 | 说明 |
 |-------|------|------|
@@ -130,6 +130,7 @@ cycle，周六 10:00 运行 financial/dividend cycle。旧 `fetcher.py` 不再�
 | Phase 5 L3 买点层 v1 | ✅ 完成，保留审计 | 最新 tracked report 中 v1 pass 的 30d 已结案 71 条、命中率 2.8%；不再作为生产主推门禁 |
 | Phase 5 L3 v2（QFQ）| ✅ Phase 2+3 完成，采集源已切换 | Phase 2: QFQ 35/35×130 行回填，pass_strong 激活，cron 16:00；Phase 3: 推送触发切换至 l3_v2_signal=1（commit e080f15）；2026-07-22 采集源由 BaoStock 切换到 TuShare，`adjusted='qfq'` 表结构/下游不变 |
 | TuShare 三域生产主源 | ✅ 强切完成 | 35/35 估值、通用财务、分红物化；运行时 0.4.1；PB 历史覆盖 28 FULL_10Y / 5 SINCE_LISTING / 2 INSUFFICIENT_HISTORY；predictions 未改写 |
+| 历史 outcome versioned shadow | ✅ Phase 1+2 完成并生产物化 | 1 immutable run、1,776 results、2,520 observations、3 表 6 触发器；backup/rehearsal/post-commit verifier PASS；legacy outcome、报告、Sheets、Telegram、cron 均未切换 |
 | 定性评分 v2 MILESTONE-002 | ✅ fixture-first 完成 | contract/types/taxonomy/schema/prompt/validator 与 145 项本地合同测试已完成，AGY 边界加固复审 PASS |
 | 定性评分 v2 MILESTONE-003 | ✅ 文件 shadow seam 完成 | 独立 client/CLI、JSONL artifact、错误分类、重试和同 hash 去重已完成，AGY 最终只读审查 PASS；该研究 shadow 与后续生产 canary 物理隔离 |
 | 定性评分 v2 生产读路径 | ✅ 全局 `on` | 35 股全部进入 v2 选择器；独立 v2 表 6 行。603606 及 000963/002050/600036/600900/601088 使用 moat/market_pos v2 与 sentiment v1 fallback，其余 29 股逐股回退 v1；只读生产验收当前 PASS |

@@ -2,6 +2,14 @@
 
 所有重大变更按时间倒序记录。
 
+## 2026-07-24 — 历史 outcome versioned shadow 生产导入
+
+- Phase 1 新增不可变的历史 outcome shadow：冻结 `as_of_date=2026-07-23` 的 1,776 个 prediction/window 事件，以 TuShare raw close 重建实际交易日、个股/基准收益与来源证据；结果为 1,767 个 `computed_aligned`、9 个 `missing_stock_entry`，不覆盖 legacy outcome。
+- Phase 2 在提交 `1ad2016` 后通过显式授权执行 additive production import：单事务新增 3 张 shadow 表、6 个 UPDATE/DELETE 拒绝触发器、1 个 run、2,520 observations 和 1,776 results；`predictions` 保持 1,999 行，保护 hash 保持 `05e8d556…0f1ce`。
+- 迁移前 SQLite online backup、事务内核验和独立 post-commit verifier 均通过；production/candidate 的 result 与 observation hash 一致，non-shadow schema/table/hash/sqlite_sequence 零漂移，两库 `PRAGMA quick_check=ok`。
+- 本次只完成审计 shadow 的生产物化；legacy outcome、accuracy-report、Sheets、Telegram 与 cron 均未切换。生产前备份和 proof 保存在 `backups/outcome-shadow-phase2-production-20260724-003955/`。
+- 清理已被最终 v4 candidate 和第二轮 rehearsal 取代的中间工件，回收 59.22 MiB；保留最终 candidate/replay/reconciliation/manifest、最终 rollback rehearsal、生产备份及 post-migration proof。
+
 ## 2026-07-23 — 行情链路强切 TuShare-only
 
 - 默认与 backfill 行情 provider 均收敛为 TuShare 或 fail-closed；旧 `MARKET_DATA_ALLOW_BAOSTOCK_ONLY` 不再生效，TuShare 失败时不再实例化第二行情源。
