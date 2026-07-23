@@ -93,6 +93,8 @@ Branch: master
 - fake crontab 在 HOLD 下识别本项目 `pipeline.py daily` 与 `-m pipeline daily` 变体并规范化为一条 managed daily
 - 注释、其他项目任务、行尾注释中提及本项目路径的任务不得触发 preserve 或 cleanup
 - 连续安装两次 crontab 字节一致；fake curl 证明 exit 2 告警与默认抑制语义不变
+- HOLD + existing daily 输出“保留现有评分链”，不得同时宣称移除；HOLD + no daily 输出“不新增评分写任务”
+- rollback 从与快照不同的 fake live crontab 开始，经真实 `--rollback` 入口后必须逐字节恢复快照
 
 ### MILESTONE-004 离线审计工具链
 
@@ -130,7 +132,7 @@ Branch: master
 - `pytest` with `tmp_path` fixture for DB isolation
 - Mock AKShare API calls (do not make real network calls in tests)
 - Mock Gemini API calls (`patch.object(gemini_scorer, "_call_gemini", ...)`)
-- Test files（截至 2026-07-19 的历史快照：938 passed；2026-07-23 当前全仓：1080 passed）：
+- Test files（截至 2026-07-19 的历史快照：938 passed；2026-07-23 当前全仓：1081 passed）：
   - `tests/test_scorer.py`
   - `tests/test_pipeline.py`（含 cmd_init/cmd_weekly/cmd_outcome_update 覆盖，Batch A+B 新增）
   - `tests/test_gemini_scorer.py`（含 retry backoff / stale cache 路径，Batch B 更新）
@@ -138,7 +140,7 @@ Branch: master
   - `tests/test_agent_reviewer.py`（含 Gemini REST / fallback / validate、timeout 与 `URLError(timeout)` 有界重试）
   - `tests/test_qualitative_v2_shadow.py`（同模型去重、跨模型独立调用与 JSONL 记录）
   - `tests/test_qualitative_v2_production_acceptance.py`（生产 PASS/ROLLBACK、历史 seal、daily 证据和 `off` 零 DB 访问）
-  - `tests/test_qualitative_v2_production_cron.py`（动态当天日期、managed cron 顺序/语义去重、参数校验、exit 2 告警与 weekly PM 兼容语义）
+  - `tests/test_qualitative_v2_production_cron.py`（动态当天日期、managed cron 顺序/语义去重、HOLD 输出、差异状态 rollback、参数校验、exit 2 告警与 weekly PM 兼容语义）
   - `tests/milestone004/test_audit.py`（frame/sample、URL/corpus、technical ledger、Wilson/coverage）
   - `tests/milestone004/test_artifacts.py`（blob/path、create-only、并发 stage、hash chain）
   - `tests/milestone004/test_review.py`（bundle、authorization、subprocess limits、seal/index/adjudication/report）

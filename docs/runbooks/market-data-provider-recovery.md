@@ -75,11 +75,11 @@ python3 scripts/check_market_data_readiness.py --scope daily
 - BaoStock-only 不允许 `daily` 写入新 `predictions`。
 - 若要把 BaoStock-only 用于生产写入，必须另行授权，并至少连续 5 个交易日与 Tushare 或人工行情页面对账。
 
-## 停止条件
+## 停止与恢复边界
 
-任一条件出现时停止 daily/outcome 生产写入：
+以下条件分别用于阻止从零恢复或要求停止生产写入；`HOLD_CRON` 的 stale/unknown 保留边界按首条单独处理：
 
-- `scripts/check_market_data_readiness.py --scope cron` 返回 `HOLD_CRON`：停止或不恢复成组 `daily` / `outcome-update` cron；`cron-setup.sh` 会保留 weekly，并移除 managed/旧版 tracker daily、outcome-update 规则。
+- `scripts/check_market_data_readiness.py --scope cron` 返回 `HOLD_CRON`：禁止从零恢复成组 `daily` / `acceptance` / `outcome-update`。`cron-setup.sh` 若识别到本项目已有 daily，会保留现有评分链并明确输出“保留现有评分链，不用于从零恢复”；若没有已有 daily，则只保留非评分任务并输出“不新增评分写任务”。HOLD 本身不证明 provider 已确认失效；若诊断已确认不安全，应按事故处置显式停用，不要依赖安装器的 stale/unknown 保留路径。
 - `scripts/check_market_data_readiness.py --scope daily` 返回 `HOLD_DAILY`：停止 daily 写入。
 - `price_at_score` 覆盖率连续两个交易日低于 95%。
 - L3 覆盖率低于 90%。

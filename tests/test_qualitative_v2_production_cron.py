@@ -188,6 +188,8 @@ def test_cron_setup_canonicalizes_project_daily_variant_and_is_idempotent(tmp_pa
     first_result, first_crontab = _run_cron_setup(tmp_path, unrelated + protected_comment + legacy + legacy_file)
 
     assert first_result.returncode == 0
+    assert "门禁未通过，但检测到既有 daily；保留现有评分链" in first_result.stdout
+    assert "移除 daily" not in first_result.stdout
     assert unrelated.strip() in first_crontab
     assert protected_comment.strip() in first_crontab
     assert "-m pipeline daily" not in first_crontab
@@ -223,5 +225,40 @@ def test_cron_setup_does_not_preserve_daily_from_comment_or_other_project(tmp_pa
     result, installed = _run_cron_setup(tmp_path, initial)
 
     assert result.returncode == 0
+    assert "未发现既有 daily，且行情恢复门禁未通过；不新增评分写任务" in result.stdout
     assert initial.strip() in installed
     assert ".venv/bin/python pipeline.py daily" not in installed
+
+
+def test_cron_setup_rollback_restores_different_snapshot_byte_for_byte(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    setup = project / "cron-setup.sh"
+    shutil.copy2(PROJECT_ROOT / "cron-setup.sh", setup)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _write_fake_crontab_command(fake_bin)
+    state = tmp_path / "crontab.txt"
+    snapshot = tmp_path / "snapshot.txt"
+    original = b"# snapshot A\n1 2 * * * /safe/task\n\n"
+    changed = b"# live state B\n9 9 * * * /different/task\n"
+    snapshot.write_bytes(original)
+    state.write_bytes(changed)
+    assert state.read_bytes() != snapshot.read_bytes()
+    environment = {
+        **os.environ,
+        "CRONTAB_STATE": str(state),
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+    }
+
+    result = subprocess.run(
+        ["bash", str(setup), "--rollback", str(snapshot)],
+        capture_output=True,
+        check=False,
+        env=environment,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert str(snapshot) in result.stdout
+    assert state.read_bytes() == original

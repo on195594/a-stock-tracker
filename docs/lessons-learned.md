@@ -526,9 +526,9 @@ entry_signal_reason='SOURCE_STALE'
 
 **根因：** 把 crontab 当作普通文本片段而不是“活动行 + 项目身份 + 命令语义 + managed block”四层合同；匹配时还把行尾注释算进命令，导致其他项目命令仅因注释提及本项目路径就可能被误删。
 
-**修复：** 先规范化项目物理路径；排除注释行并去掉活动行的行尾注释，再同时要求项目路径和 `pipeline.py daily` / `-m pipeline daily` 语义。清理仅删除精确 managed block 与本项目任务签名，保留其他项目任务和 block 外注释。wrapper 同时改为顺序无关解析 label/`--alert-exit-2`，重复或未知参数在执行前返回 64。
+**修复：** 先规范化项目物理路径；排除注释行并去掉活动行的行尾注释，再同时要求项目路径和 `pipeline.py daily` / `-m pipeline daily` 语义。清理仅删除精确 managed block 与本项目任务签名，保留其他项目任务和 block 外注释。wrapper 同时改为顺序无关解析 label/`--alert-exit-2`，重复或未知参数在执行前返回 64。HOLD 提示延后到 preserve/no-bootstrap 最终分支确定后输出，避免先声称移除又实际保留。
 
-**防复发：** cron 安装测试必须使用 fake crontab 覆盖命令变体、注释、其他项目、行尾注释反例和连续两次安装幂等；生产安装前后保存快照并比较无关行，不以静态字符串断言替代真实 installer 输出。
+**防复发：** cron 安装测试必须使用 fake crontab 覆盖命令变体、注释、其他项目、行尾注释反例、HOLD 输出和连续两次安装幂等；生产安装前后保存快照并比较无关行，不以静态字符串断言替代真实 installer 输出。rollback 测试必须让 live state 与 snapshot 确实不同，再断言真实入口逐字节恢复；相同内容的生产 hash 只能证明无漂移，不能单独证明恢复能力。
 
 ## 附录：快速检索
 

@@ -51,6 +51,20 @@ Close three bounded reliability gaps without changing scoring, Telegram message 
 - Non-timeout `URLError`, HTTP 401/403, and parse/validation errors remain immediate fallback.
 - Tests patch `urlopen`, `sleep`, curl, crontab, environment, and filesystem; no real network, credential, or production DB access.
 
+### REQ-004 — HOLD output must describe the final action
+
+- Readiness failure diagnostics may be printed, but must not announce removal before existing-daily preservation is resolved.
+- `HOLD + existing project daily` must explicitly report that bootstrap is blocked while the existing scoring lane is preserved.
+- `HOLD + no existing project daily` must explicitly report that no new scoring write jobs are installed.
+- Output must not claim that daily/acceptance/outcome are removed when they are present in the resulting managed block.
+- Schedule definitions, readiness policy, and preservation behavior remain unchanged.
+
+### REQ-005 — Rollback must restore a different state byte-for-byte
+
+- A fake-crontab integration test must start from snapshot A, replace live state with distinct bytes B, invoke the real `--rollback A` entrypoint, and assert exact byte equality with A.
+- The test must also assert that rollback output identifies the selected snapshot.
+- No production crontab mutation is permitted in the automated test.
+
 ## 4. Non-goals
 
 - Telegram `_send` retry or message-length changes.
@@ -73,6 +87,8 @@ Close three bounded reliability gaps without changing scoring, Telegram message 
 - Wrapper tests cover canonical order, reversed order, default suppression, and malformed argument rejection.
 - Cron setup runs entirely against a temporary project and fake `crontab`; after two installs there is one canonical daily rule, semantic legacy variants are absent, and unrelated lines are unchanged.
 - Reviewer tests cover direct timeout success-after-two, wrapped timeout success-after-two, exhausted timeout fallback, and non-timeout `URLError` immediate fallback.
+- HOLD integration tests require stdout to match the final preserve/no-bootstrap branch and forbid contradictory removal claims.
+- Rollback integration starts from different fake live/snapshot bytes and proves exact restoration through the real `--rollback` entrypoint.
 - `pytest tests/test_qualitative_v2_production_cron.py tests/test_agent_reviewer.py -q` passes.
 - Full `pytest tests/ -q`, Ruff lint/format, mypy, project-structure tests, shell syntax, and `git diff --check` pass.
 - Independent read-only reviewer returns no security or logic blockers.
@@ -88,6 +104,7 @@ Close three bounded reliability gaps without changing scoring, Telegram message 
    - one acceptance rule with canonical third-argument `--alert-exit-2`;
    - one canonical daily rule.
 5. Run fake-curl wrapper smoke only; do not send a real alert or call Gemini.
+6. In a real `HOLD + existing daily` install, stdout must report preservation and the before/after crontab hash must remain identical.
 
 ## 7. Rollback
 

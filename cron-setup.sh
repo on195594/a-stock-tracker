@@ -65,7 +65,7 @@ MARKET_DATA_READY=0
 if "$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/scripts/check_market_data_readiness.py" >/tmp/a-stock-market-data-readiness.log 2>&1; then
     MARKET_DATA_READY=1
 else
-    echo "⚠️  行情 provider 尚未通过恢复门禁；将只配置 weekly，并移除 daily/production-acceptance/outcome-update"
+    echo "⚠️  行情 provider 尚未通过恢复门禁"
     cat /tmp/a-stock-market-data-readiness.log
 fi
 
@@ -115,6 +115,9 @@ echo "✅ 已配置 qfq-daily-bars 任务"
 echo "✅ 已配置 tushare-primary-daily 任务"
 
 if [ "$MARKET_DATA_READY" -eq 1 ] || [ "$PRESERVE_EXISTING_DAILY" -eq 1 ]; then
+    if [ "$MARKET_DATA_READY" -eq 0 ]; then
+        echo "⚠️  门禁未通过，但检测到既有 daily；保留现有评分链，不用于从零恢复"
+    fi
     MANAGED_CRONTAB=$(cat <<EOF
 $MANAGED_CRONTAB
 
