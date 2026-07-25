@@ -13,7 +13,7 @@ import urllib.request
 logger = logging.getLogger(__name__)
 
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL = "gemini-3.5-flash-lite"
 GEMINI_TIMEOUT_S = 30
 MAX_RETRIES = 3
 RETRY_DELAYS: tuple[int, ...] = (2, 4)
@@ -139,7 +139,9 @@ def gemini_review(input_data: ReviewInput) -> ReviewOutput:
     payload = json.dumps(
         {
             "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.2, "maxOutputTokens": 512, "thinkingConfig": {"thinkingBudget": 0}},
+            # gemini-3.5-flash-lite: thinkingConfig is unsupported here (400 INVALID_ARGUMENT if set)
+            # and this model does not consume hidden thinking tokens by default, so it's omitted.
+            "generationConfig": {"temperature": 0.2, "maxOutputTokens": 512},
         }
     ).encode("utf-8")
     url = GEMINI_API_URL.format(model=GEMINI_MODEL, key=api_key)
