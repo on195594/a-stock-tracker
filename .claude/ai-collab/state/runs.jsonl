@@ -55,3 +55,4 @@
 {"date": "2026-07-22", "task_id": "holistic-fix-cron-dedup", "qa_tool": "codex-self-review", "commit_hash": "115e889", "status": "done", "desc": "", "goal_honored": "HONORED", "recorded_at": "2026-07-22T16:33:20.912053Z", "event_seq": 75}
 {"date": "2026-07-22", "task_id": "holistic-fix-reviewer-fallback-length", "qa_tool": "codex-self-review", "commit_hash": "b725d9c", "status": "done", "desc": "", "goal_honored": "HONORED", "recorded_at": "2026-07-22T16:38:03.908288Z", "event_seq": 77}
 {"date": "2026-07-25", "task_id": "fix-gemini-review-deprecated-model", "qa_tool": "none", "commit_hash": "cfb611e", "status": "done", "desc": "", "goal_honored": "HONORED", "recorded_at": "2026-07-25T09:28:05.936356Z", "event_seq": 79}
+{"date": "2026-07-25", "task_id": "switch-gemini-model-3.5-flash-lite", "qa_tool": "none", "commit_hash": "b18eb3e", "status": "done", "desc": "", "goal_honored": "HONORED", "recorded_at": "2026-07-25T09:56:54.670176Z", "event_seq": 80}
