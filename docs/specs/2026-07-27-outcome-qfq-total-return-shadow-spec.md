@@ -189,11 +189,19 @@ v1 缺 `as_of_date` 与到期谓词，导致未到期事件会被误判为数据
 
 实测 cohort 规模（固定值，实现须逐一比对）：
 
-| 窗口 | 到期事件数 | 其中生产已结案 |
-|---|---|---|
-| 30d | 1,233 | 1,233 |
-| 60d | 463 | 463 |
-| **合计 event_count** | **1,696** | 1,696 |
+| 窗口 | 到期事件数 | Framework A | Framework B |
+|---|---|---|---|
+| 30d | 1,306 | 1,233 | 73 |
+| 60d | 536 | 463 | 73 |
+| **合计 event_count** | **1,842** | 1,696 | 146 |
+
+⚠️ **本表已于 2026-07-27 订正。** v2 初稿写的是 1,233 / 463 / 1,696，那是只统计
+`framework='A'` 的结果；但 `_load_frozen_events` **不按 framework 过滤**，Phase 1 的
+1,776 条同样含 B。实现与 Phase 1 一致，错的是初稿的统计口径。该错误由 A3 实际执行
+时的 inspection 输出暴露（实测 30d 1306 / 60d 536），fixture 测试无法发现。
+
+Framework B 仍为 report-only，纳入 shadow 只是保持与 Phase 1 相同的 cohort 定义；
+报告层须按 framework 分组，不得把 B 的结果混入 Framework A 的有效性结论。
 
 后续新增 prediction 不进入本 run。
 
@@ -313,7 +321,7 @@ and target[0] == benchmark_target[0]
 
 1. §4.3.1 的两条 benchmark 校验判据未通过
 2. 个股数据出现 §6.1 约定之外的 `source` 或 `adjusted` 值
-3. §5.1 的 event_count 与实测固定值（30d 1,233 / 60d 463 / 合计 1,696）不符
+3. §5.1 的 event_count 与实测固定值（30d 1,306 / 60d 536 / 合计 1,842）不符
 4. §8.1 的扩展保护 hash 在 run 前后发生变化
 5. 单事务提交失败
 
@@ -353,7 +361,7 @@ v1 引用 `05e8d556…0f1ce`（对应 1,999 行）**已过时**。实测当前
 1. 全量测试通过（当前基线 1,126 passed，实现后不得下降）
 2. Ruff lint/format、mypy、`git diff --check` 全绿
 3. run 完成后独立只读 verifier 复验：
-   - 本 run 行数 == `event_count` == 1,696
+   - 本 run 行数 == `event_count` == 1,842
    - 随机抽 10 个事件手工按 §5.2 重算并逐字段比对
    - `predictions` 行数与**扩展**保护 hash 未变
 4. 报告层：`accuracy-report` 新增并行 section，既有 section 数值逐字节不变

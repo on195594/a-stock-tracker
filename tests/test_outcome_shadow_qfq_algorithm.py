@@ -324,6 +324,51 @@ def test_default_algorithm_still_requires_price_symbol(tmp_path: Path) -> None:
 # --- end to end ----------------------------------------------------------------
 
 
+def test_build_succeeds_when_source_already_carries_an_imported_run(tmp_path: Path) -> None:
+    """Production has held the shadow tables since the Phase 2 import.
+
+    The candidate is a full copy of the source, so it inherits those tables and any run
+    inside them. Building must still succeed and the candidate must contain only its own
+    run — not the inherited one.
+    """
+    source = tmp_path / "source.db"
+    _seed(source)
+    conn = sqlite3.connect(source)
+    conn.executescript(
+        """
+        CREATE TABLE outcome_shadow_runs (run_id TEXT PRIMARY KEY, algorithm_version TEXT);
+        CREATE TABLE outcome_shadow_observations (run_id TEXT, trade_date TEXT);
+        CREATE TABLE outcome_shadow_results (run_id TEXT, prediction_id INTEGER);
+        CREATE TRIGGER outcome_shadow_runs_update_immutable
+            BEFORE UPDATE ON outcome_shadow_runs
+            BEGIN SELECT RAISE(ABORT, 'OUTCOME_SHADOW_IMMUTABLE'); END;
+        INSERT INTO outcome_shadow_runs VALUES('inherited-run', 'tushare_raw_price_return_v1');
+        INSERT INTO outcome_shadow_results VALUES('inherited-run', 999);
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    snapshot = tmp_path / "benchmark.json"
+    _write_benchmark(snapshot, [("2026-01-05", 1000.0), ("2026-02-04", 1010.0)])
+    candidate = tmp_path / "candidate.db"
+
+    result = build_shadow_candidate(source, candidate, snapshot, as_of_date="2026-06-30", algorithm=QFQ_TOTAL_RETURN_V1)
+
+    with sqlite3.connect(f"file:{candidate}?mode=ro", uri=True) as conn:
+        conn.row_factory = sqlite3.Row
+        run_ids = [row[0] for row in conn.execute("SELECT run_id FROM outcome_shadow_runs").fetchall()]
+        stale = conn.execute("SELECT COUNT(*) FROM outcome_shadow_results WHERE run_id = 'inherited-run'").fetchone()[0]
+
+    assert run_ids == [result.run_id], "candidate must hold exactly its own run"
+    assert stale == 0, "inherited results must not leak into the candidate"
+
+    # The source database must be untouched by the build.
+    with sqlite3.connect(f"file:{source}?mode=ro", uri=True) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM outcome_shadow_runs").fetchone()[0] == 1
+        assert conn.execute("SELECT run_id FROM outcome_shadow_runs").fetchone()[0] == "inherited-run"
+
+
 def test_qfq_build_writes_null_stored_entry_and_new_algorithm_version(tmp_path: Path) -> None:
     source = tmp_path / "source.db"
     _seed(source)

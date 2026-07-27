@@ -867,6 +867,14 @@ def _write_candidate(
 
 
 def _create_schema(conn: sqlite3.Connection) -> None:
+    # The candidate is a full copy of the source database, and since the Phase 2 import
+    # production carries these three tables with a previous run inside them. A candidate
+    # must contain only its own run, so drop the inherited copies before recreating.
+    # Dropping a table also drops its triggers. This only ever touches the isolated
+    # candidate: _validate_paths rejects candidate == source and refuses to overwrite an
+    # existing file.
+    for table in ("outcome_shadow_results", "outcome_shadow_observations", "outcome_shadow_runs"):
+        conn.execute(f"DROP TABLE IF EXISTS {table}")
     conn.execute(_RUNS_DDL)
     conn.execute(_OBSERVATIONS_DDL)
     conn.execute(_RESULTS_DDL)
