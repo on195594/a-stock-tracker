@@ -63,6 +63,8 @@ class ShadowAlgorithm:
     use_extended_protection: bool
 
 
+_ALGORITHM_BY_VERSION: dict[str, ShadowAlgorithm] = {}
+
 RAW_PRICE_RETURN_V1 = ShadowAlgorithm(
     version=ALGORITHM_VERSION,
     stock_adjusted=RAW_ADJUSTED,
@@ -84,6 +86,7 @@ QFQ_TOTAL_RETURN_V1 = ShadowAlgorithm(
     compute_stored_entry=False,
     use_extended_protection=True,
 )
+_ALGORITHM_BY_VERSION.update({a.version: a for a in (RAW_PRICE_RETURN_V1, QFQ_TOTAL_RETURN_V1)})
 
 
 class ShadowContractError(RuntimeError):
@@ -317,15 +320,43 @@ def _report_payload(run: dict[str, Any], rows: list[dict[str, Any]]) -> dict[str
             "score_quantile": _quantile_summary(rows),
             "pre_post_fix": _pre_post_summary(rows),
         },
-        "caveats": [
-            "TuShare entry is ex-post reconstructed, not a decision-time price snapshot.",
-            "Raw price return excludes cash dividends and is not total shareholder return.",
-            "Rows sharing one score_date have correlated market exposure and are not independent samples.",
-            "Only 14 BaoStock outcome fallbacks are provable; broader differences must not be attributed wholesale to BaoStock.",
-            "This report is descriptive and does not switch production outcome fields or reporting semantics.",
-        ],
+        "caveats": _caveats_for(str(run.get("algorithm_version", ""))),
         "details": rows,
     }
+
+
+# Caveats describe what the numbers mean, so they must follow the algorithm that produced
+# them. A fixed list silently mis-describes every algorithm but the first one — and unlike
+# a wrong number, a wrong sentence is never caught by a test or by arithmetic.
+_SHARED_CAVEATS = (
+    "TuShare entry is ex-post reconstructed, not a decision-time price snapshot.",
+    "Rows sharing one score_date have correlated market exposure and are not independent samples.",
+    "This report is descriptive and does not switch production outcome fields or reporting semantics.",
+)
+_ALGORITHM_CAVEATS = {
+    RAW_PRICE_RETURN_V1.version: (
+        "Raw price return excludes cash dividends and is not total shareholder return.",
+        "Only 14 BaoStock outcome fallbacks are provable; broader differences must not be "
+        "attributed wholesale to BaoStock.",
+    ),
+    QFQ_TOTAL_RETURN_V1.version: (
+        "Stock returns use qfq (forward-adjusted) closes, so cash dividends are treated as "
+        "reinvested; these are total returns, not raw price returns.",
+        "The benchmark is the CSI 300 total-return index, chosen so both sides carry dividends; "
+        "comparing these returns against the price index would overstate alpha.",
+        "stored_entry_shadow_* is NULL by design: pairing a raw price_at_score with a qfq target "
+        "mixes two price scales. A zero difference count for those fields means not computed, "
+        "not unchanged.",
+        "Excludes the 90d window; only 30d and 60d are due under this run's as_of_date.",
+    ),
+}
+
+
+def _caveats_for(algorithm_version: str) -> list[str]:
+    specific = _ALGORITHM_CAVEATS.get(algorithm_version)
+    if specific is None:
+        raise ShadowContractError(f"UNKNOWN_ALGORITHM_CAVEATS:{algorithm_version}")
+    return [_SHARED_CAVEATS[0], *specific, *_SHARED_CAVEATS[1:]]
 
 
 def _count_by(rows: Sequence[Mapping[str, Any]], field: str) -> dict[str, int]:
@@ -399,18 +430,28 @@ def _pre_post_summary(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]
 
 def _report_markdown(payload: Mapping[str, Any]) -> str:
     summary = payload["summary"]
+    run = payload["run"]
+    algorithm_version = str(run.get("algorithm_version", ""))
+    computes_stored_entry = _ALGORITHM_BY_VERSION[algorithm_version].compute_stored_entry
     status_lines = "\n".join(f"- `{key}`: {value}" for key, value in summary["status_counts"].items())
     caveats = "\n".join(f"- {item}" for item in payload["caveats"])
+
+    def _stored_entry_line(label: str, key: str) -> str:
+        # Reporting "0 changed" for a field the algorithm never computes reads as
+        # "identical", which is the opposite of the truth.
+        value = "n/a (not computed by this algorithm)" if not computes_stored_entry else summary[key]
+        return f"- {label}: {value}\n"
+
     return (
-        "# Historical outcome shadow Phase 1 report\n\n"
-        f"Run: `{payload['run']['run_id']}`\n\n"
+        f"# Historical outcome shadow report — `{algorithm_version}`\n\n"
+        f"Run: `{run['run_id']}`\n\n"
         f"- Events: {summary['events']}\n"
         f"- Comparable: {summary['comparable']}\n"
         f"- Unavailable: {summary['unavailable']}\n"
         f"- Aligned alpha rows: {summary['aligned_alpha']}\n"
-        f"- Old vs stored-entry shadow changed: {summary['old_vs_stored_entry_shadow_changed']}\n"
-        f"- Stored-entry vs reconstructed changed: {summary['stored_vs_reconstructed_changed']}\n"
-        f"- Old vs TuShare benchmark changed: {summary['old_vs_shadow_benchmark_changed']}\n\n"
+        + _stored_entry_line("Old vs stored-entry shadow changed", "old_vs_stored_entry_shadow_changed")
+        + _stored_entry_line("Stored-entry vs reconstructed changed", "stored_vs_reconstructed_changed")
+        + f"- Old vs TuShare benchmark changed: {summary['old_vs_shadow_benchmark_changed']}\n\n"
         f"## Status\n\n{status_lines}\n\n"
         f"## Interpretation limits\n\n{caveats}\n"
     )

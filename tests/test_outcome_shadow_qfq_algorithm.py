@@ -390,3 +390,60 @@ def test_qfq_build_writes_null_stored_entry_and_new_algorithm_version(tmp_path: 
         assert row["stored_entry_shadow_outcome"] is None
         assert row["stored_entry_shadow_alpha"] is None
     assert {row["adjusted"] for row in rows} <= {"qfq"}
+
+
+def _build_and_report(tmp_path: Path, algorithm) -> tuple[str, dict]:
+    source = tmp_path / "source.db"
+    _seed(source)
+    snapshot = tmp_path / "benchmark.json"
+    symbol = algorithm.benchmark_symbol
+    _write_benchmark(snapshot, [("2026-01-05", 1000.0), ("2026-02-04", 1010.0)], symbol=symbol)
+    candidate = tmp_path / "candidate.db"
+    result = build_shadow_candidate(source, candidate, snapshot, as_of_date="2026-06-30", algorithm=algorithm)
+    report = outcome_shadow.write_shadow_report(candidate, result.run_id, tmp_path / "report.json")
+    markdown = report.markdown_path.read_text(encoding="utf-8")
+    payload = json.loads(report.json_path.read_text(encoding="utf-8"))
+    return markdown, payload
+
+
+def test_qfq_report_never_claims_it_excludes_dividends(tmp_path: Path) -> None:
+    """The qfq run is a total return; the Phase 1 wording asserts the exact opposite.
+
+    A wrong sentence is never caught by arithmetic, so it is pinned here.
+    """
+    markdown, payload = _build_and_report(tmp_path, QFQ_TOTAL_RETURN_V1)
+    caveats = " ".join(payload["caveats"])
+
+    assert "excludes cash dividends" not in caveats
+    assert "not total shareholder return" not in caveats
+    assert "BaoStock" not in caveats
+    assert "total returns, not raw price returns" in caveats
+    assert "total-return index" in caveats
+
+
+def test_qfq_report_header_names_the_algorithm(tmp_path: Path) -> None:
+    markdown, _ = _build_and_report(tmp_path, QFQ_TOTAL_RETURN_V1)
+    assert "qfq_total_return_v1" in markdown
+    assert "Phase 1 report" not in markdown
+
+
+def test_qfq_report_does_not_show_zero_for_uncomputed_stored_entry(tmp_path: Path) -> None:
+    """`changed: 0` on a NULL-by-design field reads as 'identical' — the opposite of true."""
+    markdown, _ = _build_and_report(tmp_path, QFQ_TOTAL_RETURN_V1)
+    for label in ("Old vs stored-entry shadow changed", "Stored-entry vs reconstructed changed"):
+        line = next(row for row in markdown.splitlines() if row.startswith(f"- {label}"))
+        assert "not computed" in line, line
+
+
+def test_default_algorithm_report_wording_is_unchanged(tmp_path: Path) -> None:
+    """Phase 1 runs must keep their original caveats verbatim."""
+    _, payload = _build_and_report(tmp_path, RAW_PRICE_RETURN_V1)
+    caveats = payload["caveats"]
+    assert "Raw price return excludes cash dividends and is not total shareholder return." in caveats
+    assert any("BaoStock" in item for item in caveats)
+    assert not any("qfq" in item for item in caveats)
+
+
+def test_unknown_algorithm_has_no_caveats_and_fails_closed() -> None:
+    with pytest.raises(ShadowContractError, match="UNKNOWN_ALGORITHM_CAVEATS:made_up_v9"):
+        outcome_shadow._caveats_for("made_up_v9")
