@@ -98,6 +98,16 @@ def test_main_serializes_path_values(monkeypatch: Any, capsys: Any) -> None:
     assert '"artifact": "1/daily_basic.jsonl.gz"' in capsys.readouterr().out
 
 
+def test_main_success_record_includes_completion_timestamp(monkeypatch: Any, capsys: Any) -> None:
+    monkeypatch.setattr(cycle, "run_daily_cycle", lambda as_of: {"changed_count": 35})
+
+    exit_code = cycle.main(["daily", "--as-of-date", "2026-07-21"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["completed_at"].startswith("2026-")
+
+
 def test_run_batch_failure_preserves_report_details(monkeypatch: Any) -> None:
     monkeypatch.setattr(
         cycle,

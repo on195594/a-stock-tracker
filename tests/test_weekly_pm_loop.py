@@ -235,6 +235,101 @@ def test_log_check_keeps_child_error_relogged_as_warning_at_failure(project_root
     assert "failure_marker=" in result.detail
 
 
+def test_log_check_treats_completed_http_fallback_as_warning(project_root: Path) -> None:
+    now = datetime(2026, 7, 24, 17, 31)
+    _write_log(
+        project_root,
+        "daily.log",
+        "\n".join(
+            (
+                "2026-07-24 17:30:40 WARNING 000786 gemini_review HTTP error 404, using fallback",
+                "2026-07-24 17:30:41 INFO Telegram 推送成功：28 只股票",
+            )
+        ),
+        mtime=now,
+    )
+
+    result = weekly_pm_loop.check_log(
+        "daily.log",
+        max_age=weekly_pm_loop.timedelta(days=4),
+        now=now,
+        project_root=project_root,
+    )
+
+    assert result.status == "WARN"
+    assert "warning_marker=" in result.detail
+
+
+def test_log_check_keeps_missing_api_key_fallback_as_failure(project_root: Path) -> None:
+    now = datetime(2026, 7, 24, 17, 31)
+    _write_log(
+        project_root,
+        "daily.log",
+        "2026-07-24 17:30:40 WARNING GEMINI_API_KEY not set, using fallback reviewer\n",
+        mtime=now,
+    )
+
+    result = weekly_pm_loop.check_log(
+        "daily.log",
+        max_age=weekly_pm_loop.timedelta(days=4),
+        now=now,
+        project_root=project_root,
+    )
+
+    assert result.status == "FAIL"
+
+
+def test_log_check_accepts_newer_undated_completed_run(project_root: Path) -> None:
+    now = datetime(2026, 7, 27, 9, 30)
+    _write_log(
+        project_root,
+        "weekly.log",
+        "\n".join(
+            (
+                "2026-07-18 10:16:12 WARNING fetcher[600785] 最新收盘价fallback失败: remote disconnected",
+                "2026-07-18 10:16:13 INFO weekly 完成：成功 35 只，失败 0 只",
+                '{"changed_count": 35, "dividend_requests": 35, "financial_requests": 140, '
+                '"mode": "weekly", "status": "completed"}',
+            )
+        ),
+        mtime=datetime(2026, 7, 25, 10, 2),
+    )
+
+    result = weekly_pm_loop.check_log(
+        "weekly.log",
+        max_age=weekly_pm_loop.timedelta(days=9),
+        now=now,
+        project_root=project_root,
+    )
+
+    assert result.status == "OK"
+    assert "no_failure_marker" in result.detail
+
+
+def test_log_check_rejects_touched_log_with_unqualified_completed_json(project_root: Path) -> None:
+    now = datetime(2026, 7, 27, 9, 30)
+    _write_log(
+        project_root,
+        "weekly.log",
+        "\n".join(
+            (
+                "2026-07-18 10:16:12 ERROR weekly crashed",
+                '{"status": "completed"}',
+            )
+        ),
+        mtime=datetime(2026, 7, 25, 10, 2),
+    )
+
+    result = weekly_pm_loop.check_log(
+        "weekly.log",
+        max_age=weekly_pm_loop.timedelta(days=9),
+        now=now,
+        project_root=project_root,
+    )
+
+    assert result.status == "FAIL"
+
+
 def test_accuracy_report_warns_when_conclusion_lacks_restrictive_marker() -> None:
     report = """
 ── Phase 6 readiness ──

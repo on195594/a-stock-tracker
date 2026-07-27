@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import traceback
 from dataclasses import asdict
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Any
 
 from a_stock_tracker.config import WATCHLIST
@@ -134,6 +134,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
     sys.stdout.write(
-        json.dumps({"status": "completed", **report}, ensure_ascii=False, sort_keys=True, default=str) + "\n"
+        json.dumps(
+            {"status": "completed", "completed_at": datetime.now(timezone.utc).isoformat(), **report},
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        )
+        + "\n"
     )
     return 0

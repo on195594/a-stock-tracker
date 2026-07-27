@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -37,6 +38,7 @@ RESTRICTIVE_CONCLUSION_MARKERS = (
     "暂不进入 Phase 6 生产化",
     "暂不进入生产化",
 )
+CRITICAL_FALLBACK_RE = re.compile(r"(API_KEY\s+not\s+set|auth\s+error)", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -70,19 +72,37 @@ def _tail_text(path: Path, max_bytes: int = LOG_TAIL_BYTES) -> str:
         return fh.read().decode("utf-8", errors="replace")
 
 
-def _latest_dated_lines(text: str) -> tuple[list[str], bool]:
+def _latest_dated_lines(text: str, *, mtime: datetime | None = None) -> tuple[list[str], bool]:
     lines = text.splitlines()
     dates = [match.group(0) for line in lines for match in [DATE_RE.search(line)] if match]
     if not dates:
         return lines, False
     latest = max(dates)
+    nonempty_lines = [line for line in lines if line.strip()]
+    if mtime is not None and nonempty_lines and mtime.strftime("%Y-%m-%d") > latest:
+        try:
+            final_record = json.loads(nonempty_lines[-1])
+        except json.JSONDecodeError:
+            final_record = None
+        if _is_legacy_weekly_completion(final_record):
+            return [nonempty_lines[-1]], True
     return [line for line in lines if latest in line], True
+
+
+def _is_legacy_weekly_completion(record: object) -> bool:
+    if not isinstance(record, dict) or record.get("status") != "completed" or record.get("mode") != "weekly":
+        return False
+    return all(isinstance(record.get(key), int) for key in ("changed_count", "financial_requests", "dividend_requests"))
 
 
 def _failure_severity(line: str) -> str | None:
     """Classify explicit failures while keeping degraded log warnings non-fatal."""
+    if CRITICAL_FALLBACK_RE.search(line) is not None:
+        return "FAIL"
     if FAILURE_RE.search(line) is None:
         return None
+    if re.search(r"\bWARNING\b", line, re.IGNORECASE) and "using fallback" in line.lower():
+        return "WARN"
     if HARD_FAILURE_RE.search(line) is not None:
         return "FAIL"
     if re.search(r"\bWARNING\b", line, re.IGNORECASE):
@@ -103,7 +123,7 @@ def check_log(log_name: str, *, max_age: timedelta, now: datetime, project_root:
         details.append(f"stale>{max_age.days}d")
 
     tail = _tail_text(path)
-    latest_lines, has_date = _latest_dated_lines(tail)
+    latest_lines, has_date = _latest_dated_lines(tail, mtime=datetime.fromtimestamp(path.stat().st_mtime))
     failure_hits = [(severity, line.strip()) for line in latest_lines if (severity := _failure_severity(line))]
     hard_failures = [line for severity, line in failure_hits if severity == "FAIL"]
     degraded_warnings = [line for severity, line in failure_hits if severity == "WARN"]
