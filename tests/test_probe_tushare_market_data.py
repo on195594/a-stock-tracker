@@ -38,6 +38,10 @@ def _check(
     )
 
 
+def test_probe_samples_match_current_tracked_reference_universe() -> None:
+    assert probe.SAMPLES == ["600036", "000786", "002594"]
+
+
 def test_close_cross_check_requires_same_reference_trade_date(monkeypatch) -> None:
     monkeypatch.setattr(
         probe,

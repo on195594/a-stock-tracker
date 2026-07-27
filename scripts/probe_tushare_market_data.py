@@ -21,7 +21,7 @@ from a_stock_lib.providers.tushare_quotes import (  # noqa: E402
 )
 from a_stock_tracker.data.cache import DB_PATH  # noqa: E402
 
-SAMPLES = ["600036", "000001", "002594"]
+SAMPLES = ["600036", "000786", "002594"]
 INDEX_SAMPLE = "000300"
 
 

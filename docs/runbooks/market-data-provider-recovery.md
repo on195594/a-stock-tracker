@@ -1,7 +1,7 @@
 # Market Data Provider Recovery Runbook
 
 创建时间：2026-06-09
-最新状态：2026-07-23 起，tracker 行情运行时强制为 TuShare-only；默认与 backfill provider 均 fail-closed，不再实例化第二行情源。生产 `daily_bars` 仅保留 TuShare，QFQ 由 `tushare.pro_bar(adj="qfq")` 提供。2026-07-15 capability report 当前已 stale，必须真实刷新后才能再次声明 `READY_CRON`。
+最新状态：2026-07-23 起，tracker 行情运行时强制为 TuShare-only；默认与 backfill provider 均 fail-closed，不再实例化第二行情源。生产 `daily_bars` 仅保留 TuShare，QFQ 由 `tushare.pro_bar(adj="qfq")` 提供。2026-07-27 capability probe 五项通过，`check_market_data_readiness.py --scope cron` 与 `--scope daily` 均返回 READY。
 
 ## 状态定义
 
@@ -74,6 +74,7 @@ python3 scripts/check_market_data_readiness.py --scope daily
 - 旧 `MARKET_DATA_ALLOW_BAOSTOCK_ONLY` 环境变量不再生效。
 - QFQ 强来源合同为 `tushare.pro_bar.qfq`；出现其他来源时 L3 v2 返回 `QFQ_SOURCE_MISMATCH`。
 - probe 只读取本地 `tushare.daily` 缓存作同源一致性检查；参考缺失或数据库损坏时返回 `MANUAL_REQUIRED`，不联网降级。
+- probe 的个股样本必须来自当前 watchlist，且在 `daily_bars` 中存在同交易日、`adjusted='none'`、`source='tushare.daily'` 的参考行；不得继续使用未跟踪样本（例如已退出本项目样本集的 `000001`），否则会把样本配置漂移误报为 provider 未就绪。
 
 ## 停止与恢复边界
 
