@@ -422,3 +422,38 @@ def test_evidence_failure_reports_committed_import(tmp_path: Path, monkeypatch: 
     assert caught.value.write_performed is True
     assert caught.value.result.status == "imported"
     assert inspect_shadow_import(production, candidate, run_id, manifest).status == "already_present"
+
+
+def test_unknown_algorithm_version_is_rejected() -> None:
+    """An unrecognised algorithm would be validated against the wrong source/protection set."""
+    from a_stock_tracker.data.outcome_shadow_migration import (
+        MigrationContractError,
+        _algorithm_for_run,
+        _protection_for_run,
+    )
+
+    with pytest.raises(MigrationContractError, match="UNKNOWN_ALGORITHM_VERSION:made_up_v9"):
+        _algorithm_for_run("made_up_v9")
+    with pytest.raises(MigrationContractError, match="UNKNOWN_ALGORITHM_VERSION"):
+        _protection_for_run("made_up_v9")
+
+
+def test_protection_variant_follows_the_run_algorithm() -> None:
+    """A qfq run stores the extended hash; validating it with the ordinary one is a false drift."""
+    from a_stock_tracker.data.outcome_shadow import (
+        _predictions_protection,
+        extended_predictions_protection,
+    )
+    from a_stock_tracker.data.outcome_shadow_migration import _protection_for_run
+
+    assert _protection_for_run("tushare_raw_price_return_v1") is _predictions_protection
+    assert _protection_for_run("qfq_total_return_v1") is extended_predictions_protection
+
+
+def test_expected_sources_follow_the_run_algorithm() -> None:
+    from a_stock_tracker.data.outcome_shadow_migration import _algorithm_for_run
+
+    raw = _algorithm_for_run("tushare_raw_price_return_v1")
+    qfq = _algorithm_for_run("qfq_total_return_v1")
+    assert (raw.stock_source, raw.stock_adjusted) == ("tushare.daily", "none")
+    assert (qfq.stock_source, qfq.stock_adjusted) == ("tushare.pro_bar.qfq", "qfq")

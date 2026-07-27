@@ -8,7 +8,7 @@ import sqlite3
 from dataclasses import asdict, dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 from a_stock_tracker.data.outcome_shadow import (
     _IMMUTABILITY_DDL,
@@ -16,8 +16,13 @@ from a_stock_tracker.data.outcome_shadow import (
     _RESULT_COLUMNS,
     _RESULTS_DDL,
     _RUNS_DDL,
+    BENCHMARK_SOURCE,
+    QFQ_TOTAL_RETURN_V1,
+    RAW_PRICE_RETURN_V1,
+    ShadowAlgorithm,
     _predictions_protection,
     _stable_hash,
+    extended_predictions_protection,
 )
 
 SHADOW_TABLES = (
@@ -27,6 +32,10 @@ SHADOW_TABLES = (
 )
 SHADOW_OBJECT_COUNT = 9
 BUSY_TIMEOUT_MS = 100
+# A run stores the protection hash of whichever variant its algorithm uses, so validating
+# it requires resolving that same variant. Comparing an extended hash against the ordinary
+# one reports a spurious PREDICTIONS_PROTECTION_DRIFT.
+KNOWN_ALGORITHMS = {algorithm.version: algorithm for algorithm in (RAW_PRICE_RETURN_V1, QFQ_TOTAL_RETURN_V1)}
 
 
 class MigrationContractError(RuntimeError):
@@ -179,6 +188,24 @@ def revert_shadow_import(
     return result
 
 
+def _algorithm_for_run(algorithm_version: str) -> ShadowAlgorithm:
+    """Resolve the algorithm contract a run was produced under.
+
+    Rejecting unknown versions is deliberate: importing a run whose source and protection
+    semantics this module does not understand would silently validate it against the
+    wrong column sets and the wrong expected sources.
+    """
+    algorithm = KNOWN_ALGORITHMS.get(str(algorithm_version))
+    if algorithm is None:
+        raise MigrationContractError(f"UNKNOWN_ALGORITHM_VERSION:{algorithm_version}")
+    return algorithm
+
+
+def _protection_for_run(algorithm_version: str) -> Callable[[sqlite3.Connection], tuple[int, str]]:
+    algorithm = _algorithm_for_run(algorithm_version)
+    return extended_predictions_protection if algorithm.use_extended_protection else _predictions_protection
+
+
 def _validate_paths(production_db: str | Path, candidate_db: str | Path) -> tuple[Path, Path]:
     production = Path(production_db).expanduser().resolve()
     candidate = Path(candidate_db).expanduser().resolve()
@@ -223,7 +250,7 @@ def _load_payload(path: Path, expected_run: str, expected_manifest: str) -> _Pay
             raise MigrationContractError("CANDIDATE_RUN_MISMATCH")
         if run["manifest_hash"] != expected_manifest:
             raise MigrationContractError("CANDIDATE_MANIFEST_MISMATCH")
-        count, protection_hash = _predictions_protection(conn)
+        count, protection_hash = _protection_for_run(run["algorithm_version"])(conn)
         if count != run["predictions_count"] or protection_hash != run["predictions_protection_hash"]:
             raise MigrationContractError("PREDICTIONS_PROTECTION_DRIFT")
         observations = conn.execute(
@@ -231,10 +258,13 @@ def _load_payload(path: Path, expected_run: str, expected_manifest: str) -> _Pay
         ).fetchall()
         results = conn.execute("SELECT * FROM outcome_shadow_results ORDER BY prediction_id,window_days").fetchall()
         _validate_rows(run, observations, results)
+        # Expected sources are algorithm-specific; qfq_total_return_v1 legitimately carries
+        # tushare.pro_bar.qfq / qfq rather than the raw-price pair.
+        algorithm = _algorithm_for_run(run["algorithm_version"])
         if conn.execute(
             """SELECT COUNT(*) FROM outcome_shadow_results
-               WHERE stock_source!='tushare.daily'
-                  OR benchmark_source!='tushare.index_daily' OR adjusted!='none'"""
+               WHERE stock_source!=? OR benchmark_source!=? OR adjusted!=?""",
+            (algorithm.stock_source, BENCHMARK_SOURCE, algorithm.stock_adjusted),
         ).fetchone()[0]:
             raise MigrationContractError("SOURCE_IMPURE")
         payload = _payload_from_rows(conn, run, observations, results, protection_hash, count)
