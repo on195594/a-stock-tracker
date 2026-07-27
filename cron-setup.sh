@@ -54,6 +54,7 @@ printf '%s\n' "$CURRENT_CRONTAB" > "$CRON_BACKUP_PATH"
 
 # cron 规则
 WEEKLY_RULE="00 10 * * 6 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python -m scripts.run_tushare_primary_production_cycle weekly\" weekly >> $PROJECT_DIR/logs/weekly.log 2>&1"
+COHORT_FREEZE_RULE="20 09 * * 1 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python scripts/run_framework_b_cohort_freeze.py\" framework-b-cohort-freeze >> $PROJECT_DIR/logs/framework-b-cohort-freeze.log 2>&1"
 PM_LOOP_RULE="30 09 * * 1 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python scripts/weekly_pm_loop.py\" weekly-pm-loop >> $PROJECT_DIR/logs/weekly-pm-loop.log 2>&1"
 QFQ_RULE="00 16 * * 1-5 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python scripts/fetch_qfq_daily_bars_tushare.py\" qfq-daily-bars >> $PROJECT_DIR/logs/qfq-daily-bars.log 2>&1"
 PRIMARY_DAILY_RULE="15 17 * * 1-5 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python -m scripts.run_tushare_primary_production_cycle daily\" tushare-primary-daily >> $PROJECT_DIR/logs/tushare-primary-daily.log 2>&1"
@@ -88,6 +89,7 @@ BASE_CRONTAB=$(printf '%s\n' "$CURRENT_CRONTAB" | awk \
     is_project_daily($0) { next }
     index($0, project_dir "/cron-alert-wrap.sh") > 0 && /pipeline\.py (weekly|daily|outcome-update)/ { next }
     index($0, project_dir "/cron-alert-wrap.sh") > 0 && /check_qualitative_v2_production\.py/ { next }
+    index($0, project_dir "/cron-alert-wrap.sh") > 0 && /run_framework_b_cohort_freeze\.py/ { next }
     index($0, project_dir "/cron-alert-wrap.sh") > 0 && /weekly_pm_loop\.py/ { next }
     index($0, project_dir "/cron-alert-wrap.sh") > 0 && /fetch_qfq_daily_bars/ { next }
     index($0, project_dir "/cron-alert-wrap.sh") > 0 && /tushare_primary/ { next }
@@ -98,6 +100,9 @@ MANAGED_CRONTAB=$(cat <<EOF
 $MANAGED_START
 # a-stock-tracker weekly 基本面刷新 (每周六 10:00)
 $WEEKLY_RULE
+
+# a-stock-tracker Framework B prospective cohort 自动冻结 (每周一 09:20)
+$COHORT_FREEZE_RULE
 
 # a-stock-tracker Phase 6 weekly PM loop (每周一 09:30)
 $PM_LOOP_RULE
@@ -110,6 +115,7 @@ $PRIMARY_DAILY_RULE
 EOF
 )
 echo "✅ 已配置 weekly 任务"
+echo "✅ 已配置 Framework B cohort 自动冻结任务"
 echo "✅ 已配置 weekly PM loop"
 echo "✅ 已配置 qfq-daily-bars 任务"
 echo "✅ 已配置 tushare-primary-daily 任务"
@@ -159,6 +165,7 @@ echo "=========================================="
 echo "rollback snapshot: $CRON_BACKUP_PATH"
 echo "任务详情："
 echo "  • weekly:         每周六 10:00 刷新基本面缓存"
+echo "  • b-cohort-freeze: 每周一 09:20 自动冻结 Framework B report-only cohort"
 echo "  • weekly-pm-loop: 每周一 09:30 复核 Phase 6 并发送 Telegram 摘要"
 echo "  • qfq-daily-bars: 每个工作日 16:00 采集 QFQ 前复权日线"
 if [ "$MARKET_DATA_READY" -eq 1 ] || [ "$PRESERVE_EXISTING_DAILY" -eq 1 ]; then
@@ -177,6 +184,7 @@ echo "  crontab -l"
 echo ""
 echo "查看执行日志："
 echo "  tail -f $PROJECT_DIR/logs/weekly.log"
+echo "  tail -f $PROJECT_DIR/logs/framework-b-cohort-freeze.log"
 echo "  tail -f $PROJECT_DIR/logs/weekly-pm-loop.log"
 echo "  tail -f $PROJECT_DIR/logs/daily.log"
 echo "  tail -f $PROJECT_DIR/logs/qualitative-v2-production-acceptance.log"

@@ -197,7 +197,7 @@
 > E/F 框架的主估值轴（PE/PS历史分位）尚无对应 AKShare 接口，需要先验证数据可获取性，再启动框架实现。这是 E/F 被列为低/中优先级的主要原因。
 
 **实施方案：**
-1. 每周先运行 `framework-b-cohort-freeze --dry-run`；确认候选后显式冻结一次，同周重跑必须幂等。
+1. 每周一 09:20 由 `run_framework_b_cohort_freeze.py` 自动执行 readiness → dry-run → 显式冻结；候选为 0、合同不一致或 readiness HOLD 时 fail-closed 告警，同周重跑必须幂等。
 2. 继续运行 `daily` / `outcome-update`，让冻结 cohort 绑定的 A prediction 自然结案；禁止切换到 latest-A。
 3. 每周查看 `accuracy-report` 的 legacy 与 prospective 两轨、Phase 6 readiness、阻塞项和下一步。
 4. 每周复核 cron 日志和 `READY_CRON`；若 readiness 返回 `HOLD_CRON`，先处理行情链路，暂停 Phase 6 深化。

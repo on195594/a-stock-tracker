@@ -25,6 +25,8 @@ def test_managed_cron_places_acceptance_between_daily_and_outcome() -> None:
     setup = (PROJECT_ROOT / "cron-setup.sh").read_text(encoding="utf-8")
 
     assert 'PRIMARY_DAILY_RULE="15 17 * * 1-5 ' in setup
+    assert 'COHORT_FREEZE_RULE="20 09 * * 1 ' in setup
+    assert 'PM_LOOP_RULE="30 09 * * 1 ' in setup
     assert 'DAILY_RULE="30 17 * * 1-5 ' in setup
     assert 'ACCEPTANCE_RULE="45 17 * * 1-5 ' in setup
     assert 'OUTCOME_RULE="00 18 * * 1-5 ' in setup
@@ -36,6 +38,9 @@ def test_managed_cron_places_acceptance_between_daily_and_outcome() -> None:
         < setup.index("$ACCEPTANCE_RULE\n")
         < setup.index("$OUTCOME_RULE\n")
     )
+    assert setup.index("$COHORT_FREEZE_RULE\n") < setup.index("$PM_LOOP_RULE\n")
+    assert "run_framework_b_cohort_freeze.py" in setup
+    assert "/run_framework_b_cohort_freeze\\.py/ { next }" in setup
     assert "-m scripts.run_tushare_primary_production_cycle daily" in setup
     assert "-m scripts.run_tushare_primary_production_cycle weekly" in setup
     assert "PRESERVE_EXISTING_DAILY=0" in setup
@@ -195,6 +200,7 @@ def test_cron_setup_canonicalizes_project_daily_variant_and_is_idempotent(tmp_pa
     assert "-m pipeline daily" not in first_crontab
     assert "old-direct" not in first_crontab
     assert first_crontab.count(".venv/bin/python pipeline.py daily") == 1
+    assert first_crontab.count("run_framework_b_cohort_freeze.py") == 1
 
     state = tmp_path / "crontab.txt"
     state.write_text(first_crontab, encoding="utf-8")
@@ -214,6 +220,7 @@ def test_cron_setup_canonicalizes_project_daily_variant_and_is_idempotent(tmp_pa
 
     assert second_result.returncode == 0
     assert state.read_text(encoding="utf-8") == first_crontab
+    assert state.read_text(encoding="utf-8").count("run_framework_b_cohort_freeze.py") == 1
 
 
 def test_cron_setup_does_not_preserve_daily_from_comment_or_other_project(tmp_path: Path) -> None:

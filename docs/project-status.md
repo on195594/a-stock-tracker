@@ -173,6 +173,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | 2026-07-21 | TuShare 估值/财务/分红三域生产强切 | 0.4.1；35/35 readiness；35 行原子物化；两库 quick_check=ok；predictions 1,894 行/hash 不变；真实 cycle run 215 成功；两次中间回滚均无错误 | 切换完成；观察新 cron 自然时序，刷新 stale market-data probe；下游 consumer 仍独立迁移 |
 | 2026-07-23 | TuShare-only 行情强切与历史标签只读评估 | 35/35 QFQ 各 139 行；非 TuShare 行/审计清理；predictions 1,999 行/hash 不变；live cron 使用 TuShare 脚本；历史 outcome 450/1,767 与当前 TuShare shadow 不一致 | 活动链路切换完成；历史标签不改写，另开 provenance/versioned shadow 治理 |
 | 2026-07-24 | 历史 outcome Phase 1+2 versioned shadow | v4 candidate/replay 与副本 import/replay/revert 通过；工具 commit `1ad2016`；生产 additive import 后 3 表 6 触发器、1,776 results、2,520 observations，post-commit verifier PASS | 审计 shadow 已落地；legacy outcome 与所有 consumer 保持不变，consumer 切换另开 spec |
+| 2026-07-27 | Framework B prospective cohort 自动冻结 | 新增 fail-closed runner；W31 真实冻结 8 条、同周重跑全量 skip；cohort 7→15、周数 1→2；predictions 2,034 行/hash 不变；1126 tests 与独立复审通过；09:20 cron 已安装并完成真实回滚/重装演练 | 保持 report-only；等待 W30/W31/W32 自然结案，达到 20 条/3 周后仅进入人工 review |
 | 2026-08-13 后 | B label 30d 结案、overdue、行业覆盖、B-A delta | 待执行 | 满足门槛后写 `phase6-b-label-review.md`，不直接上线 |
 
 ## 每周自动复核
@@ -180,6 +181,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 当前 cron managed block 已包含：
 
 ```cron
+20 09 * * 1 /home/lin/a-stock-tracker/cron-alert-wrap.sh "cd /home/lin/a-stock-tracker && .venv/bin/python scripts/run_framework_b_cohort_freeze.py" framework-b-cohort-freeze >> /home/lin/a-stock-tracker/logs/framework-b-cohort-freeze.log 2>&1
 30 09 * * 1 /home/lin/a-stock-tracker/cron-alert-wrap.sh "cd /home/lin/a-stock-tracker && .venv/bin/python scripts/weekly_pm_loop.py" weekly-pm-loop >> /home/lin/a-stock-tracker/logs/weekly-pm-loop.log 2>&1
 ```
 
