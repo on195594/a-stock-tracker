@@ -186,9 +186,12 @@ def inspect_frozen_cohort(
 ) -> CohortInspection:
     """Inspect the due cohort through a read-only SQLite connection."""
     _parse_date(as_of_date)
+    # Must match the variant build/verify will use, otherwise the hash this inspection
+    # reports cannot be compared against the resulting run.
+    protection = extended_predictions_protection if algorithm.use_extended_protection else _predictions_protection
     with _open_read_only(source_db) as conn:
         events = _load_frozen_events(conn, as_of_date, algorithm.windows)
-        predictions_count, protection_hash = _predictions_protection(conn)
+        predictions_count, protection_hash = protection(conn)
     counts = {window: sum(event.window_days == window for event in events) for window in algorithm.windows}
     return CohortInspection(
         event_count=len(events),

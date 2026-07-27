@@ -227,6 +227,24 @@ def test_qfq_algorithm_excludes_90d_window(tmp_path: Path) -> None:
     assert set(inspection.window_counts) == {30, 60}
 
 
+def test_inspection_hash_matches_the_variant_the_build_will_use(tmp_path: Path) -> None:
+    """An inspection whose hash cannot be compared against the run it previews is useless."""
+    source = tmp_path / "source.db"
+    _seed(source)
+
+    with sqlite3.connect(f"file:{source}?mode=ro", uri=True) as conn:
+        conn.row_factory = sqlite3.Row
+        ordinary_hash = outcome_shadow._predictions_protection(conn)[1]
+        extended_hash = extended_predictions_protection(conn)[1]
+    assert ordinary_hash != extended_hash, "fixture must distinguish the two variants"
+
+    qfq = inspect_frozen_cohort(source, "2026-06-30", QFQ_TOTAL_RETURN_V1)
+    assert qfq.predictions_protection_hash == extended_hash
+
+    default = inspect_frozen_cohort(source, "2026-06-30")
+    assert default.predictions_protection_hash == ordinary_hash
+
+
 def test_unsupported_window_is_rejected(tmp_path: Path) -> None:
     source = tmp_path / "source.db"
     _seed(source)
