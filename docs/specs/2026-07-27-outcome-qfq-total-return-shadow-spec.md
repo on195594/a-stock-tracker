@@ -1,10 +1,46 @@
 # outcome QFQ total-return shadow 规格（outcome shadow Phase 3）
 
 日期：2026-07-27
-版本：v2（v1 经独立 codex 审查 + 作者实测验证后修订）
-状态：draft，pending user approval for implementation
+版本：v3（阶段 A/B 已实施并回填实测结果）
+状态：**implemented（阶段 A/B）**；阶段 C 经用户决定不执行
 算法版本：`qfq_total_return_v1`
-生产迁移：未授权
+生产迁移：**未执行**，见 §13
+
+## 实施结果（2026-07-27）
+
+| 阶段 | 状态 | 证据 |
+|---|---|---|
+| A 隔离构建 | ✅ 完成 | run `outcome-shadow-e85f830d9b2d850fc2657560` |
+| B 独立验证 | ✅ 完成 | 生产库 predictions 2,069 行与既有 1 run/1,776 results 均未改动 |
+| C 生产 append | ❌ 不执行 | 迁移工具仅支持单 run 导入，见 §13 |
+
+构建产出：1,842 事件（30d 1,306 / 60d 536），1,836 computed，6 `missing_stock_entry`，
+**0 calendar mismatch**。产物在 `artifacts/qfq-shadow/`（该目录已被 `.gitignore`，
+不入版本库）。
+
+### 核心结论：复权修正后 Framework A 仍无选股能力
+
+Framework A / 30d，1,230 条可比样本：
+
+```
+分位      样本    α30d(旧/未复权)   α30d(新/双边总收益)
+Q5(高)    246        -4.11            -3.02
+Q4        246        -7.75            -7.08
+Q3        246        -4.05            -3.43
+Q2        246        -0.43            -0.64
+Q1(低)    246        -4.96            -3.06
+
+超额命中率   旧 0.320  →  新 0.319
+```
+
+口径修正幅度实测 **+0.813pt**，与 §A.1 预测的 +0.857pt 相差 0.044pt（误差 5%），
+预测方法得到端到端验证。
+
+**但修正后五分位仍全负、仍无单调性、命中率几乎不变。** 这证实 §A.3 的判断：复权是
+真实缺陷，但不是 Framework A 表现的根因。2026-07-12 倒置诊断的定量数值需按本表修正
+（Q5 −4.11 → −3.02），定性结论不变。
+
+剩余约 −3.4pt 属 watchlist 相对基准的系统性跑输，与评分无关，仍是 §3.1 非目标。
 
 ## 修订说明（v1 → v2）
 
@@ -480,3 +516,56 @@ QFQ gap 名义值        +1.308pt
 
 **审查方举证错误 1 处**：Important 6 中 predictions 行数称 2,034（实测 2,069），
 系引用 project-status.md 记录值而非实测。结论方向不受影响。
+
+---
+
+## 13. 阶段 C 未执行的原因（2026-07-27 决定）
+
+尝试阶段 C 时，只读 `inspect_shadow_import` 连续暴露三层问题。前两层已修复
+（commit `7c43c7b`）：迁移工具按 run 的 `algorithm_version` 解析保护 hash 变体与
+期望来源，未登记算法直接拒绝。
+
+第三层是**设计边界，非缺陷**：`_apply_transaction` 有硬约束
+
+```python
+if _shadow_object_names(conn):
+    raise MigrationContractError("PRODUCTION_STATE_CHANGED")
+```
+
+该工具的设计前提是"生产库尚无 shadow 表，导入后恰好存在一个 run"，不支持追加第二个
+run。支持多 run 并存需改动六处核心语义：`_production_state`、`_load_payload`（生产侧
+按 run_id 过滤）、`_apply_transaction`（表已存在时跳过建表）、
+`_validate_connection_matches`、`_assert_*` 系列（需区分本 run 行与既有行）、
+`revert_shadow_import`（只删本 run）。
+
+该工具直接操作生产库、且库中已有带不可变触发器的既有数据，当初经独立审查
+（`docs/reviews/2026-07-24-outcome-shadow-phase2-stage-a-review.md`，`APPROVE_LANDING`）
+才用于生产。同等改造应另开 spec、独立审查与回滚演练。
+
+**用户决定：阶段 C 放弃。** 本 run 的分析价值已由报告兑现，导入生产 shadow 表仅增加
+可查询的审计留痕，不改变任何结论。若将来需要，从本节列出的六处语义开始设计。
+
+## 14. 实施期间发现并修复的缺陷
+
+同一类耦合缺陷在本轮出现六次——"某个选择必须在多处保持一致"，逐条记录以便后续改造
+时优先检查：
+
+| # | 位置 | 暴露方式 | commit |
+|---|---|---|---|
+| 1 | `_verify_candidate` 用旧保护函数 | 手动追调用链 | `889ca47` |
+| 2 | 结果行 `stock_source`/`adjusted`/benchmark `instrument_code` 写死 | 单元测试断言 | `889ca47` |
+| 3 | `inspect_frozen_cohort` 保护变体硬编码 | **独立审查** | `b99fc93` |
+| 4 | `_create_schema` 未清除源库继承的 shadow 表 | **真实执行** | `4324b13` |
+| 5 | 迁移工具保护变体与来源硬编码 | **真实执行（阶段 C）** | `7c43c7b` |
+| 6 | 报告 caveats/标题固定为 Phase 1 语境 | 收尾核对产物 | `75f5bd7` |
+
+值得注意的是暴露方式各不相同，且互相抓不到：单元测试抓不到 #1（build 与 verify 在
+正常 API 下总是同步取值）与 #4（fixture 永远从空库建表）；审查抓不到 #4/#5（读的是
+diff，不是生产库当前状态）；而 #6 程序完全正常，错的只有给人读的文字，任何自动化
+手段都判断不了一句自然语言是否与代码行为矛盾。
+
+**根因是架构层面的**：`ShadowAlgorithm` 收敛了算法差异的**定义**，但没有收敛其
+**消费**——有的直接读字段，有的把值写入数据库再由另一模块读出比较（#5 这条依赖不
+体现为函数调用，grep 调用点找不到），有的嵌进 SQL 字面量，还有的写进给人看的散文。
+默认参数保住了向后兼容，代价是漏改时静默走旧路径而不报错。下一次改造前应先解决这个
+收口问题。

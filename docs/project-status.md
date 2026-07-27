@@ -86,9 +86,10 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | Phase 6 阻塞 | B label 已结案样本不足 | 数据质量门槛 OK；B label `0/20`，最早可评估日期 `2026-08-13`（accuracy-report 生成于 2026-07-15） |
 | L3 v2 QFQ / 生产写入 | 已完成，选择性待观察 | `daily_bars.adjusted='qfq'` 仅 `tushare.pro_bar.qfq`，35 个代码、4,865 行（至 2026-07-23）；非 TuShare 或 mixed source fail-closed |
 | L3 v2 Phase 3 push trigger | 已完成，生产推送已切换 | `telegram_push.py` 触发条件 `entry_signal=1` → `l3_v2_signal=1`；commit `e080f15`；298/298 tests passed |
-| Framework A 倒置诊断 | 已完成，结论：不调权重 | Q5 avg_alpha_30d=-9.91%；根因=截面校准偏差+11支伪复制；agy投资审查：Priority 1=延伸60d/90d；60d首批到期 2026-07-14 |
+| Framework A 倒置诊断 | 已完成；定量数值已按 QFQ 口径修正 | 未复权口径 Q5 avg_alpha_30d=-9.91%（2026-07-27 双边总收益口径重算为 Q5 -3.02，仍无单调性）；根因=截面校准偏差+11支伪复制；agy投资审查：Priority 1=延伸60d/90d；60d首批到期 2026-07-14 |
 | 定性评分 v2 | 全局 `on`；6/35 hybrid、29/35 v1 fallback | v2 表 6 行：000963/002050/600036/600900/601088/603606；全部为 moat/market_pos scored、sentiment NULL |
 | 定性评分 v2 研究审计 | M4 sample 与 M5 fixture-first/builder 完成；real bundle 未完成 | sample SHA `b278a7…d7635d`；不再作为当前生产读取阻塞项 |
+| outcome QFQ total-return shadow | 阶段 A/B 完成，阶段 C 未执行 | run `outcome-shadow-e85f830d9b2d850fc2657560`；产物在 `artifacts/qfq-shadow/`（gitignored，无 git 保护）；生产 predictions 2,069 行与既有 1 run/1,776 results 均未改动 |
 | 质量门禁 | 全部通过 | 2026-07-24 Phase 2 最终全仓 1,112 passed；Ruff、format 165 files、mypy 155 source files、pip check、shell syntax、`git diff --check` PASS |
 
 ## Spec Ledger
@@ -174,6 +175,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | 2026-07-23 | TuShare-only 行情强切与历史标签只读评估 | 35/35 QFQ 各 139 行；非 TuShare 行/审计清理；predictions 1,999 行/hash 不变；live cron 使用 TuShare 脚本；历史 outcome 450/1,767 与当前 TuShare shadow 不一致 | 活动链路切换完成；历史标签不改写，另开 provenance/versioned shadow 治理 |
 | 2026-07-24 | 历史 outcome Phase 1+2 versioned shadow | v4 candidate/replay 与副本 import/replay/revert 通过；工具 commit `1ad2016`；生产 additive import 后 3 表 6 触发器、1,776 results、2,520 observations，post-commit verifier PASS | 审计 shadow 已落地；legacy outcome 与所有 consumer 保持不变，consumer 切换另开 spec |
 | 2026-07-27 | Framework B prospective cohort 自动冻结 | 新增 fail-closed runner；W31 真实冻结 8 条、同周重跑全量 skip；cohort 7→15、周数 1→2；predictions 2,034 行/hash 不变；1126 tests 与独立复审通过；09:20 cron 已安装并完成真实回滚/重装演练 | 保持 report-only；等待 W30/W31/W32 自然结案，达到 20 条/3 周后仅进入人工 review |
+| 2026-07-27 | outcome QFQ total-return shadow 阶段 A/B | run `outcome-shadow-e85f830d…` 1,842 事件/1,836 computed/0 mismatch；复权净修正 +0.813pt（预测 +0.857pt）；修正后五分位仍全负、命中率 0.320→0.319 | 阶段 A/B 完成且生产库未改动；阶段 C 因迁移工具仅支持单 run 导入而放弃；Framework A 无有序预测力的结论不变 |
 | 2026-08-13 后 | B label 30d 结案、overdue、行业覆盖、B-A delta | 待执行 | 满足门槛后写 `phase6-b-label-review.md`，不直接上线 |
 
 ## 每周自动复核
