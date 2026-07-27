@@ -30,6 +30,60 @@ PROTECTION_COLUMNS = (
     "created_at",
 )
 EVENT_COLUMNS = ("id", "code", "name", *PROTECTION_COLUMNS[2:])
+OUTCOME_COLUMNS = (
+    "outcome_30d",
+    "outcome_60d",
+    "outcome_90d",
+    "benchmark_30d",
+    "benchmark_60d",
+    "benchmark_90d",
+)
+# PROTECTION_COLUMNS covers prediction identity and scoring only. Runs whose subject
+# matter is the outcome/benchmark values themselves must additionally pin those
+# columns, so mutating them cannot slip past the pre/post comparison. Never fold these
+# into PROTECTION_COLUMNS itself: doing so would change the protection hash of the
+# already-frozen Phase 1/2 runs and make them unverifiable.
+EXTENDED_PROTECTION_COLUMNS = PROTECTION_COLUMNS + OUTCOME_COLUMNS
+
+
+@dataclass(frozen=True)
+class ShadowAlgorithm:
+    """One shadow computation contract.
+
+    Every field that differs between algorithm versions lives here, so a caller that
+    passes no algorithm keeps the exact Phase 1/2 behaviour byte for byte.
+    """
+
+    version: str
+    stock_adjusted: str
+    stock_source: str
+    benchmark_symbol: str
+    windows: tuple[int, ...]
+    compute_stored_entry: bool
+    use_extended_protection: bool
+
+
+RAW_PRICE_RETURN_V1 = ShadowAlgorithm(
+    version=ALGORITHM_VERSION,
+    stock_adjusted=RAW_ADJUSTED,
+    stock_source=STOCK_SOURCE,
+    benchmark_symbol="000300",
+    windows=WINDOW_DAYS,
+    compute_stored_entry=True,
+    use_extended_protection=False,
+)
+# Stock side is qfq (total return), so the benchmark must be the total-return index or
+# alpha is overstated by the index dividend yield. `stored_entry` is dropped because
+# pairing a raw price_at_score with a qfq target mixes two price scales.
+QFQ_TOTAL_RETURN_V1 = ShadowAlgorithm(
+    version="qfq_total_return_v1",
+    stock_adjusted="qfq",
+    stock_source="tushare.pro_bar.qfq",
+    benchmark_symbol="H00300.CSI",
+    windows=(30, 60),
+    compute_stored_entry=False,
+    use_extended_protection=True,
+)
 
 
 class ShadowContractError(RuntimeError):
@@ -125,13 +179,17 @@ class ShadowRow:
     status: str
 
 
-def inspect_frozen_cohort(source_db: Path | str, as_of_date: str) -> CohortInspection:
+def inspect_frozen_cohort(
+    source_db: Path | str,
+    as_of_date: str,
+    algorithm: ShadowAlgorithm = RAW_PRICE_RETURN_V1,
+) -> CohortInspection:
     """Inspect the due cohort through a read-only SQLite connection."""
     _parse_date(as_of_date)
     with _open_read_only(source_db) as conn:
-        events = _load_frozen_events(conn, as_of_date)
+        events = _load_frozen_events(conn, as_of_date, algorithm.windows)
         predictions_count, protection_hash = _predictions_protection(conn)
-    counts = {window: sum(event.window_days == window for event in events) for window in WINDOW_DAYS}
+    counts = {window: sum(event.window_days == window for event in events) for window in algorithm.windows}
     return CohortInspection(
         event_count=len(events),
         window_counts=counts,
@@ -161,19 +219,23 @@ def build_shadow_candidate(
     benchmark_snapshot: Path | str,
     *,
     as_of_date: str,
+    algorithm: ShadowAlgorithm = RAW_PRICE_RETURN_V1,
 ) -> BuildResult:
     """Build one immutable shadow run inside a new isolated database copy."""
     source_path, candidate_path = _validate_paths(source_db, candidate_db)
     _parse_date(as_of_date)
+    protection = extended_predictions_protection if algorithm.use_extended_protection else _predictions_protection
     try:
         _copy_source_database(source_path, candidate_path)
         with _open_read_only(candidate_path) as snapshot_conn:
-            events = _load_frozen_events(snapshot_conn, as_of_date)
-            prediction_count, protection_hash = _predictions_protection(snapshot_conn)
-            stock_observations = _load_stock_observations(snapshot_conn, events, as_of_date)
-        benchmark_observations = _load_benchmark_snapshot(benchmark_snapshot, events, as_of_date)
-        manifest = _build_manifest(events, stock_observations, benchmark_observations, as_of_date, protection_hash)
-        rows = _build_shadow_rows(events, stock_observations, benchmark_observations)
+            events = _load_frozen_events(snapshot_conn, as_of_date, algorithm.windows)
+            prediction_count, protection_hash = protection(snapshot_conn)
+            stock_observations = _load_stock_observations(snapshot_conn, events, as_of_date, algorithm)
+        benchmark_observations = _load_benchmark_snapshot(benchmark_snapshot, events, as_of_date, algorithm)
+        manifest = _build_manifest(
+            events, stock_observations, benchmark_observations, as_of_date, protection_hash, algorithm
+        )
+        rows = _build_shadow_rows(events, stock_observations, benchmark_observations, algorithm)
         _write_candidate(
             candidate_path,
             manifest,
@@ -183,7 +245,7 @@ def build_shadow_candidate(
             benchmark_observations,
             rows,
         )
-        _verify_candidate(candidate_path, prediction_count, protection_hash, len(events))
+        _verify_candidate(candidate_path, prediction_count, protection_hash, len(events), algorithm)
     except Exception:
         candidate_path.unlink(missing_ok=True)
         raise
@@ -380,9 +442,15 @@ def _parse_date(value: str) -> date:
         raise ShadowContractError(f"INVALID_DATE:{value}") from exc
 
 
-def _load_frozen_events(conn: sqlite3.Connection, as_of_date: str) -> list[FrozenEvent]:
+def _load_frozen_events(
+    conn: sqlite3.Connection,
+    as_of_date: str,
+    windows: Sequence[int] = WINDOW_DAYS,
+) -> list[FrozenEvent]:
     events: list[FrozenEvent] = []
-    for window in WINDOW_DAYS:
+    for window in windows:
+        if window not in WINDOW_DAYS:
+            raise ShadowContractError(f"UNSUPPORTED_WINDOW:{window}")
         rows = conn.execute(
             f"""SELECT {",".join(EVENT_COLUMNS)}, outcome_{window}d, benchmark_{window}d
                 FROM predictions
@@ -422,6 +490,18 @@ def _predictions_protection(conn: sqlite3.Connection) -> tuple[int, str]:
     return len(rows), _stable_hash(payload)
 
 
+def extended_predictions_protection(conn: sqlite3.Connection) -> tuple[int, str]:
+    """Protection hash that also pins every outcome/benchmark column.
+
+    Used by callers whose run is about the outcome values themselves; the ordinary
+    `_predictions_protection` would not notice those columns changing.
+    """
+    columns = ",".join(EXTENDED_PROTECTION_COLUMNS)
+    rows = conn.execute(f"SELECT {columns} FROM predictions ORDER BY id").fetchall()
+    payload = [tuple(row[column] for column in EXTENDED_PROTECTION_COLUMNS) for row in rows]
+    return len(rows), _stable_hash(payload)
+
+
 def _events_hash(events: Sequence[FrozenEvent]) -> str:
     return _stable_hash([_event_identity_payload(event) for event in events])
 
@@ -452,6 +532,7 @@ def _load_stock_observations(
     conn: sqlite3.Connection,
     events: Sequence[FrozenEvent],
     as_of_date: str,
+    algorithm: ShadowAlgorithm = RAW_PRICE_RETURN_V1,
 ) -> list[Observation]:
     if not events:
         return []
@@ -459,11 +540,14 @@ def _load_stock_observations(
     earliest = min(_parse_date(event.score_date) for event in events) - timedelta(days=10)
     placeholders = ",".join("?" for _ in codes)
     params: tuple[Any, ...] = (*codes, earliest.isoformat(), as_of_date)
+    # Both predicates are required: production qfq rows and the qfq_tushare_shadow
+    # research rows share the same `source`, so filtering on source alone would let
+    # 4,620 shadow rows in.
     impurity = conn.execute(
         f"""SELECT COUNT(*) FROM daily_bars
             WHERE code IN ({placeholders}) AND trade_date BETWEEN ? AND ?
-              AND adjusted='none' AND source<>?""",
-        (*params, STOCK_SOURCE),
+              AND adjusted=? AND source<>?""",
+        (*params, algorithm.stock_adjusted, algorithm.stock_source),
     ).fetchone()[0]
     if impurity:
         raise ShadowContractError(f"SOURCE_IMPURE:{impurity}")
@@ -471,9 +555,9 @@ def _load_stock_observations(
         f"""SELECT code,trade_date,close,source,adjusted,fetched_at
             FROM daily_bars
             WHERE code IN ({placeholders}) AND trade_date BETWEEN ? AND ?
-              AND adjusted='none' AND source=?
+              AND adjusted=? AND source=?
             ORDER BY code,trade_date""",
-        (*params, STOCK_SOURCE),
+        (*params, algorithm.stock_adjusted, algorithm.stock_source),
     ).fetchall()
     return [
         Observation("stock", str(row[0]), str(row[1]), float(row[2]), str(row[3]), str(row[4]), str(row[5]))
@@ -485,6 +569,7 @@ def _load_benchmark_snapshot(
     snapshot_path: Path | str,
     events: Sequence[FrozenEvent],
     as_of_date: str,
+    algorithm: ShadowAlgorithm = RAW_PRICE_RETURN_V1,
 ) -> list[Observation]:
     path = Path(snapshot_path).expanduser().resolve()
     try:
@@ -493,7 +578,7 @@ def _load_benchmark_snapshot(
         raise ShadowContractError("BENCHMARK_SNAPSHOT_INVALID") from exc
     if payload.get("schema_version") != 1:
         raise ShadowContractError("BENCHMARK_SCHEMA_VERSION_INVALID")
-    if payload.get("source") != BENCHMARK_SOURCE or payload.get("symbol") != "000300":
+    if payload.get("source") != BENCHMARK_SOURCE or payload.get("symbol") != algorithm.benchmark_symbol:
         raise ShadowContractError("BENCHMARK_SOURCE_INVALID")
     fetched_at = str(payload.get("fetched_at") or "")
     if not fetched_at:
@@ -505,7 +590,7 @@ def _load_benchmark_snapshot(
     earliest = min((_parse_date(event.score_date) for event in events), default=_parse_date(as_of_date)) - timedelta(
         days=10
     )
-    all_rows = _normalize_benchmark_rows(payload.get("rows"), fetched_at)
+    all_rows = _normalize_benchmark_rows(payload.get("rows"), fetched_at, algorithm)
     if len({row.trade_date for row in all_rows}) != len(all_rows):
         raise ShadowContractError("BENCHMARK_DUPLICATE_DATE")
     rows = [row for row in all_rows if earliest.isoformat() <= row.trade_date <= as_of_date]
@@ -517,6 +602,7 @@ def _load_benchmark_snapshot(
 def _normalize_benchmark_rows(
     raw_rows: Any,
     fetched_at: str,
+    algorithm: ShadowAlgorithm = RAW_PRICE_RETURN_V1,
 ) -> list[Observation]:
     if not isinstance(raw_rows, list):
         raise ShadowContractError("BENCHMARK_ROWS_INVALID")
@@ -538,7 +624,7 @@ def _normalize_benchmark_rows(
         observations.append(
             Observation(
                 "benchmark",
-                "000300",
+                algorithm.benchmark_symbol,
                 normalized_date,
                 normalized_close,
                 BENCHMARK_SOURCE,
@@ -555,10 +641,11 @@ def _build_manifest(
     benchmark: Sequence[Observation],
     as_of_date: str,
     protection_hash: str,
+    algorithm: ShadowAlgorithm = RAW_PRICE_RETURN_V1,
 ) -> dict[str, Any]:
     base = {
         "schema_version": SCHEMA_VERSION,
-        "algorithm_version": ALGORITHM_VERSION,
+        "algorithm_version": algorithm.version,
         "as_of_date": as_of_date,
         "cohort_hash": _events_hash(events),
         "legacy_outcomes_hash": _legacy_outcomes_hash(events),
@@ -579,22 +666,30 @@ def _build_shadow_rows(
     events: Sequence[FrozenEvent],
     stock_observations: Sequence[Observation],
     benchmark_observations: Sequence[Observation],
+    algorithm: ShadowAlgorithm = RAW_PRICE_RETURN_V1,
 ) -> list[ShadowRow]:
     stock_maps: dict[str, dict[str, float]] = {}
     for observation in stock_observations:
         stock_maps.setdefault(observation.instrument_code, {})[observation.trade_date] = observation.close
     benchmark_map = {observation.trade_date: observation.close for observation in benchmark_observations}
-    return [_build_shadow_row(event, stock_maps.get(event.code, {}), benchmark_map) for event in events]
+    return [_build_shadow_row(event, stock_maps.get(event.code, {}), benchmark_map, algorithm) for event in events]
 
 
-def _build_shadow_row(event: FrozenEvent, stock: Mapping[str, float], benchmark: Mapping[str, float]) -> ShadowRow:
+def _build_shadow_row(
+    event: FrozenEvent,
+    stock: Mapping[str, float],
+    benchmark: Mapping[str, float],
+    algorithm: ShadowAlgorithm = RAW_PRICE_RETURN_V1,
+) -> ShadowRow:
     target_date = (_parse_date(event.score_date) + timedelta(days=event.window_days)).isoformat()
     entry = resolve_observation(stock, event.score_date)
     target = resolve_observation(stock, target_date)
     benchmark_entry = resolve_observation(benchmark, event.score_date)
     benchmark_target = resolve_observation(benchmark, target_date)
     status = _result_status(entry, target, benchmark_entry, benchmark_target)
-    stored_outcome = _return_pct(event.price_at_score, target[1]) if target else None
+    # Left NULL when the entry price scale differs from the target's: pairing a raw
+    # price_at_score against a qfq target yields a number with no interpretation.
+    stored_outcome = _return_pct(event.price_at_score, target[1]) if algorithm.compute_stored_entry and target else None
     reconstructed_outcome = _return_pct(entry[1], target[1]) if entry and target else None
     benchmark_return = (
         _return_pct(benchmark_entry[1], benchmark_target[1]) if benchmark_entry and benchmark_target else None
@@ -622,6 +717,7 @@ def _build_shadow_row(event: FrozenEvent, stock: Mapping[str, float], benchmark:
         benchmark_return,
         status,
         aligned,
+        algorithm,
     )
     return ShadowRow(values=values, row_hash=_stable_hash(values), status=status)
 
@@ -655,6 +751,7 @@ def _result_values(
     benchmark_return: float | None,
     status: str,
     aligned: int,
+    algorithm: ShadowAlgorithm = RAW_PRICE_RETURN_V1,
 ) -> tuple[Any, ...]:
     return (
         *_event_result_values(event),
@@ -665,9 +762,9 @@ def _result_values(
         _difference(stored_outcome, benchmark_return),
         _difference(reconstructed_outcome, benchmark_return),
         "ex_post_reconstructed",
-        STOCK_SOURCE,
+        algorithm.stock_source,
         BENCHMARK_SOURCE,
-        RAW_ADJUSTED,
+        algorithm.stock_adjusted,
         status,
         status.upper(),
         aligned,
@@ -840,12 +937,21 @@ def _insert_run(
     )
 
 
-def _verify_candidate(candidate: Path, prediction_count: int, protection_hash: str, event_count: int) -> None:
+def _verify_candidate(
+    candidate: Path,
+    prediction_count: int,
+    protection_hash: str,
+    event_count: int,
+    algorithm: ShadowAlgorithm = RAW_PRICE_RETURN_V1,
+) -> None:
     with sqlite3.connect(f"file:{candidate.resolve()}?mode=ro", uri=True) as conn:
         conn.row_factory = sqlite3.Row
         if conn.execute("PRAGMA quick_check").fetchone()[0] != "ok":
             raise ShadowContractError("CANDIDATE_QUICK_CHECK_FAILED")
-        actual_count, actual_hash = _predictions_protection(conn)
+        # Must use the same protection variant as the build, or the two hashes are
+        # computed over different column sets and can never match.
+        protection = extended_predictions_protection if algorithm.use_extended_protection else _predictions_protection
+        actual_count, actual_hash = protection(conn)
         result_count = conn.execute("SELECT COUNT(*) FROM outcome_shadow_results").fetchone()[0]
     if (actual_count, actual_hash) != (prediction_count, protection_hash):
         raise ShadowContractError("PREDICTIONS_PROTECTION_DRIFT")
