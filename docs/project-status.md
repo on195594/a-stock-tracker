@@ -35,6 +35,12 @@ real bundle、blind reference、Gemini shadow 或 support audit。旧授权窗�
 复用。定性评分 v2 生产读取继续依赖 validator、独立表、逐股 fallback 和 `off` 回滚，
 不因研究冻结而改变。
 
+2026-07-28 完成第一批工程减法：Telegram 删除用定性分差值推导“择时佳/择时弱”的
+错误语义，不再并列展示历史 L3 v1，只把实际路由使用的 L3 v2 如实称为风险门禁；
+outcome-shadow 命令明确标记为冻结研究；默认 pytest/mypy 排除冻结的 M4/M5 与
+outcome-shadow 治理边界，480 个冻结审计测试保留为显式路径套件。减法未删除冻结实现、
+证据或 sealed identifier。
+
 2026-07-18 曾执行一次非 v1.3.2-compliant 的 `index_classify` 直连探测：HTTP 200、provider code 0、31 rows，未持久化原始响应。该探测不构成 frame、authorization、freeze、attestation 或生产采用证据。
 
 2026-07-18 13:31 +08:00 的首次轻量 probe 在第 1 次 `index_classify` 停止：HTTP 200、provider code 0、31 rows、`has_more=false`，但 provider `count=0`，违反 count/rows 完整性门禁。实际调用 1/35、无重试，未执行其余 probe/build 请求，未生成 exclusions、frame/sample 或派生 hash；raw/summary 无 token，生产与 shadow 路径未访问。
@@ -105,12 +111,12 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | Framework B | report-only | `SUPPORTED_FRAMEWORKS={"A"}`，不写 B 生产 predictions |
 | Phase 6 阻塞 | B label 已结案样本不足 | W30/W31 已冻结；三个 cohort 周预计约于 2026-08-19、08-26、09-02 到期，达到门槛后也只进入人工 review |
 | L3 v2 QFQ / 生产写入 | 已完成，选择性待观察 | `daily_bars.adjusted='qfq'` 仅 `tushare.pro_bar.qfq`，35 个代码、4,935 行（至 2026-07-27）；非 TuShare 或 mixed source fail-closed |
-| L3 v2 Phase 3 push trigger | 已完成，生产推送已切换 | `telegram_push.py` 触发条件 `entry_signal=1` → `l3_v2_signal=1`；commit `e080f15`；298/298 tests passed |
+| L3 v2 Phase 3 push trigger | 已完成，生产推送已切换；展示语义已减法 | 路由只读 `l3_v2_signal`；2026-07-28 删除 v1/“买点触发”双重展示和定性分择时解释，当前称为风险门禁 |
 | Framework A 倒置诊断 | 已完成；定量数值已按 QFQ 口径修正 | 未复权口径 Q5 avg_alpha_30d=-9.91%（2026-07-27 双边总收益口径重算为 Q5 -3.02，仍无单调性）；根因=截面校准偏差+11支伪复制；agy投资审查：Priority 1=延伸60d/90d；60d首批到期 2026-07-14 |
 | 定性评分 v2 | 全局 `on`；6/35 hybrid、29/35 v1 fallback | v2 表 6 行：000963/002050/600036/600900/601088/603606；全部为 moat/market_pos scored、sentiment NULL |
 | 定性评分 v2 研究审计 | M4 sample 与 M5 fixture-first/builder 完成后冻结；real bundle 未完成 | sample SHA `b278a7…d7635d`；旧 pilot 授权已过期；不再作为当前生产或策略验证阻塞项 |
 | outcome QFQ total-return shadow | 阶段 A/B 完成，阶段 C 未执行 | run `outcome-shadow-e85f830d9b2d850fc2657560`；产物在 `artifacts/qfq-shadow/`（gitignored，无 git 保护）；生产 predictions 2,069 行与既有 1 run/1,776 results 均未改动 |
-| 代码质量基线 | 2026-07-24 全部通过 | Phase 2 最终全仓 1,112 passed；Ruff、format 165 files、mypy 155 source files、pip check、shell syntax、`git diff --check` PASS；不代表运行 readiness |
+| 代码质量基线 | 2026-07-28 活动套件通过 | 默认 675 passed/11.65s，冻结 480 个测试在收集前按路径排除；调整前全仓 1,154 passed/1 frozen M4 failure，114.59s；Ruff、format、mypy 101 source files、`git diff --check` 通过 |
 
 ## Spec Ledger
 

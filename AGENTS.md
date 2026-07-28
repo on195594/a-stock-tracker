@@ -47,7 +47,7 @@ These instructions apply to the entire repository. Read this file and
 
 ## Required verification
 
-Run these checks after any source or structure change:
+Run the active product checks after any source or structure change:
 
 ```bash
 .venv/bin/python -m pytest tests/test_project_structure.py -q
@@ -56,4 +56,27 @@ Run these checks after any source or structure change:
 .venv/bin/ruff format --check .
 .venv/bin/mypy
 git diff --check
+```
+
+The default pytest and mypy runs exclude frozen M4/M5 and outcome-shadow
+governance. Run the relevant frozen audit suite when those paths, their sealed
+contracts, or a shared CLI entrypoint that dispatches to them changes:
+
+```bash
+.venv/bin/python -m pytest -o addopts='' \
+  tests/milestone004 \
+  tests/test_qualitative_v2_m5*.py \
+  tests/test_outcome_shadow*.py \
+  -q
+.venv/bin/mypy --config-file=/dev/null \
+  --python-version 3.13 --ignore-missing-imports --follow-imports skip \
+  a_stock_tracker/qualitative/archive_m4 \
+  a_stock_tracker/qualitative/m5 \
+  a_stock_tracker/data/outcome_shadow.py \
+  a_stock_tracker/data/outcome_shadow_migration.py \
+  scripts/archive_m4 \
+  scripts/*m5*.py \
+  tests/milestone004 \
+  tests/test_qualitative_v2_m5*.py \
+  tests/test_outcome_shadow*.py
 ```

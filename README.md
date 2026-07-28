@@ -206,7 +206,7 @@ python3 pipeline.py init
 ## 测试
 
 ```bash
-# 全部测试
+# 活动产品测试（默认排除冻结研究治理）
 pytest tests/ -q
 
 # 常用定向测试
@@ -220,6 +220,9 @@ pytest tests/test_agent_reviewer.py -q
 pytest tests/test_sheets_sync.py -q
 pytest tests/test_qualitative_v2_types.py tests/test_qualitative_v2_taxonomy.py tests/test_qualitative_v2_validator.py tests/test_qualitative_v2_schema.py tests/test_qualitative_v2_prompt.py -q
 pytest tests/test_qualitative_v2_client.py tests/test_qualitative_v2_shadow.py -q
+
+# 仅在 M4/M5、outcome-shadow 或 sealed contract 变化时复验
+pytest -o addopts='' tests/milestone004 tests/test_qualitative_v2_m5*.py tests/test_outcome_shadow*.py -q
 ```
 
 代码质量检查：
@@ -232,7 +235,7 @@ git diff --check
 git status --short
 ```
 
-提交前标准检查请优先使用项目虚拟环境，避免误用全局 Python：
+提交前活动产品检查请优先使用项目虚拟环境，避免误用全局 Python：
 
 ```bash
 source .venv/bin/activate
@@ -244,6 +247,10 @@ git diff --check
 ```
 
 `ruff` 和 `mypy` 已列在 `requirements.txt`，配置集中在 `pyproject.toml`。如果命令不可用，先确认已激活虚拟环境并执行过 `pip install -r requirements.txt`。
+
+默认 `pytest tests/` 和 `mypy` 聚焦当前生产链与阶段一策略验证，不执行冻结的 M4/M5 和
+outcome-shadow 治理套件。冻结实现没有删除；只有修改对应路径、sealed contract 或其共享
+CLI 入口时，才运行上面的冻结套件及 `AGENTS.md` 中的冻结类型检查。
 
 测试约束：
 

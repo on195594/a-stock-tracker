@@ -102,12 +102,9 @@ def _send(token: str, chat_id: str, text: str) -> None:
 
 
 def _interpret(
-    quant_score: float,
-    total_score: float,
     moat: int | None,
     market_pos: int | None,
 ) -> str:
-    timing = round(total_score - quant_score, 1)
     parts: list[str] = []
 
     if moat is not None:
@@ -126,11 +123,6 @@ def _interpret(
         else:
             parts.append(f"行业地位弱({market_pos}/5)")
 
-    if timing >= 12:
-        parts.append("择时佳")
-    elif timing <= 5:
-        parts.append("择时弱")
-
     return "  ".join(parts) if parts else ""
 
 
@@ -139,21 +131,18 @@ def _format_stock_line(
     name: str | None,
     total_score: float,
     quant_score: float,
-    entry_signal: int | None,
-    entry_signal_version: str | None,
     moat: int | None,
     market_pos: int | None,
     l3_v2_signal: int | None = None,
 ) -> str:
     label = f"{name}({code})" if name else code
-    interp = _interpret(quant_score, total_score, moat, market_pos)
-    l3_tag = "✓ L3买点" if entry_signal == 1 else "等待L3"
-    if entry_signal_version:
-        l3_tag += f"({entry_signal_version})"
+    interp = _interpret(moat, market_pos)
     if l3_v2_signal == 1:
-        l3_tag += " (v2✓)"
+        l3_tag = "L3风险门禁:通过(v2)"
     elif l3_v2_signal == 0:
-        l3_tag += " (v2✗)"
+        l3_tag = "L3风险门禁:拒绝(v2)"
+    else:
+        l3_tag = "L3风险门禁:不可用(v2)"
 
     line = f"  {label}  总分:{total_score:.1f}  量化:{quant_score:.1f}  {l3_tag}"
     if interp:
@@ -171,8 +160,8 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
 
     db = get_db()
     primary = db.execute(
-        """SELECT p.code, p.name, p.total_score, p.quant_score, p.entry_signal,
-                  p.entry_signal_version, q.moat, q.market_pos, p.l3_v2_signal,
+        """SELECT p.code, p.name, p.total_score, p.quant_score,
+                  q.moat, q.market_pos, p.l3_v2_signal,
                   p.weights_hash, p.report_period, p.qualitative_snapshot_json,
                   p.qualitative_sources_json, p.qualitative_mode
            FROM predictions p
@@ -186,8 +175,8 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
         (score_date, threshold),
     ).fetchall()
     backup = db.execute(
-        """SELECT p.code, p.name, p.total_score, p.quant_score, p.entry_signal,
-                  p.entry_signal_version, q.moat, q.market_pos, p.l3_v2_signal,
+        """SELECT p.code, p.name, p.total_score, p.quant_score,
+                  q.moat, q.market_pos, p.l3_v2_signal,
                   p.qualitative_snapshot_json, p.qualitative_sources_json,
                   p.qualitative_mode
            FROM predictions p
@@ -202,8 +191,8 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
         (score_date, threshold),
     ).fetchall()
     radar = db.execute(
-        """SELECT p.code, p.name, p.total_score, p.quant_score, p.entry_signal,
-                  p.entry_signal_version, q.moat, q.market_pos, p.l3_v2_signal,
+        """SELECT p.code, p.name, p.total_score, p.quant_score,
+                  q.moat, q.market_pos, p.l3_v2_signal,
                   p.qualitative_snapshot_json, p.qualitative_sources_json,
                   p.qualitative_mode
            FROM predictions p
@@ -221,14 +210,12 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
     sections = [f"📊 A股推荐 {score_date}\n"]
 
     if primary:
-        lines = [f"🟢 主推（买点触发，总分>={threshold:.0f}）"]
+        lines = [f"🟢 主推（高分且风险门禁通过，总分>={threshold:.0f}）"]
         for rank, (
             code,
             name,
             total,
             quant,
-            entry_signal,
-            entry_version,
             moat,
             market_pos,
             v2_signal,
@@ -246,8 +233,6 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
                 name,
                 total,
                 quant,
-                entry_signal,
-                entry_version,
                 display_moat,
                 display_market_pos,
                 v2_signal,
@@ -298,15 +283,13 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
         sections.append("\n".join(lines))
 
     if backup:
-        lines = [f"🟡 候补（高分等待买点，总分>={threshold:.0f}）"]
+        lines = [f"🟡 候补（高分但风险门禁未通过，总分>={threshold:.0f}）"]
         for row in backup:
             (
                 code,
                 name,
                 total,
                 quant,
-                _entry_signal,
-                entry_version,
                 moat,
                 market_pos,
                 v2_signal,
@@ -323,8 +306,6 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
                     name,
                     total,
                     quant,
-                    0,
-                    entry_version,
                     display_moat,
                     display_market_pos,
                     v2_signal,
@@ -340,8 +321,6 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
                 name,
                 total,
                 quant,
-                entry_signal,
-                entry_version,
                 moat,
                 market_pos,
                 v2_signal,
@@ -358,8 +337,6 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
                     name,
                     total,
                     quant,
-                    entry_signal,
-                    entry_version,
                     display_moat,
                     display_market_pos,
                     v2_signal,

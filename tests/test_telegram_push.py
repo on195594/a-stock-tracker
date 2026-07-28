@@ -125,7 +125,8 @@ def test_push_daily_signals_sends_only_when_score_and_l3_pass(tmp_db, telegram_e
     text = sent[0][2]
     assert "🟢 主推" in text
     assert "N600036(600036)" in text
-    assert "✓ L3买点(v1)" in text
+    assert "L3风险门禁:通过(v2)" in text
+    assert "L3买点" not in text
 
 
 def test_l3_v2_pass_triggers_primary_when_v1_rejects(tmp_db, telegram_env, monkeypatch):
@@ -168,6 +169,8 @@ def test_l3_v2_null_routes_v1_pass_to_backup(tmp_db, telegram_env, monkeypatch):
     assert "🟢 主推" not in text
     assert "🟡 候补" in text
     assert "N600039(600039)" in text
+    assert "L3风险门禁:不可用(v2)" in text
+    assert "L3风险门禁:拒绝(v2)" not in text
 
 
 def test_tiered_push_backup_tier_sends_when_l3_zero(tmp_db, telegram_env, monkeypatch):
@@ -181,7 +184,8 @@ def test_tiered_push_backup_tier_sends_when_l3_zero(tmp_db, telegram_env, monkey
     text = sent[0][2]
     assert "🟡 候补" in text
     assert "N600036(600036)" in text
-    assert "等待L3(v1)" in text
+    assert "L3风险门禁:拒绝(v2)" in text
+    assert "(v1)" not in text
 
 
 def test_push_daily_signals_swallows_send_exception(tmp_db, telegram_env, monkeypatch):
@@ -277,7 +281,7 @@ def test_tiered_push_no_duplicate_when_multiple_qualitative_dates(tmp_db, telegr
 
 
 def test_interpret_edge_cases(monkeypatch, tmp_db, telegram_env):
-    """Test moat (5-7, <5), market_pos (3, <3), timing <= 5 in _interpret."""
+    """Test moat (5-7, <5) and market_pos (3, <3) interpretation."""
     sent = []
     monkeypatch.setattr(telegram_push, "_send", lambda *args: sent.append(args))
 
@@ -289,7 +293,6 @@ def test_interpret_edge_cases(monkeypatch, tmp_db, telegram_env):
     # moat=4, market_pos=2 -> 护城河4/10(弱), 行业地位弱(2/5)
     _insert_qualitative_scores("000002", 4, 2)
 
-    # Timing <= 5 -> total=66, quant=62.0 -> timing = 4.0 <= 5 -> "择时弱"
     db = cache_mod.get_db()
     db.execute(
         """INSERT INTO predictions (code, name, framework, score_date, price_at_score, quant_score, total_score, weights_hash, report_period, entry_signal, entry_signal_version, l3_v2_signal, created_at)
@@ -306,7 +309,8 @@ def test_interpret_edge_cases(monkeypatch, tmp_db, telegram_env):
     assert "行业中等(3/5)" in text
     assert "护城河4/10(弱)" in text
     assert "行业地位弱(2/5)" in text
-    assert "择时弱" in text
+    assert "择时弱" not in text
+    assert "择时佳" not in text
 
 
 def test_push_daily_signals_missing_env_vars(monkeypatch, tmp_db):
@@ -333,12 +337,11 @@ def test_push_daily_signals_http_error(monkeypatch, tmp_db, telegram_env):
     telegram_push.push_daily_signals("2026-05-30", threshold=65.0)
 
 
-def test_interpret_timing_good(monkeypatch, tmp_db, telegram_env):
-    """Test timing >= 12 in _interpret."""
+def test_qualitative_score_gap_is_not_described_as_timing(monkeypatch, tmp_db, telegram_env):
+    """Qualitative score contribution must not be presented as entry timing."""
     sent = []
     monkeypatch.setattr(telegram_push, "_send", lambda *args: sent.append(args))
 
-    # Timing >= 12 -> total=66, quant=50.0 -> timing = 16.0 >= 12 -> "择时佳"
     db = cache_mod.get_db()
     db.execute(
         """INSERT INTO predictions (code, name, framework, score_date, price_at_score, quant_score, total_score, weights_hash, report_period, entry_signal, entry_signal_version, l3_v2_signal, created_at)
@@ -349,7 +352,9 @@ def test_interpret_timing_good(monkeypatch, tmp_db, telegram_env):
 
     telegram_push.push_daily_signals("2026-05-30", threshold=44.0)
     assert len(sent) == 1
-    assert "择时佳" in sent[0][2]
+    assert "择时佳" not in sent[0][2]
+    assert "择时弱" not in sent[0][2]
+    assert "L3风险门禁:通过(v2)" in sent[0][2]
 
 
 def test_send_real_execution(monkeypatch):

@@ -38,7 +38,8 @@ python pipeline.py daily          # 每日手动触发（cron: 工作日 17:30�
 python pipeline.py outcome-update # 更新到期预测（cron: 工作日 18:00）
 python pipeline.py accuracy-report
 
-pytest tests/ -v                  # 修改前必须全通过
+pytest tests/ -q                  # 活动产品套件；默认排除冻结研究治理
+# 冻结路径复验命令见 AGENTS.md，仅修改对应路径或 sealed contract 时运行
 ```
 
 ---
