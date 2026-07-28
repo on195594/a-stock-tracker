@@ -2,7 +2,7 @@
 
 日期：2026-07-28
 
-状态：reviewed
+状态：reviewed；第二批减法已于同日执行，以下“冻结”初始判断以 §6 的更新为准
 范围：产品目标、策略证据、生产决策链、研究治理、后续三阶段路线
 
 ## 1. 结论
@@ -118,16 +118,16 @@
 - Framework A 纯评分函数和 prediction 输入快照；
 - daily、outcome-update、Telegram 基础链；
 - 核心数据质量、交易日、历史不可改写测试；
-- Framework B cohort 自动冻结，但只被动积累自然 outcome。
+- 默认 QFQ/沪深300全收益策略报告。
 
-### 6.2 冻结
+### 6.2 删除（第二批更新）
 
-- `a_stock_tracker/qualitative/archive_m4/` 及其 sealed identifier；
-- M5 当前 fixture-first、授权、pilot、bundle 与 reviewer 工具；
-- outcome shadow Phase 1/2/3 已有实现和生产证据；
-- 已完成的历史 spec、review 和 runbook。
+- M4/M5 实现、fixture、授权、pilot、bundle、reviewer、证据和治理文档；
+- qualitative 历史 context/单股/五股 pilot、Gemini client、writer/shadow；
+- outcome shadow 构建、报告、import/revert、migration 与对应测试；
+- Framework B report/cohort 活动入口。
 
-冻结表示不删除、不迁移、不改变 sealed 相对路径，但不再追加功能，也不作为普通产品迭代的默认依赖。
+这些路径没有生产消费者，只能手工执行；按用户确认不再“冻结备用”，由 Git 历史承担恢复职责。生产数据库既有历史行不做破坏性迁移。
 
 ### 6.3 暂停
 
@@ -140,17 +140,9 @@
 
 过期授权不得自动续期或复用。若未来恢复研究，必须先说明它将验证哪一个收益假设。
 
-### 6.4 验证分级（2026-07-28 已实施）
+### 6.4 验证收敛（第二批更新）
 
-验证已按以下方式分层：
-
-- 默认套件：评分、行情、生产 outcome、Telegram 和生产数据合同，普通改动运行；
-- 冻结审计套件：M4/M5、outcome shadow 和 sealed artifact，仅在对应文件变化时显式运行；
-- Ruff 仍覆盖全仓；冻结实现和证据未删除。
-
-`pyproject.toml` 在收集前按路径排除冻结 pytest，mypy 默认排除相同冻结边界；
-`AGENTS.md` 保留了覆盖默认参数的显式复验命令。全量测试基线曾耗时 114.59 秒，并因冻结 M4 artifact
-权限断言失败而阻断活动产品改动；分层后此类失败留在冻结审计维护范围内，不再混入日常反馈。
+默认 pytest、Ruff 和 mypy 只覆盖仍存在的活动产品代码，不再保留排除冻结套件的双层配置。全量测试基线曾耗时 114.59 秒并被冻结证据权限阻断；删除零消费者代码后，默认验证面与生产面一致。
 
 ## 7. 建议的局部重构
 
@@ -169,17 +161,13 @@
 
 ### 7.2 拆分报告职责
 
-2026-07-28 第二轮减法已将默认 `accuracy-report` 收敛为策略评价：
+2026-07-28 第二批减法已将默认 `accuracy-report` 收敛为策略评价：
 
 - strategy report：alpha、总收益、IC、分位差、回撤、L3 增益；
 - ops status：继续由 readiness、日志和 weekly operational checks 独立承担；
-- Framework B：历史报告/cohort 模块保留，但不再进入默认策略报告。
+- Framework B：活动报告/cohort 已删除。
 
-同轮删除 Telegram reviewer。历史 qualitative v2 context 收集、东方电缆和五股 pilot
-经消费者审计后仅被手工研究脚本使用，因此冻结并退出默认验证链；生产预计算批次仍复用
-client/shadow 引擎与 `run_qualitative_v2_production.py`，这些路径继续默认验证。L3 v1 仍被
-daily 写入、历史 backfill、生产验收和离线回测消费；本轮选择冻结规则并保持兼容写入，
-不做语义含混的停写，且默认 Telegram/策略报告不再展示 v1。
+历史 qualitative v2 context、单股/五股 pilot、client/shadow/writer 经消费者审计后均只有手工入口，已删除。L3 v1 计算、新写入和 backfill 同样删除；历史数据库列和行只作兼容保留。
 
 ### 7.3 统一决策合同
 
@@ -236,7 +224,7 @@ reasons
 
 1. 构建 300–500 股历史截面研究集；
 2. 做行业分层或行业中性比较；
-3. 验证 Framework A/B 在不同市场阶段和行业的 IC、top-bottom spread；
+3. 验证简单候选框架在不同市场阶段和行业的 IC、top-bottom spread；
 4. 加入交易成本、停牌、可交易性和样本外评估；
 5. 若 Framework A 无效，先简化或重做评分，不叠加新框架。
 
@@ -254,7 +242,7 @@ reasons
 1. 建设动态候选池和受控数据采集；
 2. 上线经验证的买点信号，而不是仅重命名风险门禁；
 3. 增加仓位、组合集中度、退出/失效条件和风险预算；
-4. 用小范围 report-only/canary 验证，再逐步影响主推；
+4. 用自动小流量验证，再逐步影响主推；
 5. 持续监控收益、回撤、换手和模型漂移。
 
 退出条件：
@@ -275,9 +263,8 @@ reasons
 
 ## 10. 近期优先级
 
-1. P0：保持 TuShare、daily、outcome 和 cron 自然运行，刷新 stale probe；
+1. P0：保持 TuShare、daily、outcome 和 cron 自然运行；
 2. P1：固定 watchlist 股票池效应与 Framework A 排序能力拆解；
 3. P1：修正 Telegram 决策语义，补 L3 v2 效果报告；
-4. P1：规划未来版本化 QFQ outcome；
-5. P2：被动等待 Framework B cohort 自然结案；
-6. HOLD：M4/M5、shadow stage C、多框架生产化和 Phase 7 生产实现。
+4. P1：积累并复核自动 QFQ/全收益报告的非重叠时间批次；
+5. HOLD：多框架生产化和阶段三生产实现。

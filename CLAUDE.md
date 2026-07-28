@@ -13,14 +13,14 @@
 - SQLite 是真相来源，Telegram 是唯一展示面；
 - 不存在 Framework B、L3 v1 新写入、Sheets、qualitative acceptance 或 weekly PM 活动链。
 
-历史数据库中的 Framework B、L3 v1 和 outcome shadow 数据保持不动，但不得据此恢复入口。
+历史数据库中的 Framework B、L3 v1 和 outcome shadow 数据保持不动，但代码、CLI 与手工迁移入口均已删除，不得据此恢复。
 
 ## 架构
 
 - `a_stock_tracker/data/`：数据库、provider、采集、readiness、物化；
 - `a_stock_tracker/signals/`：L3 v2；
 - `a_stock_tracker/reporting/`：Telegram 与策略报告；
-- `a_stock_tracker/qualitative/`：本地 qualitative 读取；历史研究代码将在第二批删除；
+- `a_stock_tracker/qualitative/`：本地 qualitative 只读选择；
 - `a_stock_tracker/cli.py`：应用编排；
 - `pipeline.py`：薄兼容启动器。
 

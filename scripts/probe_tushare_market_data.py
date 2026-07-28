@@ -181,7 +181,7 @@ def _close_cross_checks(checks: list[dict[str, Any] | ProbeCheck]) -> tuple[str,
     if failures:
         return "FAIL", rows
     if checked == 0 or missing_reference or date_mismatches:
-        return "MANUAL_REQUIRED", rows
+        return "FAIL", rows
     return "PASS", rows
 
 
@@ -207,9 +207,6 @@ def _decide_probe(token: str | None, checks: list[ProbeCheck], close_status: str
     elif close_status == "PASS":
         write_gate_status = "PASS"
         reason = "daily close cross-check passed"
-    elif close_status == "MANUAL_REQUIRED":
-        write_gate_status = "MANUAL_REQUIRED"
-        reason = "daily close cross-check requires manual review"
     else:
         write_gate_status = "FAIL"
         reason = "daily close cross-check failed"

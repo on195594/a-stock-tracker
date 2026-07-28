@@ -1,4 +1,4 @@
-"""Fetch TuShare QFQ daily bars into an isolated shadow partition."""
+"""Fetch TuShare QFQ bars and the CSI 300 total-return benchmark."""
 
 from __future__ import annotations
 
@@ -32,9 +32,11 @@ from a_stock_tracker.data.cache import DB_PATH, upsert_daily_bars
 
 logger = logging.getLogger(__name__)
 
-SHADOW_ADJUSTED = "qfq_tushare_shadow"
 PRODUCTION_ADJUSTED = "qfq"
 SOURCE = "tushare.pro_bar.qfq"
+BENCHMARK_SOURCE = "tushare.index_daily"
+BENCHMARK_API_SYMBOL = "H00300.CSI"
+BENCHMARK_DB_SYMBOL = "H00300"
 MAX_ATTEMPTS = 3
 RETRY_BUDGET_SECONDS = 60.0
 OVERLAP_BUFFER_DAYS = 40
@@ -64,7 +66,7 @@ class Args:
 
 
 def parse_args(argv: Sequence[str] | None = None) -> Args:
-    parser = argparse.ArgumentParser(description="Fetch TuShare QFQ shadow daily bars for watchlist codes.")
+    parser = argparse.ArgumentParser(description="Fetch TuShare QFQ bars and the total-return benchmark.")
     parser.add_argument(
         "--backfill-days", type=int, default=200, help="Calendar days to fetch (default: 200 ≈ 134 trading days)"
     )
@@ -344,6 +346,45 @@ def _create_api() -> Any:
     return ts.pro_api(token) if token else ts.pro_api()
 
 
+def _fetch_total_return_index(
+    conn: sqlite3.Connection,
+    api: Any,
+    start_date: str,
+    end_date: str,
+) -> tuple[int, str]:
+    frame = api.index_daily(
+        ts_code=BENCHMARK_API_SYMBOL,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    if not isinstance(frame, pd.DataFrame) or frame.empty:
+        raise RuntimeError("no CSI 300 total-return rows")
+    missing = {"trade_date", "close"} - set(frame.columns)
+    if missing:
+        raise RuntimeError(f"missing CSI 300 total-return columns: {', '.join(sorted(missing))}")
+
+    rows: list[tuple[str, float]] = []
+    for raw_date, raw_close in frame[["trade_date", "close"]].itertuples(index=False, name=None):
+        trade_date = pd.to_datetime(str(raw_date), format="%Y%m%d", errors="coerce")
+        try:
+            close = float(raw_close)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(f"invalid CSI 300 total-return close on {raw_date}") from exc
+        if pd.isna(trade_date) or not math.isfinite(close) or close <= 0:
+            raise RuntimeError(f"invalid CSI 300 total-return row on {raw_date}")
+        rows.append((trade_date.strftime("%Y-%m-%d"), close))
+    if len({trade_date for trade_date, _close in rows}) != len(rows):
+        raise RuntimeError("duplicate CSI 300 total-return dates")
+
+    with conn:
+        conn.executemany(
+            """INSERT INTO index_prices(symbol,date,close) VALUES (?,?,?)
+               ON CONFLICT(symbol,date) DO UPDATE SET close=excluded.close""",
+            ((BENCHMARK_DB_SYMBOL, trade_date, close) for trade_date, close in rows),
+        )
+    return len(rows), max(trade_date for trade_date, _close in rows)
+
+
 def run(args: Args) -> int:
     end = date.today()
     start = end - timedelta(days=args.backfill_days)
@@ -358,7 +399,26 @@ def run(args: Args) -> int:
             print(f"  {code}: client initialization failed", file=sys.stderr)
         return 1
 
+    benchmark_failure: str | None = None
     with sqlite3.connect(DB_PATH) as conn:
+        try:
+            benchmark_count, benchmark_latest = _fetch_total_return_index(
+                conn,
+                api,
+                start.strftime("%Y%m%d"),
+                end.strftime("%Y%m%d"),
+            )
+            logger.info(
+                "QFQ_BENCHMARK_FETCH_OK symbol=%s rows=%d latest=%s source=%s",
+                BENCHMARK_DB_SYMBOL,
+                benchmark_count,
+                benchmark_latest,
+                BENCHMARK_SOURCE,
+            )
+        except Exception as exc:
+            conn.rollback()
+            benchmark_failure = f"{type(exc).__name__}: {exc}"
+            logger.error("QFQ_BENCHMARK_FAILED symbol=%s detail=%s", BENCHMARK_DB_SYMBOL, benchmark_failure)
         failures, latest_dates = _collect_codes(
             conn,
             api,
@@ -374,8 +434,10 @@ def run(args: Args) -> int:
             max(latest_dates),
         )
 
-    if failures:
+    if failures or benchmark_failure:
         print("QFQ_TUSHARE_BATCH_FAILED:", file=sys.stderr)
+        if benchmark_failure:
+            print(f"  {BENCHMARK_DB_SYMBOL}: {benchmark_failure}", file=sys.stderr)
         for code, reason in failures.items():
             print(f"  {code}: {reason}", file=sys.stderr)
         return 1

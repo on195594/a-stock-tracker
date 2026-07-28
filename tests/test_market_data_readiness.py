@@ -252,22 +252,21 @@ def test_readiness_blocks_daily_when_write_gate_fails(tmp_path, monkeypatch) -> 
     assert "Production Decision is DAILY_WRITES_BLOCKED" in status.reasons
 
 
-def test_readiness_blocks_daily_when_close_cross_check_fails_or_needs_manual_review(tmp_path, monkeypatch) -> None:
+def test_readiness_blocks_daily_when_close_cross_check_fails(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(readiness, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(os.environ, "TUSHARE_TOKEN", "token")
 
-    for close_cross_check in ("FAIL", "MANUAL_REQUIRED"):
-        _write_report(
-            tmp_path,
-            "2026-06-26-tushare-capability-probe.md",
-            _new_report(close_cross_check=close_cross_check),
-        )
+    _write_report(
+        tmp_path,
+        "2026-06-26-tushare-capability-probe.md",
+        _new_report(close_cross_check="FAIL"),
+    )
 
-        status = readiness.readiness_status()
+    status = readiness.readiness_status()
 
-        assert not status.daily_ready
-        assert not status.capability_ready
-        assert f"Close cross-check is {close_cross_check}" in status.reasons
+    assert not status.daily_ready
+    assert not status.capability_ready
+    assert "Close cross-check is FAIL" in status.reasons
 
 
 def test_readiness_holds_capability_when_checks_blocked_or_dependent_jobs_hold(tmp_path, monkeypatch) -> None:

@@ -10,7 +10,6 @@ a-stock-tracker 主编排器
 
 import argparse
 from contextlib import contextmanager
-from dataclasses import asdict
 import hashlib
 import json
 import logging
@@ -44,18 +43,9 @@ from a_stock_tracker.data.market_data import (
     MarketDataProvider,
     get_default_market_data_provider,
 )
-from a_stock_tracker.data.outcome_shadow import (
-    build_shadow_candidate,
-    inspect_frozen_cohort,
-    write_shadow_report,
-)
-from a_stock_tracker.data.outcome_shadow_migration import (
-    apply_shadow_import,
-    inspect_shadow_import,
-    revert_shadow_import,
-)
-from a_stock_tracker.qualitative.contract import DIMENSION_NAMES, SCORE_RANGES
 from a_stock_tracker.qualitative.production import (
+    DIMENSION_NAMES,
+    SCORE_RANGES,
     ProductionQualitativeSelection,
     get_production_qualitative_selection,
 )
@@ -331,7 +321,6 @@ def _apply_qualitative_scores(db, code: str, name: str, data: dict) -> Productio
         db,
         code,
         name,
-        canary_codes=config.QUALITATIVE_V2_CANARY_CODES | config.QUALITATIVE_V2_PILOT_CODES,
         legacy_getter=lambda selected_code, selected_name: _load_local_qualitative_scores(
             db, selected_code, selected_name
         ),
@@ -658,8 +647,7 @@ def cmd_outcome_update() -> None:
 def cmd_accuracy_report() -> None:
     db = get_db()
     try:
-        weights = _load_weights()
-        report = build_accuracy_report(db, weights)
+        report = build_accuracy_report(db)
         print(report)
 
         report_path = config.ACCURACY_REPORT_PATH
@@ -669,87 +657,6 @@ def cmd_accuracy_report() -> None:
         logger.info(f"报告已保存到 {report_path}")
     finally:
         db.close()
-
-
-def cmd_outcome_shadow_build(
-    *,
-    source_db: str,
-    as_of_date: str,
-    dry_run: bool,
-    candidate_db: str | None = None,
-    benchmark_snapshot: str | None = None,
-) -> None:
-    """Inspect or build an explicit candidate-only historical outcome shadow."""
-    if dry_run:
-        if candidate_db or benchmark_snapshot:
-            raise ValueError("candidate_db and benchmark_snapshot are not accepted with --dry-run")
-        inspection = inspect_frozen_cohort(source_db, as_of_date)
-        print(json.dumps(asdict(inspection), ensure_ascii=False, sort_keys=True, default=str))
-        return
-    if not candidate_db or not benchmark_snapshot:
-        raise ValueError("candidate_db and benchmark_snapshot are required without --dry-run")
-    build = build_shadow_candidate(source_db, candidate_db, benchmark_snapshot, as_of_date=as_of_date)
-    print(json.dumps(asdict(build), ensure_ascii=False, sort_keys=True, default=str))
-
-
-def cmd_outcome_shadow_report(*, candidate_db: str, run_id: str, output: str) -> None:
-    """Generate a DB-read-only outcome shadow reconciliation report."""
-    result = write_shadow_report(candidate_db, run_id, output)
-    print(json.dumps(asdict(result), ensure_ascii=False, sort_keys=True, default=str))
-
-
-def cmd_outcome_shadow_import(
-    *,
-    production_db: str,
-    candidate_db: str,
-    expected_run: str,
-    expected_manifest: str,
-    mode: str,
-    backup_db: str | None = None,
-    evidence_json: str | None = None,
-) -> None:
-    """Inspect or explicitly apply one additive outcome-shadow migration."""
-    if mode == "inspect":
-        if backup_db or evidence_json:
-            raise ValueError("backup_db and evidence_json are not accepted in inspect mode")
-        result = inspect_shadow_import(production_db, candidate_db, expected_run, expected_manifest)
-    elif mode == "apply":
-        if not backup_db or not evidence_json:
-            raise ValueError("backup_db and evidence_json are required in apply mode")
-        result = apply_shadow_import(
-            production_db,
-            candidate_db,
-            expected_run,
-            expected_manifest,
-            backup_db,
-            evidence_json,
-        )
-    else:
-        raise ValueError(f"unsupported import mode: {mode}")
-    print(json.dumps(asdict(result), ensure_ascii=False, sort_keys=True, default=str))
-
-
-def cmd_outcome_shadow_revert(
-    *,
-    production_db: str,
-    expected_run: str,
-    expected_manifest: str,
-    evidence_json: str | None,
-    mode: str,
-) -> None:
-    """Inspect or explicitly apply a bounded drop-only shadow rollback."""
-    if mode not in {"inspect", "apply"}:
-        raise ValueError(f"unsupported revert mode: {mode}")
-    if mode == "apply" and not evidence_json:
-        raise ValueError("evidence_json is required in apply mode")
-    result = revert_shadow_import(
-        production_db,
-        expected_run,
-        expected_manifest,
-        evidence_json,
-        apply=mode == "apply",
-    )
-    print(json.dumps(asdict(result), ensure_ascii=False, sort_keys=True, default=str))
 
 
 # ──────────────────────────────────────────────
@@ -897,34 +804,7 @@ def main() -> None:
     sub.add_parser("weekly", help="每周刷新基本面缓存（cron: 每周六 10:00）")
     sub.add_parser("daily", help="每日评分，写入 predictions 表（依赖 weekly 缓存）")
     sub.add_parser("outcome-update", help="更新到期预测的实际收益")
-    sub.add_parser("accuracy-report", help="输出命中率报告")
-    p_shadow = sub.add_parser("outcome-shadow-build", help="[冻结研究] 只读检查或构建隔离历史 outcome shadow")
-    p_shadow.add_argument("--source-db", required=True, help="显式源 SQLite 路径")
-    p_shadow.add_argument("--as-of-date", required=True, help="冻结日期 YYYY-MM-DD")
-    p_shadow.add_argument("--dry-run", action="store_true", help="只读检查 cohort，不创建文件或 schema")
-    p_shadow.add_argument("--candidate-db", help="新建隔离候选 SQLite 路径")
-    p_shadow.add_argument("--benchmark-snapshot", help="TuShare index_daily 标准化 JSON 快照")
-    p_shadow_report = sub.add_parser("outcome-shadow-report", help="[冻结研究] 生成只读 shadow 差异报告")
-    p_shadow_report.add_argument("--candidate-db", required=True, help="隔离候选 SQLite 路径")
-    p_shadow_report.add_argument("--run-id", required=True, help="immutable shadow run ID")
-    p_shadow_report.add_argument("--output", required=True, help="新建 .json 报告路径；同时生成同名 .md")
-    p_shadow_import = sub.add_parser(
-        "outcome-shadow-import", help="[冻结研究] 检查或原子导入一个历史 outcome shadow run"
-    )
-    p_shadow_import.add_argument("--production-db", required=True, help="显式生产 SQLite 路径")
-    p_shadow_import.add_argument("--candidate-db", required=True, help="只读候选 SQLite 路径")
-    p_shadow_import.add_argument("--expected-run", required=True, help="预期 immutable run ID")
-    p_shadow_import.add_argument("--expected-manifest", required=True, help="预期 manifest hash")
-    p_shadow_import.add_argument("--mode", required=True, choices=("inspect", "apply"))
-    p_shadow_import.add_argument("--backup-db", help="apply 必填：新建 online backup 路径")
-    p_shadow_import.add_argument("--evidence-json", help="apply 必填：新建证据 JSON 路径")
-    p_shadow_revert = sub.add_parser("outcome-shadow-revert", help="[冻结研究] 检查或执行受限 drop-only shadow 回滚")
-    p_shadow_revert.add_argument("--production-db", required=True, help="显式生产 SQLite 路径")
-    p_shadow_revert.add_argument("--expected-run", required=True, help="预期 immutable run ID")
-    p_shadow_revert.add_argument("--expected-manifest", required=True, help="预期 manifest hash")
-    p_shadow_revert.add_argument("--evidence-json", help="apply 必填：新建证据 JSON 路径")
-    p_shadow_revert.add_argument("--mode", required=True, choices=("inspect", "apply"))
-    sub.add_parser("phase-check", help="手动触发 Phase 4 里程碑检测（自动在 outcome-update 后运行）")
+    sub.add_parser("accuracy-report", help="输出 QFQ 策略评估报告")
     p_remove = sub.add_parser(
         "remove",
         help="删除一只股票在 predictions 和 stock_fundamentals 表中的记录（先从 a_stock_tracker/config.py 移除）",
@@ -943,36 +823,6 @@ def main() -> None:
         cmd_outcome_update()
     elif args.cmd == "accuracy-report":
         cmd_accuracy_report()
-    elif args.cmd == "outcome-shadow-build":
-        cmd_outcome_shadow_build(
-            source_db=args.source_db,
-            as_of_date=args.as_of_date,
-            dry_run=args.dry_run,
-            candidate_db=args.candidate_db,
-            benchmark_snapshot=args.benchmark_snapshot,
-        )
-    elif args.cmd == "outcome-shadow-report":
-        cmd_outcome_shadow_report(candidate_db=args.candidate_db, run_id=args.run_id, output=args.output)
-    elif args.cmd == "outcome-shadow-import":
-        cmd_outcome_shadow_import(
-            production_db=args.production_db,
-            candidate_db=args.candidate_db,
-            expected_run=args.expected_run,
-            expected_manifest=args.expected_manifest,
-            mode=args.mode,
-            backup_db=args.backup_db,
-            evidence_json=args.evidence_json,
-        )
-    elif args.cmd == "outcome-shadow-revert":
-        cmd_outcome_shadow_revert(
-            production_db=args.production_db,
-            expected_run=args.expected_run,
-            expected_manifest=args.expected_manifest,
-            evidence_json=args.evidence_json,
-            mode=args.mode,
-        )
-    elif args.cmd == "phase-check":
-        _check_phase4_milestone()
     elif args.cmd == "remove":
         cmd_remove(args.code)
 

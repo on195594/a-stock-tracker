@@ -8,7 +8,7 @@ import urllib.error
 from dataclasses import dataclass
 
 from a_stock_tracker.data.cache import get_db
-from a_stock_tracker.qualitative.contract import DIMENSION_NAMES, SCORE_RANGES
+from a_stock_tracker.qualitative.production import DIMENSION_NAMES, SCORE_RANGES
 
 logger = logging.getLogger(__name__)
 

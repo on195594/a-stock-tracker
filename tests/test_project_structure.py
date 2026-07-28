@@ -115,7 +115,6 @@ def test_repository_files_do_not_contain_private_key_material() -> None:
 
 def test_tracked_configuration_stays_in_config_directory() -> None:
     assert (PROJECT_ROOT / "config" / "weights.json").is_file()
-    assert (PROJECT_ROOT / "config" / "qualitative").is_dir()
 
 
 def test_production_modules_use_package_imports_without_path_injection() -> None:

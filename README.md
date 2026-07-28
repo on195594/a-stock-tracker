@@ -17,9 +17,9 @@ TuShare 基本面、估值与 QFQ 行情
   → 30/60/90 日 outcome 与策略报告
 ```
 
-2026-07-28 第三轮减法第一批已经移除 Framework B、L3 v1 新写入与回填、Google Sheets、在线 Gemini、qualitative acceptance 和 weekly PM loop。历史数据库中的 B、L3 v1 字段和记录保持只读，不做破坏性迁移。
+2026-07-28 两批减法已完成：第一批移除 Framework B、L3 v1 新写入与回填、Google Sheets、在线 Gemini、qualitative acceptance 和 weekly PM loop；第二批移除 M4/M5、历史 qualitative pilot/writer/shadow、outcome shadow 工具链和手工离线回测入口。Git 历史承担恢复职责，生产数据库历史行不做破坏性迁移。
 
-定性输入不再联网：daily 读取已有本地 `qualitative_scores` 最新值；不存在或无效时使用固定 fallback。已有合法 qualitative v2 数据仍可被自动读取。
+定性输入不再联网或更新：daily 只读已有本地 v1/v2 分数，不存在或无效时使用固定 fallback。16:00 QFQ 自动任务同时更新沪深300全收益指数，默认 `accuracy-report` 直接输出 30/60/90 日总收益、IC、Q5−Q1 spread、非重叠批次回撤和 L3 对比。
 
 ## 常用命令
 
@@ -55,7 +55,7 @@ python3 -m scripts.run_tushare_primary_production_cycle weekly
 - `a_stock_tracker/data/`：SQLite、行情、TuShare ingestion/readiness/materialization；
 - `a_stock_tracker/signals/`：L3 v2 确定性风险信号；
 - `a_stock_tracker/reporting/`：Telegram 与策略报告；
-- `a_stock_tracker/qualitative/`：当前 qualitative 本地读取及待第二批删除的历史研究代码；
+- `a_stock_tracker/qualitative/`：已有 qualitative 分数的只读选择；
 - `scripts/`：自动运维、采集和当前研究入口；
 - `tests/`：默认活动产品测试；
 - `docs/`：架构、路线图、状态和历史记录。
@@ -71,7 +71,7 @@ TELEGRAM_CHAT_ID=你的_Telegram_Chat_ID
 QUALITATIVE_V2_MODE=on
 ```
 
-daily 不读取 Gemini 或 Google 凭证。
+daily 不读取 Gemini 或 Google 凭证；仓库不再提供 qualitative writer。
 
 ## 验证
 

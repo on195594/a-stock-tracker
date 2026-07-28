@@ -4,12 +4,11 @@
 
 ## 阶段一当前动作
 
-1. 第一批减法：删除 Framework B、L3 v1 活动写入、Sheets、在线 Gemini、qualitative acceptance 和 weekly PM loop；完成审查并独立提交。
-2. 第二批减法：把 QFQ 总收益评估收敛进默认自动报告，删除 M4/M5、历史 qualitative pilot、手工 qualitative writer/shadow 和 outcome shadow 工具链。
-3. 比较固定 watchlist 等权组合与沪深 300 全收益基准，拆出股票池效应。
-4. 按 score_date 计算 Framework A 30/60/90 日截面 Spearman IC、Q5−Q1 spread、最大回撤和时间批次稳定性。
-5. 判断 L3 v2 是有效风险门禁还是无实质选择性的规则；strong 候选长期无拒绝时直接收敛结论。
-6. 根据阶段一证据决定 Framework A 继续、简化、重做或停止。
+1. 等待自动 QFQ 任务积累并复核 30/60/90 日 IC、spread、非重叠批次收益和回撤。
+2. 比较固定 watchlist 等权组合与沪深 300 全收益基准，拆出股票池效应。
+3. 补充跨月份稳定性和同股事件去重敏感性分析。
+4. 判断 L3 v2 是有效风险门禁还是无实质选择性的规则；strong 候选长期无拒绝时直接收敛结论。
+5. 根据阶段一证据决定 Framework A 继续、简化、重做或停止。
 
 ## 禁止
 

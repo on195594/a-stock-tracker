@@ -53,7 +53,7 @@ def test_close_cross_check_requires_same_reference_trade_date(monkeypatch) -> No
         [{"code": "600036", "latest_trade_date": "2026-06-25", "latest_close": 36.23}]
     )
 
-    assert status == "MANUAL_REQUIRED"
+    assert status == "FAIL"
     assert "DATE_MISMATCH" in rows[0]
     assert "2026-06-24" in rows[0]
 
@@ -147,20 +147,6 @@ def test_decision_blocks_daily_writes_when_close_cross_check_fails() -> None:
 
     assert decision.exit_code == 1
     assert decision.write_gate_status == "FAIL"
-    assert decision.production_decision == "DAILY_WRITES_BLOCKED"
-
-
-def test_decision_blocks_daily_writes_when_close_cross_check_needs_manual_review() -> None:
-    checks = [
-        _check(kind="daily", blocking=True),
-        _check(kind="index_daily", blocking=False),
-        _check(kind="trade_cal", blocking=False),
-    ]
-
-    decision = probe._decide_probe("token", checks, "MANUAL_REQUIRED")
-
-    assert decision.exit_code == 1
-    assert decision.write_gate_status == "MANUAL_REQUIRED"
     assert decision.production_decision == "DAILY_WRITES_BLOCKED"
 
 

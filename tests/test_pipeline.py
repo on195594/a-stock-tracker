@@ -359,21 +359,6 @@ def _insert_prediction(
     return row_id
 
 
-def _framework_a_closed_30d_count() -> int:
-    db = cache_mod.get_db()
-    count = db.execute(
-        """SELECT COUNT(*) FROM predictions
-           WHERE outcome_30d IS NOT NULL AND framework = 'A'"""
-    ).fetchone()[0]
-    db.close()
-    return int(count)
-
-
-def assert_report_matches_db(output: str) -> None:
-    expected = _framework_a_closed_30d_count()
-    assert f"Framework A {expected} 条已结案记录" in output
-
-
 def _insert_index_price(symbol: str, d: str, close: float) -> None:
     db = cache_mod.get_db()
     db.execute(
@@ -885,83 +870,12 @@ def test_outcome_update_60d_not_yet_due(tmp_db, monkeypatch):
     assert row[2] is None
 
 
-# ---------------------------------------------------------------------------
-# 11. accuracy-report 空表
-# ---------------------------------------------------------------------------
 def test_accuracy_report_empty(tmp_db, capsys):
-    """无记录 → 显示样本不足警告 + 暂无已结案记录。"""
     pipeline.cmd_accuracy_report()
     out = capsys.readouterr().out
-    assert "样本不足" in out
-    assert "Framework A 0 条已结案记录" in out
-    assert "暂无已结案记录" in out
-    assert "选择性偏差" in out
-    assert "L3 v2 风险门禁" in out
-
-
-def test_accuracy_report_null_exclusion_count_is_framework_a_only(tmp_db, capsys):
-    """默认报告只统计 Framework A，因此头部 NULL 排除数也必须使用同一口径。"""
-    _insert_prediction("600001", "2026-07-01", 100.0, total_score=50.0)
-    db = cache_mod.get_db()
-    db.execute(
-        """INSERT INTO predictions
-           (code, name, framework, score_date, price_at_score, quant_score,
-            total_score, weights_hash, report_period, created_at)
-           VALUES ('B00001', 'B1', 'B', '2026-07-01', 100, 40, 50,
-                   'hashB', '2024-09-30', '2026-07-01T15:00:00')"""
-    )
-    db.commit()
-    db.close()
-
-    pipeline.cmd_accuracy_report()
-    out = capsys.readouterr().out
-
-    assert "已排除 1 条 NULL outcome 记录" in out
-
-
-def test_accuracy_report_l3_v2_counts_and_strong_candidates(tmp_db, capsys, fake_weights, monkeypatch):
-    """默认报告只展示 L3 v2 风险门禁，不再混入 v1 买点研究。"""
-    monkeypatch.setattr(pipeline, "_load_weights", lambda: fake_weights)
-    score_date = (date.today() - timedelta(days=30)).isoformat()
-    pass_id = _insert_prediction("600001", score_date, 100.0, total_score=70.0)
-    reject_id = _insert_prediction("600002", score_date, 100.0, total_score=68.0)
-    unavailable_id = _insert_prediction("600003", score_date, 100.0, total_score=66.0)
-    _insert_prediction("600004", score_date, 100.0, total_score=67.0)
-    db = cache_mod.get_db()
-    db.execute(
-        "UPDATE predictions SET l3_v2_signal=1, l3_v2_version='v2' WHERE id=?",
-        (pass_id,),
-    )
-    db.execute(
-        "UPDATE predictions SET l3_v2_signal=0, l3_v2_version='v2' WHERE id=?",
-        (reject_id,),
-    )
-    db.execute(
-        """UPDATE predictions
-           SET l3_v2_signal=NULL, l3_v2_version='v2', l3_v2_reason='FETCH_FAILED'
-           WHERE id=?""",
-        (unavailable_id,),
-    )
-    db.execute("UPDATE predictions SET outcome_30d=8.0, benchmark_30d=2.0 WHERE id=?", (pass_id,))
-    db.execute("UPDATE predictions SET outcome_30d=3.0, benchmark_30d=5.0 WHERE id=?", (reject_id,))
-    db.commit()
-    db.close()
-
-    pipeline.cmd_accuracy_report()
-    out = capsys.readouterr().out
-
-    assert "L3 v2 风险门禁" in out
-    assert "当前规则仅按风险门禁解释，不代表已验证买点" in out
-    assert "v2 记录：3" in out
-    assert "通过/拒绝/不可用：1/1/1" in out
-    assert "pre-v2 记录：1" in out
-    assert "可判断覆盖率：2/3 = 66.7%" in out
-    assert "不可计算原因：FETCH_FAILED=1" in out
-    assert "strong v2 候选通过/拒绝/不可用：1/1/1" in out
-    assert "strong pre-v2 候选：1" in out
-    assert "通过后 30d：样本=1，平均alpha=6.000，超额命中率=1.000" in out
-    assert "拒绝后 30d：样本=1，平均alpha=-2.000，超额命中率=0.000" in out
-    assert "L3 v2 30d 样本不足（2/30），不得输出确定性结论" in out
+    assert "a-stock-tracker QFQ 策略评估报告" in out
+    assert out.count("暂无可用的 QFQ/沪深300全收益对齐样本") == 3
+    assert "人工维护标的" in out
 
 
 def test_accuracy_report_writes_only_to_isolated_output_path(tmp_db, capsys):
@@ -975,184 +889,14 @@ def test_accuracy_report_writes_only_to_isolated_output_path(tmp_db, capsys):
     assert not root_report.exists()
 
 
-# ---------------------------------------------------------------------------
-# 12. accuracy-report 层级排序
-# ---------------------------------------------------------------------------
-def test_accuracy_report_ordering(tmp_db, capsys):
-    """分层输出顺序：strong → moderate → light → no-action。"""
-    today = date.today()
-    score_date = (today - timedelta(days=30)).isoformat()
-
-    def _closed(code: str, total: float, outcome: float) -> None:
-        row_id = _insert_prediction(code, score_date, 100.0, total_score=total)
-        db = cache_mod.get_db()
-        db.execute(
-            "UPDATE predictions SET outcome_30d=?, benchmark_30d=? WHERE id=?",
-            (outcome, 0.0, row_id),
-        )
-        db.commit()
-        db.close()
-
-    _closed("000001", 60.0, 5.0)  # strong   (>=44)
-    _closed("000002", 40.0, 3.0)  # moderate (35-44)
-    _closed("000003", 30.0, 1.0)  # light    (26-35)
-    _closed("000004", 20.0, -1.0)  # no-action (<26)
-
-    pipeline.cmd_accuracy_report()
-    out = capsys.readouterr().out
-
-    idx_strong = out.find("strong")
-    idx_mod = out.find("moderate")
-    idx_light = out.find("light")
-    idx_none = out.find("no-action")
-    assert 0 < idx_strong < idx_mod < idx_light < idx_none
-
-
-# ---------------------------------------------------------------------------
-# 13. accuracy-report 统计警告阈值
-# ---------------------------------------------------------------------------
-def test_accuracy_report_stat_warning(tmp_db, capsys):
-    """已结案记录 < 100 → 头部带样本不足警告。"""
-    today = date.today()
-    score_date = (today - timedelta(days=30)).isoformat()
-    row_id = _insert_prediction("600036", score_date, 100.0, total_score=40.0)  # moderate (35-44)
-    db = cache_mod.get_db()
-    db.execute(
-        "UPDATE predictions SET outcome_30d=?, benchmark_30d=? WHERE id=?",
-        (5.0, 2.0, row_id),
-    )
-    db.commit()
-    db.close()
-
-    pipeline.cmd_accuracy_report()
-    out = capsys.readouterr().out
-    assert "样本不足（Framework A 1 条已结案记录）" in out
-    # 且确实展示了分层数据
-    assert "moderate" in out
-
-
-def test_accuracy_report_warning_uses_framework_a_not_all_frameworks(tmp_db, capsys):
-    """总结案≥100 但当前 A 框<100 时，仍应提示 A 框样本不足。"""
-    score_date = (date.today() - timedelta(days=30)).isoformat()
-    db = cache_mod.get_db()
-    for i in range(75):
-        db.execute(
-            """INSERT INTO predictions
-               (code, name, framework, score_date, price_at_score,
-                quant_score, total_score, weights_hash, report_period,
-                outcome_30d, benchmark_30d, created_at)
-               VALUES (?, ?, 'A', ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                f"A{i:05d}",
-                f"A{i}",
-                score_date,
-                100.0,
-                30.0,
-                40.0,
-                "hash-a",
-                "2024-09-30",
-                5.0,
-                2.0,
-                score_date + "T15:00:00",
-            ),
-        )
-    for i in range(35):
-        db.execute(
-            """INSERT INTO predictions
-               (code, name, framework, score_date, price_at_score,
-                quant_score, total_score, weights_hash, report_period,
-                outcome_30d, benchmark_30d, created_at)
-               VALUES (?, ?, 'B', ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                f"B{i:05d}",
-                f"B{i}",
-                score_date,
-                100.0,
-                30.0,
-                40.0,
-                "hash-b",
-                "2024-09-30",
-                5.0,
-                2.0,
-                score_date + "T15:00:00",
-            ),
-        )
-    db.commit()
-    db.close()
-
-    pipeline.cmd_accuracy_report()
-    out = capsys.readouterr().out
-
-    assert "样本不足（Framework A 75 条已结案记录）" in out
-    assert "Framework A 总记录：75" in out
-    assert "Framework B" not in out
-
-
-def test_accuracy_report_contract_matches_framework_a_sql_anchor(tmp_db, capsys, fake_weights, monkeypatch):
-    monkeypatch.setattr(pipeline, "_load_weights", lambda: fake_weights)
-    score_date = (date.today() - timedelta(days=30)).isoformat()
-    db = cache_mod.get_db()
-    # A 框 2 条已结案
-    for idx in range(2):
-        db.execute(
-            """INSERT INTO predictions
-               (code, name, framework, score_date, price_at_score,
-                quant_score, total_score, weights_hash, report_period,
-                outcome_30d, benchmark_30d, created_at)
-               VALUES (?, ?, 'A', ?, 10, 40, 50, 'hashA', '2024-09-30', 0.10, 0.02, ?)""",
-            (f"60003{idx}", f"A{idx}", score_date, score_date + "T15:00:00"),
-        )
-    # B 框 3 条已结案：不得污染 A 框样本数
-    for idx in range(3):
-        db.execute(
-            """INSERT INTO predictions
-               (code, name, framework, score_date, price_at_score,
-                quant_score, total_score, weights_hash, report_period,
-                outcome_30d, benchmark_30d, created_at)
-               VALUES (?, ?, 'B', ?, 10, 40, 50, 'hashB', '2024-09-30', 0.10, 0.02, ?)""",
-            (f"00000{idx}", f"B{idx}", score_date, score_date + "T15:00:00"),
-        )
-    db.commit()
-    db.close()
-
-    pipeline.cmd_accuracy_report()
-    out = capsys.readouterr().out
-
-    assert _framework_a_closed_30d_count() == 2
-    assert_report_matches_db(out)
-    assert "Framework A 2 条已结案记录" in out
-
-
-def test_accuracy_report_post_fix_section_splits_samples(tmp_db, capsys):
-    """accuracy-report 单独展示 2026-05-15 后 post-fix 样本，避免跨口径混合解释。"""
-    pre_id = _insert_prediction("600001", "2026-05-14", 100.0, total_score=50.0)
-    post_id = _insert_prediction("600002", "2026-05-15", 100.0, total_score=50.0)
-    db = cache_mod.get_db()
-    db.execute("UPDATE predictions SET outcome_30d=1.0, benchmark_30d=0.0 WHERE id=?", (pre_id,))
-    db.execute("UPDATE predictions SET outcome_30d=2.0, benchmark_30d=0.0 WHERE id=?", (post_id,))
-    db.commit()
-    db.close()
-
-    pipeline.cmd_accuracy_report()
-    out = capsys.readouterr().out
-
-    assert "Post-fix 样本专区" in out
-    assert "pre-fix 30d 结案：1" in out
-    assert "post-fix 30d 结案：1" in out
-    assert "post-fix 样本不足（1/100）" in out
-
-
 def test_accuracy_report_excludes_retired_default_sections(tmp_db, capsys):
-    """默认报告只回答策略效果，不再承载研究试验和运行治理。"""
     pipeline.cmd_accuracy_report()
     out = capsys.readouterr().out
 
-    assert "a-stock-tracker 策略评估报告" in out
+    assert "a-stock-tracker QFQ 策略评估报告" in out
     assert "Framework B" not in out
-    assert "Phase 6 readiness" not in out
-    assert "Gemini 评分稳定性" not in out
-    assert "数据质量审计" not in out
-    assert "L3 买点层" not in out
+    assert "Post-fix" not in out
+    assert "命中率" not in out
 
 
 def test_pipeline_pb_percentile_wrapper_uses_scorer() -> None:

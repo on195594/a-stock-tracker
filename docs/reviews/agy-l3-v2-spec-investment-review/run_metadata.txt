@@ -1,3 +1,0 @@
-Run started: 2026-07-08T20:28:32+08:00
-Working directory: /home/lin/a-stock-tracker
-Command: agy --print "$(cat docs/reviews/agy-l3-v2-spec-investment-review/agy_prompt.txt)" --print-timeout=10m

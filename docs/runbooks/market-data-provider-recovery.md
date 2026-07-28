@@ -25,8 +25,6 @@
 
 注意：`index_daily` / `trade_cal` 的非阻塞 failed 行不再直接代表 daily 写入不可恢复；必须看 report 的 `Write Gate` 和 `Production Decision`。但 `cron-setup.sh` 会同时恢复 `daily` 与 `outcome-update`，而 `outcome-update` 依赖沪深300指数价，因此成组 cron 恢复仍必须要求 `Index/Calendar Dependent Jobs: ALLOWED`。
 
-若 `Close cross-check` 为 `MANUAL_REQUIRED`，需要先补齐本地参考行情或人工对账后再更新 probe 证据。
-
 ## 恢复步骤
 
 ```bash
@@ -45,7 +43,7 @@ bash cron-setup.sh
 - `get_default_market_data_provider()` 只返回 TuShare 或 disabled provider。
 - 旧 `MARKET_DATA_ALLOW_BAOSTOCK_ONLY` 环境变量不再生效。
 - QFQ 强来源合同为 `tushare.pro_bar.qfq`；出现其他来源时 L3 v2 返回 `QFQ_SOURCE_MISMATCH`。
-- probe 只读取本地 `tushare.daily` 缓存作同源一致性检查；参考缺失或数据库损坏时返回 `MANUAL_REQUIRED`，不联网降级。
+- probe 只读取本地 `tushare.daily` 缓存作同源一致性检查；参考缺失或数据库损坏时直接返回 `FAIL`，不保留人工对账分支。
 - probe 的个股样本必须来自当前 watchlist，且在 `daily_bars` 中存在同交易日、`adjusted='none'`、`source='tushare.daily'` 的参考行；不得继续使用未跟踪样本（例如已退出本项目样本集的 `000001`），否则会把样本配置漂移误报为 provider 未就绪。
 
 ## 停止与恢复边界

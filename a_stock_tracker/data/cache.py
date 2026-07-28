@@ -194,8 +194,7 @@ def get_db() -> sqlite3.Connection:
         PRIMARY KEY (code, scored_date)
     )""")
 
-    # v2 与 legacy qualitative_scores 物理隔离。context/result 原文用于每次读取时
-    # 重新执行合同校验，避免只信任冗余分数字段或曾经通过的写入。
+    # 保留已有 v2 行的兼容表。活动产品只读这些历史分数，不再提供 writer。
     conn.execute("""CREATE TABLE IF NOT EXISTS qualitative_scores_v2 (
         code          TEXT NOT NULL,
         name          TEXT NOT NULL,

@@ -126,10 +126,10 @@ fields:
   - field: moat_fixed
     owner: scorer_input
     requirement: fixed
-    source_primary: production_qualitative_selector.v2_or_v1
+    source_primary: local_qualitative_selector.existing_v2_or_v1
     source_fallback: weights.frameworks.A.fundamental.moat_fixed.phase1_fixed
     cache: qualitative_scores_v2_or_qualitative_scores; snapshot=predictions.qualitative_snapshot_json
-    refresh: precomputed_v2_30d_or_v1_30d_or_static
+    refresh: read_only_per_score
     affects_scoring: true
     affects_outcome: false
     failure_behavior: fallback_to_phase1_fixed
@@ -137,10 +137,10 @@ fields:
   - field: market_pos_fixed
     owner: scorer_input
     requirement: fixed
-    source_primary: production_qualitative_selector.v2_or_v1
+    source_primary: local_qualitative_selector.existing_v2_or_v1
     source_fallback: weights.frameworks.A.fundamental.market_pos_fixed.phase1_fixed
     cache: qualitative_scores_v2_or_qualitative_scores; snapshot=predictions.qualitative_snapshot_json
-    refresh: precomputed_v2_30d_or_v1_30d_or_static
+    refresh: read_only_per_score
     affects_scoring: true
     affects_outcome: false
     failure_behavior: fallback_to_phase1_fixed
@@ -148,10 +148,10 @@ fields:
   - field: sentiment_fixed
     owner: scorer_input
     requirement: fixed
-    source_primary: production_qualitative_selector.v2_or_v1
+    source_primary: local_qualitative_selector.existing_v2_or_v1
     source_fallback: weights.frameworks.A.valuation.sentiment_fixed.phase1_fixed
     cache: qualitative_scores_v2_or_qualitative_scores; snapshot=predictions.qualitative_snapshot_json
-    refresh: precomputed_v2_30d_or_v1_30d_or_static
+    refresh: read_only_per_score
     affects_scoring: true
     affects_outcome: false
     failure_behavior: fallback_to_phase1_fixed
@@ -298,6 +298,28 @@ fields:
     affects_scoring: true
     affects_outcome: false
     failure_behavior: fallback_all_or_nothing_to_fixed_values; no_external_model_call
+
+  - field: qfq_strategy_return
+    owner: strategy_report
+    requirement: required_for_default_report
+    source_primary: tushare.pro_bar.qfq
+    source_fallback: none
+    cache: daily_bars.adjusted_qfq
+    refresh: weekday_1600
+    affects_scoring: false
+    affects_outcome: true
+    failure_behavior: omit_unaligned_sample; never_fallback_to_raw_price
+
+  - field: csi300_total_return
+    owner: strategy_report
+    requirement: required_for_default_report
+    source_primary: tushare.index_daily.H00300_CSI
+    source_fallback: none
+    cache: index_prices.H00300
+    refresh: weekday_1600
+    affects_scoring: false
+    affects_outcome: true
+    failure_behavior: report_unavailable; never_fallback_to_price_index
 
   - field: daily_bars
     owner: market_data_cache

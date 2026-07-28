@@ -23,6 +23,13 @@ def isolated_db(tmp_path, monkeypatch):
     return db_path
 
 
+@pytest.fixture(autouse=True)
+def stub_total_return_index(monkeypatch):
+    original = script._fetch_total_return_index
+    monkeypatch.setattr(script, "_fetch_total_return_index", Mock(return_value=(1, date.today().isoformat())))
+    return original
+
+
 def _response(trade_date: str | None = None, volume: float = 123.45) -> pd.DataFrame:
     return pd.DataFrame(
         [
@@ -114,6 +121,35 @@ def test_create_api_uses_shared_token_reader_when_environment_token_is_absent(mo
     pro_api.assert_called_once_with("dotenv-token")
 
 
+def test_total_return_index_is_upserted_for_automatic_report(isolated_db, stub_total_return_index) -> None:
+    api = Mock()
+    api.index_daily.return_value = pd.DataFrame(
+        [
+            {"trade_date": "20260727", "close": 7123.45},
+            {"trade_date": "20260724", "close": 7099.00},
+        ]
+    )
+
+    with sqlite3.connect(isolated_db) as conn:
+        count, latest = stub_total_return_index(conn, api, "20260101", "20260728")
+        rows = conn.execute(
+            "SELECT symbol,date,close FROM index_prices WHERE symbol=? ORDER BY date",
+            (script.BENCHMARK_DB_SYMBOL,),
+        ).fetchall()
+
+    assert count == 2
+    assert latest == "2026-07-27"
+    assert rows == [
+        ("H00300", "2026-07-24", 7099.0),
+        ("H00300", "2026-07-27", 7123.45),
+    ]
+    api.index_daily.assert_called_once_with(
+        ts_code="H00300.CSI",
+        start_date="20260101",
+        end_date="20260728",
+    )
+
+
 def test_happy_path_converts_and_writes_only_production_partition(isolated_db, monkeypatch) -> None:
     with sqlite3.connect(isolated_db) as conn:
         cache_mod.upsert_daily_bars(
@@ -121,7 +157,7 @@ def test_happy_path_converts_and_writes_only_production_partition(isolated_db, m
             "600036",
             pd.DataFrame([{"date": "2026-07-20", "close": 99.0, "volume": 1.0}]),
             source="seed.shadow",
-            adjusted=script.SHADOW_ADJUSTED,
+            adjusted="qfq_tushare_shadow",
             volume_unit="share",
         )
         conn.commit()
@@ -140,7 +176,7 @@ def test_happy_path_converts_and_writes_only_production_partition(isolated_db, m
     assert latest == "2026-07-20"
     assert rows == [
         ("2026-07-20", 10.5, 143_361_015.0, script.SOURCE, script.PRODUCTION_ADJUSTED, "share"),
-        ("2026-07-20", 99.0, 1.0, "seed.shadow", script.SHADOW_ADJUSTED, "share"),
+        ("2026-07-20", 99.0, 1.0, "seed.shadow", "qfq_tushare_shadow", "share"),
     ]
     assert pro_bar.call_args.kwargs == {
         "ts_code": "600036.SH",
@@ -389,6 +425,24 @@ def test_batch_failure_returns_nonzero_and_names_failed_code(isolated_db, monkey
     assert "600036" not in captured.err
 
 
+def test_benchmark_failure_fails_batch_without_blocking_stock_refresh(isolated_db, monkeypatch, capsys) -> None:
+    monkeypatch.setattr(script, "WATCHLIST", [{"code": "600036"}])
+    monkeypatch.setattr(script, "_create_api", lambda: object())
+    monkeypatch.setattr(script, "_fetch_total_return_index", Mock(side_effect=RuntimeError("benchmark unavailable")))
+    monkeypatch.setattr(script.ts, "pro_bar", Mock(return_value=_response()))
+
+    exit_code = script.run(script.Args(backfill_days=200, code=None))
+
+    with sqlite3.connect(isolated_db) as conn:
+        stock_rows = conn.execute("SELECT COUNT(*) FROM daily_bars WHERE code='600036' AND adjusted='qfq'").fetchone()[
+            0
+        ]
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert stock_rows == 1
+    assert "H00300: RuntimeError: benchmark unavailable" in captured.err
+
+
 def test_client_initialization_failure_names_every_requested_code(monkeypatch, capsys) -> None:
     monkeypatch.setattr(script, "WATCHLIST", [{"code": "600036"}, {"code": "000001"}])
 
@@ -419,5 +473,7 @@ def test_full_watchlist_missing_today_emits_freshness_warning(isolated_db, monke
     exit_code = script.run(script.Args(backfill_days=200, code=None))
 
     assert exit_code == 0
+    assert isinstance(script._fetch_total_return_index, Mock)
+    script._fetch_total_return_index.assert_called_once()
     assert "QFQ_TUSHARE_FRESHNESS_WARNING" in caplog.text
     assert date.today().isoformat() in caplog.text

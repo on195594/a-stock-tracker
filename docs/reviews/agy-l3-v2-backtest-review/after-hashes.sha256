@@ -1,6 +1,0 @@
-67796876ae4404b0f397b0ea7f0b0759c2687e95d3f677ff7044935b8ce6a880  scripts/offline_l3_v2_backtest.py
-51a5668c446b050b269d4b5bb381abc47f9bb2ebcf669ad4b1db332f99a42f2e  docs/reviews/2026-07-08-l3-v2-backtest-report.md
-81d0ba4d460ff062edcb10402304f41b7b063d1bbbbb6424e711338f9d12df02  docs/reviews/l3-v2-backtest-artifacts/signals_daily.csv
-c6dae0bdbc01243d031137224769eccaf3b541edc307c50a5bd1895ea30f1022  docs/reviews/l3-v2-backtest-artifacts/events_raw_daily.csv
-fedc9874ced8b3b2592a1571bac5a128ff3ffc66d525462a177e3d81bfc6f214  docs/reviews/l3-v2-backtest-artifacts/events_dedup_20d.csv
-a3d5e2178a6c21bcfbcf2372e3796e97783e141fb00f877cf11c3a5be45774eb  docs/reviews/l3-v2-backtest-artifacts/metrics_summary.json
