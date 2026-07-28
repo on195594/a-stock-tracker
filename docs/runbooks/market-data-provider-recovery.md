@@ -33,44 +33,16 @@
 source .venv/bin/activate
 python3 scripts/probe_tushare_market_data.py
 python3 scripts/check_market_data_readiness.py --scope cron
-python3 pipeline.py market-data-backfill --start 2025-01-01 --end 2026-06-09
 python3 pipeline.py accuracy-report
 sqlite3 tracker.db "SELECT error_code, COUNT(*) FROM market_data_audit WHERE error_code='SOURCE_DISABLED' GROUP BY error_code;"
 bash cron-setup.sh
 ```
 
-## Staged daily 恢复
-
-当最近 report 显示：
-
-- `Write Gate: PASS`
-- `Production Decision: DAILY_WRITES_ALLOWED`
-- `Close cross-check: PASS`
-- `Capability Checks: DEGRADED`
-- `Index/Calendar Dependent Jobs: HOLD`
-
-则可以把下面命令的结果作为 staged daily 恢复讨论证据：
-
-```bash
-python3 scripts/check_market_data_readiness.py --scope daily
-```
-
-若返回 `READY_DAILY`，仅说明股票日线写入门禁通过，不代表 `outcome-update` 或 index/calendar-dependent jobs 可以恢复。
-
-在此状态下：
-
-- 严禁执行 `bash cron-setup.sh` 恢复成组 cron。
-- 严禁添加 `outcome-update` cron。
-- 只有 PM 明确授权 staged daily 恢复后，才可手工添加单条 `daily` cron：
-- staged daily 仍须遵循当前生产时序：先让 17:15 的 TuShare valuation cycle 完成，再于 17:30 启动 daily。
-
-```bash
-(crontab -l 2>/dev/null | grep -v "pipeline.py daily" || true; echo "30 17 * * 1-5 /home/lin/a-stock-tracker/cron-alert-wrap.sh \"cd /home/lin/a-stock-tracker && .venv/bin/python pipeline.py daily\" daily >> /home/lin/a-stock-tracker/logs/daily.log 2>&1") | crontab -
-```
+不保留 staged daily 或手工编辑 crontab 的恢复路径。readiness 未满足成组恢复条件时保持停止；条件满足后只通过 `cron-setup.sh` 恢复受管任务。
 
 ## TuShare-only 边界
 
-- `get_default_market_data_provider()` 与 `get_market_data_backfill_provider()` 只返回 TuShare 或 disabled provider。
+- `get_default_market_data_provider()` 只返回 TuShare 或 disabled provider。
 - 旧 `MARKET_DATA_ALLOW_BAOSTOCK_ONLY` 环境变量不再生效。
 - QFQ 强来源合同为 `tushare.pro_bar.qfq`；出现其他来源时 L3 v2 返回 `QFQ_SOURCE_MISMATCH`。
 - probe 只读取本地 `tushare.daily` 缓存作同源一致性检查；参考缺失或数据库损坏时返回 `MANUAL_REQUIRED`，不联网降级。

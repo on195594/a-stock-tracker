@@ -13,8 +13,6 @@ class InsufficientDataError(Exception):
     pass
 
 
-# Framework B 暂停积累（2026-05-12）：已有 73 条历史记录保留，但不再产生新记录。
-# 待 Framework A 有足够结案数据后，再重启 B 做对比实验。重启：加回 "B"。
 SUPPORTED_FRAMEWORKS = {"A"}
 
 # Framework A 非固定字段（计入 data_quality 分母）

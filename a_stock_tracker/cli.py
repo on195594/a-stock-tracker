@@ -6,7 +6,6 @@ a-stock-tracker 主编排器
   daily           每日评分并写入 predictions 表（cron: 工作日 16:30）
   outcome-update  更新到期预测的实际收益（cron: 工作日 17:00）
   accuracy-report 输出 benchmark 相对命中率报告
-  framework-b-cohort-freeze  显式冻结每周 Framework B report-only cohort
 """
 
 import argparse
@@ -21,7 +20,6 @@ import subprocess
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
-import pandas as pd
 
 
 @contextmanager
@@ -39,26 +37,12 @@ from a_stock_tracker.data.cache import (
     get_fundamentals,
     insert_market_data_audit,
     latest_daily_close,
-    latest_market_data_audit,
-    load_daily_bars,
-)
-from a_stock_tracker.signals.entry_signal import (
-    ENTRY_SIGNAL_VERSION,
-    EntrySignalResult,
-    REASON_MISSING_VOLUME,
-    REASON_MIXED_SOURCE_VOLUME_UNSAFE,
-    compute_entry_signal,
 )
 from a_stock_tracker.signals.l3_v2_pipeline import compute_l3_v2_from_daily_bars, now_isoformat as _l3v2_now
 from a_stock_tracker.reporting.accuracy_report import build_accuracy_report
-from a_stock_tracker.reporting.framework_b_cohort import freeze_weekly_cohort
 from a_stock_tracker.data.market_data import (
-    MarketDataCacheService,
-    MarketDataCoverage,
     MarketDataProvider,
-    SOURCE_STALE,
     get_default_market_data_provider,
-    get_market_data_backfill_provider,
 )
 from a_stock_tracker.data.outcome_shadow import (
     build_shadow_candidate,
@@ -70,7 +54,7 @@ from a_stock_tracker.data.outcome_shadow_migration import (
     inspect_shadow_import,
     revert_shadow_import,
 )
-from a_stock_tracker.integrations.gemini_scorer import get_qualitative_score
+from a_stock_tracker.qualitative.contract import DIMENSION_NAMES, SCORE_RANGES
 from a_stock_tracker.qualitative.production import (
     ProductionQualitativeSelection,
     get_production_qualitative_selection,
@@ -146,84 +130,28 @@ def _compute_daily_pb_percentile(price: float, data: dict) -> float | None:
     return compute_daily_pb_percentile(price, data)
 
 
-def _compute_stock_entry_signal(db: sqlite3.Connection, code: str, today: str) -> EntrySignalResult:
-    """从本地 daily_bars 读取 120 日窗口并计算 L3；信号阶段不发网络请求。"""
-    rows = load_daily_bars(db, code, today, 120)
-    if len(rows) < 120:
-        audit = latest_market_data_audit(db, "l3_bars", code, today)
-        if audit and audit["status"] == "failed":
-            return EntrySignalResult(
-                None,
-                ENTRY_SIGNAL_VERSION,
-                audit["error_code"] or "FETCH_FAILED",
-                "unavailable",
-                source=audit["source"],
-                fetched_at=audit["fetched_at"],
-            )
-        if audit and audit["fallback_reason"]:
-            return EntrySignalResult(
-                None,
-                ENTRY_SIGNAL_VERSION,
-                audit["fallback_reason"],
-                "insufficient",
-                source=audit["source"],
-                fetched_at=audit["fetched_at"],
-            )
-        return EntrySignalResult(None, ENTRY_SIGNAL_VERSION, "INSUFFICIENT_WINDOW", "insufficient")
-    latest_trade_date = str(rows[-1]["date"])[:10]
-    freshness_days = (date.fromisoformat(today) - date.fromisoformat(latest_trade_date)).days
-    if freshness_days > 5:
-        return EntrySignalResult(
-            None,
-            ENTRY_SIGNAL_VERSION,
-            SOURCE_STALE,
-            "unavailable",
-            source=rows[-1].get("source"),
-            fetched_at=rows[-1].get("fetched_at"),
-        )
-    sources = {row["source"] for row in rows}
-    if len(sources) > 1:
-        return EntrySignalResult(
-            None,
-            ENTRY_SIGNAL_VERSION,
-            REASON_MIXED_SOURCE_VOLUME_UNSAFE,
-            "insufficient",
-            source="mixed",
-            fetched_at=rows[-1].get("fetched_at"),
-        )
-    adjusted_values = {row.get("adjusted") for row in rows}
-    volume_units = {row.get("volume_unit") for row in rows}
-    if (
-        len(adjusted_values) > 1
-        or len(volume_units) > 1
-        or not volume_units
-        or None in volume_units
-        or "unknown" in volume_units
-    ):
-        return EntrySignalResult(
-            None,
-            ENTRY_SIGNAL_VERSION,
-            REASON_MIXED_SOURCE_VOLUME_UNSAFE,
-            "insufficient",
-            source=rows[-1].get("source"),
-            fetched_at=rows[-1].get("fetched_at"),
-        )
-    if any(row["volume"] is None for row in rows):
-        return EntrySignalResult(None, ENTRY_SIGNAL_VERSION, REASON_MISSING_VOLUME, "insufficient")
-    bars = pd.DataFrame(rows)[["date", "close", "volume"]]
-    try:
-        result = compute_entry_signal(bars)
-        return EntrySignalResult(
-            result.signal,
-            result.version,
-            result.reason,
-            result.status,
-            source=rows[-1].get("source"),
-            fetched_at=rows[-1].get("fetched_at"),
-        )
-    except Exception as e:
-        logger.warning(f"  {code} L3 买点层计算失败：{e}")
-        return EntrySignalResult(None, ENTRY_SIGNAL_VERSION, "L3_ERROR", "unavailable")
+_LOCAL_QUALITATIVE_FALLBACK = {"moat": 5, "market_pos": 2, "sentiment": 3}
+
+
+def _load_local_qualitative_scores(db: sqlite3.Connection, code: str, _name: str) -> dict[str, int]:
+    """Read the newest existing local v1 score without TTL or external calls."""
+    row = db.execute(
+        """SELECT moat, market_pos, sentiment
+           FROM qualitative_scores
+           WHERE code=?
+           ORDER BY scored_date DESC
+           LIMIT 1""",
+        (code,),
+    ).fetchone()
+    if row is None:
+        return dict(_LOCAL_QUALITATIVE_FALLBACK)
+    scores = dict(zip(DIMENSION_NAMES, row, strict=True))
+    for dimension, score in scores.items():
+        minimum, maximum = SCORE_RANGES[dimension]
+        if isinstance(score, bool) or not isinstance(score, int) or not minimum <= score <= maximum:
+            logger.warning("%s 本地定性缓存越界，使用固定 fallback", code)
+            return dict(_LOCAL_QUALITATIVE_FALLBACK)
+    return scores
 
 
 def _get_score_price(
@@ -232,9 +160,10 @@ def _get_score_price(
     code: str,
     today: str,
 ) -> float | None:
-    cached = latest_daily_close(db, code, today, max_freshness_days=5)
-    if cached:
-        return cached[0]
+    for adjusted in ("qfq", "none"):
+        cached = latest_daily_close(db, code, today, max_freshness_days=5, adjusted=adjusted)
+        if cached:
+            return cached[0]
     result = provider.fetch_score_price(code, today)
     insert_market_data_audit(db, result, "score_price", code, today)
     db.commit()
@@ -242,42 +171,6 @@ def _get_score_price(
         logger.warning(f"  {code} price_at_score 获取失败：{result.error_code or 'UNKNOWN'}")
         return None
     return result.value
-
-
-def _log_l3_coverage(db: sqlite3.Connection, today: str, strong_threshold: float) -> None:
-    row = db.execute(
-        """SELECT
-               COUNT(CASE WHEN entry_signal_version='v1' THEN 1 END),
-               COUNT(CASE WHEN entry_signal IN (0, 1) AND entry_signal_version='v1' THEN 1 END),
-               COUNT(CASE WHEN entry_signal IS NULL AND entry_signal_version='v1' THEN 1 END),
-               COUNT(CASE WHEN framework='A' AND total_score >= ?
-                           AND entry_signal IS NULL AND entry_signal_version='v1' THEN 1 END)
-           FROM predictions
-           WHERE score_date=?""",
-        (strong_threshold, today),
-    ).fetchone()
-    total, computable, unavailable, strong_unavailable = row
-    coverage = (computable / total * 100) if total else 0
-    reason_rows = db.execute(
-        """SELECT COALESCE(entry_signal_reason, 'UNKNOWN'), COUNT(*)
-           FROM predictions
-           WHERE score_date=?
-             AND entry_signal IS NULL
-             AND entry_signal_version='v1'
-           GROUP BY COALESCE(entry_signal_reason, 'UNKNOWN')
-           ORDER BY COUNT(*) DESC, 1""",
-        (today,),
-    ).fetchall()
-    reasons = ", ".join(f"{reason}={count}" for reason, count in reason_rows) or "none"
-    logger.info(
-        "L3 覆盖率：%s/%s = %.1f%%；不可计算：%s；strong 候选中 L3 不可计算：%s；原因：%s",
-        computable,
-        total,
-        coverage,
-        unavailable,
-        strong_unavailable,
-        reasons,
-    )
 
 
 def _refresh_fundamentals(label: str) -> tuple[int, int]:
@@ -433,14 +326,15 @@ def _inject_daily_pb_percentile(data: dict, price_at_score: float | None, code: 
 
 
 def _apply_qualitative_scores(db, code: str, name: str, data: dict) -> ProductionQualitativeSelection:
-    # v2 仅消费预先验证并写入独立表的结果；off/非 canary/缺数/损坏
-    # 均逐股回退既有 v1，不在 daily 内新增外部调用类型。
+    # v2 仅消费本地预计算结果；缺失或失效时读取现有本地 v1 缓存。
     selection = get_production_qualitative_selection(
         db,
         code,
         name,
         canary_codes=config.QUALITATIVE_V2_CANARY_CODES | config.QUALITATIVE_V2_PILOT_CODES,
-        legacy_getter=get_qualitative_score,
+        legacy_getter=lambda selected_code, selected_name: _load_local_qualitative_scores(
+            db, selected_code, selected_name
+        ),
     )
     data["moat_fixed"] = selection.scores["moat"]
     data["market_pos_fixed"] = selection.scores["market_pos"]
@@ -496,7 +390,6 @@ def _prepare_stock_scoring_input(
         "report_period": report_period,
         "price_at_score": price_at_score,
         "threshold_adjusted": 0,
-        "entry_signal_result": _compute_stock_entry_signal(db, code, today),
         "l3_v2_result": compute_l3_v2_from_daily_bars(db, code, today),
         "l3_v2_fetched_at": _l3v2_now(),
         **_qualitative_snapshot_fields(qualitative_selection),
@@ -511,20 +404,14 @@ def _upsert_one_framework_prediction(
         """INSERT OR IGNORE INTO predictions
                                (code, name, framework, score_date, price_at_score,
                                 quant_score, total_score, weights_hash, report_period,
-                                threshold_adjusted, entry_signal, entry_signal_version,
-                                entry_signal_status, entry_signal_reason, entry_signal_source,
-                                entry_signal_fetched_at,
-                                l3_v2_signal, l3_v2_version, l3_v2_status, l3_v2_reason,
+                                threshold_adjusted, l3_v2_signal, l3_v2_version, l3_v2_status, l3_v2_reason,
                                 l3_v2_fetched_at, qualitative_snapshot_json,
                                 qualitative_sources_json, qualitative_mode, created_at)
-                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             prep["code"], prep["name"], framework, today, prep["price_at_score"],
             result["quant_score"], result["total_score"], weights_hash, prep["report_period"],
-            prep["threshold_adjusted"], prep["entry_signal_result"].signal,
-            prep["entry_signal_result"].version, prep["entry_signal_result"].status,
-            prep["entry_signal_result"].reason, prep["entry_signal_result"].source,
-            prep["entry_signal_result"].fetched_at, prep["l3_v2_result"].signal,
+            prep["threshold_adjusted"], prep["l3_v2_result"].signal,
             prep["l3_v2_result"].version, prep["l3_v2_result"].status,
             prep["l3_v2_result"].reason, prep["l3_v2_fetched_at"],
             prep["qualitative_snapshot_json"], prep["qualitative_sources_json"],
@@ -534,22 +421,13 @@ def _upsert_one_framework_prediction(
     if cursor.rowcount == 0:
         db.execute(
             """UPDATE predictions
-                                   SET entry_signal=?,
-                                       entry_signal_version=?,
-                                       entry_signal_status=?,
-                                       entry_signal_reason=?,
-                                       entry_signal_source=?,
-                                       entry_signal_fetched_at=?,
-                                       l3_v2_signal=?,
+                                   SET l3_v2_signal=?,
                                        l3_v2_version=?,
                                        l3_v2_status=?,
                                        l3_v2_reason=?,
                                        l3_v2_fetched_at=?
                                    WHERE code=? AND framework=? AND score_date=?""",
             (
-                prep["entry_signal_result"].signal, prep["entry_signal_result"].version,
-                prep["entry_signal_result"].status, prep["entry_signal_result"].reason,
-                prep["entry_signal_result"].source, prep["entry_signal_result"].fetched_at,
                 prep["l3_v2_result"].signal, prep["l3_v2_result"].version,
                 prep["l3_v2_result"].status, prep["l3_v2_result"].reason,
                 prep["l3_v2_fetched_at"], prep["code"], framework, today,
@@ -602,14 +480,6 @@ def _run_daily_post_steps(today: str, weights: dict) -> None:
     except Exception as e:
         logger.warning(f"Telegram 推送失败（不影响 SQLite 数据）：{e}")
 
-    # Sheets sync（独立后置步骤，失败不影响上方写入结果）
-    try:
-        import a_stock_tracker.reporting.sheets_sync as sheets_sync
-
-        sheets_sync.sync_all()
-    except Exception as e:
-        logger.warning(f"Sheets sync 失败（不影响 SQLite 数据）：{e}")
-
 
 def cmd_daily() -> None:
     weights = _load_weights()
@@ -619,17 +489,7 @@ def cmd_daily() -> None:
     try:
         provider = get_default_market_data_provider()
         with provider_session(provider):
-            market_data_cache = MarketDataCacheService(db, provider)
             _ensure_no_weights_hash_conflict(db, today, weights_hash)
-            codes = [item["code"] for item in config.WATCHLIST]
-            coverage = market_data_cache.refresh_daily_bars(codes, today, 120)
-            logger.info(
-                "L3 行情刷新：ok=%s degraded=%s failed=%s total=%s",
-                coverage.ok,
-                coverage.degraded,
-                coverage.failed,
-                coverage.total,
-            )
             score_prices = _collect_score_prices(db, provider, today)
             if score_prices:
                 logger.info(f"price_at_score：获取到 {len(score_prices)} 只股票收盘价")
@@ -648,7 +508,6 @@ def cmd_daily() -> None:
                 f"（{skipped}）" if skipped else ""
             )
             logger.info(log_line)
-            _log_l3_coverage(db, today, weights.get("thresholds", {}).get("buy_strong", 55))
             with open(os.path.join(config.LOG_DIR, "daily_log.txt"), "a", encoding="utf-8") as f:
                 f.write(log_line + "\n")
     finally:
@@ -790,156 +649,6 @@ def cmd_outcome_update() -> None:
     except Exception as e:
         logger.warning(f"Phase 4 里程碑检测失败（不影响数据）：{e}")
 
-    # Sheets sync（独立后置步骤，失败不影响 SQLite 数据）
-    try:
-        import a_stock_tracker.reporting.sheets_sync as sheets_sync
-
-        sheets_sync.sync_all()
-    except Exception as e:
-        logger.warning(f"Sheets sync 失败（不影响 SQLite 数据）：{e}")
-
-
-# ──────────────────────────────────────────────
-# market-data-backfill 命令
-# ──────────────────────────────────────────────
-
-
-def _validate_l3_bar_windows(db: sqlite3.Connection, start: str) -> list[tuple]:
-    return db.execute(
-        """SELECT code,
-                  COUNT(*) AS bars,
-                  MIN(trade_date),
-                  MAX(trade_date),
-                  COUNT(DISTINCT source) AS sources,
-                  COUNT(DISTINCT adjusted) AS adjustments,
-                  COUNT(DISTINCT volume_unit) AS volume_units
-           FROM daily_bars
-           WHERE trade_date >= ?
-             AND adjusted='none'
-           GROUP BY code
-           ORDER BY bars, code""",
-        (start,),
-    ).fetchall()
-
-
-def _recompute_existing_l3_metadata(
-    db: sqlite3.Connection,
-    start: str,
-    end: str,
-    refreshed_codes: set[str] | None = None,
-) -> int:
-    rows = db.execute(
-        """SELECT DISTINCT code, score_date
-           FROM predictions
-           WHERE score_date BETWEEN ? AND ?
-             AND entry_signal_version='v1'
-           ORDER BY score_date, code""",
-        (start, end),
-    ).fetchall()
-    updated = 0
-    for code, score_date in rows:
-        if refreshed_codes is not None and code not in refreshed_codes:
-            continue
-        result = _compute_stock_entry_signal(db, code, score_date)
-        cur = db.execute(
-            """UPDATE predictions
-               SET entry_signal=?,
-                   entry_signal_version=?,
-                   entry_signal_status=?,
-                   entry_signal_reason=?,
-                   entry_signal_source=?,
-                   entry_signal_fetched_at=?
-               WHERE code=? AND score_date=? AND entry_signal_version='v1'""",
-            (
-                result.signal,
-                result.version,
-                result.status,
-                result.reason,
-                result.source,
-                result.fetched_at,
-                code,
-                score_date,
-            ),
-        )
-        updated += cur.rowcount
-    db.commit()
-    return updated
-
-
-def _backfill_fetch_start(start: str) -> str:
-    return (date.fromisoformat(start) - timedelta(days=240)).isoformat()
-
-
-def _refresh_daily_bars_range(
-    db: sqlite3.Connection,
-    provider: MarketDataProvider,
-    codes: list[str],
-    start: str,
-    end: str,
-) -> MarketDataCoverage:
-    results = {}
-    fetch_start = _backfill_fetch_start(start)
-    for code in codes:
-        result = provider.fetch_daily_bars_range(code, fetch_start, end)
-        results[code] = result
-        insert_market_data_audit(db, result, "l3_bars", code, end)
-        if result.status != "failed" and result.value is not None:
-            from a_stock_tracker.data.cache import upsert_daily_bars
-
-            upsert_daily_bars(
-                db,
-                code,
-                result.value,
-                result.source,
-                adjusted=result.adjusted,
-                volume_unit=result.volume_unit,
-                quality_status=result.status,
-                fetched_at=result.fetched_at,
-                error_code=result.error_code,
-            )
-    db.commit()
-    ok = sum(1 for r in results.values() if r.status == "ok")
-    degraded = sum(1 for r in results.values() if r.status == "degraded")
-    failed = sum(1 for r in results.values() if r.status == "failed")
-    return MarketDataCoverage(len(results), ok, degraded, failed, results)
-
-
-def cmd_market_data_backfill(start: str, end: str, provider: MarketDataProvider | None = None) -> None:
-    db = get_db()
-    try:
-        provider = provider or get_market_data_backfill_provider()
-        with provider_session(provider):
-            codes = [item["code"] for item in config.WATCHLIST]
-            coverage = _refresh_daily_bars_range(db, provider, codes, start, end)
-            logger.info(
-                "market-data-backfill 行情刷新：ok=%s degraded=%s failed=%s total=%s",
-                coverage.ok,
-                coverage.degraded,
-                coverage.failed,
-                coverage.total,
-            )
-            refreshed_codes = {
-                code
-                for code, result in coverage.by_code.items()
-                if result.status != "failed" and result.value is not None
-            }
-            updated_l3 = _recompute_existing_l3_metadata(db, start, end, refreshed_codes)
-            logger.info("market-data-backfill L3 metadata 重算：更新 %s 条 prediction", updated_l3)
-            for row in _validate_l3_bar_windows(db, start):
-                code, bars, min_date, max_date, sources, adjustments, volume_units = row
-                logger.info(
-                    "daily_bars window %s bars=%s range=%s..%s sources=%s adjusted=%s volume_units=%s",
-                    code,
-                    bars,
-                    min_date,
-                    max_date,
-                    sources,
-                    adjustments,
-                    volume_units,
-                )
-    finally:
-        db.close()
-
 
 # ──────────────────────────────────────────────
 # accuracy-report 命令
@@ -958,21 +667,6 @@ def cmd_accuracy_report() -> None:
         with open(report_path, "w", encoding="utf-8") as f:
             f.write(report + "\n")
         logger.info(f"报告已保存到 {report_path}")
-    finally:
-        db.close()
-
-
-def cmd_framework_b_cohort_freeze(*, dry_run: bool, label_date: str | None = None) -> None:
-    """Explicitly freeze one weekly report-only cohort; never writes predictions."""
-    effective_date = label_date or _today()
-    if dry_run:
-        db_path = Path(config.DB_PATH).resolve()
-        db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-    else:
-        db = get_db()
-    try:
-        result = freeze_weekly_cohort(db, _load_weights(), label_date=effective_date, dry_run=dry_run)
-        print(json.dumps(asdict(result), ensure_ascii=False, sort_keys=True))
     finally:
         db.close()
 
@@ -1148,7 +842,7 @@ def _send_phase4_notification(db, count: int, milestone: int) -> None:
             "",
             "建议操作：",
             "  运行 python pipeline.py accuracy-report 查看完整报告",
-            "  若 strong 层级 hit_rate_vs_300 > 55%，可进入后续 Framework B / 权重评估讨论",
+            "  继续完成 QFQ 总收益、截面 IC、spread 与回撤评估",
         ]
 
     text = "\n".join(lines)
@@ -1203,13 +897,7 @@ def main() -> None:
     sub.add_parser("weekly", help="每周刷新基本面缓存（cron: 每周六 10:00）")
     sub.add_parser("daily", help="每日评分，写入 predictions 表（依赖 weekly 缓存）")
     sub.add_parser("outcome-update", help="更新到期预测的实际收益")
-    p_backfill = sub.add_parser("market-data-backfill", help="预热行情日线并重算已有 L3 metadata")
-    p_backfill.add_argument("--start", required=True, help="开始日期 YYYY-MM-DD")
-    p_backfill.add_argument("--end", required=True, help="结束日期 YYYY-MM-DD")
     sub.add_parser("accuracy-report", help="输出命中率报告")
-    p_cohort = sub.add_parser("framework-b-cohort-freeze", help="显式冻结 Framework B 每周研究 cohort")
-    p_cohort.add_argument("--dry-run", action="store_true", help="只显示候选计数，不建表、不写数据库")
-    p_cohort.add_argument("--label-date", help="冻结日期 YYYY-MM-DD，默认今天")
     p_shadow = sub.add_parser("outcome-shadow-build", help="[冻结研究] 只读检查或构建隔离历史 outcome shadow")
     p_shadow.add_argument("--source-db", required=True, help="显式源 SQLite 路径")
     p_shadow.add_argument("--as-of-date", required=True, help="冻结日期 YYYY-MM-DD")
@@ -1253,12 +941,8 @@ def main() -> None:
         cmd_daily()
     elif args.cmd == "outcome-update":
         cmd_outcome_update()
-    elif args.cmd == "market-data-backfill":
-        cmd_market_data_backfill(args.start, args.end)
     elif args.cmd == "accuracy-report":
         cmd_accuracy_report()
-    elif args.cmd == "framework-b-cohort-freeze":
-        cmd_framework_b_cohort_freeze(dry_run=args.dry_run, label_date=args.label_date)
     elif args.cmd == "outcome-shadow-build":
         cmd_outcome_shadow_build(
             source_db=args.source_db,

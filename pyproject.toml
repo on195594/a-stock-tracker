@@ -40,7 +40,6 @@ files = [
     "pipeline.py",
     "tests",
     "scripts/run_qualitative_v2_production.py",
-    "scripts/check_qualitative_v2_production.py",
 ]
 ignore_missing_imports = true
 follow_imports = "skip"

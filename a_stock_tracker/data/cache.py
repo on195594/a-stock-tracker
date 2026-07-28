@@ -65,49 +65,6 @@ def _ensure_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
 
 
-def ensure_framework_b_cohort_schema(conn: sqlite3.Connection) -> None:
-    """Create the explicit report-only Framework B cohort store.
-
-    This is intentionally not called by get_db(): schema creation belongs to the
-    explicit framework-b-cohort-freeze command, not accuracy-report.
-    """
-    conn.execute(
-        """CREATE TABLE IF NOT EXISTS framework_b_label_cohorts (
-            id                      INTEGER PRIMARY KEY AUTOINCREMENT,
-            cohort_week             TEXT NOT NULL,
-            label_date              TEXT NOT NULL,
-            code                    TEXT NOT NULL,
-            name                    TEXT,
-            industry                TEXT,
-            source_a_prediction_id  INTEGER NOT NULL REFERENCES predictions(id),
-            source_a_score_date     TEXT NOT NULL,
-            source_a_total_score    REAL,
-            score_a                 REAL NOT NULL,
-            score_b                 REAL NOT NULL,
-            delta                   REAL NOT NULL,
-            label                   TEXT NOT NULL,
-            rule_name               TEXT NOT NULL,
-            rule_snapshot_json      TEXT NOT NULL,
-            threshold_snapshot_json TEXT NOT NULL,
-            candidate_input_json    TEXT NOT NULL,
-            score_snapshot_json     TEXT NOT NULL,
-            weights_hash            TEXT NOT NULL,
-            status                  TEXT NOT NULL DEFAULT 'active',
-            created_at              TEXT NOT NULL,
-            UNIQUE(cohort_week, code, rule_name, weights_hash),
-            UNIQUE(source_a_prediction_id, weights_hash)
-        )"""
-    )
-    conn.execute(
-        """CREATE INDEX IF NOT EXISTS idx_framework_b_cohort_status_week
-           ON framework_b_label_cohorts(status, cohort_week, label_date)"""
-    )
-    conn.commit()
-    # SQLite disables FK enforcement per connection by default. Enable it only
-    # for the explicit cohort-write connection after schema DDL is committed.
-    conn.execute("PRAGMA foreign_keys=ON")
-
-
 def get_db() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.execute("""CREATE TABLE IF NOT EXISTS stock_fundamentals (

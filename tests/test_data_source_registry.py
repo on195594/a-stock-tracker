@@ -86,13 +86,7 @@ def test_registry_includes_fallback_and_failure_language() -> None:
 
 
 def test_registry_covers_market_data_boundary_fields() -> None:
-    assert {
-        "daily_bars",
-        "daily_bars_volume_unit",
-        "entry_signal",
-        "entry_signal_status",
-        "entry_signal_reason",
-    } <= _fields()
+    assert {"daily_bars", "daily_bars_volume_unit"} <= _fields()
 
 
 def test_market_data_fields_include_user_visible_failure_contract() -> None:
@@ -106,5 +100,5 @@ def test_market_data_fields_include_user_visible_failure_contract() -> None:
         "user_visible_impact",
     }
 
-    for field in ["daily_bars", "entry_signal", "entry_signal_status", "entry_signal_reason"]:
+    for field in ["daily_bars"]:
         assert required_keys <= _block_keys(field), field

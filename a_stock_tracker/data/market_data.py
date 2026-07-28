@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import os
 from typing import Any
 
@@ -29,8 +28,6 @@ from a_stock_lib.market_data import (
     now,
 )
 
-from a_stock_tracker.data.cache import insert_market_data_audit, upsert_daily_bars
-
 _normalize_bars_result = normalize_bars_result
 _exception_result = exception_result
 _now = now
@@ -50,8 +47,6 @@ __all__ = [
     "TIMEOUT",
     "UNKNOWN_ERROR",
     "CompositeMarketDataProvider",
-    "MarketDataCacheService",
-    "MarketDataCoverage",
     "MarketDataProvider",
     "MarketDataResult",
     "MarketDataStatus",
@@ -59,7 +54,6 @@ __all__ = [
     "ak",
     "exception_result",
     "get_default_market_data_provider",
-    "get_market_data_backfill_provider",
     "normalize_bars_result",
     "now",
     "_exception_result",
@@ -122,46 +116,3 @@ def get_default_market_data_provider() -> MarketDataProvider:
 
         return TushareMarketDataProvider(token=token)
     return RemovedMarketDataProvider()
-
-
-def get_market_data_backfill_provider() -> MarketDataProvider:
-    return get_default_market_data_provider()
-
-
-@dataclass(frozen=True)
-class MarketDataCoverage:
-    total: int
-    ok: int
-    degraded: int
-    failed: int
-    by_code: dict[str, MarketDataResult[pd.DataFrame]]
-
-
-class MarketDataCacheService:
-    def __init__(self, conn: Any, provider: MarketDataProvider | None = None):
-        self.conn = conn
-        self.provider = provider or get_default_market_data_provider()
-
-    def refresh_daily_bars(self, codes: list[str], end_date: str, window: int = 120) -> MarketDataCoverage:
-        results: dict[str, MarketDataResult[pd.DataFrame]] = {}
-        for code in codes:
-            result = self.provider.fetch_l3_bars(code, end_date, window)
-            results[code] = result
-            insert_market_data_audit(self.conn, result, "l3_bars", code, end_date)
-            if result.status != "failed" and result.value is not None:
-                upsert_daily_bars(
-                    self.conn,
-                    code,
-                    result.value,
-                    result.source,
-                    adjusted=result.adjusted,
-                    volume_unit=result.volume_unit,
-                    quality_status=result.status,
-                    fetched_at=result.fetched_at,
-                    error_code=result.error_code,
-                )
-        self.conn.commit()
-        ok = sum(1 for r in results.values() if r.status == "ok")
-        degraded = sum(1 for r in results.values() if r.status == "degraded")
-        failed = sum(1 for r in results.values() if r.status == "failed")
-        return MarketDataCoverage(len(results), ok, degraded, failed, results)

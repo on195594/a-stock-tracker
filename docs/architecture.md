@@ -11,8 +11,7 @@ a-stock-tracker/
 │   ├── scoring.py            # Framework A 确定性评分
 │   ├── data/                 # SQLite、行情、TuShare shadow/readiness/materialization 与缓存
 │   ├── signals/              # L3 v1/v2 信号
-│   ├── integrations/         # 外部服务适配器
-│   ├── reporting/            # Telegram、Sheets 与报告层
+│   ├── reporting/            # Telegram 与策略报告
 │   └── qualitative/          # 定性评分合同、生产与研究链路
 │       ├── archive_m4/       # 已归档冻结的 MILESTONE-004 工作流，不在活动依赖图中
 │       └── m5/               # 已冻结的 MILESTONE-005 数据与质量工作流
@@ -30,7 +29,6 @@ a-stock-tracker/
 ## 依赖方向
 
 - `data/` 与 `signals/` 提供底层能力，不依赖通知或展示层；TuShare production cycle 只编排 data 层采集、readiness 和原子物化。
-- `integrations/` 封装外部服务；测试必须 mock 网络。
 - `reporting/` 可以读取数据与评分结果，但不能成为数据真相来源。
 - `qualitative/` 内部按稳定合同、生产路径、M4/M5 研究路径分层。
 - `archive_m4/`、`m5/`、历史 qualitative context/单股/五股 pilot 与 outcome shadow

@@ -54,12 +54,9 @@ printf '%s\n' "$CURRENT_CRONTAB" > "$CRON_BACKUP_PATH"
 
 # cron 规则
 WEEKLY_RULE="00 10 * * 6 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python -m scripts.run_tushare_primary_production_cycle weekly\" weekly >> $PROJECT_DIR/logs/weekly.log 2>&1"
-COHORT_FREEZE_RULE="20 09 * * 1 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python scripts/run_framework_b_cohort_freeze.py\" framework-b-cohort-freeze >> $PROJECT_DIR/logs/framework-b-cohort-freeze.log 2>&1"
-PM_LOOP_RULE="30 09 * * 1 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python scripts/weekly_pm_loop.py\" weekly-pm-loop >> $PROJECT_DIR/logs/weekly-pm-loop.log 2>&1"
 QFQ_RULE="00 16 * * 1-5 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python scripts/fetch_qfq_daily_bars_tushare.py\" qfq-daily-bars >> $PROJECT_DIR/logs/qfq-daily-bars.log 2>&1"
 PRIMARY_DAILY_RULE="15 17 * * 1-5 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python -m scripts.run_tushare_primary_production_cycle daily\" tushare-primary-daily >> $PROJECT_DIR/logs/tushare-primary-daily.log 2>&1"
 DAILY_RULE="30 17 * * 1-5 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python pipeline.py daily\" daily >> $PROJECT_DIR/logs/daily.log 2>&1"
-ACCEPTANCE_RULE="45 17 * * 1-5 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python scripts/check_qualitative_v2_production.py --require-today\" qualitative-v2-production-acceptance --alert-exit-2 >> $PROJECT_DIR/logs/qualitative-v2-production-acceptance.log 2>&1"
 OUTCOME_RULE="00 18 * * 1-5 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python pipeline.py outcome-update\" outcome-update >> $PROJECT_DIR/logs/outcome.log 2>&1"
 
 MARKET_DATA_READY=0
@@ -101,12 +98,6 @@ $MANAGED_START
 # a-stock-tracker weekly 基本面刷新 (每周六 10:00)
 $WEEKLY_RULE
 
-# a-stock-tracker Framework B prospective cohort 自动冻结 (每周一 09:20)
-$COHORT_FREEZE_RULE
-
-# a-stock-tracker weekly operational checks (每周一 09:30)
-$PM_LOOP_RULE
-
 # a-stock-tracker QFQ 日线采集 (TuShare, 工作日 16:00，pipeline 前)
 $QFQ_RULE
 
@@ -115,8 +106,6 @@ $PRIMARY_DAILY_RULE
 EOF
 )
 echo "✅ 已配置 weekly 任务"
-echo "✅ 已配置 Framework B cohort 自动冻结任务"
-echo "✅ 已配置 weekly operational checks"
 echo "✅ 已配置 qfq-daily-bars 任务"
 echo "✅ 已配置 tushare-primary-daily 任务"
 
@@ -130,16 +119,11 @@ $MANAGED_CRONTAB
 # a-stock-tracker daily (工作日 17:30)
 $DAILY_RULE
 
-# a-stock-tracker qualitative-v2 production acceptance (工作日 17:45，daily 后、outcome-update 前)
-$ACCEPTANCE_RULE
-
 # a-stock-tracker outcome-update (工作日 18:00)
 $OUTCOME_RULE
 EOF
 )
     echo "✅ 已配置 daily 任务"
-
-    echo "✅ 已配置 qualitative-v2 production acceptance 任务"
     echo "✅ 已配置 outcome-update 任务"
 else
     echo "⏸️  未发现既有 daily，且行情恢复门禁未通过；不新增评分写任务"
@@ -165,17 +149,13 @@ echo "=========================================="
 echo "rollback snapshot: $CRON_BACKUP_PATH"
 echo "任务详情："
 echo "  • weekly:         每周六 10:00 刷新基本面缓存"
-echo "  • b-cohort-freeze: 每周一 09:20 自动冻结 Framework B report-only cohort"
-echo "  • weekly-pm-loop: 每周一 09:30 复核运行状态并发送 Telegram 摘要"
 echo "  • qfq-daily-bars: 每个工作日 16:00 采集 QFQ 前复权日线"
 if [ "$MARKET_DATA_READY" -eq 1 ] || [ "$PRESERVE_EXISTING_DAILY" -eq 1 ]; then
     echo "  • primary-daily:  每个工作日 17:15 采集并物化 TuShare 估值"
-    echo "  • daily:          每个工作日 17:30 评分 + Sheets 同步"
-    echo "  • v2-acceptance:  每个工作日 17:45 只读验收；ROLLBACK 触发 Telegram 告警"
+    echo "  • daily:          每个工作日 17:30 评分 + Telegram 推送"
     echo "  • outcome-update: 每个工作日 18:00 更新到期结果"
 else
     echo "  • daily:          HOLD（行情恢复门禁未通过）"
-    echo "  • v2-acceptance:  HOLD（daily 未配置）"
     echo "  • outcome-update: HOLD（行情恢复门禁未通过）"
 fi
 echo ""
@@ -184,8 +164,5 @@ echo "  crontab -l"
 echo ""
 echo "查看执行日志："
 echo "  tail -f $PROJECT_DIR/logs/weekly.log"
-echo "  tail -f $PROJECT_DIR/logs/framework-b-cohort-freeze.log"
-echo "  tail -f $PROJECT_DIR/logs/weekly-pm-loop.log"
 echo "  tail -f $PROJECT_DIR/logs/daily.log"
-echo "  tail -f $PROJECT_DIR/logs/qualitative-v2-production-acceptance.log"
 echo "  tail -f $PROJECT_DIR/logs/outcome.log"

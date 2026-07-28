@@ -35,7 +35,7 @@ ALLOWED_TOP_LEVEL_DIRECTORIES = {
     "tests",
 }
 ALLOWED_PACKAGE_FILES = {"__init__.py", "cli.py", "config.py", "paths.py", "scoring.py"}
-ALLOWED_PACKAGE_DIRECTORIES = {"data", "integrations", "qualitative", "reporting", "signals"}
+ALLOWED_PACKAGE_DIRECTORIES = {"data", "qualitative", "reporting", "signals"}
 LEGACY_IMPORT_ROOTS = {
     "config",
     "gemini_scorer",

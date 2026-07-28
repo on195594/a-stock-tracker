@@ -11,7 +11,6 @@ These instructions apply to the entire repository. Read this file and
 - Place modules by responsibility:
   - `a_stock_tracker/data/`: database, providers, fetching, and caches;
   - `a_stock_tracker/signals/`: deterministic signal calculations;
-  - `a_stock_tracker/integrations/`: external service adapters;
   - `a_stock_tracker/reporting/`: notifications and presentation;
   - `a_stock_tracker/qualitative/`: qualitative contracts and workflows;
   - `a_stock_tracker/qualitative/archive_m4/` and

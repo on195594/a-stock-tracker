@@ -19,12 +19,9 @@ from a_stock_tracker.data.market_data import (  # noqa: E402
     CompositeMarketDataProvider,
     MISSING_COLUMNS,
     PERMISSION_DENIED,
-    MarketDataCacheService,
     MarketDataResult,
-    RemovedMarketDataProvider,
     SOURCE_DISABLED,
     get_default_market_data_provider,
-    get_market_data_backfill_provider,
     _normalize_bars_result,
 )
 from a_stock_lib.providers.baostock_quotes import (  # noqa: E402
@@ -119,68 +116,6 @@ def test_daily_bars_upsert_and_load_are_stable(tmp_db) -> None:
     assert tmp_db.execute("SELECT COUNT(*) FROM daily_bars").fetchone()[0] == 2
 
 
-class _FakeProvider:
-    def __init__(self, results):
-        self.results = results
-
-    def fetch_l3_bars(self, code: str, end_date: str, window: int):
-        return self.results[code]
-
-    def fetch_score_price(self, code: str, score_date: str):
-        raise AssertionError("not used")
-
-    def fetch_outcome_price(self, code: str, target_date: str):
-        raise AssertionError("not used")
-
-    def fetch_daily_bars_range(self, code: str, start_date: str, end_date: str):
-        raise AssertionError("not used")
-
-    def fetch_index_bars(self, symbol: str):
-        raise AssertionError("not used")
-
-
-def test_refresh_daily_bars_writes_bars_and_audit(tmp_db) -> None:
-    service = MarketDataCacheService(
-        tmp_db,
-        _FakeProvider(
-            {
-                "600036": MarketDataResult(
-                    _bars(),
-                    "ok",
-                    "source",
-                    date.today().isoformat(),
-                    adjusted="none",
-                    volume_unit="share",
-                )
-            }
-        ),
-    )
-
-    coverage = service.refresh_daily_bars(["600036"], date.today().isoformat(), 120)
-
-    assert coverage.ok == 1
-    assert tmp_db.execute("SELECT COUNT(*) FROM daily_bars").fetchone()[0] == 120
-    row = tmp_db.execute("SELECT DISTINCT adjusted, volume_unit FROM daily_bars").fetchone()
-    assert row == ("none", "share")
-    assert tmp_db.execute("SELECT status FROM market_data_audit").fetchone()[0] == "ok"
-
-
-def test_refresh_daily_bars_failed_provider_only_writes_audit(tmp_db) -> None:
-    service = MarketDataCacheService(
-        tmp_db,
-        _FakeProvider(
-            {"600036": MarketDataResult(None, "failed", "source", date.today().isoformat(), error_code=EMPTY_RESPONSE)}
-        ),
-    )
-
-    coverage = service.refresh_daily_bars(["600036"], date.today().isoformat(), 120)
-
-    assert coverage.failed == 1
-    assert tmp_db.execute("SELECT COUNT(*) FROM daily_bars").fetchone()[0] == 0
-    row = tmp_db.execute("SELECT status, error_code FROM market_data_audit").fetchone()
-    assert row == ("failed", EMPTY_RESPONSE)
-
-
 def test_default_market_data_provider_is_disabled(monkeypatch) -> None:
     monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
     provider = get_default_market_data_provider()
@@ -189,16 +124,6 @@ def test_default_market_data_provider_is_disabled(monkeypatch) -> None:
 
     assert result.status == "failed"
     assert result.error_code == SOURCE_DISABLED
-
-
-def test_refresh_daily_bars_uses_disabled_default_provider(tmp_db, monkeypatch) -> None:
-    monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
-    coverage = MarketDataCacheService(tmp_db).refresh_daily_bars(["600036"], date.today().isoformat(), 120)
-
-    assert coverage.failed == 1
-    assert tmp_db.execute("SELECT COUNT(*) FROM daily_bars").fetchone()[0] == 0
-    row = tmp_db.execute("SELECT status, error_code FROM market_data_audit").fetchone()
-    assert row == ("failed", SOURCE_DISABLED)
 
 
 def test_tushare_code_conversion() -> None:
@@ -439,15 +364,6 @@ def test_composite_provider_uses_baostock_fallback_as_degraded() -> None:
     assert result.fallback_source == "primary"
     assert result.fallback_reason == EMPTY_RESPONSE
     assert result.value == pytest.approx(35.9)
-
-
-def test_backfill_provider_rejects_explicit_baostock_only(monkeypatch) -> None:
-    monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
-    monkeypatch.setenv("MARKET_DATA_ALLOW_BAOSTOCK_ONLY", "1")
-
-    provider = get_market_data_backfill_provider()
-
-    assert isinstance(provider, RemovedMarketDataProvider)
 
 
 class _TransientFailureTushareClient:
