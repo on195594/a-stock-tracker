@@ -25,6 +25,11 @@ Phase 7 生产动态池均 HOLD。权威三阶段路线见 `docs/evolution-roadm
 不可逆生产风险。只读研究默认不创建 production-grade migration、seal、reviewer 或
 authorization；技术 PASS/READY 不等于值得买。
 
+**第二轮减法（2026-07-28）：** Telegram reviewer 已删除；默认 `accuracy-report` 只保留
+Framework A、post-fix、五分位与 L3 v2 风险门禁，不再混入 Framework B、Phase 6、
+Gemini 漂移和数据质量审计。历史 qualitative pilot 退出默认验证。L3 v1 规则冻结，但因
+daily/backfill/生产验收/离线回测仍消费其字段，暂时保持兼容写入；默认推送和报告不再读取 v1。
+
 ---
 
 ## 路径与运行
@@ -50,7 +55,7 @@ pytest tests/ -q                  # 活动产品套件；默认排除冻结研�
 |------|------|
 | `pipeline.py` / `a_stock_tracker/cli.py` | 兼容入口 / 主编排器实现 |
 | `a_stock_tracker/scoring.py` | 评分引擎（breakpoints 线性插值，不调 AKShare）|
-| `a_stock_tracker/integrations/` | Gemini 定性评分与 reviewer 外部适配器 |
+| `a_stock_tracker/integrations/` | 外部服务适配器 |
 | `a_stock_tracker/reporting/` | Telegram、Sheets 与报告层 |
 | `config/weights.json` | 模型权重（阈值 buy_strong=44/moderate=35/light=26）|
 | `a_stock_tracker/config.py` | watchlist / DB_PATH / LOG_DIR（禁止硬编码股票代码或路径）|
@@ -143,12 +148,12 @@ BaoStock QFQ 活动采集入口；历史备份只用于受控数据恢复，不�
 | 收敛阶段二 | ⏸ 未启动 | 先做 300–500 股离线截面、行业分层、成本与样本外验证，不直接建设生产动态池 |
 | 收敛阶段三 | ⏸ 未启动 | 动态池、真实买点、仓位和退出闭环仅在阶段二通过后建设 |
 | Phase 4 验证基础 | ✅ 工程基础完成，策略验证并入收敛阶段一 | QFQ shadow 后仍无稳定五分位单调性；先拆股票池效应和评分排序能力 |
-| Phase 5 L3 买点层 v1 | ✅ 完成，保留审计 | 最新 tracked report 中 v1 pass 的 30d 已结案 71 条、命中率 2.8%；不再作为生产主推门禁 |
+| Phase 5 L3 v1 | ❄️ 规则冻结，兼容写入 | daily/backfill/生产验收/离线回测仍消费字段；默认推送和策略报告不再读取 |
 | Phase 5 L3 v2（QFQ）| ✅ 生产运行；买点语义未证实 | 规则只拒绝极端下跌，当前按风险门禁理解；阶段一补状态、收益和回撤对照 |
 | TuShare 三域生产主源 | ✅ 强切完成 | 35/35 估值、通用财务、分红物化；运行时 0.4.1；PB 历史覆盖 28 FULL_10Y / 5 SINCE_LISTING / 2 INSUFFICIENT_HISTORY；predictions 未改写 |
 | 历史 outcome versioned shadow | ✅ Phase 1+2 完成并生产物化 | 1 immutable run、1,776 results、2,520 observations、3 表 6 触发器；backup/rehearsal/post-commit verifier PASS；legacy outcome、报告、Sheets、Telegram、cron 均未切换 |
 | 定性评分 v2 MILESTONE-002 | ✅ fixture-first 完成 | contract/types/taxonomy/schema/prompt/validator 与 145 项本地合同测试已完成，AGY 边界加固复审 PASS |
-| 定性评分 v2 MILESTONE-003 | ✅ 文件 shadow seam 完成 | 独立 client/CLI、JSONL artifact、错误分类、重试和同 hash 去重已完成，AGY 最终只读审查 PASS；该研究 shadow 与后续生产 canary 物理隔离 |
+| 定性评分 v2 MILESTONE-003 | seam 完成；独立 CLI 冻结 | client/shadow 引擎仍是生产预计算批次依赖并默认验证；独立 CLI 不作为常用操作 |
 | 定性评分 v2 生产读路径 | ✅ 全局 `on` | 35 股全部进入 v2 选择器；独立 v2 表 6 行。603606 及 000963/002050/600036/600900/601088 使用 moat/market_pos v2 与 sentiment v1 fallback，其余 29 股逐股回退 v1；只读生产验收当前 PASS |
 | 定性评分 v2 MILESTONE-004/005 | ❄️ 冻结研究 | 保留 frame/sample/sealed evidence；旧授权已过期，不阻塞生产或阶段一 |
 | Phase 6 多框架激活 | 🔶 report-only 被动观察 | Framework B 不写生产；W30/W31/W32 自然结案后也只进入人工 review |

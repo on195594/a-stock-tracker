@@ -8,6 +8,7 @@ from typing import Final, Mapping
 SCHEMA_VERSION: Final = "qualitative-score-v2"
 RUBRIC_VERSION: Final = "rubric-v1"
 TAXONOMY_VERSION: Final = "taxonomy-v1"
+DEFAULT_GEMINI_MODEL: Final = "gemini-2.5-flash"
 
 DIMENSION_NAMES: Final = ("moat", "market_pos", "sentiment")
 DIMENSION_STATUS_VALUES: Final = ("scored", "insufficient_data")
@@ -31,6 +32,7 @@ PROMPT_PACKET_MAX_BYTES: Final = 131_072
 __all__ = [
     "CONFIDENCE_VALUES",
     "CONTEXT_TEXT_MAX_CHARS",
+    "DEFAULT_GEMINI_MODEL",
     "DIMENSION_NAMES",
     "DIMENSION_STATUS_VALUES",
     "EVIDENCE_ID_MAX_CHARS",

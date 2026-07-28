@@ -22,7 +22,7 @@ M4/M5、新 shadow migration、多框架生产化和 Phase 7 生产动态池全�
 `a-stock-lib==0.4.1`，历史 predictions 未改写。该数据换源不代表 Framework A
 有效性、Framework B 生产化或下游 consumer 迁移已完成。
 
-2026-07-23 修复 prediction 解释链路的数据一致性：新 prediction 原子保存实际采用的定性分值、逐维 `v1/v2` 来源和 `v1/v2/hybrid_v2` 模式；Telegram 展示与 reviewer 只使用该行快照，旧行缺失或快照损坏时 reviewer fail-closed，不再用最新 legacy 定性分值解释历史/混合总分。迁移只增加 nullable 列，不回填或改写历史 prediction。
+2026-07-23 修复 prediction 解释链路的数据一致性：新 prediction 原子保存实际采用的定性分值、逐维 `v1/v2` 来源和 `v1/v2/hybrid_v2` 模式；当时 Telegram 展示与 reviewer 只使用该行快照，旧行缺失或快照损坏时 reviewer fail-closed，不再用最新 legacy 定性分值解释历史/混合总分。迁移只增加 nullable 列，不回填或改写历史 prediction。该 reviewer 后于 2026-07-28 第二轮减法中退役，快照仍供确定性展示与审计。
 
 同日完成 cron/reviewer 可靠性加固：`cron-alert-wrap.sh` 对 label 与 `--alert-exit-2` 采用顺序无关且拒绝重复/未知参数的解析；`cron-setup.sh` 只按活动、本项目、去除行尾注释后的命令语义识别和清理 daily 变体，保留其他项目任务及 managed block 外注释；HOLD 输出在最终分支确定后明确区分“保留既有评分链”和“不从零新增”，不再先宣称移除后又保留；fake rollback 从不同 live/snapshot 内容验证字节级恢复。Gemini reviewer 对直接 timeout 与 `URLError(timeout)` 复用既有 3 次/2s+4s 有界重试，非 timeout、鉴权和解析错误继续立即 fallback。测试全程使用 fake crontab/curl/urlopen，无真实网络。
 
@@ -40,6 +40,15 @@ real bundle、blind reference、Gemini shadow 或 support audit。旧授权窗�
 outcome-shadow 命令明确标记为冻结研究；默认 pytest/mypy 排除冻结的 M4/M5 与
 outcome-shadow 治理边界，480 个冻结审计测试保留为显式路径套件。减法未删除冻结实现、
 证据或 sealed identifier。
+
+2026-07-28 完成第二轮工程减法：Telegram reviewer 及其测试删除，推送不再产生模型点评；
+默认 `accuracy-report` 收敛为 Framework A 分层、post-fix、五分位和 L3 v2 风险门禁，
+移除 Framework B、Phase 6、Gemini 漂移和数据质量审计混合章节；weekly loop 相应改为
+运行状态检查，只校验策略报告生成合同。历史 qualitative v2 context 收集、东方电缆与五股
+pilot 保留但退出默认 pytest/mypy；生产预计算批次复用的 client/shadow 引擎继续默认验证。
+L3 v1 经消费者审计后决定“冻结规则、保持兼容写入”：
+daily、历史 backfill、生产验收和离线回测仍依赖其字段连续性，本轮不制造含义不明确的
+停写断点；默认 Telegram 和策略报告均不再消费 v1。
 
 2026-07-18 曾执行一次非 v1.3.2-compliant 的 `index_classify` 直连探测：HTTP 200、provider code 0、31 rows，未持久化原始响应。该探测不构成 frame、authorization、freeze、attestation 或生产采用证据。
 
@@ -84,12 +93,12 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | 收敛阶段一：证明现有系统 | 当前执行 | 股票池效应拆解、QFQ 30/60/90 日排序、L3 效果、Telegram 语义、未来 outcome 设计 | 完成策略证据报告 | 明确 A 是否有排序力、L3 是买点/风险门禁/无效规则；不调权重 |
 | 收敛阶段二：离线扩大宇宙 | 未启动 | 不建设生产动态池 | 阶段一形成明确结论后，无论结论正负 | 300–500 股样本外、行业分层、成本与可交易性验证完成，并决定继续、简化或停止 |
 | 收敛阶段三：生产决策闭环 | 未启动 | 不增加仓位/卖出/动态池生产能力 | 阶段二结论通过后 | 回答买什么、何时买、买多少、何时退出，风险调整后优于基准 |
-| Phase 4 验证基础 | 已完成，持续观察 | weekly PM loop 自动检查 accuracy-report；不在此阶段顺手调权重 | 每周一自动摘要 | 若要调权重，另开 spec |
+| Phase 4 验证基础 | 已完成，持续观察 | weekly operations 检查报告可生成；策略结论由报告人工复核，不在此阶段顺手调权重 | 每周一自动摘要 | 若要调权重，另开 spec |
 | Phase 5 L3 层 | v1 保留审计；v2 生产运行但买点语义未证实 | 补 v2 状态、收益和回撤对照；当前按极端下跌风险门禁理解 | 收敛阶段一 L3 报告 | 证明相对无门禁能提高收益或降低回撤，再讨论买点规则 |
 | TuShare 三域生产主源 | 已完成并验证 | 观察 17:15 daily 与周六 10:00 weekly 自然日志；保持 registry/runbook 同步 | 下一次自然 daily/weekly cycle | 35/35 readiness、原子物化、来源审计、回滚与真实 cron smoke 均通过 |
 | 历史 outcome versioned shadow | 已完成生产 additive import | 保持 shadow append-only；报告继续读取 legacy outcome | 若要切报告，另开 consumer/cutover spec | 1 run、1,776 results、2,520 observations、3 表 6 触发器；backup/rehearsal/post-commit proof 可复验 |
 | 定性评分 v2 MILESTONE-002 | 已完成 | 保持合同稳定和本地 validator fail-closed | MILESTONE-003 已独立完成 | REQ-001~035 对应本地合同齐全 |
-| 定性评分 v2 MILESTONE-003 | 已完成 | 使用独立 CLI/JSONL artifact；不接 pipeline 或生产 DB | 无；后续 M4/M5 已冻结 | REQ-036~039 文件持久化、错误分类、脱敏、去重和隔离测试及 AGY 最终只读审查通过 |
+| 定性评分 v2 MILESTONE-003 | seam 完成；独立 CLI 冻结 | client/shadow 引擎仍由生产预计算批次复用并默认验证；独立 CLI 无活动执行 | 新生产批次必须另获授权 | REQ-036~039 合同保留；不把独立 shadow 当常用操作 |
 | 定性评分 v2 MILESTONE-004 | 冻结；轻量 frame/sample 完成 | 保留 4,694 frame、36 sample 和 sealed identifier，不续建治理 | 无活动授权 | 仅在出现明确收益假设后另行决定是否恢复 |
 | 定性评分 v2 生产读路径 | 全局 `on`；截至 2026-07-27 自然 acceptance PASS | 继续由 managed acceptance 复验 6 股 hybrid、29 股 fallback、历史 seal 与 `off` 回滚 | 后续自然运行 | 35/35 正常完成；无批量异常、历史改写或错误 v2 采用 |
 | 定性评分 v2 MILESTONE-005 | 冻结；fixture-first 与离线 builder 完成 | 不续用 2026-07-22 已过期授权，不安排模型 Sprint | 无活动授权 | 只在收益假设需要时重新授权，不阻塞生产 |
@@ -116,7 +125,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | 定性评分 v2 | 全局 `on`；6/35 hybrid、29/35 v1 fallback | v2 表 6 行：000963/002050/600036/600900/601088/603606；全部为 moat/market_pos scored、sentiment NULL |
 | 定性评分 v2 研究审计 | M4 sample 与 M5 fixture-first/builder 完成后冻结；real bundle 未完成 | sample SHA `b278a7…d7635d`；旧 pilot 授权已过期；不再作为当前生产或策略验证阻塞项 |
 | outcome QFQ total-return shadow | 阶段 A/B 完成，阶段 C 未执行 | run `outcome-shadow-e85f830d9b2d850fc2657560`；产物在 `artifacts/qfq-shadow/`（gitignored，无 git 保护）；生产 predictions 2,069 行与既有 1 run/1,776 results 均未改动 |
-| 代码质量基线 | 2026-07-28 活动套件通过 | 默认 675 passed/11.65s，冻结 480 个测试在收集前按路径排除；调整前全仓 1,154 passed/1 frozen M4 failure，114.59s；Ruff、format、mypy 101 source files、`git diff --check` 通过 |
+| 代码质量基线 | 2026-07-28 第二轮减法复审后通过 | 默认 626 passed；冻结的历史 qualitative pilot 21 passed；Ruff、format、mypy 90 source files、`git diff --check` 通过 |
 
 ## Spec Ledger
 
@@ -142,7 +151,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | `/home/lin/a-stock-lib/docs/plans/2026-07-01-three-project-next-work-plan.md` | active cross-project plan | Hermes PM | 按 P0/P1/P2 顺序推进共享包、tracker、research 联动事项 | 三项目版本/文档/任务边界一致 |
 | `docs/runbooks/market-data-provider-recovery.md` | active | Hermes PM | 若 readiness/cron 语义变更则同步 | HOLD/READY 行为与 `cron-setup.sh` 一致 |
 | `docs/reviews/2026-07-27-tushare-capability-probe.md` | latest probe PASS；按 0 天 freshness 当前 stale | 系统探测 | 需要恢复当日 cron readiness 时刷新真实 probe | 不引用前一日 PASS；以实时 `check_market_data_readiness.py --scope cron` 为准 |
-| `artifacts/reports/accuracy-report.txt` | ignored runtime report | pipeline | 按周更新 | Phase 6 仍明确 report-only，运行后不污染 Git 状态 |
+| `artifacts/reports/accuracy-report.txt` | ignored runtime strategy report | pipeline | 按周更新 | 仅含 Framework A/post-fix/五分位/L3 v2，运行后不污染 Git 状态 |
 | `docs/specs/2026-07-08-l3-v2-entry-signal-spec.md` | draft 历史父 spec；其 Phase 2/3 子 spec 已实施 | Hermes PM + agy review | 观察 v2 生产数据，不再执行旧 NEED_QFQ 下一步 | 规则变更需另开审查，不回写历史分数 |
 | `docs/specs/2026-07-14-source-grounded-structured-qualitative-scoring-spec.md` | approved；生产 hybrid/global read 已实施 | Hermes PM + codex + AGY review | 保持合同稳定；覆盖扩展走预计算批次 | 不得把 fallback 冒充 v2，不得把结构有效性冒充预测有效性 |
 | `docs/plans/2026-07-15-milestone-004-evidence-feasibility-preregistration-v1.1.md` | frozen historical；acquisition route 技术关闭 | codex + AGY review | 保持协议/hash/artifacts 不变；不得 retry/resume/assemble incomplete | seed、URL、Reviewer、Wilson 与 scope disposition 契约均由测试覆盖 |
@@ -150,7 +159,7 @@ P0 根因已定位：2026-06-27 `weekly` 实际卡在第 22 只 `002119` 的外�
 | `docs/plans/2026-07-17-milestone-004-segmented-rest-preregistration-v1.3.1.md` | frozen implementation contract；无真实授权 | codex | 保持 hash/provenance；仅在新外部授权后可执行 | capability/date/capture 分别授权；本阶段不联网、不组装 |
 | `reviews/milestone-004-audit-v1.2/capability-probe-2026-07-17.md` | final；complete=true/capability_pass=false | codex | 保留 hash 与 non-adoptable package；不得重试 | manifest 离线复验通过；终态已收敛 |
 | `reviews/milestone-004-audit-v1.1/execution-authorization.md` | historical；相关 live attempts 已消费 | user + codex | 无；以 v1.1 closeout 和 v1.2 gate 为当前控制面 | 不访问生产 DB，不复用旧授权，不运行 Reviewer，不接生产 pipeline |
-| `docs/runbooks/qualitative-v2-shadow.md` | active | codex | 仅对获批 context 使用显式 `--execute` | JSONL 隔离、同 hash 幂等、无生产副作用 |
+| `docs/runbooks/qualitative-v2-shadow.md` | frozen historical | codex | 无活动执行；只在新的收益假设与授权下恢复 | 历史 JSONL 隔离、同 hash 幂等合同保留 |
 | `docs/runbooks/qualitative-v2-m5-fixture-first.md` | frozen historical；real build offline、model execution synthetic only | codex | 无；仅在明确收益假设需要时重新评估 | 旧授权不得复用，且不阻塞当前生产或阶段一 |
 | `docs/plans/2026-07-08-l3-v2-offline-backtest-plan.md` | implemented，历史 | Hermes PM + agy review | 保留追溯；生产已采用后续 BaoStock QFQ 方案 | 脚本只读 `tracker.db`，独立 review gate 通过 |
 | `docs/reviews/2026-07-08-l3-v2-backtest-report.md` | 历史 L3 v2 offline evidence | offline script | 不再把其中 NEED_QFQ 当当前 gate | 后续生产 QFQ 事实以 DB、Phase 2/3 spec 和运行日志为准 |

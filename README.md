@@ -33,7 +33,7 @@ A 股选股与买入决策支持项目。系统以提高风险调整后收益的
 - Google Sheets 同步：展示层能力，失败只记录 warning，不是数据真相来源。
 - 数据治理：`docs/data-source-registry.yaml` 记录字段来源、缓存、刷新、fallback 和失败语义。
 - TuShare 三域生产主源：估值/市值、通用财务指标和分红事实已于 2026-07-21 强切完成；运行时为 `a-stock-lib==0.4.1`，35 股由独立 shadow/readiness 单事务物化。生产入口、日志与回滚见 `docs/runbooks/tushare-primary-production.md`。
-- 只读 reviewer schema：`a_stock_tracker/integrations/agent_reviewer.py` 限制 reviewer 只能输出 commentary，不能覆盖分数、阈值、交易动作或 DB 写入。
+- Telegram reviewer 已在第二轮减法中退役；推送只展示确定性评分、定性快照和 L3 v2 风险门禁状态。
 
 ## 安装
 
@@ -91,22 +91,6 @@ python3 pipeline.py market-data-backfill --start 2025-01-01 --end 2026-06-09
 # 生成准确率报告
 python3 pipeline.py accuracy-report
 
-# 仅验证定性评分 v2 context，不发网络请求、不创建 artifact
-python3 scripts/run_qualitative_v2_shadow.py \
-  --context tests/fixtures/qualitative_v2_empty_context.json
-
-# 显式执行一次隔离 shadow；需要 GEMINI_API_KEY，输出仅写 JSONL artifact
-python3 scripts/run_qualitative_v2_shadow.py \
-  --context path/to/approved-context.json \
-  --legacy-scores path/to/legacy-scores.json \
-  --output artifacts/qualitative_v2_shadow.jsonl \
-  --execute
-
-# 生产 Fast Lane：先对真实 watchlist canary 做零凭证/零 artifact 预检
-python3 scripts/run_qualitative_v2_production.py preview \
-  --contexts path/to/exact-five-contexts \
-  --scope canary
-
 # 只读生产验收：PASS=exit 0，ROLLBACK=exit 2；不读取模型凭证、不写 .env/DB/artifact
 python3 scripts/check_qualitative_v2_production.py
 
@@ -118,7 +102,9 @@ python3 pipeline.py remove 601857
 `--require-score-date YYYY-MM-DD`，日期必须替换为实际已完成的 `score_date`。
 历史 CNINFO canary 授权已经过期，其真实采集命令不再作为常用操作或授权模板。
 
-M4/M5 已冻结为历史研究能力，因此不再把其 probe、bundle 或模型命令列为常用操作。
+M4/M5、独立 qualitative v2 shadow CLI、历史 context 收集和单股/五股 pilot
+已冻结为历史研究能力，因此不再把其 probe、bundle 或模型命令列为常用操作。
+生产预计算批次复用的 client/shadow 引擎仍属于默认验证范围。
 既有 frame/sample、失败记录和 sealed identifier 继续保留，详见
 [`轻量运行简报`](docs/reviews/2026-07-18-m4-frame-lite-run.md)。
 
@@ -128,12 +114,10 @@ M4/M5 已冻结为历史研究能力，因此不再把其 probe、bundle 或模�
 
 - Framework A 总体分层表现和五分位单调性检验。
 - 2026-05-15 后 post-fix 样本专区，避免新旧数据口径混合解释。
-- L3 历史买点层统计；阶段一需补充 v2 风险门禁的状态、收益与回撤对照。
-- Gemini 评分稳定性。
-- Framework B 重启门槛进度。
-- watchlist 数据质量审计，区分 `cache_report_period` 和 `prediction_report_period` 缺失；金融行业 `gross_margin` 计为不适用。
-- Framework B dry-run 对比；该部分只读、report-only，不写入 `predictions`。
-- Phase 6 readiness 结论、生产化阻塞项和下一步；只有 post-fix outcome、数据质量、B dry-run 覆盖和 B label 自然结案同时满足时，才可讨论 Phase 6 生产化，且仍需保持不写 B predictions 的审阅流程。
+- L3 v2 风险门禁的覆盖、通过/拒绝/不可用分布及 30 日结果；不再把 v1 称为买点。
+
+Framework B、Phase 6 readiness、Gemini 漂移和数据质量审计已退出默认策略报告；
+相应历史模块或独立运维检查保留，不再混入用户的选股效果判断。
 
 ## Cron
 
@@ -144,7 +128,7 @@ bash cron-setup.sh
 默认规则：
 
 - 每周六 10:00：运行 TuShare financial/dividend weekly cycle
-- 每周一 09:30：运行 Phase 6 weekly PM loop
+- 每周一 09:30：运行 weekly operational checks
 - 工作日 16:00：采集 QFQ 日线
 - 工作日 17:15：运行 TuShare valuation daily cycle
 - 工作日 17:30：运行 `daily`
@@ -178,7 +162,7 @@ python3 pipeline.py init
 - `a_stock_tracker/scoring.py`：Framework A 确定性评分，breakpoints 线性插值，PB 分位纯计算。
 - `a_stock_tracker/data/`：SQLite schema、行情 provider、TuShare shadow/ingestion/readiness/materialization 与 production cycle。
 - `a_stock_tracker/signals/`：L3 v1/v2 纯计算与生产包装层。
-- `a_stock_tracker/integrations/`：Gemini 定性评分与只读 reviewer 适配器。
+- `a_stock_tracker/integrations/`：外部服务适配器。
 - `a_stock_tracker/reporting/`：Telegram、Google Sheets 和 Framework B report-only 输出。
 - `a_stock_tracker/qualitative/`：定性评分 v2 合同、校验、生产路径及 M4/M5 研究工作流。
 - `a_stock_lib.providers.tushare_quotes`：Tushare Pro 行情 provider，覆盖评分价、L3 日线、outcome 和沪深 300 指数日线。
@@ -216,13 +200,11 @@ pytest tests/test_l3_entry_signal.py -q
 pytest tests/test_telegram_push.py -q
 pytest tests/test_data_source_registry.py -q
 pytest tests/test_data_quality.py -q
-pytest tests/test_agent_reviewer.py -q
 pytest tests/test_sheets_sync.py -q
 pytest tests/test_qualitative_v2_types.py tests/test_qualitative_v2_taxonomy.py tests/test_qualitative_v2_validator.py tests/test_qualitative_v2_schema.py tests/test_qualitative_v2_prompt.py -q
-pytest tests/test_qualitative_v2_client.py tests/test_qualitative_v2_shadow.py -q
 
-# 仅在 M4/M5、outcome-shadow 或 sealed contract 变化时复验
-pytest -o addopts='' tests/milestone004 tests/test_qualitative_v2_m5*.py tests/test_outcome_shadow*.py -q
+# 仅在冻结研究路径或 sealed contract 变化时复验；完整命令见 AGENTS.md
+pytest -o addopts='' tests/test_qualitative_v2_production_contexts.py tests/test_qualitative_v2_orient_cable_pilot.py tests/test_qualitative_v2_orient_cable_hybrid.py tests/test_qualitative_v2_selected_five.py -q
 ```
 
 代码质量检查：
@@ -248,9 +230,9 @@ git diff --check
 
 `ruff` 和 `mypy` 已列在 `requirements.txt`，配置集中在 `pyproject.toml`。如果命令不可用，先确认已激活虚拟环境并执行过 `pip install -r requirements.txt`。
 
-默认 `pytest tests/` 和 `mypy` 聚焦当前生产链与阶段一策略验证，不执行冻结的 M4/M5 和
-outcome-shadow 治理套件。冻结实现没有删除；只有修改对应路径、sealed contract 或其共享
-CLI 入口时，才运行上面的冻结套件及 `AGENTS.md` 中的冻结类型检查。
+默认 `pytest tests/` 和 `mypy` 聚焦当前生产链与阶段一策略验证，不执行冻结的 M4/M5、
+历史 qualitative pilot 和 outcome-shadow 治理套件。冻结实现没有删除；只有修改对应路径、
+sealed contract 或其共享 CLI 入口时，才运行上面的冻结套件及 `AGENTS.md` 中的冻结类型检查。
 
 测试约束：
 

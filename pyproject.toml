@@ -19,31 +19,28 @@ select = [
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
-addopts = "--ignore=tests/milestone004 --ignore-glob=tests/test_qualitative_v2_m5*.py --ignore-glob=tests/test_outcome_shadow*.py"
+addopts = "--ignore=tests/milestone004 --ignore-glob=tests/test_qualitative_v2_m5*.py --ignore-glob=tests/test_outcome_shadow*.py --ignore=tests/test_qualitative_v2_production_contexts.py --ignore=tests/test_qualitative_v2_orient_cable_pilot.py --ignore=tests/test_qualitative_v2_orient_cable_hybrid.py --ignore=tests/test_qualitative_v2_selected_five.py"
 
 [tool.mypy]
 python_version = "3.13"
 exclude = [
     "^a_stock_tracker/qualitative/archive_m4/",
     "^a_stock_tracker/qualitative/m5/",
+    "^a_stock_tracker/qualitative/(production_contexts|orient_cable_pilot|orient_cable_hybrid|selected_five)\\.py$",
     "^a_stock_tracker/data/outcome_shadow(_migration)?\\.py$",
     "^tests/milestone004/",
     "^tests/test_qualitative_v2_m5.*\\.py$",
     "^tests/test_outcome_shadow.*\\.py$",
     "^scripts/archive_m4/",
     "^scripts/(build_qualitative_v2_m5_bundle|build_qualitative_v2_m5_fundamentals_snapshot|capture_qualitative_v2_m5_source_frontdoors|capture_qualitative_v2_m5_source_ui_assets|prepare_qualitative_v2_m5_data_authorization|prepare_qualitative_v2_m5_quality_pilot|probe_qualitative_v2_m5_source_capability|run_qualitative_v2_m5|run_qualitative_v2_m5_quality_pilot)\\.py$",
+    "^scripts/(run_qualitative_v2_shadow|collect_qualitative_v2_production_contexts|collect_qualitative_v2_orient_cable|prepare_qualitative_v2_orient_cable_hybrid|collect_qualitative_v2_selected_five)\\.py$",
 ]
 files = [
     "a_stock_tracker",
     "pipeline.py",
     "tests",
-    "scripts/run_qualitative_v2_shadow.py",
     "scripts/run_qualitative_v2_production.py",
     "scripts/check_qualitative_v2_production.py",
-    "scripts/collect_qualitative_v2_production_contexts.py",
-    "scripts/collect_qualitative_v2_orient_cable.py",
-    "scripts/prepare_qualitative_v2_orient_cable_hybrid.py",
-    "scripts/collect_qualitative_v2_selected_five.py",
 ]
 ignore_missing_imports = true
 follow_imports = "skip"

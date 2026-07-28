@@ -8,7 +8,6 @@ import urllib.error
 from dataclasses import dataclass
 
 from a_stock_tracker.data.cache import get_db
-from a_stock_tracker.integrations.agent_reviewer import ReviewInput, ReviewOutput, gemini_review
 from a_stock_tracker.qualitative.contract import DIMENSION_NAMES, SCORE_RANGES
 
 logger = logging.getLogger(__name__)
@@ -16,12 +15,6 @@ logger = logging.getLogger(__name__)
 TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
 TELEGRAM_TEXT_LIMIT = 4096
 MESSAGE_TRUNCATION_MARKER = "\n\n⚠️ 消息过长已截断，请查看日志获取完整内容"
-
-# Keep one stock's complete reviewer block below roughly 300 characters,
-# including labels, indentation, and line breaks.
-REVIEW_EXPLANATION_LIMIT = 110
-REVIEW_OBJECTIONS_LIMIT = 60
-REVIEW_QUESTIONS_LIMIT = 60
 
 
 @dataclass(frozen=True)
@@ -59,10 +52,10 @@ def _prediction_qualitative_snapshot(
     scores_raw = _parse_json_object(snapshot_json)
     sources_raw = _parse_json_object(sources_json)
     if scores_raw is None or sources_raw is None or not isinstance(mode, str):
-        logger.warning("%s prediction 缺少合法定性快照，reviewer 已跳过", code)
+        logger.warning("%s prediction 缺少合法定性快照，展示降级为 legacy cache", code)
         return None
     if set(scores_raw) != set(DIMENSION_NAMES) or set(sources_raw) != set(DIMENSION_NAMES):
-        logger.warning("%s prediction 定性快照字段漂移，reviewer 已跳过", code)
+        logger.warning("%s prediction 定性快照字段漂移，展示降级为 legacy cache", code)
         return None
     scores: dict[str, int] = {}
     sources: dict[str, str] = {}
@@ -71,23 +64,17 @@ def _prediction_qualitative_snapshot(
         source = sources_raw[dimension]
         minimum, maximum = SCORE_RANGES[dimension]
         if isinstance(score, bool) or not isinstance(score, int) or not minimum <= score <= maximum:
-            logger.warning("%s prediction 定性快照分值无效，reviewer 已跳过", code)
+            logger.warning("%s prediction 定性快照分值无效，展示降级为 legacy cache", code)
             return None
         if not isinstance(source, str) or source not in {"v1", "v2"}:
-            logger.warning("%s prediction 定性快照来源无效，reviewer 已跳过", code)
+            logger.warning("%s prediction 定性快照来源无效，展示降级为 legacy cache", code)
             return None
         scores[dimension] = score
         sources[dimension] = source
     if not _sources_match_mode(sources, mode):
-        logger.warning("%s prediction 定性快照模式不一致，reviewer 已跳过", code)
+        logger.warning("%s prediction 定性快照模式不一致，展示降级为 legacy cache", code)
         return None
     return PredictionQualitativeSnapshot(scores=scores, sources=sources, mode=mode)
-
-
-def _truncate_with_ellipsis(value: str, limit: int) -> str:
-    if len(value) <= limit:
-        return value
-    return value[: limit - 1] + "…"
 
 
 def _send(token: str, chat_id: str, text: str) -> None:
@@ -162,7 +149,7 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
     primary = db.execute(
         """SELECT p.code, p.name, p.total_score, p.quant_score,
                   q.moat, q.market_pos, p.l3_v2_signal,
-                  p.weights_hash, p.report_period, p.qualitative_snapshot_json,
+                  p.qualitative_snapshot_json,
                   p.qualitative_sources_json, p.qualitative_mode
            FROM predictions p
            LEFT JOIN qualitative_scores q
@@ -211,7 +198,7 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
 
     if primary:
         lines = [f"🟢 主推（高分且风险门禁通过，总分>={threshold:.0f}）"]
-        for rank, (
+        for (
             code,
             name,
             total,
@@ -219,12 +206,10 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
             moat,
             market_pos,
             v2_signal,
-            weights_hash,
-            report_period,
             snapshot_json,
             sources_json,
             qualitative_mode,
-        ) in enumerate(primary):
+        ) in primary:
             snapshot = _prediction_qualitative_snapshot(code, snapshot_json, sources_json, qualitative_mode)
             display_moat = snapshot.scores["moat"] if snapshot else moat
             display_market_pos = snapshot.scores["market_pos"] if snapshot else market_pos
@@ -238,48 +223,6 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
                 v2_signal,
             )
             lines.append(stock_line)
-            if rank >= 3 or snapshot is None:
-                continue
-
-            try:
-                review_input = ReviewInput(
-                    code=code,
-                    name=name,
-                    score_result={
-                        "total_score": total,
-                        "quant_score": quant,
-                        "moat": snapshot.scores["moat"],
-                        "market_pos": snapshot.scores["market_pos"],
-                        "sentiment": snapshot.scores["sentiment"],
-                        "qualitative_sources": snapshot.sources,
-                        "qualitative_mode": snapshot.mode,
-                        "l3_v2_signal": v2_signal,
-                    },
-                    data_quality_result={
-                        "moat_available": True,
-                        "market_pos_available": True,
-                        "sentiment_available": True,
-                        "prediction_snapshot_available": True,
-                    },
-                    missing_fields=(),
-                    risk_flags=(),
-                    policy_version="framework-a-primary-push-v2",
-                    weights_hash=weights_hash,
-                    report_period=report_period,
-                )
-                review: ReviewOutput = gemini_review(review_input)
-                review_label = "📋 说明(降级，未调用真实LLM):" if review.is_fallback else "🤖 审查:"
-                explanation = _truncate_with_ellipsis(review.explanation, REVIEW_EXPLANATION_LIMIT)
-                review_lines = [f"    {review_label} {explanation}"]
-                if review.objections:
-                    objections = _truncate_with_ellipsis("; ".join(review.objections), REVIEW_OBJECTIONS_LIMIT)
-                    review_lines.append(f"    ⚠️ 异议: {objections}")
-                if review.human_questions:
-                    questions = _truncate_with_ellipsis("; ".join(review.human_questions), REVIEW_QUESTIONS_LIMIT)
-                    review_lines.append(f"    ❓ 待核实: {questions}")
-                lines.append("\n".join(review_lines))
-            except Exception as e:
-                logger.warning("%s reviewer block omitted: %s", code, e)
         sections.append("\n".join(lines))
 
     if backup:

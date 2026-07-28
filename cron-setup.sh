@@ -104,7 +104,7 @@ $WEEKLY_RULE
 # a-stock-tracker Framework B prospective cohort 自动冻结 (每周一 09:20)
 $COHORT_FREEZE_RULE
 
-# a-stock-tracker Phase 6 weekly PM loop (每周一 09:30)
+# a-stock-tracker weekly operational checks (每周一 09:30)
 $PM_LOOP_RULE
 
 # a-stock-tracker QFQ 日线采集 (TuShare, 工作日 16:00，pipeline 前)
@@ -116,7 +116,7 @@ EOF
 )
 echo "✅ 已配置 weekly 任务"
 echo "✅ 已配置 Framework B cohort 自动冻结任务"
-echo "✅ 已配置 weekly PM loop"
+echo "✅ 已配置 weekly operational checks"
 echo "✅ 已配置 qfq-daily-bars 任务"
 echo "✅ 已配置 tushare-primary-daily 任务"
 
@@ -166,7 +166,7 @@ echo "rollback snapshot: $CRON_BACKUP_PATH"
 echo "任务详情："
 echo "  • weekly:         每周六 10:00 刷新基本面缓存"
 echo "  • b-cohort-freeze: 每周一 09:20 自动冻结 Framework B report-only cohort"
-echo "  • weekly-pm-loop: 每周一 09:30 复核 Phase 6 并发送 Telegram 摘要"
+echo "  • weekly-pm-loop: 每周一 09:30 复核运行状态并发送 Telegram 摘要"
 echo "  • qfq-daily-bars: 每个工作日 16:00 采集 QFQ 前复权日线"
 if [ "$MARKET_DATA_READY" -eq 1 ] || [ "$PRESERVE_EXISTING_DAILY" -eq 1 ]; then
     echo "  • primary-daily:  每个工作日 17:15 采集并物化 TuShare 估值"

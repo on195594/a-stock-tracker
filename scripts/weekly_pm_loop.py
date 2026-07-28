@@ -33,12 +33,13 @@ HARD_FAILURE_RE = re.compile(
     r"崩溃|database is locked)",
     re.IGNORECASE,
 )
-RESTRICTIVE_CONCLUSION_MARKERS = (
-    "仍不要启用生产写入",
-    "暂不进入 Phase 6 生产化",
-    "暂不进入生产化",
-)
 CRITICAL_FALLBACK_RE = re.compile(r"(API_KEY\s+not\s+set|auth\s+error)", re.IGNORECASE)
+STRATEGY_REPORT_MARKERS = (
+    "a-stock-tracker 策略评估报告",
+    "选择性偏差声明",
+    "Post-fix 样本专区",
+    "L3 v2 风险门禁",
+)
 
 
 @dataclass(frozen=True)
@@ -205,56 +206,14 @@ def check_accuracy_report(project_root: Path) -> CheckResult:
         combined = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
         return CheckResult("accuracy-report", "FAIL", _shorten(combined or f"exit={result.returncode}"))
 
-    summary = extract_phase6_summary(output)
-    if summary.status == "FAIL":
-        return summary
-    return summary
+    return extract_strategy_report_summary(output)
 
 
-def extract_phase6_summary(text: str) -> CheckResult:
-    if "Phase 6 readiness" not in text:
-        return CheckResult("accuracy-report", "FAIL", "missing Phase 6 readiness section")
-
-    blockers = _first_prefixed_line(text, "Phase 6 生产化阻塞项：")
-    next_action = _first_prefixed_line(text, "Phase 6 下一步：")
-    conclusion = _first_prefixed_line(text, "结论：", after_marker="Phase 6 readiness")
-
-    missing = [
-        name
-        for name, value in (
-            ("blockers", blockers),
-            ("next_action", next_action),
-            ("conclusion", conclusion),
-        )
-        if value is None
-    ]
+def extract_strategy_report_summary(text: str) -> CheckResult:
+    missing = [marker for marker in STRATEGY_REPORT_MARKERS if marker not in text]
     if missing:
         return CheckResult("accuracy-report", "FAIL", "missing " + ",".join(missing))
-
-    assert blockers is not None
-    assert next_action is not None
-    assert conclusion is not None
-
-    status = "OK"
-    if "无" not in blockers:
-        status = "WARN"
-    if not any(marker in conclusion for marker in RESTRICTIVE_CONCLUSION_MARKERS):
-        status = "WARN"
-        conclusion += " | production_guard=missing_restrictive_marker"
-
-    detail = " | ".join([blockers, next_action, conclusion])
-    return CheckResult("accuracy-report", status, detail)
-
-
-def _first_prefixed_line(text: str, prefix: str, *, after_marker: str | None = None) -> str | None:
-    if after_marker is not None:
-        marker_index = text.find(after_marker)
-        if marker_index >= 0:
-            text = text[marker_index:]
-    for line in text.splitlines():
-        if line.startswith(prefix):
-            return line.strip()
-    return None
+    return CheckResult("accuracy-report", "OK", "strategy report generated")
 
 
 def _shorten(text: str, limit: int = 300) -> str:
@@ -267,7 +226,7 @@ def _shorten(text: str, limit: int = 300) -> str:
 def build_summary(results: list[CheckResult], *, now: datetime, project_root: Path) -> tuple[str, str]:
     overall = _max_status([result.status for result in results])
     lines = [
-        "Phase 6 weekly PM loop",
+        "a-stock-tracker weekly operations",
         f"run_at: {now.strftime('%Y-%m-%d %H:%M:%S')}",
         f"status: {overall}",
         "",
@@ -321,7 +280,7 @@ def write_summary(summary: str, *, project_root: Path) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Run the Phase 6 weekly PM loop and send a Telegram summary.")
+    parser = argparse.ArgumentParser(description="Run weekly operational checks and send a Telegram summary.")
     parser.add_argument("--dry-run", action="store_true", help="Print the summary to stdout.")
     parser.add_argument("--no-telegram", action="store_true", help="Do not send Telegram notification.")
     args = parser.parse_args(argv)

@@ -408,36 +408,6 @@ def assert_report_matches_db(output: str) -> None:
     assert f"Framework A {expected} 条已结案记录" in output
 
 
-FRAMEWORK_B_FINANCIAL_SECTION = "Framework B 金融候选 dry-run"
-FRAMEWORK_B_QUALITY_SECTION = "Framework B 非金融质量候选与 B label 研究"
-FRAMEWORK_B_THRESHOLDS_SECTION = "B provisional thresholds"
-FRAMEWORK_B_LABEL_TRACKING_SECTION = "[UNFROZEN-PREVIEW] B provisional label preview"
-
-
-def _framework_b_prediction_count() -> int:
-    db = cache_mod.get_db()
-    count = db.execute("SELECT COUNT(*) FROM predictions WHERE framework='B'").fetchone()[0]
-    db.close()
-    return int(count)
-
-
-def _run_accuracy_report(capsys) -> str:
-    pipeline.cmd_accuracy_report()
-    return capsys.readouterr().out
-
-
-def _run_accuracy_report_without_b_writes(capsys) -> str:
-    before = _framework_b_prediction_count()
-    out = _run_accuracy_report(capsys)
-    assert _framework_b_prediction_count() == before
-    return out
-
-
-def _assert_contains_all(output: str, needles: list[str]) -> None:
-    for needle in needles:
-        assert needle in output
-
-
 def _insert_index_price(symbol: str, d: str, close: float) -> None:
     db = cache_mod.get_db()
     db.execute(
@@ -1192,38 +1162,19 @@ def test_accuracy_report_empty(tmp_db, capsys):
     assert "Framework A 0 条已结案记录" in out
     assert "暂无已结案记录" in out
     assert "选择性偏差" in out
-    assert "L3 买点层" in out
+    assert "L3 v2 风险门禁" in out
 
 
-def test_accuracy_report_l3_counts_null_semantics_and_strong_candidates(tmp_db, capsys, fake_weights, monkeypatch):
-    """L3 section 区分 NULL/NULL、NULL/v1、0/v1，并统计 strong 候选通过/拒绝。"""
-    monkeypatch.setattr(pipeline, "_load_weights", lambda: fake_weights)
-    score_date = (date.today() - timedelta(days=30)).isoformat()
-    pass_id = _insert_prediction(
-        "600001", score_date, 100.0, total_score=70.0, entry_signal=1, entry_signal_version="v1"
-    )
-    reject_id = _insert_prediction(
-        "600002", score_date, 100.0, total_score=68.0, entry_signal=0, entry_signal_version="v1"
-    )
-    null_v1_id = _insert_prediction(
-        "600003", score_date, 100.0, total_score=66.0, entry_signal=None, entry_signal_version="v1"
-    )
-    _insert_prediction("600004", score_date, 100.0, total_score=67.0, entry_signal=None, entry_signal_version=None)
+def test_accuracy_report_null_exclusion_count_is_framework_a_only(tmp_db, capsys):
+    """默认报告只统计 Framework A，因此头部 NULL 排除数也必须使用同一口径。"""
+    _insert_prediction("600001", "2026-07-01", 100.0, total_score=50.0)
     db = cache_mod.get_db()
-    db.execute(
-        "UPDATE predictions SET entry_signal_status='unavailable', entry_signal_reason='FETCH_FAILED' WHERE id=?",
-        (null_v1_id,),
-    )
-    db.execute("UPDATE predictions SET outcome_30d=8.0, benchmark_30d=2.0 WHERE id=?", (pass_id,))
-    db.execute("UPDATE predictions SET outcome_30d=3.0, benchmark_30d=5.0 WHERE id=?", (reject_id,))
-    db.execute("UPDATE predictions SET outcome_30d=4.0, benchmark_30d=1.0 WHERE id=?", (null_v1_id,))
     db.execute(
         """INSERT INTO predictions
            (code, name, framework, score_date, price_at_score, quant_score,
-            total_score, weights_hash, report_period, outcome_30d, benchmark_30d,
-            entry_signal, entry_signal_version, created_at)
-           VALUES ('B00001', 'B1', 'B', ?, 100, 50, 80, 'hashB', '2024-09-30', -5, -10, 1, 'v1', ?)""",
-        (score_date, score_date + "T15:00:00"),
+            total_score, weights_hash, report_period, created_at)
+           VALUES ('B00001', 'B1', 'B', '2026-07-01', 100, 40, 50,
+                   'hashB', '2024-09-30', '2026-07-01T15:00:00')"""
     )
     db.commit()
     db.close()
@@ -1231,21 +1182,52 @@ def test_accuracy_report_l3_counts_null_semantics_and_strong_candidates(tmp_db, 
     pipeline.cmd_accuracy_report()
     out = capsys.readouterr().out
 
-    assert "L3 买点层" in out
-    assert "v1 记录数：4" in out
-    assert "entry_signal=1：2" in out
-    assert "entry_signal=0：1" in out
-    assert "NULL/NULL pre-L3：1" in out
-    assert "NULL/v1 不可计算：1" in out
-    assert "L3 覆盖率：3/4 = 75.0%" in out
+    assert "已排除 1 条 NULL outcome 记录" in out
+
+
+def test_accuracy_report_l3_v2_counts_and_strong_candidates(tmp_db, capsys, fake_weights, monkeypatch):
+    """默认报告只展示 L3 v2 风险门禁，不再混入 v1 买点研究。"""
+    monkeypatch.setattr(pipeline, "_load_weights", lambda: fake_weights)
+    score_date = (date.today() - timedelta(days=30)).isoformat()
+    pass_id = _insert_prediction("600001", score_date, 100.0, total_score=70.0)
+    reject_id = _insert_prediction("600002", score_date, 100.0, total_score=68.0)
+    unavailable_id = _insert_prediction("600003", score_date, 100.0, total_score=66.0)
+    _insert_prediction("600004", score_date, 100.0, total_score=67.0)
+    db = cache_mod.get_db()
+    db.execute(
+        "UPDATE predictions SET l3_v2_signal=1, l3_v2_version='v2' WHERE id=?",
+        (pass_id,),
+    )
+    db.execute(
+        "UPDATE predictions SET l3_v2_signal=0, l3_v2_version='v2' WHERE id=?",
+        (reject_id,),
+    )
+    db.execute(
+        """UPDATE predictions
+           SET l3_v2_signal=NULL, l3_v2_version='v2', l3_v2_reason='FETCH_FAILED'
+           WHERE id=?""",
+        (unavailable_id,),
+    )
+    db.execute("UPDATE predictions SET outcome_30d=8.0, benchmark_30d=2.0 WHERE id=?", (pass_id,))
+    db.execute("UPDATE predictions SET outcome_30d=3.0, benchmark_30d=5.0 WHERE id=?", (reject_id,))
+    db.commit()
+    db.close()
+
+    pipeline.cmd_accuracy_report()
+    out = capsys.readouterr().out
+
+    assert "L3 v2 风险门禁" in out
+    assert "当前规则仅按风险门禁解释，不代表已验证买点" in out
+    assert "v2 记录：3" in out
+    assert "通过/拒绝/不可用：1/1/1" in out
+    assert "pre-v2 记录：1" in out
+    assert "可判断覆盖率：2/3 = 66.7%" in out
     assert "不可计算原因：FETCH_FAILED=1" in out
-    assert "strong 候选 L3 通过：1" in out
-    assert "strong 候选 L3 拒绝：1" in out
-    assert "strong 候选中 L3 不可计算：1" in out
-    assert "高分但未推送：1（L3 unavailable）" in out
-    assert "L3 30d 已结案：1" in out
-    assert "L3 30d 命中率：1.000" in out
-    assert "L3 30d 样本不足" in out
+    assert "strong v2 候选通过/拒绝/不可用：1/1/1" in out
+    assert "strong pre-v2 候选：1" in out
+    assert "通过后 30d：样本=1，平均alpha=6.000，超额命中率=1.000" in out
+    assert "拒绝后 30d：样本=1，平均alpha=-2.000，超额命中率=0.000" in out
+    assert "L3 v2 30d 样本不足（2/30），不得输出确定性结论" in out
 
 
 def test_accuracy_report_writes_only_to_isolated_output_path(tmp_db, capsys):
@@ -1368,8 +1350,8 @@ def test_accuracy_report_warning_uses_framework_a_not_all_frameworks(tmp_db, cap
     out = capsys.readouterr().out
 
     assert "样本不足（Framework A 75 条已结案记录）" in out
-    assert "A" in out and "75        75" in out
-    assert "B" in out and "35        35" in out
+    assert "Framework A 总记录：75" in out
+    assert "Framework B" not in out
 
 
 def test_accuracy_report_contract_matches_framework_a_sql_anchor(tmp_db, capsys, fake_weights, monkeypatch):
@@ -1426,242 +1408,17 @@ def test_accuracy_report_post_fix_section_splits_samples(tmp_db, capsys):
     assert "post-fix 样本不足（1/100）" in out
 
 
-def test_accuracy_report_data_quality_audit(tmp_db, capsys, small_watchlist):
-    """数据质量审计报告 watchlist 缓存、PB 日度可计算和 Gemini cache 状态。"""
-    data = _full_data()
-    data["bps"] = 10.0
-    data["pb_hist_monthly"] = [1.0] * 12
-    _insert_fundamentals("600036", "招商银行", "银行", data)
-    _insert_prediction("600036", "2026-05-30", 35.0, total_score=50.0)
-    db = cache_mod.get_db()
-    db.execute(
-        """INSERT INTO qualitative_scores (code, moat, market_pos, sentiment, scored_date)
-           VALUES ('600036', 7, 3, 4, '2026-05-30')"""
-    )
-    db.commit()
-    db.close()
-
+def test_accuracy_report_excludes_retired_default_sections(tmp_db, capsys):
+    """默认报告只回答策略效果，不再承载研究试验和运行治理。"""
     pipeline.cmd_accuracy_report()
     out = capsys.readouterr().out
 
-    assert "数据质量审计（当前 watchlist）" in out
-    assert "基本面缓存可用：1/2" in out
-    assert "基本面缓存缺失或过期：1" in out
-    assert "金融行业 gross_margin 不适用：0" in out
-    assert "PB 日度可计算：1/1" in out
-    assert "cache report_period 缺失：0/1" in out
-    assert "prediction report_period 缺失：0/1" in out
-    assert "Gemini 缓存存在：1/2" in out
-    assert "000858 五粮液: cache_missing_or_expired" in out
-
-
-def test_accuracy_report_report_period_missing_split_history_locked(tmp_db, capsys, small_watchlist):
-    """缓存已有 report_period 但 prediction 为空时，应标成历史记录不可回填。"""
-    _insert_fundamentals("600036", "招商银行", "银行", _full_data("2025-12-31"))
-    row_id = _insert_prediction("600036", "2026-05-30", 35.0, total_score=50.0)
-    db = cache_mod.get_db()
-    db.execute("UPDATE predictions SET report_period=NULL WHERE id=?", (row_id,))
-    db.commit()
-    db.close()
-
-    pipeline.cmd_accuracy_report()
-    out = capsys.readouterr().out
-
-    assert "prediction report_period 缺失：1/1" in out
-    assert "prediction report_period 缺失拆分：历史记录不可回填=1, 新记录待补齐=0, 无A记录=0" in out
-    assert "missing:prediction_report_period(history_locked_cache_ready)" in out
-
-
-def test_accuracy_report_framework_b_dry_run_does_not_write_predictions(
-    tmp_db, capsys, fake_weights, small_watchlist, monkeypatch
-):
-    """Framework B dry-run 只在报告里对比，不启用生产写入。"""
-    monkeypatch.setattr(pipeline, "_load_weights", lambda: fake_weights)
-    _insert_fundamentals("600036", "招商银行", "银行", _full_data())
-    _insert_fundamentals("000858", "五粮液", "白酒", _full_data())
-    _insert_prediction("600036", "2026-05-30", 35.0, total_score=50.0)
-
-    out = _run_accuracy_report_without_b_writes(capsys)
-
-    _assert_contains_all(
-        out,
-        [
-            FRAMEWORK_B_FINANCIAL_SECTION,
-            "report-only，不写 predictions",
-            "口径：银行/证券/保险/金融关键词候选",
-            "不参与 B label 阈值",
-            "候选样本：1",
-            "可评分：1",
-            "招商银行(600036)",
-            "B 候选行业分布：",
-            "银行: 1",
-            "B-A 分项得分差异均值：",
-            "B-A delta Top：",
-            "B-A delta Bottom：",
-            "金融行业专用口径",
-        ],
-    )
-
-
-def test_accuracy_report_framework_b_dry_run_flags_roe_trend_warning(
-    tmp_db, capsys, fake_weights, small_watchlist, monkeypatch
-):
-    """roe_latest 显著低于 roe_3y_avg 时，B dry-run 报告行带 ⚠️ROE趋势预警 标注，
-    且分数/排序跟改动前一致（纯展示，不改变打分行为）。"""
-    monkeypatch.setattr(pipeline, "_load_weights", lambda: fake_weights)
-    warned_data = {**_full_data(), "roe_3y_avg": 15.0, "roe_latest": 8.0}
-    stable_data = {**_full_data(), "roe_3y_avg": 15.0, "roe_latest": 14.5}
-    _insert_fundamentals("600036", "招商银行", "银行", warned_data)
-    _insert_fundamentals("601318", "中国平安", "保险", stable_data)
-    _insert_prediction("600036", "2026-05-30", 35.0, total_score=50.0)
-    monkeypatch.setattr(
-        config,
-        "WATCHLIST",
-        [
-            {"code": "600036", "name": "招商银行"},
-            {"code": "601318", "name": "中国平安"},
-        ],
-    )
-
-    out = _run_accuracy_report_without_b_writes(capsys)
-
-    assert "招商银行(600036)" in out
-    warned_line = next(line for line in out.splitlines() if "招商银行(600036)" in line and "B=" in line)
-    assert "⚠️ROE趋势预警" in warned_line
-    stable_lines = [line for line in out.splitlines() if "中国平安(601318)" in line and "B=" in line]
-    assert stable_lines and all("⚠️ROE趋势预警" not in line for line in stable_lines)
-
-    # 分数本身不受影响：用同样的数据直接调用打分逻辑核对，确认报告里的 B 分数没有被打分前置调整改过
-    from a_stock_tracker.scoring import score_stock
-
-    expected_b = score_stock("600036", "B", warned_data, weights=fake_weights, enforce_supported=False)
-    assert f"B={expected_b['total_score']:.1f}" in warned_line
-
-
-def test_accuracy_report_framework_b_quality_expansion_report_only(
-    tmp_db, capsys, fake_weights, small_watchlist, monkeypatch
-):
-    """B 框扩展候选只做非金融质量股 dry-run，不写 predictions。"""
-    monkeypatch.setattr(pipeline, "_load_weights", lambda: fake_weights)
-    _insert_fundamentals("600036", "招商银行", "银行", _full_data())
-    _insert_fundamentals("000858", "五粮液", "白酒", _full_data())
-    _insert_prediction("000858", "2026-05-30", 35.0, total_score=50.0)
-
-    out = _run_accuracy_report_without_b_writes(capsys)
-
-    _assert_contains_all(
-        out,
-        [
-            FRAMEWORK_B_QUALITY_SECTION,
-            "report-only",
-            "口径：非金融质量规则",
-            "provisional thresholds 与 label outcome",
-            "conservative 规则：非金融",
-            "base 规则：非金融",
-            "loose 规则：非金融",
-            "候选样本：1",
-            "五粮液(000858)",
-            "[白酒]",
-            "当前候选已覆盖非金融行业",
-            "后续积累建议：",
-            FRAMEWORK_B_THRESHOLDS_SECTION,
-            "基于非金融质量候选",
-            FRAMEWORK_B_LABEL_TRACKING_SECTION,
-            "禁止解释命中率/胜率",
-            "不能作为交易或生产门槛",
-        ],
-    )
-
-
-def test_accuracy_report_separates_unfrozen_preview_from_prospective_gate(tmp_db, capsys, fake_weights, monkeypatch):
-    """滚动 latest-A 只能预览；Phase 6 门禁必须读取冻结 cohort。"""
-    watchlist = [
-        {"code": "000858", "name": "五粮液"},
-        {"code": "600519", "name": "贵州茅台"},
-        {"code": "000333", "name": "美的集团"},
-        {"code": "600309", "name": "万华化学"},
-        {"code": "300750", "name": "宁德时代"},
-    ]
-    monkeypatch.setattr(config, "WATCHLIST", watchlist)
-    monkeypatch.setattr(pipeline, "_load_weights", lambda: fake_weights)
-    for item in watchlist:
-        _insert_fundamentals(item["code"], item["name"], "制造", _full_data())
-        row_id = _insert_prediction(item["code"], "2026-05-01", 35.0, total_score=50.0)
-        if item["code"] in {"000858", "600519"}:
-            db = cache_mod.get_db()
-            db.execute(
-                "UPDATE predictions SET outcome_30d=?, benchmark_30d=? WHERE id=?",
-                (3.0, 1.0, row_id),
-            )
-            db.commit()
-            db.close()
-
-    out = _run_accuracy_report_without_b_writes(capsys)
-
-    _assert_contains_all(
-        out,
-        [
-            FRAMEWORK_B_THRESHOLDS_SECTION,
-            FRAMEWORK_B_LABEL_TRACKING_SECTION,
-            "滚动 latest-A，不参与门禁",
-            "latest-A 会随 daily 滚动",
-            "已结案30d=",
-            "未来可结案30d=",
-            "30d可结案日期：最早=",
-            "下一批预计=",
-            "到期但 outcome 仍为空风险清单（最多 8 条）：",
-            "due=2026-05-31",
-            "A均分=",
-            "B均分=",
-            "行业=制造:",
-            "Framework B prospective frozen cohort（只读）",
-            "尚未创建 cohort 表",
-            "B label outcome 自然结案（prospective frozen cohort）：WAIT",
-            "已结案=0/20",
-            "最早可评估=N/A",
-            "overdue风险=0",
-            "B label 阈值/命中率解释：禁止",
-            "禁止解释命中率/胜率",
-        ],
-    )
-
-
-def test_accuracy_report_financial_gross_margin_not_required(tmp_db, capsys, small_watchlist):
-    """金融行业 gross_margin=None 应计为不适用，而不是 required 缺失。"""
-    data = _full_data()
-    data["gross_margin"] = None
-    data["bps"] = 10.0
-    data["pb_hist_monthly"] = [1.0] * 12
-    _insert_fundamentals("600036", "招商银行", "银行", data)
-    _insert_prediction("600036", "2026-05-30", 35.0, total_score=50.0)
-
-    pipeline.cmd_accuracy_report()
-    out = capsys.readouterr().out
-
-    assert "金融行业 gross_margin 不适用：1" in out
-    assert "required 字段可接受：1/1" in out
-    assert "600036 招商银行: gross_margin" not in out
-
-
-def test_accuracy_report_phase6_readiness_waits_for_data_quality(tmp_db, capsys, small_watchlist):
-    """Phase 6 readiness 应明确在数据质量或 post-fix outcome 不满足时等待。"""
-    _insert_fundamentals("600036", "招商银行", "银行", _full_data())
-
-    pipeline.cmd_accuracy_report()
-    out = capsys.readouterr().out
-
-    assert "Phase 6 readiness" in out
-    assert "post-fix A框 30d 结案 ≥ 100：0/100 WAIT" in out
-    assert "数据质量门槛：WAIT" in out
-    assert "B label outcome 自然结案（prospective frozen cohort）：WAIT" in out
-    assert "B label 阈值/命中率解释：禁止" in out
-    assert "Phase 6 生产化阻塞项：" in out
-    assert "post-fix A框 30d 结案不足（0/100）" in out
-    assert "数据质量门槛未满足" in out
-    assert "B label 已结案样本不足（0/20）" in out
-    assert "Phase 6 下一步：" in out
-    assert "继续 daily/outcome-update，等待 post-fix A 框自然结案" in out
-    assert "结论：暂不进入 Phase 6 生产化" in out
+    assert "a-stock-tracker 策略评估报告" in out
+    assert "Framework B" not in out
+    assert "Phase 6 readiness" not in out
+    assert "Gemini 评分稳定性" not in out
+    assert "数据质量审计" not in out
+    assert "L3 买点层" not in out
 
 
 def test_pipeline_pb_percentile_wrapper_uses_scorer() -> None:
@@ -2355,79 +2112,6 @@ def test_cmd_remove(tmp_db, monkeypatch):
 
     # 对不存在的股票不应抛出异常
     pipeline.cmd_remove("999999")
-
-
-# ---------------------------------------------------------------------------
-# 46. accuracy-report：Gemini 仅首次评分（无后续重打分数据）→ 显示预计重打分日期
-# ---------------------------------------------------------------------------
-def test_accuracy_report_gemini_no_rescore(tmp_db, capsys):
-    """qualitative_scores 每只股只有1条记录 → 显示尚无重评数据 + 预计首批重评。"""
-    db = cache_mod.get_db()
-    db.execute(
-        """INSERT INTO qualitative_scores (code, moat, market_pos, sentiment, scored_date)
-           VALUES ('600036', 7, 3, 4, '2026-04-12')"""
-    )
-    db.commit()
-    db.close()
-
-    pipeline.cmd_accuracy_report()
-    out = capsys.readouterr().out
-    assert "尚无重评数据" in out
-    assert "2026-05-12" in out  # 2026-04-12 + 30天
-
-
-# ---------------------------------------------------------------------------
-# 47. accuracy-report：Gemini 漂移检测（2条记录，moat差值>2）→ 标记 low_confidence
-# ---------------------------------------------------------------------------
-def test_accuracy_report_gemini_drift_detected(tmp_db, capsys):
-    """同一股票有首次和重打分两条记录，且 moat 差值 > 2 → ⚠️ low_confidence 标记。"""
-    db = cache_mod.get_db()
-    db.execute(
-        """INSERT INTO qualitative_scores (code, moat, market_pos, sentiment, scored_date)
-           VALUES ('600036', 5, 3, 3, '2026-03-01')"""
-    )
-    db.execute(
-        """INSERT INTO qualitative_scores (code, moat, market_pos, sentiment, scored_date)
-           VALUES ('600036', 9, 3, 3, '2026-04-01')"""
-    )
-    db.commit()
-    db.close()
-
-    pipeline.cmd_accuracy_report()
-    out = capsys.readouterr().out
-    assert "low_confidence" in out
-    assert "600036" in out
-
-
-# ---------------------------------------------------------------------------
-# 48. accuracy-report：Framework B 门槛 1 未满足
-# ---------------------------------------------------------------------------
-def test_accuracy_report_b_progress_not_met(tmp_db, capsys, fake_weights, monkeypatch):
-    """A框 30d 结案 < 100 → 门槛 1 显示 ❌。"""
-    today = date.today()
-    score_date = (today - timedelta(days=30)).isoformat()
-    row_id = _insert_prediction("600036", score_date, 100.0, total_score=50.0)
-    db = cache_mod.get_db()
-    db.execute("UPDATE predictions SET outcome_30d=5.0, benchmark_30d=2.0 WHERE id=?", (row_id,))
-    db.commit()
-    db.close()
-
-    pipeline.cmd_accuracy_report()
-    out = capsys.readouterr().out
-    assert "门槛 1" in out
-    assert "❌" in out
-
-
-# ---------------------------------------------------------------------------
-# 49. accuracy-report：Framework B 旧门槛进度显示存在
-# ---------------------------------------------------------------------------
-def test_accuracy_report_b_progress_section_present(tmp_db, capsys):
-    """accuracy-report 始终包含 Framework B 旧重启门槛进度节。"""
-    pipeline.cmd_accuracy_report()
-    out = capsys.readouterr().out
-    assert "Framework B 旧重启门槛进度（A框生产化前置，不等同 report-only）" in out
-    assert "门槛 1" in out
-    assert "门槛 2" in out
 
 
 def test_backfill_null_prices_uses_db_cache(tmp_db) -> None:

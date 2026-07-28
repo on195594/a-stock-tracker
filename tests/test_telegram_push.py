@@ -373,58 +373,9 @@ def test_send_real_execution(monkeypatch):
         assert req.get_method() == "POST"
 
 
-def test_reviewer_only_receives_top_three_primary_stocks_with_row_metadata(tmp_db, telegram_env, monkeypatch):
+def test_display_uses_prediction_hybrid_snapshot_not_latest_legacy(tmp_db, telegram_env, monkeypatch):
     sent: list[tuple[Any, ...]] = []
-    reviewed_inputs = []
     monkeypatch.setattr(telegram_push, "_send", lambda *args: sent.append(args))
-
-    def capture_review(review_input):
-        reviewed_inputs.append(review_input)
-        return telegram_push.ReviewOutput(explanation=f"review-{review_input.code}")
-
-    monkeypatch.setattr(telegram_push, "gemini_review", capture_review)
-    for code, score in (
-        ("600001", 51.0),
-        ("600002", 75.0),
-        ("600003", 63.0),
-        ("600004", 82.0),
-        ("600005", 70.0),
-    ):
-        _insert_prediction(
-            code,
-            score,
-            1,
-            l3_v2_signal=1,
-            weights_hash=f"weights-{code}",
-            report_period=f"period-{code}",
-        )
-
-    telegram_push.push_daily_signals("2026-05-30", threshold=44.0)
-
-    assert len(sent) == 1
-    assert [review.code for review in reviewed_inputs] == ["600004", "600002", "600005"]
-    assert len(reviewed_inputs) == 3
-    assert reviewed_inputs[0].weights_hash == "weights-600004"
-    assert reviewed_inputs[0].report_period == "period-600004"
-    assert reviewed_inputs[0].score_result["qualitative_mode"] == "v1"
-    assert reviewed_inputs[0].score_result["qualitative_sources"] == {
-        "moat": "v1",
-        "market_pos": "v1",
-        "sentiment": "v1",
-    }
-
-
-def test_reviewer_and_display_use_prediction_hybrid_snapshot_not_latest_legacy(tmp_db, telegram_env, monkeypatch):
-    sent: list[tuple[Any, ...]] = []
-    reviewed_inputs = []
-    monkeypatch.setattr(telegram_push, "_send", lambda *args: sent.append(args))
-    monkeypatch.setattr(
-        telegram_push,
-        "gemini_review",
-        lambda review_input: (
-            reviewed_inputs.append(review_input) or telegram_push.ReviewOutput(explanation="snapshot-review")
-        ),
-    )
     _insert_prediction("600036", 66.0, 1, l3_v2_signal=1)
     _insert_qualitative_scores("600036", 7, 3)
     db = cache_mod.get_db()
@@ -442,23 +393,12 @@ def test_reviewer_and_display_use_prediction_hybrid_snapshot_not_latest_legacy(t
 
     telegram_push.push_daily_signals("2026-05-30", threshold=44.0)
 
-    assert len(reviewed_inputs) == 1
-    assert reviewed_inputs[0].score_result["moat"] == 9
-    assert reviewed_inputs[0].score_result["market_pos"] == 5
-    assert reviewed_inputs[0].score_result["qualitative_mode"] == "hybrid_v2"
-    assert reviewed_inputs[0].score_result["qualitative_sources"] == {
-        "moat": "v2",
-        "market_pos": "v2",
-        "sentiment": "v1",
-    }
     assert "护城河9/10(强)" in sent[0][2]
 
 
-def test_reviewer_fails_closed_when_prediction_snapshot_is_missing(tmp_db, telegram_env, monkeypatch):
+def test_display_falls_back_to_legacy_cache_when_prediction_snapshot_is_missing(tmp_db, telegram_env, monkeypatch):
     sent: list[tuple[Any, ...]] = []
-    reviewed_inputs = []
     monkeypatch.setattr(telegram_push, "_send", lambda *args: sent.append(args))
-    monkeypatch.setattr(telegram_push, "gemini_review", lambda value: reviewed_inputs.append(value))
     _insert_prediction("600010", 66.0, 1, l3_v2_signal=1, with_snapshot=False)
     _insert_qualitative_scores("600010", 7, 3)
     db = cache_mod.get_db()
@@ -472,133 +412,12 @@ def test_reviewer_fails_closed_when_prediction_snapshot_is_missing(tmp_db, teleg
 
     telegram_push.push_daily_signals("2026-05-30", threshold=44.0)
 
-    assert reviewed_inputs == []
     assert "护城河7/10" in sent[0][2]
-
-
-def test_reviewer_handles_fewer_than_three_primary_stocks(tmp_db, telegram_env, monkeypatch):
-    sent: list[tuple[Any, ...]] = []
-    reviewed_inputs = []
-    monkeypatch.setattr(telegram_push, "_send", lambda *args: sent.append(args))
-
-    def capture_review(review_input):
-        reviewed_inputs.append(review_input)
-        return telegram_push.ReviewOutput(explanation="single review")
-
-    monkeypatch.setattr(telegram_push, "gemini_review", capture_review)
-    _insert_prediction("600010", 66.0, 1, l3_v2_signal=1)
-
-    telegram_push.push_daily_signals("2026-05-30", threshold=44.0)
-
-    assert len(sent) == 1
-    assert [review.code for review in reviewed_inputs] == ["600010"]
-
-
-def test_reviewer_not_called_without_primary_stocks(tmp_db, telegram_env, monkeypatch):
-    sent: list[tuple[Any, ...]] = []
-    review_calls: list[Any] = []
-    monkeypatch.setattr(telegram_push, "_send", lambda *args: sent.append(args))
-    monkeypatch.setattr(telegram_push, "gemini_review", lambda value: review_calls.append(value))
-    _insert_prediction("600020", 66.0, 1, l3_v2_signal=0)
-    _insert_prediction("600021", 38.0, 0)
-
-    telegram_push.push_daily_signals("2026-05-30", threshold=44.0, radar_min=35.0)
-
-    assert len(sent) == 1
-    assert review_calls == []
-    assert "🟡 候补" in sent[0][2]
-    assert "🔵 雷达" in sent[0][2]
-
-
-def test_reviewer_output_only_appears_for_reviewed_primary_stocks(tmp_db, telegram_env, monkeypatch):
-    sent: list[tuple[Any, ...]] = []
-    monkeypatch.setattr(telegram_push, "_send", lambda *args: sent.append(args))
-
-    def review(review_input):
-        return telegram_push.ReviewOutput(
-            explanation=f"explanation-{review_input.code}",
-            objections=(f"objection-{review_input.code}",),
-            human_questions=(f"question-{review_input.code}",),
-        )
-
-    monkeypatch.setattr(telegram_push, "gemini_review", review)
-    for code, score in (("600030", 80.0), ("600031", 70.0), ("600032", 60.0), ("600033", 50.0)):
-        _insert_prediction(code, score, 1, l3_v2_signal=1)
-    _insert_prediction("600034", 49.0, 1, l3_v2_signal=0)
-    _insert_prediction("600035", 38.0, 0)
-
-    telegram_push.push_daily_signals("2026-05-30", threshold=44.0, radar_min=35.0)
-
-    text = sent[0][2]
-    for code in ("600030", "600031", "600032"):
-        assert f"🤖 审查: explanation-{code}" in text
-        assert f"⚠️ 异议: objection-{code}" in text
-        assert f"❓ 待核实: question-{code}" in text
-    for code in ("600033", "600034", "600035"):
-        assert f"explanation-{code}" not in text
-        assert f"objection-{code}" not in text
-        assert f"question-{code}" not in text
-    assert telegram_push.MESSAGE_TRUNCATION_MARKER not in text
-
-
-def test_reviewer_output_visibly_distinguishes_fallback(tmp_db, telegram_env, monkeypatch):
-    sent: list[tuple[Any, ...]] = []
-    monkeypatch.setattr(telegram_push, "_send", lambda *args: sent.append(args))
-
-    def review(review_input):
-        return telegram_push.ReviewOutput(
-            explanation=f"review-{review_input.code}",
-            is_fallback=review_input.code == "600051",
-        )
-
-    monkeypatch.setattr(telegram_push, "gemini_review", review)
-    _insert_prediction("600050", 80.0, 1, l3_v2_signal=1)
-    _insert_prediction("600051", 70.0, 1, l3_v2_signal=1)
-
-    telegram_push.push_daily_signals("2026-05-30", threshold=44.0)
-
-    text = sent[0][2]
-    assert "🤖 审查: review-600050" in text
-    assert "📋 说明(降级，未调用真实LLM): review-600051" in text
-    assert "🤖 审查: review-600051" not in text
-
-
-def test_reviewer_fields_are_bounded_without_truncating_whole_message(tmp_db, telegram_env, monkeypatch):
-    sent: list[tuple[Any, ...]] = []
-    monkeypatch.setattr(telegram_push, "_send", lambda *args: sent.append(args))
-    monkeypatch.setattr(
-        telegram_push,
-        "gemini_review",
-        lambda _review_input: telegram_push.ReviewOutput(
-            explanation="解" * 1000,
-            objections=("异" * 1000,),
-            human_questions=("问" * 1000,),
-        ),
-    )
-    _insert_prediction("600052", 80.0, 1, l3_v2_signal=1)
-
-    telegram_push.push_daily_signals("2026-05-30", threshold=44.0)
-
-    text = sent[0][2]
-    assert telegram_push.MESSAGE_TRUNCATION_MARKER not in text
-    assert "解" * (telegram_push.REVIEW_EXPLANATION_LIMIT - 1) + "…" in text
-    assert "异" * (telegram_push.REVIEW_OBJECTIONS_LIMIT - 1) + "…" in text
-    assert "问" * (telegram_push.REVIEW_QUESTIONS_LIMIT - 1) + "…" in text
-    assert "解" * telegram_push.REVIEW_EXPLANATION_LIMIT not in text
 
 
 def test_pathological_message_is_truncated_to_telegram_limit(tmp_db, telegram_env, monkeypatch, caplog):
     sent: list[tuple[Any, ...]] = []
     monkeypatch.setattr(telegram_push, "_send", lambda *args: sent.append(args))
-    monkeypatch.setattr(
-        telegram_push,
-        "gemini_review",
-        lambda _review_input: telegram_push.ReviewOutput(
-            explanation="超长说明" * 1000,
-            objections=("超长异议" * 1000,),
-            human_questions=("超长问题" * 1000,),
-        ),
-    )
 
     for index in range(3):
         _insert_prediction(f"61{index:04d}", 80.0 - index, 1, l3_v2_signal=1)
@@ -615,33 +434,3 @@ def test_pathological_message_is_truncated_to_telegram_limit(tmp_db, telegram_en
     assert len(text) <= telegram_push.TELEGRAM_TEXT_LIMIT
     assert text.endswith(telegram_push.MESSAGE_TRUNCATION_MARKER)
     assert "Telegram 消息过长" in caplog.text
-
-
-def test_reviewer_exception_omits_one_block_without_interrupting_push(tmp_db, telegram_env, monkeypatch):
-    sent: list[tuple[Any, ...]] = []
-    monkeypatch.setattr(telegram_push, "_send", lambda *args: sent.append(args))
-
-    def review(review_input):
-        if review_input.code == "600041":
-            raise RuntimeError("boom")
-        return telegram_push.ReviewOutput(explanation=f"review-{review_input.code}")
-
-    monkeypatch.setattr(telegram_push, "gemini_review", review)
-    _insert_prediction("600040", 80.0, 1, l3_v2_signal=1)
-    _insert_prediction("600041", 70.0, 1, l3_v2_signal=1)
-    _insert_prediction("600042", 60.0, 1, l3_v2_signal=1)
-    _insert_prediction("600043", 50.0, 1, l3_v2_signal=0)
-    _insert_prediction("600044", 38.0, 0)
-
-    telegram_push.push_daily_signals("2026-05-30", threshold=44.0, radar_min=35.0)
-
-    assert len(sent) == 1
-    text = sent[0][2]
-    assert "N600041(600041)" in text
-    assert "review-600041" not in text
-    assert "review-600040" in text
-    assert "review-600042" in text
-    assert "🟡 候补" in text
-    assert "N600043(600043)" in text
-    assert "🔵 雷达" in text
-    assert "N600044(600044)" in text

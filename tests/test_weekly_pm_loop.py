@@ -18,18 +18,13 @@ spec.loader.exec_module(weekly_pm_loop)
 
 
 REPORT_OK = """
-── Phase 6 readiness ──
-Phase 6 生产化阻塞项：无
-Phase 6 下一步：继续 report-only
-结论：可以进入 Phase 6 report-only 深化；仍不要启用生产写入。
+a-stock-tracker 策略评估报告
+⚠️  选择性偏差声明：watchlist 为手动维护的已知标的。
+── Post-fix 样本专区（Framework A）──
+── L3 v2 风险门禁 ──
 """
 
-REPORT_WARN = """
-── Phase 6 readiness ──
-Phase 6 生产化阻塞项：B label 已结案样本不足
-Phase 6 下一步：等待自然结案
-结论：暂不进入 Phase 6 生产化；继续 report-only。
-"""
+REPORT_WARN = REPORT_OK
 
 
 @pytest.fixture
@@ -242,7 +237,7 @@ def test_log_check_treats_completed_http_fallback_as_warning(project_root: Path)
         "daily.log",
         "\n".join(
             (
-                "2026-07-24 17:30:40 WARNING 000786 gemini_review HTTP error 404, using fallback",
+                "2026-07-24 17:30:40 WARNING 000786 data provider HTTP error 404, using fallback",
                 "2026-07-24 17:30:41 INFO Telegram 推送成功：28 只股票",
             )
         ),
@@ -265,7 +260,7 @@ def test_log_check_keeps_missing_api_key_fallback_as_failure(project_root: Path)
     _write_log(
         project_root,
         "daily.log",
-        "2026-07-24 17:30:40 WARNING GEMINI_API_KEY not set, using fallback reviewer\n",
+        "2026-07-24 17:30:40 WARNING DATA_API_KEY not set, using fallback provider\n",
         mtime=now,
     )
 
@@ -330,18 +325,17 @@ def test_log_check_rejects_touched_log_with_unqualified_completed_json(project_r
     assert result.status == "FAIL"
 
 
-def test_accuracy_report_warns_when_conclusion_lacks_restrictive_marker() -> None:
+def test_accuracy_report_fails_when_strategy_section_is_missing() -> None:
     report = """
-── Phase 6 readiness ──
-Phase 6 生产化阻塞项：无
-Phase 6 下一步：人工复核
-结论：可以进入 Phase 6 生产化。
+a-stock-tracker 策略评估报告
+⚠️  选择性偏差声明：watchlist 为手动维护的已知标的。
+── Post-fix 样本专区（Framework A）──
 """
 
-    result = weekly_pm_loop.extract_phase6_summary(report)
+    result = weekly_pm_loop.extract_strategy_report_summary(report)
 
-    assert result.status == "WARN"
-    assert "production_guard=missing_restrictive_marker" in result.detail
+    assert result.status == "FAIL"
+    assert "L3 v2 风险门禁" in result.detail
 
 
 def test_accuracy_report_fallback_reads_artifacts_report(project_root: Path, monkeypatch) -> None:
@@ -393,5 +387,5 @@ def test_dry_run_no_telegram_does_not_require_credentials(
     assert weekly_pm_loop.main(["--dry-run", "--no-telegram"]) == 0
 
     out = capsys.readouterr().out
-    assert "Phase 6 weekly PM loop" in out
+    assert "a-stock-tracker weekly operations" in out
     assert "telegram_disabled" in out

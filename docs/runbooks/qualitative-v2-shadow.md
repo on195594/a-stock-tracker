@@ -1,5 +1,8 @@
 # Qualitative v2 Shadow Runbook
 
+> 冻结状态（2026-07-28）：本 runbook 仅供历史复验，不是当前常用操作。
+> 不要恢复真实外部调用或新增 artifact，除非新的收益假设和执行授权明确要求。
+
 ## Purpose and boundary
 
 This entrypoint evaluates an already-approved `QualitativeContext` without changing production scoring. It does not import `pipeline.py`, read or write `tracker.db`, update `qualitative_scores` or `predictions`, send Telegram messages, or change cron.

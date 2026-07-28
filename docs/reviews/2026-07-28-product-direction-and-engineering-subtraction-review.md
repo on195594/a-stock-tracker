@@ -169,11 +169,17 @@
 
 ### 7.2 拆分报告职责
 
-当前 `accuracy-report` 同时承担策略评价、数据质量、Framework B、Phase 6 和运维状态，建议逐步拆成：
+2026-07-28 第二轮减法已将默认 `accuracy-report` 收敛为策略评价：
 
 - strategy report：alpha、总收益、IC、分位差、回撤、L3 增益；
-- ops status：cache、readiness、cron、来源；
-- Framework B report：cohort 和生产化门槛。
+- ops status：继续由 readiness、日志和 weekly operational checks 独立承担；
+- Framework B：历史报告/cohort 模块保留，但不再进入默认策略报告。
+
+同轮删除 Telegram reviewer。历史 qualitative v2 context 收集、东方电缆和五股 pilot
+经消费者审计后仅被手工研究脚本使用，因此冻结并退出默认验证链；生产预计算批次仍复用
+client/shadow 引擎与 `run_qualitative_v2_production.py`，这些路径继续默认验证。L3 v1 仍被
+daily 写入、历史 backfill、生产验收和离线回测消费；本轮选择冻结规则并保持兼容写入，
+不做语义含混的停写，且默认 Telegram/策略报告不再展示 v1。
 
 ### 7.3 统一决策合同
 

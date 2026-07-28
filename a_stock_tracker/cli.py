@@ -950,8 +950,7 @@ def cmd_accuracy_report() -> None:
     db = get_db()
     try:
         weights = _load_weights()
-        weights_hash = _compute_weights_hash(weights)
-        report = build_accuracy_report(db, weights, weights_hash)
+        report = build_accuracy_report(db, weights)
         print(report)
 
         report_path = config.ACCURACY_REPORT_PATH

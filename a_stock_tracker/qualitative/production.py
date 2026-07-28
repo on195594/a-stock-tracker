@@ -16,8 +16,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import cast
 
-from a_stock_tracker.qualitative.client import DEFAULT_GEMINI_MODEL
-from a_stock_tracker.qualitative.contract import DIMENSION_NAMES, SCORE_RANGES
+from a_stock_tracker.qualitative.contract import DEFAULT_GEMINI_MODEL, DIMENSION_NAMES, SCORE_RANGES
 from a_stock_tracker.qualitative.types import QualitativeContext
 from a_stock_tracker.qualitative.validator import validate_context, validate_context_dict, validate_model_output
 

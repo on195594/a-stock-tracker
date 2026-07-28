@@ -20,12 +20,12 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol, cast
 
+from a_stock_tracker.qualitative.contract import DEFAULT_GEMINI_MODEL
 from a_stock_tracker.qualitative.prompt import build_scoring_prompt
 from a_stock_tracker.qualitative.schema import build_generation_config
 from a_stock_tracker.qualitative.types import QualitativeContext, ScoringResult
 from a_stock_tracker.qualitative.validator import validate_context, validate_model_output
 
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 DEFAULT_TIMEOUT_SECONDS = 30.0
 DEFAULT_MAX_ATTEMPTS = 3
 DEFAULT_RETRY_DELAYS: tuple[float, ...] = (1.0, 2.0)

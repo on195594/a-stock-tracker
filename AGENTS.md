@@ -58,25 +58,43 @@ Run the active product checks after any source or structure change:
 git diff --check
 ```
 
-The default pytest and mypy runs exclude frozen M4/M5 and outcome-shadow
-governance. Run the relevant frozen audit suite when those paths, their sealed
-contracts, or a shared CLI entrypoint that dispatches to them changes:
+The default pytest and mypy runs exclude frozen M4/M5, historical qualitative
+pilots, and outcome-shadow governance. Run the relevant frozen audit suite when
+those paths, their sealed contracts, or a shared CLI entrypoint that dispatches
+to them changes:
 
 ```bash
 .venv/bin/python -m pytest -o addopts='' \
   tests/milestone004 \
   tests/test_qualitative_v2_m5*.py \
+  tests/test_qualitative_v2_production_contexts.py \
+  tests/test_qualitative_v2_orient_cable_pilot.py \
+  tests/test_qualitative_v2_orient_cable_hybrid.py \
+  tests/test_qualitative_v2_selected_five.py \
   tests/test_outcome_shadow*.py \
   -q
 .venv/bin/mypy --config-file=/dev/null \
   --python-version 3.13 --ignore-missing-imports --follow-imports skip \
   a_stock_tracker/qualitative/archive_m4 \
   a_stock_tracker/qualitative/m5 \
+  a_stock_tracker/qualitative/production_contexts.py \
+  a_stock_tracker/qualitative/orient_cable_pilot.py \
+  a_stock_tracker/qualitative/orient_cable_hybrid.py \
+  a_stock_tracker/qualitative/selected_five.py \
   a_stock_tracker/data/outcome_shadow.py \
   a_stock_tracker/data/outcome_shadow_migration.py \
   scripts/archive_m4 \
   scripts/*m5*.py \
+  scripts/run_qualitative_v2_shadow.py \
+  scripts/collect_qualitative_v2_production_contexts.py \
+  scripts/collect_qualitative_v2_orient_cable.py \
+  scripts/prepare_qualitative_v2_orient_cable_hybrid.py \
+  scripts/collect_qualitative_v2_selected_five.py \
   tests/milestone004 \
   tests/test_qualitative_v2_m5*.py \
+  tests/test_qualitative_v2_production_contexts.py \
+  tests/test_qualitative_v2_orient_cable_pilot.py \
+  tests/test_qualitative_v2_orient_cable_hybrid.py \
+  tests/test_qualitative_v2_selected_five.py \
   tests/test_outcome_shadow*.py
 ```

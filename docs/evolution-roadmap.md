@@ -205,7 +205,8 @@ README/CLAUDE 只做入口与短摘要。运行数字冲突时以最新只读查
 - 信号生效不改变 `weights_hash`，不影响 total_score 历史数据可比性
 - **版本化约束**：L3 规则变更时须同步更新 `entry_signal_version`（字符串，格式 `v{N}`，存入 predictions 表），使回测可区分不同版本规则下的信号记录
 - **空值语义**：旧记录为 `entry_signal=NULL AND entry_signal_version IS NULL`；L3 v1 已运行但不可计算为 `entry_signal=NULL AND entry_signal_version='v1'`；二者必须分开统计
-- **报告约束**：`accuracy-report` 必须包含 L3 买点层 section，且将 `NULL`、`0`、`1` 分开统计；样本不足时不得输出确定性结论
+- **当前报告约束**：默认 `accuracy-report` 只展示生产使用的 L3 v2 风险门禁，
+  将通过、拒绝、不可用和 pre-v2 分开统计；不得把 v1 或 v2 称为已验证买点
 
 **候选信号（按实现难度排序）：**
 
@@ -223,7 +224,8 @@ README/CLAUDE 只做入口与短摘要。运行数字冲突时以最新只读查
 4. `predictions` 表新增 `entry_signal INT` 列和 `entry_signal_version TEXT` 列；旧记录保持 `NULL/NULL`
 5. `accuracy-report` 增加 L3 买点层 section，区分 `NULL/NULL`、`NULL/v1`、`0/v1` 与 `1/v1`，样本不足时提示
 
-以上 1~5 是 v1 历史实施结果。当前生产仍保留 v1 字段用于审计，但 Telegram 主推不再读取 `entry_signal=1`，而读取下文 Phase 3 的 `l3_v2_signal=1`。
+以上 1~5 是 v1 历史实施结果。2026-07-28 消费者审计后，v1 规则冻结但 daily 继续兼容写入，
+以满足历史 backfill、生产验收和离线回测的数据连续性；Telegram 与默认策略报告均不再读取 v1。
 
 **预期观测范围：** L3 过滤后，strong 信号从当前约 6/35 = 17% 降至 3-5%。这是产品/策略观察目标，不是 CI 通过条件；工程验收以字段语义、推送过滤和 accuracy-report 统计正确为准。
 
@@ -310,7 +312,8 @@ README/CLAUDE 只做入口与短摘要。运行数字冲突时以最新只读查
 **实施方案：**
 1. 每周一 09:20 由 `run_framework_b_cohort_freeze.py` 自动执行 readiness → dry-run → 显式冻结；候选为 0、合同不一致或 readiness HOLD 时 fail-closed 告警，同周重跑必须幂等。
 2. 继续运行 `daily` / `outcome-update`，让冻结 cohort 绑定的 A prediction 自然结案；禁止切换到 latest-A。
-3. 每周查看 `accuracy-report` 的 legacy 与 prospective 两轨、Phase 6 readiness、阻塞项和下一步。
+3. Framework B legacy/prospective 与 Phase 6 readiness 仅通过独立研究模块或只读查询检查，
+   不再混入默认 `accuracy-report`。
 4. 每周复核 cron 日志和 `READY_CRON`；若 readiness 返回 `HOLD_CRON`，先处理行情链路，暂停 Phase 6 深化。
 5. 若数据质量或 B dry-run 覆盖未满足，先修复字段来源、缓存或跳过原因。
 6. prospective 已结案 ≥20、已结案周 ≥3 且 overdue=0 后，先写 `docs/reviews/YYYY-MM-DD-phase6-b-label-review.md`。
@@ -415,3 +418,4 @@ README/CLAUDE 只做入口与短摘要。运行数字冲突时以最新只读查
 | v1.30 | 2026-07-23 | 行情链路强切 TuShare-only：默认/backfill provider 失败即关闭；35 股 QFQ 通过 TuShare API 全量补至各 139 行；生产活动行情与历史审计清除非 TuShare 数据；删除旧采集/双源对账入口，predictions 完整 hash 不变。 |
 | v1.31 | 2026-07-24 | 同步 TuShare 三域、历史 outcome versioned shadow、Framework B prospective cohort 与 Phase 6 report-only 当前基线。 |
 | v1.32 | 2026-07-28 | 澄清产品目标为 A 股选股与买入决策支持；冻结非关键 M4/M5 与 shadow 扩展；新增“证明现有系统→离线扩大宇宙→生产决策闭环”三阶段收敛路线及防过度治理约束。 |
+| v1.33 | 2026-07-28 | 第二轮减法：删除 Telegram reviewer；默认 accuracy-report 收敛到 Framework A 与 L3 v2 风险门禁；冻结历史 qualitative pilot；L3 v1 冻结规则但因 active consumers 暂时保持兼容写入。 |
