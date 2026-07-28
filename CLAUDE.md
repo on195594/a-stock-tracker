@@ -4,8 +4,9 @@
 > `docs/architecture.md`；结构变更必须通过 `tests/test_project_structure.py`。
 
 ## 项目简介
-A 股自动评分管道。每日盘后对 watchlist 运行 Framework A 定量评分（SQLite），
-追踪 30/60/90 天收益率及 benchmark 相对 alpha。
+A 股选股与买入决策支持系统。每日盘后对 watchlist 运行 Framework A 定量评分（SQLite），
+结合估值和 L3 风险/买点状态输出人工决策参考，并追踪 30/60/90 天收益率及 benchmark
+相对 alpha。目标是提高获得较高风险调整后收益的概率，不承诺高收益。
 
 **文档指针**（详细逻辑优先读这里，不要靠 CLAUDE.md）：
 - 架构 / 数据模型 → `docs/architecture.md` 与 `AGENTS.md`
@@ -13,6 +14,16 @@ A 股自动评分管道。每日盘后对 watchlist 运行 Framework A 定量评
 - 已知陷阱 / 历史修复 → `docs/lessons-learned.md`
 - 演进路线图 → `docs/evolution-roadmap.md`
 - 测试计划 → `docs/test-plan.md`
+
+**当前最高优先级（2026-07-28）：** 项目处于“证明现有系统是否有效”阶段。先完成
+固定 watchlist 股票池效应、Framework A 的 QFQ 总收益排序、L3 v2 效果、Telegram 决策语义和未来
+outcome 版本设计；在结论前不调权重。M4/M5、新 shadow migration、多框架生产化和
+Phase 7 生产动态池均 HOLD。权威三阶段路线见 `docs/evolution-roadmap.md`，阶段复盘见
+`docs/reviews/2026-07-28-product-direction-and-engineering-subtraction-review.md`。
+
+**防方向漂移：** 新任务必须能说明它提高 alpha、改善买入时点、降低回撤，或防止哪一种
+不可逆生产风险。只读研究默认不创建 production-grade migration、seal、reviewer 或
+authorization；技术 PASS/READY 不等于值得买。
 
 ---
 
@@ -46,7 +57,7 @@ pytest tests/ -v                  # 修改前必须全通过
 | `a_stock_tracker/data/fetcher.py` | 旧 AKShare/Sina 基本面抓取入口；已切三域的生产 cron 不再调用它 |
 | `a_stock_tracker/data/market_data.py` | 行情数据 provider 兼容入口 |
 | `a_stock_lib.providers.tushare_quotes` | 行情主源（`a-stock-lib==0.4.1`，需 `TUSHARE_TOKEN`） |
-| `a_stock_lib.providers.baostock_quotes` | 行情 degraded fallback，仅 Tushare 失败后或显式 backfill 使用 |
+| `a_stock_lib.providers.baostock_quotes` | 历史 provider；当前 TuShare-only 活动链路不实例化 |
 | `a_stock_tracker/data/tushare_primary_*` | 三域 shadow、采集、readiness、物化与 daily/weekly production cycle |
 | `a_stock_tracker/data/cache.py` | SQLite 管理（predictions / index_prices / qualitative_scores 表）|
 
@@ -86,9 +97,10 @@ pytest tests/ -v                  # 修改前必须全通过
 avg_score 有约 4-5 分系统性偏移，Phase 4 optimizer 训练需按 score_date 分层。详见 `docs/lessons-learned.md`。
 
 **行情数据源（2026-06-09 起迁移）**：AKShare/东方财富**行情**入口已禁用。
-当前运行时是 `a-stock-lib==0.4.1`；行情主源为 Tushare provider（需 `TUSHARE_TOKEN`），
-失败后降级到同包 BaoStock provider（degraded）。`_ensure_index_prices` 走同一套 provider，不再直连
-新浪/腾讯接口。成组恢复 `daily` / `outcome-update` 前必须 `python3 scripts/check_market_data_readiness.py --scope cron` 返回 `READY_CRON`
+当前运行时是 `a-stock-lib==0.4.1`；活动行情链路已于 2026-07-23 强切为 TuShare-only
+（需 `TUSHARE_TOKEN`），provider 失败即关闭，不再自动降级 BaoStock。`_ensure_index_prices`
+走同一套 provider，不再直连新浪/腾讯接口。成组恢复 `daily` / `outcome-update` 前必须
+`python3 scripts/check_market_data_readiness.py --scope cron` 返回 `READY_CRON`
 （最新探测报告见 `docs/reviews/*-tushare-capability-probe.md`）。详见
 `docs/runbooks/market-data-provider-recovery.md` 和
 `docs/plans/2026-06-09-market-data-provider-replacement-plan.md`。
@@ -104,9 +116,9 @@ cycle，周六 10:00 运行 financial/dividend cycle。旧 `fetcher.py` 不再�
 `daily_bars.adjusted='qfq'` 表结构/下游消费方式不变。新脚本自带增量抓取 + 重叠窗口
 漂移检测（连续 ≥5 交易日一致偏移才判定漂移，避免单日噪声误报）+ 事务化全量重刷。
 切换前已用真实 TuShare 数据对账（35 股/4550 重叠交易日 0 超容差）并在隔离库和真实
-生产库各完成一次端到端模拟漂移演练。旧 `scripts/fetch_qfq_daily_bars.py`（BaoStock）
-保留≥1 个月作为代码级回退，配合 `backups/tracker-pre-qfq-tushare-cutover-2026-07-22.db`
-数据库快照作为数据级回退。详见 `CHANGELOG.md` 2026-07-22 条目。
+生产库各完成一次端到端模拟漂移演练。2026-07-23 TuShare-only 强切随后删除旧
+BaoStock QFQ 活动采集入口；历史备份只用于受控数据恢复，不代表活动 fallback。
+详见 `CHANGELOG.md` 2026-07-22/23 条目。
 
 ---
 
@@ -121,27 +133,33 @@ cycle，周六 10:00 运行 financial/dividend cycle。旧 `fetcher.py` 不再�
 
 ---
 
-## Phase 状态快照（2026-07-24）
+## Phase 状态快照（2026-07-28）
 
 | Phase | 状态 | 说明 |
 |-------|------|------|
 | Phase 3 Gemini/Telegram | ✅ 上线 | v1 定性评分保持生产；主推由 ≥44 分 AND `l3_v2_signal=1` 触发 |
-| Phase 4 验证基础 | ✅ 完成，持续观察 | A框架 30d 结案 953 条，其中 post-fix 735 条；hit_rate 待验证 |
+| 收敛阶段一 | 🔶 当前执行 | 股票池效应拆解、QFQ 30/60/90 日排序、L3 效果、Telegram 语义、未来 outcome 设计；不调权重 |
+| 收敛阶段二 | ⏸ 未启动 | 先做 300–500 股离线截面、行业分层、成本与样本外验证，不直接建设生产动态池 |
+| 收敛阶段三 | ⏸ 未启动 | 动态池、真实买点、仓位和退出闭环仅在阶段二通过后建设 |
+| Phase 4 验证基础 | ✅ 工程基础完成，策略验证并入收敛阶段一 | QFQ shadow 后仍无稳定五分位单调性；先拆股票池效应和评分排序能力 |
 | Phase 5 L3 买点层 v1 | ✅ 完成，保留审计 | 最新 tracked report 中 v1 pass 的 30d 已结案 71 条、命中率 2.8%；不再作为生产主推门禁 |
-| Phase 5 L3 v2（QFQ）| ✅ Phase 2+3 完成，采集源已切换 | Phase 2: QFQ 35/35×130 行回填，pass_strong 激活，cron 16:00；Phase 3: 推送触发切换至 l3_v2_signal=1（commit e080f15）；2026-07-22 采集源由 BaoStock 切换到 TuShare，`adjusted='qfq'` 表结构/下游不变 |
+| Phase 5 L3 v2（QFQ）| ✅ 生产运行；买点语义未证实 | 规则只拒绝极端下跌，当前按风险门禁理解；阶段一补状态、收益和回撤对照 |
 | TuShare 三域生产主源 | ✅ 强切完成 | 35/35 估值、通用财务、分红物化；运行时 0.4.1；PB 历史覆盖 28 FULL_10Y / 5 SINCE_LISTING / 2 INSUFFICIENT_HISTORY；predictions 未改写 |
 | 历史 outcome versioned shadow | ✅ Phase 1+2 完成并生产物化 | 1 immutable run、1,776 results、2,520 observations、3 表 6 触发器；backup/rehearsal/post-commit verifier PASS；legacy outcome、报告、Sheets、Telegram、cron 均未切换 |
 | 定性评分 v2 MILESTONE-002 | ✅ fixture-first 完成 | contract/types/taxonomy/schema/prompt/validator 与 145 项本地合同测试已完成，AGY 边界加固复审 PASS |
 | 定性评分 v2 MILESTONE-003 | ✅ 文件 shadow seam 完成 | 独立 client/CLI、JSONL artifact、错误分类、重试和同 hash 去重已完成，AGY 最终只读审查 PASS；该研究 shadow 与后续生产 canary 物理隔离 |
 | 定性评分 v2 生产读路径 | ✅ 全局 `on` | 35 股全部进入 v2 选择器；独立 v2 表 6 行。603606 及 000963/002050/600036/600900/601088 使用 moat/market_pos v2 与 sentiment v1 fallback，其余 29 股逐股回退 v1；只读生产验收当前 PASS |
-| 定性评分 v2 MILESTONE-004 | ✅ v1.3.1 工程实现、轻量 frame/sample 完成 | 后续轻量路线已完成 35/35 调用、4,694 行 frame 和 36 股 sample，仍仅限本地研究；最新状态与边界以 `docs/project-status.md` 为准 |
-| Phase 6 多框架激活 | 🔶 report-only | Framework B 仍不写生产；73 条 legacy 仅回溯；2026-W30 首批 7 条 prospective cohort 已冻结并绑定 2026-07-20 A prediction，最早 2026-08-19 结案 |
-| Phase 7 选股宇宙 | ⏸ 未启动 | 待 Phase 6 完成或明确降级策略 |
+| 定性评分 v2 MILESTONE-004/005 | ❄️ 冻结研究 | 保留 frame/sample/sealed evidence；旧授权已过期，不阻塞生产或阶段一 |
+| Phase 6 多框架激活 | 🔶 report-only 被动观察 | Framework B 不写生产；W30/W31/W32 自然结案后也只进入人工 review |
+| Phase 7 选股宇宙 | ⏸ 生产未启动 | 离线 300–500 股验证前移到收敛阶段二，生产动态池保留到阶段三 |
 
 optimizer.py 启动门槛：Framework A 30d 结案 ≥ 100（已满足） AND `hit_rate_vs_300 > 55%`（待验证）。
 Framework B 重启：在 `a_stock_tracker/scoring.py` 加回 "B"，另写生产化 spec 并经独立审查。
 
-运维门禁是动态状态，不以本快照替代实时检查。旧 market-data probe 当前已 stale；恢复或新启用行情依赖任务前必须重新运行 `scripts/check_market_data_readiness.py --scope cron`，不得引用 2026-07-15 报告冒充当前 PASS。TuShare 三域任务使用独立 readiness。
+运维门禁是动态状态，不以本快照替代实时检查。market-data probe 采用严格当日 freshness；
+恢复或新启用行情依赖任务前必须重新运行
+`scripts/check_market_data_readiness.py --scope cron`，不得引用任何过期报告冒充当前 PASS。
+TuShare 三域任务使用独立 readiness。
 
 **TuShare 生产主源治理（2026-07-21）：** 估值/市值、通用财务指标和分红事实已完成
 真实采集、35/35 readiness、单事务生产 materialization、cron 安装与回滚验证；运行时实际

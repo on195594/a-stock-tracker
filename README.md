@@ -1,29 +1,34 @@
 # a-stock-tracker
 
-A 股选股与方法论验证项目。当前定位是 **Framework A 定量评分 + Gemini 定性补充 + L3 买点过滤 + 数据治理审计**：每日对固定 watchlist 股票评分，写入 SQLite，追踪 30/60/90 天收益率，并用 `accuracy-report` 评估相对沪深 300 的表现。
+A 股选股与买入决策支持项目。系统以提高风险调整后收益的决策胜率为目标，不承诺收益：每日对固定 watchlist 股票评分，写入 SQLite，追踪 30/60/90 天收益率，并用 `accuracy-report` 评估相对沪深 300 的表现。
 
-> 当前阶段目标是积累数据、验证 Framework A 和 L3 买点层的有效性。项目不做自动交易、下单、持仓账户管理或投资建议。
+> 当前阶段目标是验证 Framework A 的排序能力和 L3 风险过滤的增量价值。项目不做自动交易、下单、持仓账户管理或投资建议。
 
 ## 当前状态
 
 - 主分支：`master`
-- 当前阶段：Phase 5 L3 v2 已接入生产评分与推送；Phase 6 仍处于 report-only 观察期；来源约束的定性评分 v2 已切换为全局 `on` 读模式，并支持逐维 `hybrid_v2`；当前东方电缆及本次指定 5 股采用 moat/market_pos v2、sentiment v1，其余 29 股在合法 v2 行就绪前逐股回退 v1；M4/M5 继续作为发布后研究审计
-- 生产框架：`SUPPORTED_FRAMEWORKS = {"A"}`；Framework B 历史数据保留，Phase 6 前不得启用生产写入
+- 当前阶段：三阶段路线的阶段一，先证明现有系统；Framework B 保持 report-only，M4/M5 冻结
+- 生产框架：`SUPPORTED_FRAMEWORKS = {"A"}`；Framework B 历史数据保留，未经独立验证和明确批准不得启用生产写入
 - watchlist：35 只，维护在 `a_stock_tracker/config.py`
 - 评分阈值：`buy_strong=44`、`buy_moderate=35`、`buy_light=26`
 - L3 主推条件：`total_score >= buy_strong AND l3_v2_signal = 1`；v2 为 `0/NULL` 的高分股票进入候补而不是主推
 - 数据库：`tracker.db`，核心表为 `stock_fundamentals`、`predictions`、`index_prices`、`qualitative_scores`
 - 最新顶层路线图：`docs/evolution-roadmap.md`
 
+本轮方向复盘见
+[`阶段性总结报告`](docs/reviews/2026-07-28-product-direction-and-engineering-subtraction-review.md)，
+后续工作以 [`演进路线图`](docs/evolution-roadmap.md) 和
+[`项目状态`](docs/project-status.md) 为准。
+
 已落地能力：
 
 - Framework A：ROE、净利润增速、负债率、毛利率、PB 分位和定性项的 80 分制评分。
 - Gemini 定性评分：`moat`、`market_pos`、`sentiment`，30 天缓存，失败时 all-or-nothing fallback 到固定值。
 - Outcome 追踪：记录 30/60/90 天收益、沪深 300 benchmark 和 generated `alpha_*d`。
-- L3 买点层：v1 保留用于历史审计；生产 daily 优先读取 QFQ 日线计算 `l3_v2_signal`，Telegram 主推已切换到 v2。
+- L3 风险过滤层：v1 保留用于历史审计；生产 daily 优先读取 QFQ 日线计算 `l3_v2_signal`，Telegram 主推已切换到 v2；买点有效性仍待阶段一验证。
 - 定性评分 v2 研究链路：MILESTONE-002 合同、MILESTONE-003 文件型 shadow seam 已完成；M4 v1.3.2 的 authorization、freeze、golden、oracle、attestation 和多角色审批实现已退役，仍可从 Git 历史恢复；轻量 builder 已完成本地 frame/sample。研究链路与下述生产 canary 保持隔离。
 - 定性评分 v2 生产读路径：`.env` 已切换为 `QUALITATIVE_V2_MODE=on`，35 股全部进入 v2 选择器，结果存储与 v1 隔离；合法 partial output 可按维度采用 v2、缺证据维度回退 v1并记录为 `hybrid_v2`。当前 `qualitative_scores_v2` 为 6 行：603606 及 000963/002050/600036/600900/601088 使用 moat/market_pos v2、sentiment v1；其余 29 股无合法 v2 行时逐股回退 v1。
-- M5 fixture-first：已提供固定 36 股 sample 的 synthetic bundle 校验、批量 blind-reference/shadow/support-audit 编排和聚合 gate；当前执行仅使用无凭证 fake transport，真实 bundle 构建与外部调用仍待分别批准。
+- M5 fixture-first：已提供固定 36 股 sample 的 synthetic bundle 校验、批量 blind-reference/shadow/support-audit 编排和聚合 gate；该历史研究能力现已冻结，不推进真实 bundle 或外部调用。
 - Telegram 推送：日报分为主推、候补和雷达；只有强分且 L3 v2 通过的股票进入主推，发送失败不阻断 daily。
 - Google Sheets 同步：展示层能力，失败只记录 warning，不是数据真相来源。
 - 数据治理：`docs/data-source-registry.yaml` 记录字段来源、缓存、刷新、fallback 和失败语义。
@@ -105,39 +110,17 @@ python3 scripts/run_qualitative_v2_production.py preview \
 # 只读生产验收：PASS=exit 0，ROLLBACK=exit 2；不读取模型凭证、不写 .env/DB/artifact
 python3 scripts/check_qualitative_v2_production.py
 
-# 下一交易日 daily 后追加自然运行证据检查
-python3 scripts/check_qualitative_v2_production.py \
-  --require-score-date 2026-07-20
-
-# 经明确授权后，从 CNINFO 全文片段构建真实 canary context
-python3 scripts/collect_qualitative_v2_production_contexts.py \
-  --authorization-id qualitative-v2-prod-canary-20260719-01 \
-  --scope canary --as-of-date 2026-07-19 \
-  --run-id qualitative-v2-contexts-canary-20260719-01 \
-  --execute-cninfo
-
-# M5 synthetic bundle 只读预检（不读取 .env、不创建 artifact）
-python3 scripts/run_qualitative_v2_m5.py preview \
-  --sample tests/fixtures/milestone005/sample.csv \
-  --bundle path/to/synthetic/bundle-manifest.json
-
 # 删除某只股票在 predictions 和 stock_fundamentals 表中的记录
 python3 pipeline.py remove 601857
-
-# M4 轻量 probe（5 次请求）与同 run build（仅补采另外 30 个行业）
-python3 scripts/build_m4_frame_lite.py probe --trade-date 20260717
-python3 scripts/build_m4_frame_lite.py build \
-  --from-probe artifacts/milestone-004/lite/<run-id>
 ```
 
-MILESTONE-004 的 v1.1 legacy acquisition route 已关闭，v1.2 失败 attempt 保持永久 `non-adoptable`，
-v1.3.1 capability 请求已撤回。2026-07-18 曾执行一次不符合 v1.3.2 协议的 `index_classify`
-直连探测：HTTP 200、provider code 0、31 rows，未持久化原始响应；它只证明当时接口可读，不能作为
-frame 或治理证据。v1.3.2 治理实现已从当前树退役但可从 Git 历史恢复，M4 后续改走轻量 frame/sample
-路径。前三个 run 分别因 count 哨兵、transport failure 和退市非六位成员代码停止；经明确授权把
-`T00018.SH` 记录为 `invalid_member_code` exclusion 后，第四个 run 35/35 调用通过，生成 4,694 行 frame、
-1,170 行 exclusions 和 36 股 sample。详见
-[`轻量运行简报`](docs/reviews/2026-07-18-m4-frame-lite-run.md)。这不代表进入 MILESTONE-005 或生产采用。
+需要按某个交易日复验 qualitative v2 自然运行时，可在验收命令后增加
+`--require-score-date YYYY-MM-DD`，日期必须替换为实际已完成的 `score_date`。
+历史 CNINFO canary 授权已经过期，其真实采集命令不再作为常用操作或授权模板。
+
+M4/M5 已冻结为历史研究能力，因此不再把其 probe、bundle 或模型命令列为常用操作。
+既有 frame/sample、失败记录和 sealed identifier 继续保留，详见
+[`轻量运行简报`](docs/reviews/2026-07-18-m4-frame-lite-run.md)。
 
 `accuracy-report` 默认写入 `config.ACCURACY_REPORT_PATH`，生产路径为被 Git 忽略的 `artifacts/reports/accuracy-report.txt`。测试会把该路径隔离到临时目录，运行报告不会产生 tracked 文件变更。
 
@@ -145,7 +128,7 @@ frame 或治理证据。v1.3.2 治理实现已从当前树退役但可从 Git �
 
 - Framework A 总体分层表现和五分位单调性检验。
 - 2026-05-15 后 post-fix 样本专区，避免新旧数据口径混合解释。
-- L3 买点层统计。
+- L3 历史买点层统计；阶段一需补充 v2 风险门禁的状态、收益与回撤对照。
 - Gemini 评分稳定性。
 - Framework B 重启门槛进度。
 - watchlist 数据质量审计，区分 `cache_report_period` 和 `prediction_report_period` 缺失；金融行业 `gross_margin` 计为不适用。

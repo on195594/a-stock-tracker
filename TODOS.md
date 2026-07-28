@@ -1,20 +1,36 @@
 # TODOS
 
-## 当前有效计划来源（2026-07-21）
+## 当前有效计划来源（2026-07-28）
 
 当前阶段、门槛和边界以 `docs/evolution-roadmap.md` 为准。`docs/impl-plan.md` 已归档为
 Phase 1-3.6 历史实施记录，不再作为后续计划来源。
 
-当前工作重心：
+产品目标已澄清为：建设 A 股选股与买入决策支持系统，提高获得较高风险调整后收益的
+概率。阶段总结见
+`docs/reviews/2026-07-28-product-direction-and-engineering-subtraction-review.md`。
 
-1. **P0 TuShare 运维闭环：** 观察新 17:15→17:30→17:45 自然 cron 和首个周六 10:00 weekly cycle；刷新已 stale 的 market-data capability probe。两套 readiness 独立，不伪造 PASS。
-2. **P1 定性评分 v2：** 2026-07-20 窗口已过去；先核对六股结构质量 pilot 的实际执行证据和授权终态，不自动复用旧授权。语义质量仍需后续独立授权，完成后才能冻结新采集协议。
-3. **P2 L3 v2 选择性：** 2026-07-13/14 的 70 条 v2 记录全部为 pass，18/18 strong 每日均未被 L3 过滤；先在 report 中增加 v2 状态/门禁分布并积累 outcome，不据两天样本直接改规则。
-4. **P1 模型验证：** 2026-07-27 已完成复权口径 shadow（详见下节），结论是**复权不是根因**。
-   下一步是拆解剩余约 −3.4pt：计算 watchlist 等权组合 vs 沪深300 的纯 beta，把"选股宇宙
-   跑输"与"评分排序无效"分离。此项未做之前，任何权重调整都是在噪声上拟合。60d/90d
-   五分位延伸评估仍待执行；不据此顺手调权重。
-5. **P3 Phase 6：** Framework B 继续 report-only，等待 B label 30d 自然结案至 20 条；生产化必须另写实施计划并获得明确授权。
+当前按路线图“三阶段收敛路线”的阶段一执行：
+
+1. **P0 生产运维：** 保持 TuShare、QFQ、daily、acceptance、outcome 和 cron 自然运行；
+   刷新已 stale 的 market-data capability probe。两套 readiness 独立，不伪造 PASS。
+2. **P1 Framework A 有效性：** 比较 watchlist 等权组合与沪深 300，拆出固定股票池
+   本身的相对表现，再评估评分在池内的排序能力；如需讨论市场 beta，必须另行按收益
+   序列估计，不得把两条累计收益之差直接称为 beta。同步完成 QFQ 总收益 30/60/90 日分位、
+   按 `score_date` 计算的截面 Spearman IC 及其时间汇总、Q5−Q1 spread、回撤和时间批次
+   验证。在结果前不得调整权重或阈值。
+3. **P1 决策语义：** 修复 Telegram 将定性分差值解释为“择时”的错误；明确区分公司
+   质量、估值、L3 风险/买点状态和数据可信度，只展示实际决定主推的 L3 版本。
+4. **P1 L3 v2 证据：** 在 strategy report 增加 `NULL/0/1`、状态分布以及通过/拒绝后的
+   收益与回撤。当前 v2 更接近极端下跌风险门禁；若拒绝样本长期接近零，应直接判定为
+   “当前规则无实质选择性”，不得无限等待样本或宣称“买点已解决”。
+5. **P1 outcome 真相：** 规划未来版本化 QFQ 总收益与全收益 benchmark；不原地改写
+   历史 prediction，不为此继续扩展已有 shadow 多 run migration。
+6. **P2 Phase 6：** Framework B cohort 继续自动冻结并等待 W30/W31/W32 自然结案；
+   达到 20 条/3 周/无 overdue 后也只进入人工 review，不直接生产化。
+
+**HOLD：** M4/M5 新授权和模型 Sprint、outcome shadow 阶段 C、多框架生产化、
+Framework C/D/E/F、Phase 7 生产动态池、新治理/Reviewer/seal/authorization 基础设施。
+恢复任一项前必须说明它验证的 alpha、买入时点或回撤假设。
 
 
 ## outcome QFQ total-return shadow（2026-07-27 阶段 A/B 完成）
@@ -41,7 +57,7 @@ Q1(低)    246        -4.96            -3.06
 - 产物：`artifacts/qfq-shadow/`（已 gitignored，**无 git 保护**，磁盘清理时注意）
 - 阶段 C（导入生产 shadow 表）已放弃：迁移工具仅支持单 run 导入，改造需另开 spec
 
-**Next：** 拆解剩余 −3.4pt 的 watchlist beta 占比（见上方 P1）。
+**Next：** 拆解剩余 −3.4pt 中固定 watchlist 股票池效应的占比（见上方 P1）。
 
 ## TuShare 估值/财务/分红三域强切（2026-07-21 已完成）
 
@@ -59,7 +75,7 @@ Q1(低)    246        -4.96            -3.06
 - 当天 Tushare probe 的 daily/index/calendar/close cross-check 全部 PASS，readiness 恢复 `READY_CRON`，managed cron 已重新安装并确认五项任务齐全。
 - weekly PM loop 不再把中文“失败 0 只”判为失败；降级 `WARNING ... fallback失败` 归为 WARN，明确 ERROR/非零失败仍为 FAIL。真实 dry-run 从错误的 FAIL 恢复为符合现状的 WARN。
 - mypy 从 24 errors 修复后保持零错误；Ruff format 基线持续有效。
-- 当前完整质量基线：`1010 passed`，Ruff lint/format、mypy、结构/registry、Markdown 链接和 `git diff --check` 全部通过。
+- 当时质量基线为 `1010 passed`，Ruff lint/format、mypy、结构/registry、Markdown 链接和 `git diff --check` 全部通过；当前基线以后续状态页和实际校验结果为准。
 
 ## 定性评分 v2 MILESTONE-002~003（已完成）
 
@@ -70,7 +86,7 @@ Q1(低)    246        -4.96            -3.06
 - task 2.3 及后续 P1/P2 边界加固已完成；MILESTONE-002 最终本地合同测试与独立复核通过。
 - MILESTONE-003 文件型 shadow seam 已完成；受控空 evidence packet Gemini smoke 通过，但不构成真实 evidence shadow。
 
-## 定性评分 v2 MILESTONE-004~005（两 Sprint 推进中）
+## 定性评分 v2 MILESTONE-004~005（冻结的发布后研究）
 
 **已完成：**
 
@@ -81,20 +97,30 @@ Q1(低)    246        -4.96            -3.06
 - 轻量 builder 已生成 4,694 行 frame、1,170 行 exclusions 和固定 36 股 sample；sample SHA-256 为 `b278a7b00b71fd54e34519dead098602a8748635f1350414e1b78538a3d7635d`。
 - M5 fixture-first 批处理、artifact seal、聚合 gate、review finding 修复、real bundle 离线 builder、D1 authorization/preflight 和严格只读 fundamentals snapshot builder 已完成；模型命令仍只执行 synthetic fake transport。
 
-**Next：**
+**冻结状态：**
 
-1. 审批 `reviews/milestone-005/v1.2-quality-pilot-authorization-proposal-2026-07-19.md` 中的精确 SHA，随后封存并执行 CNINFO 六公司轻量结构质量 pilot；不得据 capability PASS 或结构质量结果推导语义质量 PASS。
-2. pilot 完成并明确来源范围后冻结新采集协议/授权，重新开始 create-only data run；corpus 冻结后，以精确 corpus/bundle/prompt/command hash 申请 Reviewer A/B 执行授权，完成裁决和 coverage report。
-3. 八个 coverage layer 全部通过后构建 36 份真实 context，运行零凭证 `preview` 并冻结 real bundle SHA-256。
-4. 再以 exact sample/bundle/model/call/cost/credential/run-root 申请模型 Sprint 授权，依次执行 Claude blind reference、Gemini shadow 和 Claude support audit。
+- 2026-07-19 的六公司结构质量 pilot 已批准并封存，但授权执行窗口已于
+  2026-07-22 结束；不得把它继续写成“待审批”，也不得复用过期授权。
+- 当前没有活动 M5 真实采集、Reviewer、Claude 或 Gemini 执行授权。
+- M4/M5 不再是生产读取、阶段一策略验证或 Framework B cohort 的前置条件。
+- 仅在阶段一/二发现一个明确需要定性证据验证的收益假设时，才讨论新的有界研究授权；
+  不为恢复旧路线本身续期。
 
-**边界：** 当前 M5 模型 CLI 仍只能执行 synthetic transport。v1.2 capability report 是零调用离线结果，不授权质量 pilot、36 股采集、Reviewer、Claude 或 Gemini。生产 cache/schema、pipeline、cron、Telegram、权重、M6 和 cutover 始终不在两 Sprint 授权内。
+**边界：** 冻结不表示删除。tracked 代码、测试、文档、hash 和 sealed identifier 保持
+可追溯；gitignored artifacts 只具备本地留存，不得描述为受 Git 保护。不得搬移或改写
+frozen M4/M5 证据。生产 cache/schema、pipeline、cron、Telegram 和权重不因研究冻结而改变。
 
 ## L3 v2 qfq 覆盖修复（2026-07-12 已完成，采集源已于 2026-07-22 切换）
 
-原 `NEED_QFQ` 已由 BaoStock QFQ 采集与 `daily_bars.adjusted='qfq'` 缓存方案解除。当前 35/35 代码有 QFQ 覆盖，工作日 16:00 cron 已安装，daily 与 Telegram 主推已使用 `l3_v2_signal`。历史离线 gate 和限频问题保留在 `docs/reviews/2026-07-10-l3-v2-backtest-retro.md` 供追溯，不再是当前 TODO。
+原 `NEED_QFQ` 最初由 BaoStock QFQ 采集与 `daily_bars.adjusted='qfq'` 缓存方案解除。
+当前 35/35 代码有 QFQ 覆盖，工作日 16:00 cron 已安装，daily 与 Telegram 主推已使用
+`l3_v2_signal`。历史离线 gate 和限频问题保留在
+`docs/reviews/2026-07-10-l3-v2-backtest-retro.md` 供追溯，不再是当前 TODO。
 
-**2026-07-22 更新：** 底层采集源已从 BaoStock 切换到 TuShare（`scripts/fetch_qfq_daily_bars_tushare.py`），`daily_bars.adjusted='qfq'` 这一物化结果的表结构/字段/下游消费方式不变。详见 `CHANGELOG.md` 2026-07-22 条目。旧 BaoStock 脚本 `scripts/fetch_qfq_daily_bars.py` 保留至少 1 个月作为回退方案，清理前需满足：连续多个交易日 cron 正常完成 + 已做过模拟漂移演练 + 已做过真实/模拟数据回滚演练。
+**2026-07-23 更新：** 底层采集源已强切为 TuShare-only
+（`scripts/fetch_qfq_daily_bars_tushare.py`），`daily_bars.adjusted='qfq'` 的表结构、字段和
+下游消费方式不变。旧 BaoStock QFQ 活动采集入口及双源对账入口已删除；provider 失败即
+关闭，不再自动 fallback。详见 `CHANGELOG.md` 2026-07-22/23 条目。
 
 ## Phase 6 生产化门槛（当前有效）
 
@@ -143,7 +169,9 @@ cat logs/weekly-pm-loop-summary.txt
 - L3 窗口不足时会优先读取当天 `market_data_audit`，保留真实失败原因，例如 `REMOTE_DISCONNECTED`。
 - 2026-06-08 当日 20 条 L3 metadata 已从笼统 `INSUFFICIENT_WINDOW` 修正为审计中的真实失败原因。
 
-**Status:** 行情入口已按 `docs/plans/2026-06-09-market-data-provider-replacement-plan.md` 迁移到 Tushare Pro 主源 + BaoStock degraded fallback，AKShare/东方财富行情入口已禁用；本节不再是当前 TODO。基本面 AKShare 迁移仍需另开计划和授权。
+**Status:** 该节是历史迁移记录。2026-07-23 活动行情链路已进一步强切为
+TuShare-only、失败即关闭，AKShare/东方财富/BaoStock 均不再是活动行情 fallback；
+本节不再是当前 TODO。
 
 ## Phase 4 启动门槛（历史记录）
 

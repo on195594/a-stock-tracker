@@ -1,54 +1,156 @@
 # a-stock-tracker 进化路线图
 
-**版本：** v1.31
-**基线日期：** 2026-07-24
+**版本：** v1.32
+**基线日期：** 2026-07-28
 **文档定位：** 系统演化的顶层规划文档。所有后续 Phase 的修改、补丁、设计决策均以本文档为基线。若实施中发现偏差，先更新本文档，再改代码。
 
 ---
 
 ## 一、目标定义
 
-将 a-stock-tracker 从"对固定 watchlist 打分并记录"演化为**三层选股系统**：
+将 a-stock-tracker 从"对固定 watchlist 打分并记录"演化为**A 股选股与买入决策支持系统**。
+系统帮助用户判断“买什么、什么时候买”，目标是提高获得较高风险调整后收益的概率，
+不承诺高收益，也不把工程门禁、报告完整或模型调用成功等同于投资有效性。
+
+目标能力仍分为三层：
 
 | 层次 | 问题 | 当前状态 |
 |------|------|---------|
 | L1 好公司 | 这家公司值不值得持有？ | ✅ 已成型（ROE/增速/负债率/毛利率/Gemini定性） |
 | L2 好价格 | 当前估值有没有安全边际？ | ✅ TuShare PB/PE/PB历史生产物化；PB 十年覆盖不足时 fail-closed，PE 分位暂不计权 |
-| L3 合适买点 | 现在是不是好的入场时机？ | ✅ v1 保留审计；v2 已完成 QFQ 生产接入并成为 Telegram 主推门禁 |
+| L3 合适买点 | 现在是不是好的入场时机？ | ⚠️ v2 已接入生产，但当前仅证实为极端下跌风险门禁；买点能力待阶段一验证 |
 
-**系统不追踪价格动量**：框架是价值投资逻辑，股价下跌+基本面不变 = 估值改善 = 评分可能上升。这是设计决策，不是缺陷。
+**L1/L2 不使用价格动量评分**：框架的公司质量和估值层保持价值投资逻辑；价格与成交量
+只允许在独立 L3 层作为待验证的入场或风险信号，不得改写 `total_score`。
+
+### 1.1 当前最高优先级
+
+当前瓶颈已经从数据接入和生产可靠性转为策略证据：
+
+- Framework A 尚未证明稳定的截面排序能力；
+- `buy_strong=44` 是可得分上限校准，不是收益最优门槛；
+- 生产 L3 v2 只拒绝 `close < MA120 × 0.65` 的极端下跌，更接近风险门禁而非买点；
+- Telegram 把定性分差值解释为择时，存在产品语义错误；
+- legacy outcome 使用未复权价格，不能继续作为未来策略训练的唯一真相；
+- 固定 35 股只能验证有限股票池，不能代表 A 股市场选股能力。
+
+在这些问题解决前，不修改评分权重，不继续扩展研究治理基础设施，不启动新框架生产化。
+
+### 1.2 三阶段收敛路线（当前权威执行顺序）
+
+#### 阶段一：证明现有系统是否有效（当前执行）
+
+目标：在不调整权重的前提下，判断现有评分和 L3 是否具有可复验投资价值。
+
+执行项：
+
+1. 比较 watchlist 等权组合与沪深 300，拆出固定股票池效应，再评估评分在池内的排序能力；
+2. 使用 QFQ 个股总收益和全收益基准评估 30/60/90 日结果；
+3. 按 `score_date` 计算截面 Spearman IC 并做时间汇总，同时增加 Q5−Q1 spread、
+   最大回撤、时间批次和同股事件去重；
+4. 报告 L3 v2 的 `NULL/0/1`、状态分布及通过/拒绝后的收益和回撤；若拒绝样本长期
+   接近零，则判定当前规则无实质选择性，不无限等待样本；
+5. 修正 Telegram：定性分不再解释为择时，只展示实际决定主推的 L3 版本；
+6. 设计未来版本化 outcome，历史 prediction 不原地改写。
+
+退出条件：
+
+- 明确判断 Framework A 是否具有跨窗口、跨时间批次的正排序能力；
+- 明确判断 L3 是买点信号、风险门禁还是无效规则；
+- 策略报告采用可解释的总收益口径；
+- 形成继续、简化或重做评分模型的明确决定。
+
+#### 阶段二：离线扩大股票宇宙并验证框架
+
+目标：去除固定 35 股带来的股票池效应、行业集中和选择偏差，不直接建设生产动态池。
+
+执行项：
+
+1. 构建 300–500 股历史截面研究集；
+2. 按行业分层或行业中性评估 Framework A/B；
+3. 比较不同市场阶段的 IC、top-bottom spread、命中率和回撤；
+4. 纳入交易成本、停牌、可交易性和样本外验证；
+5. 若 Framework A 无效，先简化或重做评分，不叠加 C/D/E/F 新框架。
+
+退出条件：
+
+- 完成预先约定的样本外、行业分层、成本和可交易性检验，并形成可复验结论；
+- 若至少一个框架显示稳定、可解释且不依赖单一行业、固定 watchlist 或单一时间区间的
+  排序优势，则定义生产候选池规则及失败边界；
+- 若没有框架通过，则明确简化、重做或停止，不通过叠加新框架延长阶段二。
+
+#### 阶段三：建设生产决策支持闭环
+
+目标：在策略证据通过后，回答“买什么、为什么现在买、买多少、何时退出”。
+
+执行项：
+
+1. 建设动态候选池与受控数据采集；
+2. 上线经验证的买点信号，而不是把风险门禁重新命名为买点；
+3. 增加仓位、组合集中度、退出/失效条件和风险预算；
+4. 先 report-only/canary，再逐步影响生产主推；
+5. 持续监控收益、回撤、换手和模型漂移。
+
+退出条件：
+
+- 推荐拥有完整决策时快照、行动建议和事后归因；
+- 风险调整后结果优于明确基准；
+- 优势不是由单一行业、市场暴露或固定股票池效应驱动。
+
+### 1.3 与既有 Phase 的映射
+
+- 既有 Phase 4/5 的后续工作并入阶段一；
+- Phase 6 Framework B cohort 继续被动积累，但不阻塞阶段一，也不提前生产化；
+- Phase 7 的离线研究部分前移到阶段二，生产动态池保留到阶段三；
+- M4/M5 和 outcome shadow 既有证据冻结，不再作为当前执行路线；
+- 详细减法结论见
+  `docs/reviews/2026-07-28-product-direction-and-engineering-subtraction-review.md`。
+
+### 1.4 防止再次工程过重
+
+新任务必须先说明它验证哪一个可证伪假设：提高 alpha、改善买入时点或降低回撤/不可逆风险。
+只读研究不创建生产级 migration、seal、reviewer 或 authorization 系统；只有生产 DB、cron、
+凭证、真实外部调用、权重和不可逆行为使用重治理。研究不确定时应限制声明，而不是用更多
+工程把“不确定”包装成“完成”。
+
+文档职责保持单一：本文只管理方向、阶段顺序和退出条件；`TODOS.md` 只管理当前动作；
+`docs/project-status.md` 只记录带日期的运行事实和 blocker；阶段总结只保留决策理由；
+README/CLAUDE 只做入口与短摘要。运行数字冲突时以最新只读查询和日志为准，执行顺序
+冲突时以本文为准，避免在多份文档中各自演化一套路标。
 
 ---
 
-## 二、当前系统基线（2026-07-24 快照）
+## 二、当前系统基线（2026-07-28；运行数据截至 2026-07-27）
 
 ### 能力盘点
 
 | 模块 | 状态 | 说明 |
 |------|------|------|
-| Framework A 评分 | ✅ 正常 | 生产写入框架仍仅 A；live DB 共 1,926 条 A 记录，另有 73 条 legacy B |
+| Framework A 评分 | ✅ 正常 | 生产写入框架仍仅 A；live DB 共 1,996 条 A 记录，另有 73 条 legacy B |
 | Framework B 评分 | ⏸ report-only | 73 条 legacy B 记录仅作回溯；prospective cohort 改为显式按周冻结并绑定固定 A prediction，不启用生产写入 |
 | 每日 PB 分位 | ✅ TuShare 主源 | 35/35 已物化；28 FULL_10Y、5 SINCE_LISTING、2 INSUFFICIENT_HISTORY，历史不足不沿用旧源十年分位 |
 | 通用财务/分红 | ✅ TuShare 主源 | 35/35 单事务物化；财务按有效公告日和三个已披露年度选择，分红仅取最新已实施税前事件 |
 | 定性评分 | ✅ v1 + v2 hybrid | v1 保持 30 天缓存与既有 fallback；v2 全局选择器已启用，6 股使用 source-grounded moat/market_pos，其余维度或股票回退 v1 |
 | Telegram 推送 | ✅ v2 门禁已上线 | 主推条件为 ≥ buy_strong 且 `l3_v2_signal=1`；v2 为 0/NULL 的高分股进入候补 |
-| Outcome 追踪 | ✅ legacy 正常；versioned shadow 已物化 | live DB 中 Framework A 30d/60d/90d 结案 1,198/428/4；另有不可变 shadow 1 run、1,776 results、2,520 observations。报告仍读取 legacy outcome |
-| L3 买点层 | ✅ v2 Phase 2+3 完成；选择性待观察 | TuShare QFQ 覆盖 35/35 codes、4,865 行；非 TuShare/mixed source fail-closed；cron 工作日 16:00 采集 |
+| Outcome 追踪 | ✅ legacy 正常；versioned shadow 已物化 | live DB 中 Framework A 30d/60d/90d 结案 1,303/568/40；另有不可变 shadow 1 run、1,776 results、2,520 observations。报告仍读取 legacy outcome |
+| L3 风险/买点层 | ⚠️ v2 生产运行；买点能力未证实 | TuShare QFQ 覆盖 35/35 codes、4,935 行；非 TuShare/mixed source fail-closed；cron 工作日 16:00 采集 |
 | 定性评分 v2 | ✅ 全局生产读路径；覆盖扩展中 | `QUALITATIVE_V2_MODE=on`；35 股全部进入选择器，6 股 hybrid、29 股 v1 fallback。M5 36 股审计改为发布后独立研究，不阻塞安全读取 |
-| 行情数据源 | ⚠️ TuShare-only，probe stale | 运行时 `a-stock-lib==0.4.1`；provider 失败即关闭；2026-07-15 market-data probe 已过 freshness 门禁，需真实刷新 |
+| 行情数据源 | ⚠️ TuShare-only，probe stale | 运行时 `a-stock-lib==0.4.1`；provider 失败即关闭；2026-07-27 probe 本身 PASS，但 cron 要求当日报告，2026-07-28 已转 stale |
 | cron | ✅ 新时序已安装 | 16:00 QFQ、17:15 TuShare valuation、17:30 daily、17:45 acceptance、18:00 outcome；周六 10:00 financial/dividend |
 | 质量门禁 | ✅ 全绿 | Phase 2 最终全仓 `1112 passed`；Ruff、format、mypy、pip check、shell syntax 与 `git diff --check` 通过 |
 
 ### 关键数据规模
 
 - watchlist：35只（手动维护，固定池）
-- Framework A 记录 1,926 条、Framework B 历史记录 73 条；predictions 合计 1,999 条（2026-07-24 只读查询），outcome shadow 导入前后保护 hash `05e8d556…0f1ce` 不变
+- Framework A 记录 1,996 条、Framework B 历史记录 73 条；predictions 合计 2,069 条（2026-07-27 只读查询）
 - Framework B 生产写入暂停，仅 report-only 观察
-- L3 v1 记录：1078 条，其中通过 148 条、30d 已结案 350 条；L3 v2 历史记录 70 条且 70/70 pass；当前 QFQ 已由 TuShare-only 补至 35×139 行，选择性仍待自然数据证明
+- L3 v1 记录：1,393 条，其中通过 204 条、通过组 30d 已结案 124 条；L3 v2 共 385 条，
+  其中 375 pass、10 reject；当前 QFQ 为 35×141 行，选择性仍待阶段一验证
 - 最新 tracked accuracy report 生成于 2026-07-15；其中 post-fix A 30d 结案 735 条，L3 v1 pass 的 30d 已结案 71 条
 - Phase 6 当前阻塞：2026-W30 首批 frozen cohort 已入组 7 条，当前结案 0/20、已结案周 0/3，7 条预计最早 2026-08-19 结案；门禁仍要求无 overdue
 - 定性评分 v2：独立表 6 行，000963/002050/600036/600900/601088/603606 的 moat/market_pos 来自 v2，sentiment 因证据不足为 `NULL` 并回退 v1；其余 29 股完整回退 v1
-- TuShare 三域 shadow：215 个 completed runs、0 failed；最新 daily cycle `run_id=215`、`source_as_of=2026-07-21`、`changed_count=35`
+- TuShare 三域 ingestion：398 个 completed runs、0 failed；最新 daily cycle
+  `run_id=398`、`source_as_of=2026-07-27`、`changed_count=35`
 - 历史 outcome versioned shadow：生产 1 个 immutable run、1,776 results（1,767 computed / 9 missing）、2,520 observations、3 表 6 触发器；legacy outcome 和 consumer 未切换
 
 ### 已知系统性偏差
@@ -59,7 +161,10 @@
 
 ---
 
-## 三、进化路线（四个阶段）
+## 三、既有 Phase 能力记录
+
+本节保留原 Phase 4–7 的设计和实施历史，但执行优先级已由 1.2 节三阶段收敛路线取代。
+不得仅因下列旧 Phase 尚有未完成项，就绕过当前阶段退出条件继续投入工程。
 
 ### Phase 4：验证基础 [已完成 2026-06-26，进入持续观察]
 
@@ -84,7 +189,7 @@
 
 ---
 
-### Phase 5：买点层（L3 补全）[v1 已完成；v2 Phase 2+3 已完成]
+### Phase 5：L3 风险/买点层 [工程接入完成；买点有效性回到收敛阶段一验证]
 
 **目标：** 在现有评分基础上增加"入场时机确认"信号，解决最大缺口。
 
@@ -153,19 +258,24 @@
 
 ---
 
-### Phase 6：多框架激活（L1 完备化）[report-only 深化中]
+### Phase 6：多框架激活（L1 完备化）[report-only 被动观察]
 
 **目标：** 为不同行业激活对应框架，解决"白酒用 A 框架不合适"的问题。
 
-**当前状态（2026-07-20）：** Phase 6 仍为 report-only 深化期。旧版 B label 跟踪因每次选择 latest-A 而让到期日随 daily 后移，`0/20` 不是有效倒计时。修复后采用双轨：73 条 legacy B 记录只做回溯；prospective cohort 通过显式命令按周冻结并绑定固定 `source_a_prediction_id`。Framework B 生产写入未启用。
+**当前状态（2026-07-27）：** Phase 6 仅做 report-only 被动观察。旧版 B label 跟踪因
+每次选择 latest-A 而让到期日随 daily 后移，已由绑定固定 `source_a_prediction_id`
+的 prospective cohort 替代。73 条 legacy B 记录只做回溯；W30/W31 已冻结 15 条、
+覆盖 2 周，尚未自然结案。Framework B 生产写入未启用。
 
 **本轮推进复盘：**
 - 行情链路当前运行于 `a-stock-lib==0.4.1`：2026-07-23 已强切为 TuShare-only、失败即关闭；旧 fallback 仅保留在历史记录中。
-- cron 已迁移到新 managed block；`READY_CRON` 仍是从零恢复行情依赖任务的门禁，但 2026-07-15 probe 当前已 stale，不得继续描述为实时 READY。
+- cron 已迁移到新 managed block；`READY_CRON` 仍是从零恢复行情依赖任务的门禁。
+  2026-07-27 probe 本身 PASS，但严格当日 freshness 下已于 2026-07-28 stale。
 - Phase 6 readiness 使用 prospective frozen cohort；滚动 latest-A 仅保留为 `[UNFROZEN-PREVIEW]`，不参与门禁。
 - legacy 回溯显示真实 B 历史表现，但必须披露同日样本相关性，永不计入 prospective 门禁。
 - 保持生产边界不变：未启用 `SUPPORTED_FRAMEWORKS` 的 B 写入，未新增 B predictions，未修改 `weights.json`，未改写历史 prediction/outcome 数据。
-- 当前阻塞：2026-W30 首批 7 条已于 2026-07-20 显式冻结，全部绑定当日 A prediction；当前未来可结案 7、overdue 0，最早可评估 2026-08-19，仍需累计后续 cohort 周。
+- 当前观察：W30 7 条、W31 8 条，共 15 条、2 周；预计约于 2026-08-19/26 自然结案，
+  W32 仍需按既定自动流程冻结。满足 20 条/3 周门槛后也只进入人工 review。
 
 **Phase 6 生产化前置条件：**
 - post-fix Framework A 30d 结案样本 ≥ 100。
@@ -210,7 +320,7 @@
 
 ---
 
-### Phase 7：选股宇宙扩展
+### Phase 7：选股宇宙扩展（历史设计；生产实现延后至收敛阶段三）
 
 **目标：** 解决"35只固定股票宇宙太小"的根本问题，实现动态候选池。
 
@@ -302,3 +412,5 @@
 | v1.28 | 2026-07-19 | 定性评分 v2 完成可回滚生产闭环：东方电缆和指定五股形成 6 行合法 partial v2，全局模式切到 `on`，35 股选择器只读验证为 6 股 hybrid + 29 股 v1 fallback；M5 代表性/agreement 审计改为发布后独立研究。 |
 | v1.29 | 2026-07-19 | 新增只读生产验收与回滚检查：tracked baseline 绑定 6 股逐维分数和截至 2026-07-17 的历史评分 seal；自动输出 PASS/ROLLBACK，并可在自然 daily 后复验 35 股 prediction 与 v2 adoption 日志。 |
 | v1.30 | 2026-07-23 | 行情链路强切 TuShare-only：默认/backfill provider 失败即关闭；35 股 QFQ 通过 TuShare API 全量补至各 139 行；生产活动行情与历史审计清除非 TuShare 数据；删除旧采集/双源对账入口，predictions 完整 hash 不变。 |
+| v1.31 | 2026-07-24 | 同步 TuShare 三域、历史 outcome versioned shadow、Framework B prospective cohort 与 Phase 6 report-only 当前基线。 |
+| v1.32 | 2026-07-28 | 澄清产品目标为 A 股选股与买入决策支持；冻结非关键 M4/M5 与 shadow 扩展；新增“证明现有系统→离线扩大宇宙→生产决策闭环”三阶段收敛路线及防过度治理约束。 |
