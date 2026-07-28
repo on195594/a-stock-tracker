@@ -57,7 +57,6 @@ WEEKLY_RULE="00 10 * * 6 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .v
 QFQ_RULE="00 16 * * 1-5 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python scripts/fetch_qfq_daily_bars_tushare.py\" qfq-daily-bars >> $PROJECT_DIR/logs/qfq-daily-bars.log 2>&1"
 PRIMARY_DAILY_RULE="15 17 * * 1-5 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python -m scripts.run_tushare_primary_production_cycle daily\" tushare-primary-daily >> $PROJECT_DIR/logs/tushare-primary-daily.log 2>&1"
 DAILY_RULE="30 17 * * 1-5 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python pipeline.py daily\" daily >> $PROJECT_DIR/logs/daily.log 2>&1"
-OUTCOME_RULE="00 18 * * 1-5 $PROJECT_DIR/cron-alert-wrap.sh \"cd $PROJECT_DIR && .venv/bin/python pipeline.py outcome-update\" outcome-update >> $PROJECT_DIR/logs/outcome.log 2>&1"
 
 MARKET_DATA_READY=0
 if "$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/scripts/check_market_data_readiness.py" >/tmp/a-stock-market-data-readiness.log 2>&1; then
@@ -118,13 +117,9 @@ $MANAGED_CRONTAB
 
 # a-stock-tracker daily (工作日 17:30)
 $DAILY_RULE
-
-# a-stock-tracker outcome-update (工作日 18:00)
-$OUTCOME_RULE
 EOF
 )
     echo "✅ 已配置 daily 任务"
-    echo "✅ 已配置 outcome-update 任务"
 else
     echo "⏸️  未发现既有 daily，且行情恢复门禁未通过；不新增评分写任务"
 fi
@@ -152,11 +147,9 @@ echo "  • weekly:         每周六 10:00 刷新基本面缓存"
 echo "  • qfq-daily-bars: 每个工作日 16:00 采集 QFQ 前复权日线"
 if [ "$MARKET_DATA_READY" -eq 1 ] || [ "$PRESERVE_EXISTING_DAILY" -eq 1 ]; then
     echo "  • primary-daily:  每个工作日 17:15 采集并物化 TuShare 估值"
-    echo "  • daily:          每个工作日 17:30 评分 + Telegram 推送"
-    echo "  • outcome-update: 每个工作日 18:00 更新到期结果"
+    echo "  • daily:          每个工作日 17:30 评分 + 自动报告 + Telegram 观察名单"
 else
     echo "  • daily:          HOLD（行情恢复门禁未通过）"
-    echo "  • outcome-update: HOLD（行情恢复门禁未通过）"
 fi
 echo ""
 echo "查看定时任务："
@@ -165,4 +158,3 @@ echo ""
 echo "查看执行日志："
 echo "  tail -f $PROJECT_DIR/logs/weekly.log"
 echo "  tail -f $PROJECT_DIR/logs/daily.log"
-echo "  tail -f $PROJECT_DIR/logs/outcome.log"

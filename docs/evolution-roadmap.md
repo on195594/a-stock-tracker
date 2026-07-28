@@ -60,7 +60,7 @@
 1. 建设动态候选池；
 2. 上线经验证的买点信号；
 3. 增加仓位、集中度、退出条件和风险预算；
-4. 先自动小流量验证，再影响主推；
+4. 先自动小流量验证，再影响用户买入结论；
 5. 持续监控收益、回撤和换手。
 
 退出条件：系统能回答“买什么、为什么现在买、买多少、何时退出”，且风险调整后结果优于明确基准。
@@ -91,12 +91,21 @@
 
 第二批已完成。生产数据库中既有 shadow 表和 qualitative v2 行仅作历史兼容保留，不再有写入、迁移或手工执行入口。
 
+### 阶段一收口（2026-07-28）
+
+- Telegram 从“主推/候补”降级为未验证观察名单；
+- 策略报告改为 daily 后自动刷新，删除手工 `accuracy-report`；
+- 删除 legacy `outcome-update`、18:00 cron、Phase4 通知与新库里程碑表；
+- 历史 outcome/benchmark/alpha/estimate 与里程碑数据只读保留；
+- 报告只使用最新 `weights_hash` 且 qualitative provenance 已记录的 cohort，IC、spread、组合收益和 L3 统一使用完整的非重叠截面；
+- 增加观察池等权组合，直接展示 Q5 相对固定股票池的排序收益差。
+
 ## 长期保留
 
 - TuShare 数据采集、readiness、来源纯度和原子物化；
 - QFQ 行情缓存；
 - Framework A 纯评分与决策时快照；
-- daily、Telegram、outcome 自动链；
+- daily、自动 QFQ 策略报告与 Telegram 观察名单；
 - 核心数据库和交易日语义测试。
 
 ## 防止再次过重

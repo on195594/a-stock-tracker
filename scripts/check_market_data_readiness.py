@@ -32,7 +32,7 @@ class ReadinessStatus:
 
     @property
     def cron_ready(self) -> bool:
-        return self.daily_ready and self.capability_ready
+        return self.daily_ready
 
 
 def _today() -> date:
@@ -195,7 +195,7 @@ def main(argv: list[str] | None = None) -> int:
         "--scope",
         choices=("cron", "daily"),
         default="cron",
-        help="cron requires daily and index/calendar readiness; daily checks staged daily writes only.",
+        help="cron requires a fresh daily-write decision; daily checks staged daily writes only.",
     )
     parser.add_argument(
         "--allow-stale-days",
@@ -222,7 +222,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if status.cron_ready:
-        print("READY_CRON: daily and index/calendar-dependent market data jobs can be considered for cron recovery")
+        print("READY_CRON: daily market data jobs can be considered for cron recovery")
         _print_details(status)
         return 0
     print("HOLD_CRON: market data cron recovery is not cleared")

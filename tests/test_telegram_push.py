@@ -123,7 +123,8 @@ def test_push_daily_signals_sends_only_when_score_and_l3_pass(tmp_db, telegram_e
 
     assert len(sent) == 1
     text = sent[0][2]
-    assert "🟢 主推" in text
+    assert "📊 A股未验证观察名单" in text
+    assert "🟢 高分观察" in text
     assert "N600036(600036)" in text
     assert "L3风险门禁:通过(v2)" in text
     assert "L3买点" not in text
@@ -138,9 +139,9 @@ def test_l3_v2_pass_triggers_primary_when_v1_rejects(tmp_db, telegram_env, monke
 
     assert len(sent) == 1
     text = sent[0][2]
-    assert "🟢 主推" in text
+    assert "🟢 高分观察" in text
     assert "N600037(600037)" in text
-    assert "🟡 候补" not in text
+    assert "🟡 高分风险观察" not in text
 
 
 def test_l3_v2_reject_routes_v1_pass_to_backup(tmp_db, telegram_env, monkeypatch):
@@ -152,8 +153,8 @@ def test_l3_v2_reject_routes_v1_pass_to_backup(tmp_db, telegram_env, monkeypatch
 
     assert len(sent) == 1
     text = sent[0][2]
-    assert "🟢 主推" not in text
-    assert "🟡 候补" in text
+    assert "🟢 高分观察" not in text
+    assert "🟡 高分风险观察" in text
     assert "N600038(600038)" in text
 
 
@@ -166,8 +167,8 @@ def test_l3_v2_null_routes_v1_pass_to_backup(tmp_db, telegram_env, monkeypatch):
 
     assert len(sent) == 1
     text = sent[0][2]
-    assert "🟢 主推" not in text
-    assert "🟡 候补" in text
+    assert "🟢 高分观察" not in text
+    assert "🟡 高分风险观察" in text
     assert "N600039(600039)" in text
     assert "L3风险门禁:不可用(v2)" in text
     assert "L3风险门禁:拒绝(v2)" not in text
@@ -182,7 +183,7 @@ def test_tiered_push_backup_tier_sends_when_l3_zero(tmp_db, telegram_env, monkey
 
     assert len(sent) == 1
     text = sent[0][2]
-    assert "🟡 候补" in text
+    assert "🟡 高分风险观察" in text
     assert "N600036(600036)" in text
     assert "L3风险门禁:拒绝(v2)" in text
     assert "(v1)" not in text
@@ -201,7 +202,7 @@ def test_push_daily_signals_swallows_send_exception(tmp_db, telegram_env, monkey
     telegram_push.push_daily_signals("2026-05-30", threshold=65.0)
 
     assert len(calls) == 1
-    assert "🟢 主推" in calls[0][2]
+    assert "🟢 高分观察" in calls[0][2]
 
 
 def test_tiered_push_radar_tier_only(tmp_db, telegram_env, monkeypatch):
@@ -213,7 +214,7 @@ def test_tiered_push_radar_tier_only(tmp_db, telegram_env, monkeypatch):
 
     assert len(sent) == 1
     text = sent[0][2]
-    assert "🔵 雷达" in text
+    assert "🔵 一般观察" in text
     assert "N600036(600036)" in text
 
 
@@ -224,7 +225,7 @@ def test_tiered_push_always_sends_when_all_tiers_empty(tmp_db, telegram_env, mon
     telegram_push.push_daily_signals("2026-05-30", threshold=44.0, radar_min=35.0)
 
     assert len(sent) == 1
-    assert "今日无推荐信号" in sent[0][2]
+    assert "今日无观察信号" in sent[0][2]
 
 
 def test_tiered_push_all_three_tiers(tmp_db, telegram_env, monkeypatch):
@@ -238,9 +239,9 @@ def test_tiered_push_all_three_tiers(tmp_db, telegram_env, monkeypatch):
 
     assert len(sent) == 1
     text = sent[0][2]
-    assert "🟢 主推" in text
-    assert "🟡 候补" in text
-    assert "🔵 雷达" in text
+    assert "🟢 高分观察" in text
+    assert "🟡 高分风险观察" in text
+    assert "🔵 一般观察" in text
 
 
 def test_tiered_push_interpretation_includes_moat(tmp_db, telegram_env, monkeypatch):

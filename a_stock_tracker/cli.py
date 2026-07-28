@@ -4,8 +4,6 @@ a-stock-tracker 主编排器
 子命令：
   init            首次初始化，对 watchlist 每只股票执行 fetch，填充 stock_fundamentals
   daily           每日评分并写入 predictions 表（cron: 工作日 16:30）
-  outcome-update  更新到期预测的实际收益（cron: 工作日 17:00）
-  accuracy-report 输出 benchmark 相对命中率报告
 """
 
 import argparse
@@ -59,7 +57,6 @@ from a_stock_tracker.scoring import (
 from a_stock_tracker.paths import PROJECT_ROOT
 
 FETCHER_STOCK_TIMEOUT_SECONDS = 420
-_OUTCOME_WINDOWS: frozenset[str] = frozenset({"30d", "60d", "90d"})
 
 
 def _load_dotenv() -> None:
@@ -110,10 +107,6 @@ def _compute_weights_hash(weights: dict) -> str:
 
 def _today() -> str:
     return date.today().isoformat()
-
-
-def _add_days(d: str, n: int) -> str:
-    return (date.fromisoformat(d) + timedelta(days=n)).isoformat()
 
 
 def _compute_daily_pb_percentile(price: float, data: dict) -> float | None:
@@ -470,9 +463,26 @@ def _run_daily_post_steps(today: str, weights: dict) -> None:
         logger.warning(f"Telegram 推送失败（不影响 SQLite 数据）：{e}")
 
 
+def _write_accuracy_report(strong_threshold: float = 44.0) -> None:
+    """从 SQLite 自动刷新唯一的策略评估报告。"""
+    db = get_db()
+    try:
+        report = build_accuracy_report(db, strong_threshold=strong_threshold)
+    finally:
+        db.close()
+
+    report_path = Path(config.ACCURACY_REPORT_PATH)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = report_path.with_name(f"{report_path.name}.tmp")
+    temporary_path.write_text(report + "\n", encoding="utf-8")
+    temporary_path.replace(report_path)
+    logger.info(f"策略评估报告已自动刷新：{report_path}")
+
+
 def cmd_daily() -> None:
     weights = _load_weights()
     weights_hash = _compute_weights_hash(weights)
+    buy_threshold = weights.get("thresholds", {}).get("buy_strong", 55)
     today = _today()
     db = get_db()
     try:
@@ -501,269 +511,11 @@ def cmd_daily() -> None:
                 f.write(log_line + "\n")
     finally:
         db.close()
+        try:
+            _write_accuracy_report(buy_threshold)
+        except Exception as e:
+            logger.warning(f"策略评估报告刷新失败（不影响 SQLite 数据）：{e}")
     _run_daily_post_steps(today, weights)
-
-
-# ──────────────────────────────────────────────
-# outcome-update 命令
-# ──────────────────────────────────────────────
-
-
-def _get_index_price(db: sqlite3.Connection, symbol: str, target_date: str) -> float | None:
-    """从 index_prices 表查收盘价，向前找最近 10 个自然日（覆盖黄金周 7 天停牌）。"""
-    for delta in range(11):
-        d = _add_days(target_date, -delta)
-        row = db.execute("SELECT close FROM index_prices WHERE symbol=? AND date=?", (symbol, d)).fetchone()
-        if row:
-            return row[0]
-    return None
-
-
-def _ensure_index_prices(
-    db: sqlite3.Connection,
-    earliest_score_date: str,
-    today: str,
-    provider: MarketDataProvider | None = None,
-) -> None:
-    """确保 index_prices 有从 earliest_score_date 到 today 的完整数据。"""
-    latest_cached = db.execute("SELECT MAX(date) FROM index_prices WHERE symbol='000300'").fetchone()[0]
-
-    start_date = earliest_score_date
-    if latest_cached and latest_cached >= earliest_score_date:
-        # 增量更新：从 latest_cached 到 today
-        start_date = latest_cached
-
-    if start_date > today:
-        return
-
-    logger.info(f"拉取沪深300日线：{start_date} → {today}")
-    provider = provider or get_default_market_data_provider()
-    result = provider.fetch_index_bars("000300")
-    insert_market_data_audit(db, result, "benchmark_price", "000300", today)
-    if result.value is None:
-        logger.warning("沪深300历史数据拉取失败，benchmark 将为 NULL")
-        return
-    df = result.value
-    date_col, close_col = "date", "close"
-    # 腾讯接口返回全量历史，过滤到所需范围（date 列为 datetime.date 对象）
-    df = df[df["date"].astype(str) >= start_date]
-
-    inserted = 0
-    for _, row in df.iterrows():
-        d = str(row[date_col])[:10]
-        c = float(row[close_col])
-        cur = db.execute(
-            "INSERT OR IGNORE INTO index_prices (symbol, date, close) VALUES (?, ?, ?)",
-            ("000300", d, c),
-        )
-        inserted += cur.rowcount
-    db.commit()
-    logger.info(f"index_prices 写入 {inserted} 条")
-
-
-def cmd_outcome_update() -> None:
-    today = _today()
-    db = get_db()
-    try:
-        provider = get_default_market_data_provider()
-        with provider_session(provider):
-            # 确保有足够的 index_prices 历史
-            earliest = db.execute("SELECT MIN(score_date) FROM predictions").fetchone()[0]
-            if earliest:
-                _ensure_index_prices(db, earliest, today, provider)
-
-            updated = 0
-            for window, days in [("30d", 30), ("60d", 60), ("90d", 90)]:
-                if window not in _OUTCOME_WINDOWS:
-                    raise ValueError(f"未知 window: {window!r}")
-                outcome_col = f"outcome_{window}"
-                benchmark_col = f"benchmark_{window}"
-
-                rows = db.execute(
-                    f"""SELECT id, code, score_date, price_at_score
-                        FROM predictions
-                        WHERE {outcome_col} IS NULL
-                          AND price_at_score IS NOT NULL
-                          AND date(score_date, '+{days} days') <= ?""",
-                    (today,),
-                ).fetchall()
-
-                for row_id, code, score_date, price_at_score in rows:
-                    target_date = _add_days(score_date, days)
-
-                    # 获取股票到期价格（向前找 10 个自然日，覆盖黄金周 7 天停牌）
-                    outcome_price = None
-                    estimate_flag = 0
-                    result = provider.fetch_outcome_price(code, target_date)
-                    insert_market_data_audit(db, result, "outcome_price", code, today)
-                    if result.value is not None:
-                        outcome_price = result.value
-                        if result.freshness_days and result.freshness_days > 0:
-                            estimate_flag = 1
-
-                    if outcome_price is None:
-                        logger.info(f"  {code} {window} 到期日 {target_date} 无可用价格（10日内），置 NULL")
-                        continue
-
-                    outcome_val = (outcome_price / price_at_score - 1) * 100
-
-                    # 获取 benchmark
-                    benchmark_val = None
-                    score_index_price = _get_index_price(db, "000300", score_date)
-                    target_index_price = _get_index_price(db, "000300", target_date)
-                    if score_index_price and target_index_price:
-                        benchmark_val = (target_index_price / score_index_price - 1) * 100
-
-                    try:
-                        db.execute(
-                            f"""UPDATE predictions
-                                SET {outcome_col} = ?,
-                                    {benchmark_col} = ?,
-                                    estimate_flag = CASE WHEN ? = 1 THEN 1 ELSE estimate_flag END
-                                WHERE id = ?""",
-                            (outcome_val, benchmark_val, estimate_flag, row_id),
-                        )
-                        updated += 1
-                    except Exception as e:
-                        logger.error(f"  写入 {code} {window} outcome 失败：{e}")
-
-            db.commit()
-            logger.info(f"outcome-update 完成：更新 {updated} 条")
-    finally:
-        db.close()
-
-    # Phase 4 里程碑检测（失败不阻断）
-    try:
-        _check_phase4_milestone()
-    except Exception as e:
-        logger.warning(f"Phase 4 里程碑检测失败（不影响数据）：{e}")
-
-
-# ──────────────────────────────────────────────
-# accuracy-report 命令
-# ──────────────────────────────────────────────
-
-
-def cmd_accuracy_report() -> None:
-    db = get_db()
-    try:
-        report = build_accuracy_report(db)
-        print(report)
-
-        report_path = config.ACCURACY_REPORT_PATH
-        Path(report_path).parent.mkdir(parents=True, exist_ok=True)
-        with open(report_path, "w", encoding="utf-8") as f:
-            f.write(report + "\n")
-        logger.info(f"报告已保存到 {report_path}")
-    finally:
-        db.close()
-
-
-# ──────────────────────────────────────────────
-# Phase 4 里程碑检测
-# ──────────────────────────────────────────────
-
-_PHASE4_POST_FIX_DATE = "2026-05-15"  # gross_margin + pb_percentile 修复日
-_PHASE4_MILESTONES = [25, 50, 75, 100]
-
-
-def _check_phase4_milestone() -> None:
-    """统计 post-fix 30d 结案记录数，到达里程碑节点时发送 Telegram 通知。
-
-    状态持久化在 phase_milestones 表，重复运行不重复推送。
-    """
-    db = get_db()
-    try:
-        count = db.execute(
-            """SELECT COUNT(*) FROM predictions
-               WHERE framework='A'
-                 AND score_date >= ?
-                 AND outcome_30d IS NOT NULL""",
-            (_PHASE4_POST_FIX_DATE,),
-        ).fetchone()[0]
-
-        notified = {
-            row[0] for row in db.execute("SELECT milestone FROM phase_milestones WHERE phase='phase4_30d'").fetchall()
-        }
-
-        for milestone in _PHASE4_MILESTONES:
-            if count >= milestone and milestone not in notified:
-                _send_phase4_notification(db, count, milestone)
-                db.execute(
-                    "INSERT OR IGNORE INTO phase_milestones(phase, milestone, notified_at) VALUES(?,?,?)",
-                    ("phase4_30d", milestone, datetime.now().isoformat()),
-                )
-                db.commit()
-                logger.info(f"Phase 4 里程碑 {milestone} 已通知")
-    finally:
-        db.close()
-
-
-def _send_phase4_notification(db, count: int, milestone: int) -> None:
-    """构造并发送 Phase 4 里程碑 Telegram 消息。"""
-    import json as _json
-    import urllib.request
-
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
-    if not token or not chat_id:
-        logger.warning("Telegram 未配置，跳过 Phase 4 里程碑推送")
-        return
-
-    if milestone < 100:
-        # 进度更新
-        remaining = 100 - count
-        lines = [
-            f"Phase 4 进度 {count}/100 条",
-            f"post-fix 30d 结案记录已达 {milestone} 条里程碑",
-            f"距目标还差 {remaining} 条，预计约 {remaining} 个交易日",
-            "",
-            "系统正常运行中，无需操作。",
-        ]
-    else:
-        # 100 条达成：附简要 hit_rate 摘要
-        rows = db.execute(
-            """SELECT
-                 AVG(CASE WHEN alpha_30d > 0 THEN 1.0 ELSE 0.0 END) hit_rate,
-                 COUNT(*) n,
-                 AVG(outcome_30d) avg_ret,
-                 AVG(alpha_30d)   avg_alpha
-               FROM predictions
-               WHERE framework='A'
-                 AND score_date >= ?
-                 AND outcome_30d IS NOT NULL
-                 AND benchmark_30d IS NOT NULL""",
-            (_PHASE4_POST_FIX_DATE,),
-        ).fetchone()
-        hit_rate, n, avg_ret, avg_alpha = rows
-        hit_pct = f"{hit_rate * 100:.1f}%" if hit_rate is not None else "N/A"
-        avg_ret_s = f"{avg_ret:+.2f}%" if avg_ret is not None else "N/A"
-        avg_alpha_s = f"{avg_alpha:+.2f}%" if avg_alpha is not None else "N/A"
-
-        lines = [
-            "Phase 4 里程碑达成",
-            f"post-fix 30d 结案记录已达 {count} 条",
-            "",
-            f"跑赢沪深300胜率：{hit_pct}（样本 {n} 条）",
-            f"平均收益：{avg_ret_s}，平均 alpha：{avg_alpha_s}",
-            "",
-            "建议操作：",
-            "  运行 python pipeline.py accuracy-report 查看完整报告",
-            "  继续完成 QFQ 总收益、截面 IC、spread 与回撤评估",
-        ]
-
-    text = "\n".join(lines)
-    payload = _json.dumps({"chat_id": chat_id, "text": text}).encode()
-    req = urllib.request.Request(
-        f"https://api.telegram.org/bot{token}/sendMessage",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            resp.read()
-    except Exception as e:
-        logger.warning(f"Phase 4 里程碑 Telegram 推送失败：{e}")
 
 
 # ──────────────────────────────────────────────
@@ -803,8 +555,6 @@ def main() -> None:
     sub.add_parser("init", help="首次初始化，预填 watchlist 基本面缓存")
     sub.add_parser("weekly", help="每周刷新基本面缓存（cron: 每周六 10:00）")
     sub.add_parser("daily", help="每日评分，写入 predictions 表（依赖 weekly 缓存）")
-    sub.add_parser("outcome-update", help="更新到期预测的实际收益")
-    sub.add_parser("accuracy-report", help="输出 QFQ 策略评估报告")
     p_remove = sub.add_parser(
         "remove",
         help="删除一只股票在 predictions 和 stock_fundamentals 表中的记录（先从 a_stock_tracker/config.py 移除）",
@@ -819,10 +569,6 @@ def main() -> None:
         cmd_weekly()
     elif args.cmd == "daily":
         cmd_daily()
-    elif args.cmd == "outcome-update":
-        cmd_outcome_update()
-    elif args.cmd == "accuracy-report":
-        cmd_accuracy_report()
     elif args.cmd == "remove":
         cmd_remove(args.code)
 
@@ -830,7 +576,7 @@ def main() -> None:
 def _alert_crash(cmd: str, exc: Exception) -> None:
     """main()未捕获异常时的最后一道告警：cron环境下日志没人主动看，
     不发Telegram就等同于2026-04那次"claude command not found"静默两个月的同类风险。
-    跟现有_send_phase4_notification同样的直连curl方式，不依赖额外模块。
+    使用标准库 HTTP 请求，不依赖额外模块。
     """
     import json as _json
     import urllib.request

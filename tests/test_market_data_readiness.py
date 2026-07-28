@@ -76,7 +76,7 @@ def test_cron_readiness_rejects_stale_report(tmp_path, monkeypatch, capsys) -> N
     assert "latest Tushare capability probe is stale" in out
 
 
-def test_cron_readiness_allows_stale_report_with_explicit_weekly_loop_grace(
+def test_cron_readiness_allows_stale_report_with_explicit_grace(
     tmp_path,
     monkeypatch,
     capsys,
@@ -122,7 +122,7 @@ def test_readiness_allows_cron_when_daily_and_capabilities_pass(tmp_path, monkey
     assert status.reasons == []
 
 
-def test_readiness_allows_daily_but_holds_cron_when_capabilities_degraded(tmp_path, monkeypatch) -> None:
+def test_readiness_allows_cron_when_daily_ready_but_capabilities_degraded(tmp_path, monkeypatch) -> None:
     _write_report(
         tmp_path,
         "2026-06-26-tushare-capability-probe.md",
@@ -135,7 +135,7 @@ def test_readiness_allows_daily_but_holds_cron_when_capabilities_degraded(tmp_pa
 
     assert status.daily_ready
     assert not status.capability_ready
-    assert not status.cron_ready
+    assert status.cron_ready
     assert "Capability Checks is DEGRADED" in status.reasons
     assert "Index/Calendar Dependent Jobs is HOLD" in status.reasons
 
@@ -308,9 +308,9 @@ def test_main_scope_exit_codes_for_degraded_capabilities(tmp_path, monkeypatch, 
     monkeypatch.setattr(readiness, "_today", lambda: date(2026, 6, 26))
     monkeypatch.setitem(os.environ, "TUSHARE_TOKEN", "token")
 
-    assert readiness.main(["--scope", "cron"]) == 1
+    assert readiness.main(["--scope", "cron"]) == 0
     cron_out = capsys.readouterr().out
-    assert "HOLD_CRON" in cron_out
+    assert "READY_CRON" in cron_out
     assert "- daily writes: READY" in cron_out
     assert "- index/calendar-dependent jobs: HOLD" in cron_out
 

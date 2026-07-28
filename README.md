@@ -13,13 +13,13 @@ TuShare 基本面、估值与 QFQ 行情
   → Framework A 评分
   → L3 v2 极端下跌风险门禁
   → SQLite 决策快照
-  → Telegram 主推/候补
-  → 30/60/90 日 outcome 与策略报告
+  → 自动 30/60/90 日 QFQ 策略报告
+  → Telegram 未验证观察名单
 ```
 
-2026-07-28 两批减法已完成：第一批移除 Framework B、L3 v1 新写入与回填、Google Sheets、在线 Gemini、qualitative acceptance 和 weekly PM loop；第二批移除 M4/M5、历史 qualitative pilot/writer/shadow、outcome shadow 工具链和手工离线回测入口。Git 历史承担恢复职责，生产数据库历史行不做破坏性迁移。
+2026-07-28 三轮减法已完成：前两轮移除 Framework B、L3 v1 新写入与回填、Google Sheets、在线 Gemini、M4/M5、历史 qualitative/outcome shadow 和手工离线入口；阶段一收口进一步删除 legacy outcome/Phase4 和手工报告入口，并降级 Telegram 语义。Git 历史承担恢复职责，生产数据库历史行不做破坏性迁移。
 
-定性输入不再联网或更新：daily 只读已有本地 v1/v2 分数，不存在或无效时使用固定 fallback。16:00 QFQ 自动任务同时更新沪深300全收益指数，默认 `accuracy-report` 直接输出 30/60/90 日总收益、IC、Q5−Q1 spread、非重叠批次回撤和 L3 对比。
+定性输入不再联网或更新：daily 只读已有本地 v1/v2 分数，不存在或无效时使用固定 fallback。16:00 QFQ 自动任务同时更新沪深300全收益指数；17:30 daily 落库后自动刷新 30/60/90 日总收益、IC、Q5−Q1 spread 和非重叠批次回撤报告。
 
 ## 常用命令
 
@@ -27,8 +27,6 @@ TuShare 基本面、估值与 QFQ 行情
 python3 pipeline.py init
 python3 pipeline.py weekly
 python3 pipeline.py daily
-python3 pipeline.py outcome-update
-python3 pipeline.py accuracy-report
 
 python3 scripts/fetch_qfq_daily_bars_tushare.py
 python3 scripts/check_market_data_readiness.py --scope cron
@@ -36,7 +34,7 @@ python3 -m scripts.run_tushare_primary_production_cycle daily
 python3 -m scripts.run_tushare_primary_production_cycle weekly
 ```
 
-`accuracy-report` 写入被 Git 忽略的 `artifacts/reports/accuracy-report.txt`。SQLite 是数据真相来源；Telegram 是唯一生产展示面。
+自动报告写入被 Git 忽略的 `artifacts/reports/accuracy-report.txt`。SQLite 是数据真相来源；Telegram 只展示未验证观察名单，不构成买入建议。
 
 ## 自动任务
 
@@ -45,10 +43,9 @@ python3 -m scripts.run_tushare_primary_production_cycle weekly
 - 周六 10:00：财务与分红刷新；
 - 工作日 16:00：TuShare QFQ 日线；
 - 工作日 17:15：TuShare 估值物化；
-- 工作日 17:30：Framework A daily 与 Telegram；
-- 工作日 18:00：outcome-update。
+- 工作日 17:30：Framework A daily、自动策略报告与 Telegram 观察名单。
 
-脚本会清理已退休的 Framework B、weekly PM 和 qualitative acceptance 旧 cron 规则。
+脚本会清理已退休的 Framework B、weekly PM、qualitative acceptance 和 legacy outcome-update 旧 cron 规则。
 
 ## 目录
 

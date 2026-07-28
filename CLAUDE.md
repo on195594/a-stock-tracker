@@ -7,13 +7,13 @@
 ## 当前生产边界
 
 - 只写 Framework A prediction；
-- TuShare 提供基本面、估值、当前价格、QFQ 行情和 outcome 行情；
+- TuShare 提供基本面、估值、当前价格、QFQ 行情和沪深300全收益基准；
 - L3 v2 只称为极端下跌风险门禁；
 - 定性输入只读已有本地缓存或固定 fallback，daily 不调用外部模型；
-- SQLite 是真相来源，Telegram 是唯一展示面；
+- SQLite 是真相来源，daily 自动刷新唯一策略报告，Telegram 只展示未验证观察名单；
 - 不存在 Framework B、L3 v1 新写入、Sheets、qualitative acceptance 或 weekly PM 活动链。
 
-历史数据库中的 Framework B、L3 v1 和 outcome shadow 数据保持不动，但代码、CLI 与手工迁移入口均已删除，不得据此恢复。
+历史数据库中的 Framework B、L3 v1、outcome shadow、legacy outcome 和 Phase4 里程碑数据保持不动，但活动代码、CLI、cron 与手工迁移入口均已删除，不得据此恢复。
 
 ## 架构
 
@@ -29,6 +29,7 @@
 - 不修改历史核心评分字段；
 - 不在阶段一结论前修改权重或阈值；
 - 不把风险门禁称为已验证买点；
+- 策略报告只评估最新 `weights_hash` 且 qualitative provenance 已记录的 cohort，所有窗口统一使用完整的非重叠截面，并同时报告观察池等权基线；
 - 不新增手工备用入口；
 - 不增加治理、reviewer、seal、authorization 或 migration；
 - 不在测试中真实访问网络；

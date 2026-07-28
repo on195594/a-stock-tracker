@@ -1,4 +1,4 @@
-"""Telegram 每日信号推送。daily cron 完成后调用，推送评分 >= 阈值的股票。"""
+"""Telegram 每日观察名单推送。daily cron 完成后调用，展示评分 >= 阈值的股票。"""
 
 import json
 import logging
@@ -138,7 +138,7 @@ def _format_stock_line(
 
 
 def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: float = 35.0) -> None:
-    """查询当日分层推荐股票，发送 Telegram 消息。"""
+    """查询当日分层观察股票，发送 Telegram 消息。"""
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
     if not token or not chat_id:
@@ -194,10 +194,10 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
     ).fetchall()
     db.close()
 
-    sections = [f"📊 A股推荐 {score_date}\n"]
+    sections = [f"📊 A股未验证观察名单 {score_date}\n"]
 
     if primary:
-        lines = [f"🟢 主推（高分且风险门禁通过，总分>={threshold:.0f}）"]
+        lines = [f"🟢 高分观察（风险门禁通过，总分>={threshold:.0f}）"]
         for (
             code,
             name,
@@ -226,7 +226,7 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
         sections.append("\n".join(lines))
 
     if backup:
-        lines = [f"🟡 候补（高分但风险门禁未通过，总分>={threshold:.0f}）"]
+        lines = [f"🟡 高分风险观察（风险门禁未通过，总分>={threshold:.0f}）"]
         for row in backup:
             (
                 code,
@@ -257,7 +257,7 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
         sections.append("\n".join(lines))
 
     if radar:
-        lines = [f"🔵 雷达（{radar_min:.0f}~{threshold:.0f}分，关注）"]
+        lines = [f"🔵 一般观察（{radar_min:.0f}~{threshold:.0f}分）"]
         for row in radar:
             (
                 code,
@@ -289,7 +289,7 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
 
     total_counted = len(primary) + len(backup) + len(radar)
     if total_counted == 0:
-        sections.append("今日无推荐信号")
+        sections.append("今日无观察信号")
 
     sections.append(f"\n共评估{total_counted}只股票（{score_date}盘后）")
     text = "\n\n".join(section for section in sections if section)

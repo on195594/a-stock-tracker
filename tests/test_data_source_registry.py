@@ -67,14 +67,8 @@ def test_registry_covers_report_contract_fields() -> None:
     expected = {
         "framework",
         "weights_hash",
-        "report_period",
-        "price_at_score",
-        "outcome_30d",
-        "outcome_60d",
-        "outcome_90d",
-        "benchmark_30d",
-        "benchmark_60d",
-        "benchmark_90d",
+        "qfq_strategy_return",
+        "csi300_total_return",
     }
     assert expected <= _fields()
 

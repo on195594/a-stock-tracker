@@ -5,7 +5,7 @@ A 股选股管道的 SQLite 缓存层。
 保留的职责：
 - stock_fundamentals 基本面缓存
 - spot_em_snapshot 当日行情快照缓存
-- predictions / index_prices / qualitative_scores / phase_milestones schema
+- predictions / index_prices / qualitative_scores schema
 
 旧 skill 时代的分析结论缓存、预警和持仓 CLI 已移除。本项目只做选股信号验证，
 不做持仓或账户管理。
@@ -226,12 +226,6 @@ def get_db() -> sqlite3.Connection:
             PRIMARY KEY (code, scored_date)
         )""")
 
-    conn.execute("""CREATE TABLE IF NOT EXISTS phase_milestones (
-        phase        TEXT    NOT NULL,
-        milestone    INTEGER NOT NULL,
-        notified_at  TEXT    NOT NULL,
-        PRIMARY KEY (phase, milestone)
-    )""")
     conn.commit()
     return conn
 

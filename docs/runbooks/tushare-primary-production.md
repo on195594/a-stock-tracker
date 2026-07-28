@@ -23,10 +23,9 @@ cycle 会根据 `daily|weekly` 显式启用对应域，因此紧急停用必须�
 
 ```cron
 00 10 * * 6   # weekly：财务、分红采集与物化
+00 16 * * 1-5 # QFQ 个股日线与沪深300全收益指数
 15 17 * * 1-5 # daily：当日估值采集与物化
-30 17 * * 1-5 # pipeline daily
-45 17 * * 1-5 # qualitative-v2 production acceptance
-00 18 * * 1-5 # outcome-update
+30 17 * * 1-5 # pipeline daily、自动策略报告与 Telegram 观察名单
 ```
 
 权威安装入口：

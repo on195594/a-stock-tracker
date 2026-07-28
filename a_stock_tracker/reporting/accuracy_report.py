@@ -16,6 +16,7 @@ STOCK_ADJUSTED = "qfq"
 BENCHMARK_SYMBOL = "H00300"
 MAX_LAG_DAYS = 10
 MIN_CROSS_SECTION = 5
+MIN_CROSS_SECTION_COVERAGE = 0.9
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,16 @@ class StrategyObservation:
     stock_return: float
     benchmark_return: float
     alpha: float
+
+
+@dataclass(frozen=True)
+class StrategyPath:
+    batches: int
+    q5_return: float | None
+    equal_weight_return: float | None
+    benchmark_return: float | None
+    q5_minus_equal_weight: float | None
+    max_drawdown: float | None
 
 
 def _fmt_percent(value: float | None) -> str:
@@ -81,16 +92,74 @@ def _aligned_close(
     return dates[index], closes[index]
 
 
-def _load_observations(db: sqlite3.Connection, window_days: int) -> list[StrategyObservation]:
+def _current_scoring_version(db: sqlite3.Connection) -> tuple[str | None, str | None, str | None]:
+    row = db.execute(
+        """SELECT weights_hash
+           FROM predictions
+           WHERE framework='A'
+             AND total_score IS NOT NULL
+             AND weights_hash IS NOT NULL
+             AND qualitative_mode IS NOT NULL
+             AND score_date = (
+                 SELECT MAX(score_date)
+                 FROM predictions
+                 WHERE framework='A'
+                   AND total_score IS NOT NULL
+                   AND weights_hash IS NOT NULL
+                   AND qualitative_mode IS NOT NULL
+             )
+           GROUP BY weights_hash
+           ORDER BY COUNT(*) DESC, weights_hash
+           LIMIT 1"""
+    ).fetchone()
+    if row is None:
+        return None, None, None
+    weights_hash = str(row[0])
+    first_date, last_date = db.execute(
+        """SELECT MIN(score_date), MAX(score_date)
+           FROM predictions
+           WHERE framework='A'
+             AND total_score IS NOT NULL
+             AND weights_hash=?
+             AND qualitative_mode IS NOT NULL""",
+        (weights_hash,),
+    ).fetchone()
+    return weights_hash, str(first_date), str(last_date)
+
+
+def _load_observations(
+    db: sqlite3.Connection,
+    window_days: int,
+    weights_hash: str | None,
+) -> tuple[list[StrategyObservation], int]:
+    if weights_hash is None:
+        return [], 0
+    expected_size = db.execute(
+        """SELECT COALESCE(MAX(prediction_count), 0)
+           FROM (
+               SELECT COUNT(*) AS prediction_count
+               FROM predictions
+               WHERE framework='A'
+                 AND total_score IS NOT NULL
+                 AND weights_hash=?
+                 AND qualitative_mode IS NOT NULL
+               GROUP BY score_date
+           )""",
+        (weights_hash,),
+    ).fetchone()[0]
     stocks, benchmark = _load_price_series(db)
     if not benchmark[0]:
-        return []
+        return [], int(expected_size)
     as_of_date = date.fromisoformat(benchmark[0][-1])
     predictions = db.execute(
         """SELECT code, score_date, total_score, l3_v2_signal
            FROM predictions
-           WHERE framework='A' AND total_score IS NOT NULL
-           ORDER BY score_date, code"""
+           WHERE framework='A'
+             AND total_score IS NOT NULL
+             AND weights_hash=?
+             AND qualitative_mode IS NOT NULL
+           ORDER BY score_date, code""",
+        (weights_hash,),
     ).fetchall()
     observations: list[StrategyObservation] = []
     for raw_code, raw_score_date, raw_score, raw_signal in predictions:
@@ -126,7 +195,7 @@ def _load_observations(db: sqlite3.Connection, window_days: int) -> list[Strateg
                 alpha=stock_return - benchmark_return,
             )
         )
-    return observations
+    return observations, int(expected_size)
 
 
 def _average_ranks(values: list[float]) -> list[float]:
@@ -157,17 +226,33 @@ def _correlation(left: list[float], right: list[float]) -> float | None:
     return numerator / (left_scale * right_scale)
 
 
-def _cross_section_metrics(
+def _non_overlapping_sections(
     observations: list[StrategyObservation],
-) -> tuple[int, float | None, float | None]:
+    window_days: int,
+    expected_size: int,
+) -> list[list[StrategyObservation]]:
     grouped: dict[str, list[StrategyObservation]] = defaultdict(list)
     for observation in observations:
         grouped[observation.score_date].append(observation)
+    sections: list[list[StrategyObservation]] = []
+    required_size = max(MIN_CROSS_SECTION, math.ceil(expected_size * MIN_CROSS_SECTION_COVERAGE))
+    next_eligible = date.min
+    for raw_score_date in sorted(grouped):
+        score_date = date.fromisoformat(raw_score_date)
+        rows = grouped[raw_score_date]
+        if score_date < next_eligible or len(rows) < required_size:
+            continue
+        sections.append(rows)
+        next_eligible = score_date + timedelta(days=window_days)
+    return sections
+
+
+def _cross_section_metrics(
+    sections: list[list[StrategyObservation]],
+) -> tuple[int, float | None, float | None]:
     information_coefficients: list[float] = []
     spreads: list[float] = []
-    for rows in grouped.values():
-        if len(rows) < MIN_CROSS_SECTION:
-            continue
+    for rows in sections:
         information_coefficient = _correlation(
             _average_ranks([row.total_score for row in rows]),
             _average_ranks([row.alpha for row in rows]),
@@ -187,81 +272,96 @@ def _cross_section_metrics(
 
 
 def _strategy_path(
-    observations: list[StrategyObservation],
-    window_days: int,
-) -> tuple[int, float | None, float | None, float | None]:
-    grouped: dict[str, list[StrategyObservation]] = defaultdict(list)
-    for observation in observations:
-        grouped[observation.score_date].append(observation)
-    next_eligible = date.min
-    strategy_equity = 1.0
+    sections: list[list[StrategyObservation]],
+) -> StrategyPath:
+    q5_equity = 1.0
+    equal_weight_equity = 1.0
     benchmark_equity = 1.0
     peak = 1.0
     max_drawdown = 0.0
-    batches = 0
-    for raw_score_date in sorted(grouped):
-        score_date = date.fromisoformat(raw_score_date)
-        rows = grouped[raw_score_date]
-        if score_date < next_eligible or len(rows) < MIN_CROSS_SECTION:
-            continue
+    for rows in sections:
         ordered = sorted(rows, key=lambda row: row.total_score)
         bucket_size = max(1, len(ordered) // 5)
         top = ordered[-bucket_size:]
-        strategy_return = fmean(row.stock_return for row in top)
+        q5_return = fmean(row.stock_return for row in top)
+        equal_weight_return = fmean(row.stock_return for row in rows)
         benchmark_return = fmean(row.benchmark_return for row in top)
-        strategy_equity *= 1.0 + strategy_return / 100.0
+        q5_equity *= 1.0 + q5_return / 100.0
+        equal_weight_equity *= 1.0 + equal_weight_return / 100.0
         benchmark_equity *= 1.0 + benchmark_return / 100.0
-        peak = max(peak, strategy_equity)
-        max_drawdown = min(max_drawdown, strategy_equity / peak - 1.0)
-        batches += 1
-        next_eligible = score_date + timedelta(days=window_days)
-    if batches == 0:
-        return 0, None, None, None
-    return (
-        batches,
-        (strategy_equity - 1.0) * 100.0,
-        (benchmark_equity - 1.0) * 100.0,
-        max_drawdown * 100.0,
+        peak = max(peak, q5_equity)
+        max_drawdown = min(max_drawdown, q5_equity / peak - 1.0)
+    if not sections:
+        return StrategyPath(0, None, None, None, None, None)
+    q5_total_return = (q5_equity - 1.0) * 100.0
+    equal_weight_total_return = (equal_weight_equity - 1.0) * 100.0
+    return StrategyPath(
+        batches=len(sections),
+        q5_return=q5_total_return,
+        equal_weight_return=equal_weight_total_return,
+        benchmark_return=(benchmark_equity - 1.0) * 100.0,
+        q5_minus_equal_weight=q5_total_return - equal_weight_total_return,
+        max_drawdown=max_drawdown * 100.0,
     )
 
 
-def _l3_summary(observations: list[StrategyObservation]) -> str:
-    passed = [row.alpha for row in observations if row.l3_v2_signal == 1]
-    rejected = [row.alpha for row in observations if row.l3_v2_signal == 0]
+def _l3_summary(sections: list[list[StrategyObservation]], strong_threshold: float) -> str:
+    rows = [row for section in sections for row in section if row.total_score >= strong_threshold]
+    passed = [row.alpha for row in rows if row.l3_v2_signal == 1]
+    rejected = [row.alpha for row in rows if row.l3_v2_signal == 0]
     if not passed and not rejected:
-        return "L3 v2：暂无已对齐样本"
+        return f"L3 v2（高分候选>={strong_threshold:.0f}）：暂无已对齐样本"
+    if not rejected:
+        return f"L3 v2（高分候选>={strong_threshold:.0f}）：通过 n={len(passed)}；拒绝 n=0，暂无选择能力样本"
     return (
-        f"L3 v2：通过 n={len(passed)} 平均alpha={_fmt_percent(fmean(passed) if passed else None)}；"
+        f"L3 v2（高分候选>={strong_threshold:.0f}）："
+        f"通过 n={len(passed)} 平均alpha={_fmt_percent(fmean(passed) if passed else None)}；"
         f"拒绝 n={len(rejected)} 平均alpha={_fmt_percent(fmean(rejected) if rejected else None)}"
     )
 
 
-def build_accuracy_report(db: sqlite3.Connection) -> str:
+def build_accuracy_report(db: sqlite3.Connection, strong_threshold: float = 44.0) -> str:
+    weights_hash, first_date, last_date = _current_scoring_version(db)
     lines = [
         "=" * 60,
         "a-stock-tracker QFQ 策略评估报告",
         f"生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}",
         "=" * 60,
         "口径：个股前复权总收益 vs 沪深300全收益指数；仅统计交易日对齐样本。",
+        (
+            f"当前评分版本：weights_hash={weights_hash} + qualitative provenance 已记录；"
+            f"记录区间：{first_date} 至 {last_date}。"
+            if weights_hash is not None
+            else "当前评分版本：暂无 Framework A 记录。"
+        ),
+        "去重：各窗口按 score_date 选取非重叠截面；IC、spread、组合收益和 L3 使用相同批次。",
         "限制：watchlist 为人工维护标的，结果不代表样本外泛化能力。",
     ]
     for window_days in WINDOWS:
-        observations = _load_observations(db, window_days)
+        observations, expected_size = _load_observations(db, window_days, weights_hash)
         lines.extend(["", f"── {window_days}d ──"])
         if not observations:
             lines.append("暂无可用的 QFQ/沪深300全收益对齐样本。")
             continue
-        cross_sections, information_coefficient, spread = _cross_section_metrics(observations)
-        batches, strategy_return, benchmark_return, max_drawdown = _strategy_path(observations, window_days)
+        required_size = max(MIN_CROSS_SECTION, math.ceil(expected_size * MIN_CROSS_SECTION_COVERAGE))
+        sections = _non_overlapping_sections(observations, window_days, expected_size)
+        cross_sections, information_coefficient, spread = _cross_section_metrics(sections)
+        path = _strategy_path(sections)
         lines.extend(
             [
-                f"对齐样本：{len(observations)}；有效截面：{cross_sections}；非重叠批次：{batches}",
+                (
+                    f"对齐样本：{len(observations)}；非重叠样本：{sum(len(rows) for rows in sections)}；"
+                    f"非重叠截面：{path.batches}；IC有效截面：{cross_sections}"
+                ),
+                f"截面完整性门槛：至少 {required_size}/{expected_size} 只",
                 f"截面 Spearman IC 均值：{_fmt_number(information_coefficient)}",
                 f"Q5−Q1 平均 alpha spread：{_fmt_percent(spread)}",
-                f"Q5 策略累计总收益：{_fmt_percent(strategy_return)}",
-                f"沪深300全收益：{_fmt_percent(benchmark_return)}",
-                f"Q5 策略最大回撤：{_fmt_percent(max_drawdown)}",
-                _l3_summary(observations),
+                f"Q5 策略累计总收益：{_fmt_percent(path.q5_return)}",
+                f"观察池等权累计总收益：{_fmt_percent(path.equal_weight_return)}",
+                f"Q5−观察池等权累计收益差：{_fmt_percent(path.q5_minus_equal_weight)}",
+                f"沪深300全收益：{_fmt_percent(path.benchmark_return)}",
+                f"Q5 策略最大回撤：{_fmt_percent(path.max_drawdown)}",
+                _l3_summary(sections, strong_threshold),
             ]
         )
     return "\n".join(lines)

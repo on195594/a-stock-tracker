@@ -282,11 +282,6 @@ def _tencent_hist_side_effect(code_price: dict[str, float]):
     return _side
 
 
-def _index_tx_df(pairs: list[tuple[str, float]]) -> pd.DataFrame:
-    """构造 stock_zh_index_daily_tx 的返回 DataFrame（腾讯列名）。"""
-    return pd.DataFrame([{"date": d, "open": c, "high": c, "low": c, "close": c} for d, c in pairs])
-
-
 def _entry_hist_df(closes: list[float], volumes: list[float] | None = None) -> pd.DataFrame:
     """构造 AKShare stock_zh_a_hist 的中文列名日线返回。"""
     if volumes is None:
@@ -357,16 +352,6 @@ def _insert_prediction(
     db.close()
     assert row_id is not None
     return row_id
-
-
-def _insert_index_price(symbol: str, d: str, close: float) -> None:
-    db = cache_mod.get_db()
-    db.execute(
-        "INSERT OR REPLACE INTO index_prices (symbol, date, close) VALUES (?, ?, ?)",
-        (symbol, d, close),
-    )
-    db.commit()
-    db.close()
 
 
 def _prediction_columns() -> set[str]:
@@ -692,206 +677,39 @@ def test_daily_price_from_tencent_hist(tmp_db, small_watchlist, fake_fetcher, fa
     assert rows["000858"] is None
 
 
-# ---------------------------------------------------------------------------
-# 6. outcome-update 30d 正常
-# ---------------------------------------------------------------------------
-def test_outcome_update_30d_normal(tmp_db, monkeypatch):
-    """到期日能精确查到价格 → outcome = (新价/旧价-1)*100，estimate_flag=0。"""
-    today = date.today()
-    score_date = (today - timedelta(days=30)).isoformat()
-    _insert_prediction("600036", score_date, 100.0)
-
-    # index_prices 提供 benchmark 所需两个端点
-    _insert_index_price("000300", score_date, 4000.0)
-    _insert_index_price("000300", today.isoformat(), 4200.0)
-
-    # target_date == today → 走 provider outcome price 路径
-    def fake_hist_today(**kw):
-        if kw.get("symbol") == "600036" and kw.get("start_date") == date.today().strftime("%Y%m%d"):
-            return pd.DataFrame([{"收盘": 110.0, "日期": date.today().isoformat()}])
-        return pd.DataFrame(columns=["收盘", "日期"])
-
-    monkeypatch.setattr(market_data.ak, "stock_zh_a_hist", fake_hist_today)
-
-    # _ensure_index_prices 用腾讯接口 — 返回空 df 让它无操作（已有 index_prices）
-    monkeypatch.setattr(
-        market_data.ak,
-        "stock_zh_index_daily_tx",
-        lambda **kw: pd.DataFrame(columns=["date", "close"]),
-    )
-
-    pipeline.cmd_outcome_update()
-
-    db = cache_mod.get_db()
-    row = db.execute(
-        "SELECT outcome_30d, benchmark_30d, alpha_30d, estimate_flag FROM predictions WHERE code='600036'"
-    ).fetchone()
-    db.close()
-    assert row[0] == pytest.approx(10.0)
-    assert row[1] == pytest.approx(5.0)
-    assert row[2] == pytest.approx(5.0)
-    assert row[3] == 0
-
-
-# ---------------------------------------------------------------------------
-# 7. outcome-update estimate_flag 标记
-# ---------------------------------------------------------------------------
-def test_outcome_update_estimate_flag(tmp_db, monkeypatch):
-    """到期日当天停牌 → 向前回溯找到 N<5 日前的价，estimate_flag=1。"""
-    today = date.today()
-    # score_date + 31 天 ≤ today → 今天就是到期日的后 1 天（target_date = today-1）
-    score_date = (today - timedelta(days=31)).isoformat()
-    target_date = (today - timedelta(days=1)).isoformat()  # 到期日
-    replacement_date = (today - timedelta(days=2)).isoformat()  # 替代日（1 天前）
-
-    _insert_prediction("600036", score_date, 100.0)
-    _insert_index_price("000300", score_date, 4000.0)
-    _insert_index_price("000300", target_date, 4100.0)
-
-    # 到期日 hist 为空；回溯 1 天得到 105.0
-    def fake_hist(**kw):
-        d = kw["start_date"]  # YYYYMMDD
-        if d == target_date.replace("-", ""):
-            return pd.DataFrame(columns=["日期", "收盘"])
-        if d == replacement_date.replace("-", ""):
-            return pd.DataFrame([{"日期": replacement_date, "收盘": 105.0}])
-        return pd.DataFrame(columns=["日期", "收盘"])
-
-    monkeypatch.setattr(market_data.ak, "stock_zh_a_hist", fake_hist)
-    monkeypatch.setattr(
-        market_data.ak,
-        "stock_zh_index_daily_tx",
-        lambda **kw: pd.DataFrame(columns=["date", "close"]),
-    )
-
-    pipeline.cmd_outcome_update()
-
-    db = cache_mod.get_db()
-    row = db.execute("SELECT outcome_30d, estimate_flag FROM predictions WHERE code='600036'").fetchone()
-    db.close()
-    assert row[0] == pytest.approx(5.0)  # 105/100-1 = 5%
-    assert row[1] == 1
-
-
-# ---------------------------------------------------------------------------
-# 8. outcome-update 超出 10 日 → NULL
-# ---------------------------------------------------------------------------
-def test_outcome_update_null_beyond_10_days(tmp_db, monkeypatch):
-    """10 日内都无可用价 → outcome 保持 NULL，不写异常值。"""
-    today = date.today()
-    score_date = (today - timedelta(days=35)).isoformat()
-    _insert_prediction("600036", score_date, 100.0)
-
-    # hist 永远返回空；spot_em 也不匹配
-    monkeypatch.setattr(
-        market_data.ak,
-        "stock_zh_a_hist",
-        lambda **kw: pd.DataFrame(columns=["日期", "收盘"]),
-    )
-    monkeypatch.setattr(
-        market_data.ak,
-        "stock_zh_index_daily_tx",
-        lambda **kw: pd.DataFrame(columns=["date", "close"]),
-    )
-
-    pipeline.cmd_outcome_update()
-
-    db = cache_mod.get_db()
-    row = db.execute("SELECT outcome_30d, benchmark_30d FROM predictions WHERE code='600036'").fetchone()
-    db.close()
-    assert row[0] is None
-    assert row[1] is None
-
-
-# ---------------------------------------------------------------------------
-# 9. outcome-update benchmark 失败，outcome 正常
-# ---------------------------------------------------------------------------
-def test_outcome_update_benchmark_failure(tmp_db, monkeypatch):
-    """index_prices 无数据 → outcome 正常写入，benchmark_*d 留 NULL。"""
-    today = date.today()
-    score_date = (today - timedelta(days=30)).isoformat()
-    _insert_prediction("600036", score_date, 100.0)
-    # 故意不插入 index_prices
-
-    # target_date == today → 走 provider outcome price 路径
-    def fake_hist_today(**kw):
-        if kw.get("symbol") == "600036":
-            return pd.DataFrame([{"收盘": 120.0, "日期": date.today().isoformat()}])
-        return pd.DataFrame(columns=["收盘", "日期"])
-
-    monkeypatch.setattr(market_data.ak, "stock_zh_a_hist", fake_hist_today)
-    monkeypatch.setattr(
-        market_data.ak,
-        "stock_zh_index_daily_tx",
-        lambda **kw: pd.DataFrame(columns=["date", "close"]),
-    )
-
-    pipeline.cmd_outcome_update()
-
-    db = cache_mod.get_db()
-    row = db.execute("SELECT outcome_30d, benchmark_30d, alpha_30d FROM predictions WHERE code='600036'").fetchone()
-    db.close()
-    assert row[0] == pytest.approx(20.0)
-    assert row[1] is None
-    assert row[2] is None  # VIRTUAL column 任一 NULL → NULL
-
-
-# ---------------------------------------------------------------------------
-# 10. outcome-update 60d 未到期不写
-# ---------------------------------------------------------------------------
-def test_outcome_update_60d_not_yet_due(tmp_db, monkeypatch):
-    """score_date + 60 > today → 60d 未到期，不覆盖。"""
-    today = date.today()
-    score_date = (today - timedelta(days=30)).isoformat()  # 仅 30d 到期
-    _insert_prediction("600036", score_date, 100.0)
-    _insert_index_price("000300", score_date, 4000.0)
-    _insert_index_price("000300", today.isoformat(), 4100.0)
-
-    # target_date == today → 走 provider outcome price 路径
-    def fake_hist_today(**kw):
-        if kw.get("symbol") == "600036":
-            return pd.DataFrame([{"收盘": 110.0, "日期": date.today().isoformat()}])
-        return pd.DataFrame(columns=["收盘", "日期"])
-
-    monkeypatch.setattr(market_data.ak, "stock_zh_a_hist", fake_hist_today)
-    monkeypatch.setattr(
-        market_data.ak,
-        "stock_zh_index_daily_tx",
-        lambda **kw: pd.DataFrame(columns=["date", "close"]),
-    )
-
-    pipeline.cmd_outcome_update()
-
-    db = cache_mod.get_db()
-    row = db.execute("SELECT outcome_30d, outcome_60d, outcome_90d FROM predictions WHERE code='600036'").fetchone()
-    db.close()
-    assert row[0] == pytest.approx(10.0)
-    assert row[1] is None
-    assert row[2] is None
-
-
-def test_accuracy_report_empty(tmp_db, capsys):
-    pipeline.cmd_accuracy_report()
-    out = capsys.readouterr().out
+def test_accuracy_report_empty(tmp_db):
+    pipeline._write_accuracy_report()
+    out = Path(config.ACCURACY_REPORT_PATH).read_text(encoding="utf-8")
     assert "a-stock-tracker QFQ 策略评估报告" in out
     assert out.count("暂无可用的 QFQ/沪深300全收益对齐样本") == 3
     assert "人工维护标的" in out
 
 
-def test_accuracy_report_writes_only_to_isolated_output_path(tmp_db, capsys):
+def test_accuracy_report_writes_only_to_isolated_output_path(tmp_db):
     """测试报告写入 fixture 配置的路径，不在项目根目录创建运行产物。"""
     root_report = Path(PROJECT_ROOT) / "accuracy_report.txt"
 
-    pipeline.cmd_accuracy_report()
-    capsys.readouterr()
+    pipeline._write_accuracy_report()
 
     assert Path(config.ACCURACY_REPORT_PATH).is_file()
+    assert "a-stock-tracker QFQ 策略评估报告" in Path(config.ACCURACY_REPORT_PATH).read_text(encoding="utf-8")
     assert not root_report.exists()
 
 
-def test_accuracy_report_excludes_retired_default_sections(tmp_db, capsys):
-    pipeline.cmd_accuracy_report()
-    out = capsys.readouterr().out
+def test_daily_post_steps_pushes_telegram(tmp_db, monkeypatch):
+    import a_stock_tracker.reporting.telegram_push as telegram_push
+
+    calls: list[str] = []
+    monkeypatch.setattr(telegram_push, "push_daily_signals", lambda *_args: calls.append("telegram"))
+
+    pipeline._run_daily_post_steps("2026-07-28", {"thresholds": {"buy_strong": 44}})
+
+    assert calls == ["telegram"]
+
+
+def test_accuracy_report_excludes_retired_default_sections(tmp_db):
+    pipeline._write_accuracy_report()
+    out = Path(config.ACCURACY_REPORT_PATH).read_text(encoding="utf-8")
 
     assert "a-stock-tracker QFQ 策略评估报告" in out
     assert "Framework B" not in out
@@ -902,217 +720,6 @@ def test_accuracy_report_excludes_retired_default_sections(tmp_db, capsys):
 def test_pipeline_pb_percentile_wrapper_uses_scorer() -> None:
     hist = [1.0] * 12
     assert pipeline._compute_daily_pb_percentile(20.0, {"bps": 10.0, "pb_hist_monthly": hist}) == 100.0
-
-
-# ---------------------------------------------------------------------------
-# 14. _ensure_index_prices 首次拉取
-# ---------------------------------------------------------------------------
-def test_index_prices_init(tmp_db, monkeypatch):
-    """index_prices 初始为空 → 用内部 canonical symbol 调 provider，过滤到 earliest 起。"""
-    today = date.today().isoformat()
-    earliest = (date.today() - timedelta(days=90)).isoformat()
-    older = (date.today() - timedelta(days=120)).isoformat()  # 应被过滤掉
-
-    class _IndexProvider:
-        called = 0
-        symbol = None
-
-        def fetch_index_bars(self, symbol: str):
-            self.called += 1
-            self.symbol = symbol
-            return market_data.MarketDataResult(
-                _index_tx_df(
-                    [
-                        (older, 3800.0),
-                        (earliest, 4000.0),
-                        (today, 4200.0),
-                    ]
-                ),
-                "ok",
-                "test.index",
-                today,
-            )
-
-    provider = _IndexProvider()
-
-    db = cache_mod.get_db()
-    pipeline._ensure_index_prices(db, earliest, today, provider)
-
-    rows = db.execute("SELECT symbol, date, close FROM index_prices ORDER BY date").fetchall()
-    db.close()
-
-    assert provider.called == 1
-    assert provider.symbol == "000300"
-    assert len(rows) == 2  # older 被 start_date 过滤掉
-    assert rows[0] == ("000300", earliest, 4000.0)
-    assert rows[1] == ("000300", today, 4200.0)
-
-
-# ---------------------------------------------------------------------------
-# 15. _ensure_index_prices 已有数据则跳过
-# ---------------------------------------------------------------------------
-def test_index_prices_skip_existing(tmp_db, monkeypatch):
-    """latest_cached >= today → 完全不调用 AKShare（增量起点已过 today）。"""
-    today_dt = date.today()
-    today = today_dt.isoformat()
-    earliest = (today_dt - timedelta(days=90)).isoformat()
-    # 预填到未来一天，使 start_date > today
-    future = (today_dt + timedelta(days=1)).isoformat()
-    _insert_index_price("000300", future, 4500.0)
-
-    called = {"n": 0}
-
-    def fake_index_tx(**kw):
-        called["n"] += 1
-        return pd.DataFrame(columns=["date", "close"])
-
-    monkeypatch.setattr(market_data.ak, "stock_zh_index_daily_tx", fake_index_tx)
-
-    db = cache_mod.get_db()
-    pipeline._ensure_index_prices(db, earliest, today)
-
-    rows = db.execute("SELECT COUNT(*) FROM index_prices").fetchone()[0]
-    db.close()
-
-    assert called["n"] == 0  # start_date > today → 早返回，不触发网络调用
-    assert rows == 1  # 原有数据保持
-
-
-# ---------------------------------------------------------------------------
-# 16. outcome-update 幂等性 — 已有 outcome 不被覆盖
-# ---------------------------------------------------------------------------
-def test_outcome_update_idempotent(tmp_db, monkeypatch):
-    """outcome_30d 已写入 → 重跑不覆盖（WHERE outcome_30d IS NULL 过滤）。"""
-    today = date.today()
-    score_date = (today - timedelta(days=30)).isoformat()
-    row_id = _insert_prediction("600036", score_date, 100.0)
-
-    # 手动写入 outcome，模拟已结案状态
-    db = cache_mod.get_db()
-    db.execute(
-        "UPDATE predictions SET outcome_30d=5.0, benchmark_30d=2.0 WHERE id=?",
-        (row_id,),
-    )
-    db.commit()
-    db.close()
-
-    monkeypatch.setattr(
-        market_data.ak,
-        "stock_zh_index_daily_tx",
-        lambda **kw: pd.DataFrame(columns=["date", "close"]),
-    )
-
-    pipeline.cmd_outcome_update()
-
-    db = cache_mod.get_db()
-    row = db.execute("SELECT outcome_30d, benchmark_30d FROM predictions WHERE id=?", (row_id,)).fetchone()
-    db.close()
-    assert row[0] == pytest.approx(5.0)  # 原值不被覆盖
-    assert row[1] == pytest.approx(2.0)  # 原值不被覆盖
-
-
-# ---------------------------------------------------------------------------
-# 17. estimate_flag delta=5 边界（最大回溯）
-# ---------------------------------------------------------------------------
-def test_outcome_update_estimate_flag_delta5(tmp_db, monkeypatch):
-    """delta=0~4 全空，delta=5（最大回溯）找到价格 → outcome 正常，estimate_flag=1。"""
-    today = date.today()
-    # target_date = score_date + 30 = today - 5（delta=5 → today-10）
-    score_date = (today - timedelta(days=35)).isoformat()
-    target_date = (today - timedelta(days=5)).isoformat()
-    replacement_date = (today - timedelta(days=10)).isoformat()  # target_date - 5
-
-    _insert_prediction("600036", score_date, 100.0)
-    _insert_index_price("000300", score_date, 4000.0)
-    _insert_index_price("000300", target_date, 4100.0)
-
-    def fake_hist(**kw):
-        if kw["start_date"] == replacement_date.replace("-", ""):
-            return pd.DataFrame([{"日期": replacement_date, "收盘": 112.0}])
-        return pd.DataFrame(columns=["日期", "收盘"])  # delta 0-4 全部空
-
-    monkeypatch.setattr(market_data.ak, "stock_zh_a_hist", fake_hist)
-    monkeypatch.setattr(
-        market_data.ak,
-        "stock_zh_index_daily_tx",
-        lambda **kw: pd.DataFrame(columns=["date", "close"]),
-    )
-
-    pipeline.cmd_outcome_update()
-
-    db = cache_mod.get_db()
-    row = db.execute("SELECT outcome_30d, estimate_flag FROM predictions WHERE code='600036'").fetchone()
-    db.close()
-    assert row[0] == pytest.approx(12.0)  # (112/100-1)*100
-    assert row[1] == 1
-
-
-# ---------------------------------------------------------------------------
-# 18. benchmark 单端缺失（只有 score_date 指数价）→ benchmark NULL，outcome 正常
-# ---------------------------------------------------------------------------
-def test_outcome_update_benchmark_one_side_missing(tmp_db, monkeypatch):
-    """score_date 有指数价，target_date 无 → benchmark_30d NULL，outcome_30d 正常写入。"""
-    today = date.today()
-    score_date = (today - timedelta(days=30)).isoformat()
-    _insert_prediction("600036", score_date, 100.0)
-
-    # 只有 score_date 端有指数价，target_date (today) 无数据
-    _insert_index_price("000300", score_date, 4000.0)
-
-    # target_date == today → 走 provider outcome price 路径
-    def fake_hist_today(**kw):
-        if kw.get("symbol") == "600036":
-            return pd.DataFrame([{"收盘": 115.0, "日期": date.today().isoformat()}])
-        return pd.DataFrame(columns=["收盘", "日期"])
-
-    monkeypatch.setattr(market_data.ak, "stock_zh_a_hist", fake_hist_today)
-    monkeypatch.setattr(
-        market_data.ak,
-        "stock_zh_index_daily_tx",
-        lambda **kw: pd.DataFrame(columns=["date", "close"]),
-    )
-
-    pipeline.cmd_outcome_update()
-
-    db = cache_mod.get_db()
-    row = db.execute("SELECT outcome_30d, benchmark_30d, alpha_30d FROM predictions WHERE code='600036'").fetchone()
-    db.close()
-    assert row[0] == pytest.approx(15.0)  # (115/100-1)*100
-    assert row[1] is None  # 单端缺失 → benchmark NULL
-    assert row[2] is None  # VIRTUAL: 任一 NULL → NULL
-
-
-# ---------------------------------------------------------------------------
-# 19. outcome-update：spot_em 失败时不提前退出（P0-B 回归）
-# ---------------------------------------------------------------------------
-def test_outcome_update_non_today_expiry_via_hist(tmp_db, monkeypatch):
-    """target_date < today（非今日到期）→ 走 provider outcome price 历史查询路径。"""
-    today = date.today()
-    score_date = (today - timedelta(days=31)).isoformat()
-    target_date = (today - timedelta(days=1)).isoformat()
-
-    _insert_prediction("600036", score_date, 100.0)
-    _insert_index_price("000300", score_date, 4000.0)
-    _insert_index_price("000300", target_date, 4100.0)
-
-    def fake_hist(**kw):
-        if kw.get("start_date") == target_date.replace("-", ""):
-            return pd.DataFrame([{"日期": target_date, "收盘": 110.0}])
-        return pd.DataFrame(columns=["日期", "收盘"])
-
-    monkeypatch.setattr(market_data.ak, "stock_zh_a_hist", fake_hist)
-    monkeypatch.setattr(
-        market_data.ak,
-        "stock_zh_index_daily_tx",
-        lambda **kw: pd.DataFrame(columns=["date", "close"]),
-    )
-
-    pipeline.cmd_outcome_update()
-
-    db = cache_mod.get_db()
-    row = db.execute("SELECT outcome_30d FROM predictions WHERE code='600036'").fetchone()
-    db.close()
-    assert row[0] == pytest.approx(10.0)  # (110/100-1)*100
 
 
 # ---------------------------------------------------------------------------
@@ -1138,48 +745,19 @@ def test_daily_writes_predictions_when_tencent_fails(tmp_db, small_watchlist, fa
 
 
 # ---------------------------------------------------------------------------
-# 21. outcome-update：target_date==today → 走 provider outcome price（D3）
-# ---------------------------------------------------------------------------
-def test_outcome_update_today_expiry_via_hist(tmp_db, monkeypatch):
-    """到期日恰好是今天，snapshot_data 恒为空 → 走 provider outcome price delta=0 路径。"""
-    today = date.today()
-    score_date = (today - timedelta(days=30)).isoformat()
-    _insert_prediction("600036", score_date, 100.0)
-    _insert_index_price("000300", score_date, 4000.0)
-    _insert_index_price("000300", today.isoformat(), 4200.0)
-
-    def fake_hist(**kw):
-        # delta=0：start_date == end_date == today
-        if kw.get("symbol") == "600036" and kw.get("start_date") == today.strftime("%Y%m%d"):
-            return pd.DataFrame([{"收盘": 108.0, "日期": today.isoformat()}])
-        return pd.DataFrame(columns=["收盘", "日期"])
-
-    monkeypatch.setattr(market_data.ak, "stock_zh_a_hist", fake_hist)
-    monkeypatch.setattr(
-        market_data.ak,
-        "stock_zh_index_daily_tx",
-        lambda **kw: pd.DataFrame(columns=["date", "close"]),
-    )
-
-    pipeline.cmd_outcome_update()
-
-    db = cache_mod.get_db()
-    row = db.execute("SELECT outcome_30d, benchmark_30d, estimate_flag FROM predictions WHERE code='600036'").fetchone()
-    db.close()
-    assert row[0] == pytest.approx(8.0)  # (108/100-1)*100
-    assert row[1] == pytest.approx(5.0)  # (4200/4000-1)*100
-    assert row[2] == 0  # 精确到期日，非估算
-
-
-# ---------------------------------------------------------------------------
 # 41. daily 价格全部失败 → 阻断写入，predictions 保持空
 # ---------------------------------------------------------------------------
 def test_daily_aborts_when_no_prices(tmp_db, small_watchlist, fake_fetcher, fake_weights, monkeypatch):
     """腾讯日线全部失败（返回空 DataFrame）→ cmd_daily 提前退出，不写 predictions。"""
+    import a_stock_tracker.reporting.telegram_push as telegram_push
+
+    calls: list[str] = []
     for item in small_watchlist:
         _insert_fundamentals(item["code"], item["name"], "银行", _full_data())
 
     monkeypatch.setattr(market_data.ak, "stock_zh_a_hist_tx", lambda **kw: pd.DataFrame(columns=["close", "date"]))
+    monkeypatch.setattr(pipeline, "_write_accuracy_report", lambda *_args: calls.append("report"))
+    monkeypatch.setattr(telegram_push, "push_daily_signals", lambda *_args: calls.append("telegram"))
 
     pipeline.cmd_daily()
 
@@ -1187,6 +765,7 @@ def test_daily_aborts_when_no_prices(tmp_db, small_watchlist, fake_fetcher, fake
     cnt = db.execute("SELECT COUNT(*) FROM predictions").fetchone()[0]
     db.close()
     assert cnt == 0
+    assert calls == ["report"]
 
 
 def test_daily_with_disabled_default_provider_writes_audit_but_no_predictions(
@@ -1510,46 +1089,3 @@ def test_cmd_weekly_attempts_all_stocks_on_fetcher_timeout(tmp_db, small_watchli
     monkeypatch.setattr(pipeline, "_run_fetcher_process", fake_run_fetcher_process)
     pipeline.cmd_weekly()
     assert len(calls) == len(config.WATCHLIST)
-
-
-def test_cmd_outcome_update_sends_telegram_summary(tmp_db, monkeypatch):
-    """Smoke test: cmd_outcome_update runs cleanly on an empty DB with Telegram mocked."""
-    push_calls = []
-
-    def fake_send(msg: str) -> bool:
-        push_calls.append(msg)
-        return True
-
-    monkeypatch.setattr(pipeline, "send_daily_push", fake_send, raising=False)
-
-    class _NoNetworkProvider:
-        def fetch_outcome_price(self, *a, **kw):
-            return None
-
-        def fetch_index_prices(self, *a, **kw):
-            return {}
-
-    monkeypatch.setattr(pipeline, "get_default_market_data_provider", lambda: _NoNetworkProvider())
-    monkeypatch.setattr(pipeline, "_fetch_outcome_price", lambda *a, **kw: None, raising=False)
-
-    pipeline.cmd_outcome_update()
-    assert push_calls == []  # empty DB -> no predictions to summarize -> no push
-
-
-def test_cmd_outcome_update_rejects_invalid_window(tmp_db, monkeypatch):
-    """cmd_outcome_update raises ValueError for an unknown window string."""
-    import pytest
-
-    class _NoNetworkProvider:
-        def fetch_outcome_price(self, *a, **kw):
-            return None
-
-        def fetch_index_prices(self, *a, **kw):
-            return {}
-
-    monkeypatch.setattr(pipeline, "get_default_market_data_provider", lambda: _NoNetworkProvider())
-    monkeypatch.setattr(pipeline, "send_daily_push", lambda *a, **kw: True, raising=False)
-    monkeypatch.setattr(pipeline, "_OUTCOME_WINDOWS", frozenset())
-
-    with pytest.raises(ValueError):
-        pipeline.cmd_outcome_update()

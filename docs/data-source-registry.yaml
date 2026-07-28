@@ -201,37 +201,37 @@ fields:
     failure_behavior: mark_missing; skip_prediction_write
 
   - field: benchmark_30d
-    owner: outcome_contract
-    requirement: degradable
-    source_primary: index_prices.000300
-    source_fallback: tushare.index_daily_when_TUSHARE_TOKEN_configured
+    owner: frozen_legacy
+    requirement: historical_only
+    source_primary: frozen_historical_value
+    source_fallback: none
     cache: predictions.benchmark_30d
-    refresh: outcome_update
+    refresh: never
     affects_scoring: false
-    affects_outcome: true
-    failure_behavior: fallback_or_leave_null; outcome_not_blocked
+    affects_outcome: false
+    failure_behavior: no_new_writes; default_report_uses_index_prices.H00300
 
   - field: benchmark_60d
-    owner: outcome_contract
-    requirement: degradable
-    source_primary: index_prices.000300
-    source_fallback: tushare.index_daily_when_TUSHARE_TOKEN_configured
+    owner: frozen_legacy
+    requirement: historical_only
+    source_primary: frozen_historical_value
+    source_fallback: none
     cache: predictions.benchmark_60d
-    refresh: outcome_update
+    refresh: never
     affects_scoring: false
-    affects_outcome: true
-    failure_behavior: fallback_or_leave_null; outcome_not_blocked
+    affects_outcome: false
+    failure_behavior: no_new_writes; default_report_uses_index_prices.H00300
 
   - field: benchmark_90d
-    owner: outcome_contract
-    requirement: degradable
-    source_primary: index_prices.000300
-    source_fallback: tushare.index_daily_when_TUSHARE_TOKEN_configured
+    owner: frozen_legacy
+    requirement: historical_only
+    source_primary: frozen_historical_value
+    source_fallback: none
     cache: predictions.benchmark_90d
-    refresh: outcome_update
+    refresh: never
     affects_scoring: false
-    affects_outcome: true
-    failure_behavior: fallback_or_leave_null; outcome_not_blocked
+    affects_outcome: false
+    failure_behavior: no_new_writes; default_report_uses_index_prices.H00300
 
   - field: weights_hash
     owner: audit_contract
@@ -256,37 +256,37 @@ fields:
     failure_behavior: unsupported_framework_blocks_scoring
 
   - field: outcome_30d
-    owner: outcome_contract
-    requirement: degradable
-    source_primary: tushare.daily_due_date_close
+    owner: frozen_legacy
+    requirement: historical_only
+    source_primary: frozen_historical_value
     source_fallback: none
     cache: predictions.outcome_30d
-    refresh: outcome_update
+    refresh: never
     affects_scoring: false
-    affects_outcome: true
-    failure_behavior: leave_null_with_structured_failure
+    affects_outcome: false
+    failure_behavior: no_new_writes; default_report_uses_daily_bars.adjusted_qfq
 
   - field: outcome_60d
-    owner: outcome_contract
-    requirement: degradable
-    source_primary: tushare.daily_due_date_close
+    owner: frozen_legacy
+    requirement: historical_only
+    source_primary: frozen_historical_value
     source_fallback: none
     cache: predictions.outcome_60d
-    refresh: outcome_update
+    refresh: never
     affects_scoring: false
-    affects_outcome: true
-    failure_behavior: leave_null_with_structured_failure
+    affects_outcome: false
+    failure_behavior: no_new_writes; default_report_uses_daily_bars.adjusted_qfq
 
   - field: outcome_90d
-    owner: outcome_contract
-    requirement: degradable
-    source_primary: tushare.daily_due_date_close
+    owner: frozen_legacy
+    requirement: historical_only
+    source_primary: frozen_historical_value
     source_fallback: none
     cache: predictions.outcome_90d
-    refresh: outcome_update
+    refresh: never
     affects_scoring: false
-    affects_outcome: true
-    failure_behavior: leave_null_with_structured_failure
+    affects_outcome: false
+    failure_behavior: no_new_writes; default_report_uses_daily_bars.adjusted_qfq
 
   - field: qualitative_snapshot
     owner: qualitative_support
