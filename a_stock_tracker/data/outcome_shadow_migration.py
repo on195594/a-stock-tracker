@@ -567,8 +567,8 @@ def _validate_connection_matches(
     expected_manifest: str,
 ) -> None:
     _validate_shadow_schema(conn)
-    run = conn.execute("SELECT run_id,manifest_hash FROM outcome_shadow_runs").fetchall()
-    if len(run) != 1 or tuple(run[0]) != (expected_run, expected_manifest):
+    runs = conn.execute("SELECT run_id,manifest_hash,algorithm_version FROM outcome_shadow_runs").fetchall()
+    if len(runs) != 1 or (runs[0]["run_id"], runs[0]["manifest_hash"]) != (expected_run, expected_manifest):
         raise MigrationContractError("IMPORTED_RUN_MISMATCH")
     result_hashes = tuple(
         row[0] for row in conn.execute("SELECT row_hash FROM outcome_shadow_results ORDER BY prediction_id,window_days")
@@ -584,7 +584,7 @@ def _validate_connection_matches(
         raise MigrationContractError("IMPORTED_RESULT_HASH_MISMATCH")
     if observation_hashes != payload.observation_hashes:
         raise MigrationContractError("IMPORTED_OBSERVATION_HASH_MISMATCH")
-    count, protection = _predictions_protection(conn)
+    count, protection = _protection_for_run(str(runs[0]["algorithm_version"]))(conn)
     if (count, protection) != (payload.predictions_count, payload.protection_hash):
         raise MigrationContractError("PREDICTIONS_PROTECTION_DRIFT")
 

@@ -11,7 +11,7 @@ import pytest
 
 from a_stock_tracker import cli
 import a_stock_tracker.data.outcome_shadow_migration as migration
-from a_stock_tracker.data.outcome_shadow import build_shadow_candidate
+from a_stock_tracker.data.outcome_shadow import QFQ_TOTAL_RETURN_V1, build_shadow_candidate
 from a_stock_tracker.data.outcome_shadow_migration import (
     MigrationContractError,
     MigrationEvidenceError,
@@ -91,6 +91,38 @@ def _make_candidate(tmp_path: Path) -> tuple[Path, Path, str, str]:
     return production, candidate, built.run_id, built.manifest_hash
 
 
+def _make_qfq_candidate(tmp_path: Path) -> tuple[Path, Path, str, str]:
+    production = tmp_path / "production.db"
+    candidate = tmp_path / "candidate.db"
+    benchmark = tmp_path / "benchmark.json"
+    _seed_production(production)
+    with sqlite3.connect(production) as conn:
+        conn.execute("UPDATE daily_bars SET source='tushare.pro_bar.qfq', adjusted='qfq'")
+    benchmark.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "source": "tushare.index_daily",
+                "symbol": "H00300.CSI",
+                "fetched_at": "2026-07-23T10:00:00Z",
+                "rows": [
+                    {"trade_date": "2026-01-05", "close": 100.0},
+                    {"trade_date": "2026-02-04", "close": 105.0},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    built = build_shadow_candidate(
+        production,
+        candidate,
+        benchmark,
+        as_of_date="2026-02-10",
+        algorithm=QFQ_TOTAL_RETURN_V1,
+    )
+    return production, candidate, built.run_id, built.manifest_hash
+
+
 def _shadow_objects(path: Path) -> list[str]:
     with sqlite3.connect(path) as conn:
         return [
@@ -136,6 +168,22 @@ def test_apply_creates_backup_and_is_idempotent(tmp_path: Path) -> None:
         assert conn.execute("PRAGMA quick_check").fetchone()[0] == "ok"
         assert conn.execute("SELECT COUNT(*) FROM outcome_shadow_results").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM outcome_shadow_observations").fetchone()[0] == 4
+
+
+def test_qfq_apply_uses_extended_protection_in_post_import_verifier(tmp_path: Path) -> None:
+    production, candidate, run_id, manifest = _make_qfq_candidate(tmp_path)
+
+    result = apply_shadow_import(
+        production,
+        candidate,
+        run_id,
+        manifest,
+        tmp_path / "backup.db",
+        tmp_path / "evidence.json",
+    )
+
+    assert result.status == "imported"
+    assert inspect_shadow_import(production, candidate, run_id, manifest).status == "already_present"
 
 
 def test_candidate_identity_mismatch_fails_before_writing(tmp_path: Path) -> None:

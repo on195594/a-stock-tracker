@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -220,6 +221,22 @@ def test_default_algorithm_preserves_phase1_behaviour() -> None:
     assert RAW_PRICE_RETURN_V1.use_extended_protection is False
 
 
+def test_public_entries_reject_configuration_drift_under_a_known_version(tmp_path: Path) -> None:
+    source = tmp_path / "source.db"
+    _seed(source)
+    snapshot = tmp_path / "benchmark.json"
+    _write_benchmark(snapshot, [("2026-01-05", 1000.0), ("2026-02-04", 1010.0)])
+    candidate = tmp_path / "candidate.db"
+    altered = replace(QFQ_TOTAL_RETURN_V1, compute_stored_entry=True)
+
+    with pytest.raises(ShadowContractError, match="ALGORITHM_CONFIG_MISMATCH:qfq_total_return_v1"):
+        inspect_frozen_cohort(source, "2026-06-30", altered)
+    with pytest.raises(ShadowContractError, match="ALGORITHM_CONFIG_MISMATCH:qfq_total_return_v1"):
+        build_shadow_candidate(source, candidate, snapshot, as_of_date="2026-06-30", algorithm=altered)
+
+    assert not candidate.exists()
+
+
 def test_qfq_algorithm_excludes_90d_window(tmp_path: Path) -> None:
     source = tmp_path / "source.db"
     _seed(source)
@@ -419,6 +436,8 @@ def test_qfq_report_never_claims_it_excludes_dividends(tmp_path: Path) -> None:
     assert "BaoStock" not in caveats
     assert "total returns, not raw price returns" in caveats
     assert "total-return index" in caveats
+    assert "only 4 events are due" in caveats
+    assert "only 30d and 60d are due" not in caveats
 
 
 def test_qfq_report_header_names_the_algorithm(tmp_path: Path) -> None:

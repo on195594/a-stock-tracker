@@ -188,6 +188,7 @@ def inspect_frozen_cohort(
     algorithm: ShadowAlgorithm = RAW_PRICE_RETURN_V1,
 ) -> CohortInspection:
     """Inspect the due cohort through a read-only SQLite connection."""
+    algorithm = _validate_algorithm(algorithm)
     _parse_date(as_of_date)
     # Must match the variant build/verify will use, otherwise the hash this inspection
     # reports cannot be compared against the resulting run.
@@ -228,6 +229,7 @@ def build_shadow_candidate(
     algorithm: ShadowAlgorithm = RAW_PRICE_RETURN_V1,
 ) -> BuildResult:
     """Build one immutable shadow run inside a new isolated database copy."""
+    algorithm = _validate_algorithm(algorithm)
     source_path, candidate_path = _validate_paths(source_db, candidate_db)
     _parse_date(as_of_date)
     protection = extended_predictions_protection if algorithm.use_extended_protection else _predictions_protection
@@ -347,7 +349,7 @@ _ALGORITHM_CAVEATS = {
         "stored_entry_shadow_* is NULL by design: pairing a raw price_at_score with a qfq target "
         "mixes two price scales. A zero difference count for those fields means not computed, "
         "not unchanged.",
-        "Excludes the 90d window; only 30d and 60d are due under this run's as_of_date.",
+        "The 90d window is excluded because only 4 events are due, too few for stratified analysis.",
     ),
 }
 
@@ -357,6 +359,16 @@ def _caveats_for(algorithm_version: str) -> list[str]:
     if specific is None:
         raise ShadowContractError(f"UNKNOWN_ALGORITHM_CAVEATS:{algorithm_version}")
     return [_SHARED_CAVEATS[0], *specific, *_SHARED_CAVEATS[1:]]
+
+
+def _validate_algorithm(algorithm: ShadowAlgorithm) -> ShadowAlgorithm:
+    """Require one version string to identify exactly one computation contract."""
+    canonical = _ALGORITHM_BY_VERSION.get(algorithm.version)
+    if canonical is None:
+        raise ShadowContractError(f"UNKNOWN_ALGORITHM_VERSION:{algorithm.version}")
+    if algorithm != canonical:
+        raise ShadowContractError(f"ALGORITHM_CONFIG_MISMATCH:{algorithm.version}")
+    return canonical
 
 
 def _count_by(rows: Sequence[Mapping[str, Any]], field: str) -> dict[str, int]:
