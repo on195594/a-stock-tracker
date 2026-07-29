@@ -23,6 +23,8 @@ from a_stock_tracker.data.cache import DB_PATH  # noqa: E402
 
 SAMPLES = ["600036", "000786", "002594"]
 INDEX_SAMPLE = "000300"
+REFERENCE_SOURCE = "tushare.pro_bar.qfq"
+REFERENCE_ADJUSTED = "qfq"
 
 
 class ReferenceClose(NamedTuple):
@@ -130,10 +132,10 @@ def _load_reference_close(code: str, trade_date: str) -> ReferenceClose | None:
                 row = conn.execute(
                     """SELECT close, source
                        FROM daily_bars
-                       WHERE code=? AND trade_date=? AND adjusted='none' AND source='tushare.daily'
+                       WHERE code=? AND trade_date=? AND adjusted=? AND source=?
                        ORDER BY fetched_at DESC
                        LIMIT 1""",
-                    (code, trade_date),
+                    (code, trade_date, REFERENCE_ADJUSTED, REFERENCE_SOURCE),
                 ).fetchone()
             finally:
                 conn.close()

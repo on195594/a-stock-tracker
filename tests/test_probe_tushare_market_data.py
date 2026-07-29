@@ -73,7 +73,9 @@ def test_close_cross_check_compares_same_day_reference(monkeypatch) -> None:
     assert "PASS" in rows[0]
 
 
-def test_load_reference_close_uses_unadjusted_cache_row(monkeypatch, tmp_path) -> None:
+def test_load_reference_close_uses_qfq_production_row(monkeypatch, tmp_path) -> None:
+    """Legacy tushare.daily/none rows stopped being written after the QFQ cutover
+    and must not be picked up even if they have a newer fetched_at."""
     db_path = tmp_path / "market.db"
     conn = sqlite3.connect(db_path)
     try:
@@ -89,11 +91,11 @@ def test_load_reference_close_uses_unadjusted_cache_row(monkeypatch, tmp_path) -
         )
         conn.execute(
             "INSERT INTO daily_bars VALUES (?, ?, ?, ?, ?, ?)",
-            ("600036", "2026-06-25", 37.5, "legacy.qfq", "qfq", "2026-06-25T15:01:00"),
+            ("600036", "2026-06-25", 36.23, "tushare.daily", "none", "2026-06-25T15:01:00"),
         )
         conn.execute(
             "INSERT INTO daily_bars VALUES (?, ?, ?, ?, ?, ?)",
-            ("600036", "2026-06-25", 36.23, "tushare.daily", "none", "2026-06-25T15:00:00"),
+            ("600036", "2026-06-25", 37.5, "tushare.pro_bar.qfq", "qfq", "2026-06-25T15:00:00"),
         )
         conn.commit()
     finally:
@@ -103,7 +105,7 @@ def test_load_reference_close_uses_unadjusted_cache_row(monkeypatch, tmp_path) -
 
     reference = probe._load_reference_close("600036", "2026-06-25")
 
-    assert reference == probe.ReferenceClose(36.23, "tushare.daily", "2026-06-25")
+    assert reference == probe.ReferenceClose(37.5, "tushare.pro_bar.qfq", "2026-06-25")
 
 
 def test_decision_allows_daily_writes_when_only_capabilities_are_rate_limited() -> None:
