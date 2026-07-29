@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import date, timedelta
 
 from a_stock_tracker.reporting.accuracy_report import build_accuracy_report
 
@@ -23,7 +24,11 @@ def _strategy_db() -> sqlite3.Connection:
             trade_date TEXT NOT NULL,
             close REAL,
             source TEXT NOT NULL,
-            adjusted TEXT NOT NULL
+            adjusted TEXT NOT NULL,
+            volume REAL DEFAULT 1000000,
+            volume_unit TEXT DEFAULT 'hand',
+            fetched_at TEXT DEFAULT '2026-01-01T00:00:00',
+            quality_status TEXT DEFAULT 'ok'
         );
         CREATE TABLE index_prices (
             symbol TEXT NOT NULL,
@@ -52,6 +57,26 @@ def _strategy_db() -> sqlite3.Connection:
             ((code, trade_date, close) for trade_date, close in zip(dates, closes, strict=True)),
         )
     return db
+
+
+def _insert_history(
+    db: sqlite3.Connection,
+    code: str,
+    closes: list[float],
+    *,
+    adjusted: str,
+    end_date: date = date(2026, 1, 4),
+) -> None:
+    start_date = end_date - timedelta(days=len(closes) - 1)
+    source = "tushare.pro_bar.qfq" if adjusted == "qfq" else "tushare.daily"
+    db.executemany(
+        """INSERT INTO daily_bars(code,trade_date,close,source,adjusted)
+           VALUES (?,?,?,?,?)""",
+        (
+            (code, (start_date + timedelta(days=offset)).isoformat(), close, source, adjusted)
+            for offset, close in enumerate(closes)
+        ),
+    )
 
 
 def test_qfq_report_computes_core_strategy_metrics() -> None:
@@ -192,10 +217,63 @@ def test_qfq_report_compares_l3_only_within_strong_candidates() -> None:
 
 
 def test_qfq_report_distinguishes_missing_l3_results_from_zero_rejects() -> None:
+    """With <120 daily_bars rows, reconstruction itself is INSUFFICIENT_WINDOW, so the
+    report must say so instead of implying zero rejects."""
     db = _strategy_db()
     db.execute("UPDATE predictions SET l3_v2_signal=NULL")
 
     report = build_accuracy_report(db, strong_threshold=4.0)
 
-    assert "L3 v2（高分候选>=4）：暂无门禁结果已记录的对齐样本" in report
+    assert (
+        "L3 v2（高分候选>=4）：暂无门禁结果已记录或可回溯计算的对齐样本"
+        "（含回溯计算 QFQ强通过0/未复权弱通过0/拒绝0/不可计算2）"
+    ) in report
     assert "拒绝 n=0" not in report
+
+
+def test_qfq_report_reconstructs_l3_v2_signal_when_not_recorded() -> None:
+    """A resolvable NULL and an unresolvable NULL can coexist in one report section."""
+    db = _strategy_db()
+    db.execute("UPDATE predictions SET l3_v2_signal=NULL WHERE total_score>=4")
+    _insert_history(db, "600004", [50.0] * 120, adjusted="qfq")
+
+    report = build_accuracy_report(db, strong_threshold=4.0)
+
+    assert "通过 n=1；拒绝 n=0" in report
+    assert "含回溯计算 QFQ强通过1/未复权弱通过0/拒绝0/不可计算1" in report
+
+
+def test_qfq_report_reconstructs_l3_v2_reject_when_not_recorded() -> None:
+    db = _strategy_db()
+    db.execute("UPDATE predictions SET l3_v2_signal=NULL WHERE code='600004'")
+    _insert_history(db, "600004", [100.0] * 119 + [50.0], adjusted="qfq")
+
+    report = build_accuracy_report(db, strong_threshold=4.0)
+
+    assert "通过 n=1 平均alpha=" in report
+    assert "；拒绝 n=1 平均alpha=" in report
+    assert "含回溯计算 QFQ强通过0/未复权弱通过0/拒绝1/不可计算0" in report
+
+
+def test_qfq_report_discloses_unadjusted_reconstruction_fallback() -> None:
+    db = _strategy_db()
+    db.execute("UPDATE predictions SET l3_v2_signal=NULL WHERE code='600004'")
+    _insert_history(db, "600004", [50.0] * 120, adjusted="none")
+
+    report = build_accuracy_report(db, strong_threshold=4.0)
+
+    assert "通过 n=2；拒绝 n=0" in report
+    assert "含回溯计算 QFQ强通过0/未复权弱通过1/拒绝0/不可计算0" in report
+
+
+def test_qfq_report_reconstruction_excludes_score_date_close() -> None:
+    """Predictions may be generated intraday, before that date's close is known."""
+    db = _strategy_db()
+    db.execute("UPDATE predictions SET l3_v2_signal=NULL WHERE code='600004'")
+    db.execute("UPDATE daily_bars SET close=1.0 WHERE code='600004' AND trade_date='2026-01-05' AND adjusted='qfq'")
+    _insert_history(db, "600004", [100.0] * 120, adjusted="qfq")
+
+    report = build_accuracy_report(db, strong_threshold=4.0)
+
+    assert "通过 n=2；拒绝 n=0" in report
+    assert "含回溯计算 QFQ强通过1/未复权弱通过0/拒绝0/不可计算0" in report

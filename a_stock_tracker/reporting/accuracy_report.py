@@ -10,6 +10,8 @@ import math
 import sqlite3
 from statistics import fmean
 
+from a_stock_tracker.signals.l3_v2_pipeline import compute_l3_v2_from_daily_bars
+
 WINDOWS = (30, 60, 90)
 STOCK_SOURCE = "tushare.pro_bar.qfq"
 STOCK_ADJUSTED = "qfq"
@@ -312,18 +314,69 @@ def _strategy_path(
     )
 
 
-def _l3_summary(sections: list[list[StrategyObservation]], strong_threshold: float) -> str:
+def _resolve_l3_v2_signal(
+    db: sqlite3.Connection,
+    code: str,
+    score_date: str,
+    recorded_signal: int | None,
+) -> tuple[int | None, bool, str | None]:
+    """Prefer a recorded signal; otherwise reconstruct from closes before score_date.
+
+    Historical predictions can be created before the market close, so including the
+    score-date close would leak information that was not yet available at prediction time.
+    """
+    if recorded_signal is not None:
+        return recorded_signal, False, None
+    reconstruction_end = (date.fromisoformat(score_date) - timedelta(days=1)).isoformat()
+    result = compute_l3_v2_from_daily_bars(db, code, reconstruction_end)
+    return result.signal, True, result.status
+
+
+def _l3_summary(db: sqlite3.Connection, sections: list[list[StrategyObservation]], strong_threshold: float) -> str:
     rows = [row for section in sections for row in section if row.total_score >= strong_threshold]
-    passed = [row.alpha for row in rows if row.l3_v2_signal == 1]
-    rejected = [row.alpha for row in rows if row.l3_v2_signal == 0]
+    passed: list[float] = []
+    rejected: list[float] = []
+    reconstructed_passed = 0
+    reconstructed_rejected = 0
+    reconstructed_strong_passed = 0
+    reconstructed_weak_passed = 0
+    reconstruction_unavailable = 0
+    for row in rows:
+        signal, reconstructed, reconstruction_status = _resolve_l3_v2_signal(
+            db, row.code, row.score_date, row.l3_v2_signal
+        )
+        if signal == 1:
+            passed.append(row.alpha)
+            reconstructed_passed += reconstructed
+            reconstructed_strong_passed += reconstruction_status == "pass_strong"
+            reconstructed_weak_passed += reconstruction_status == "pass_weak"
+        elif signal == 0:
+            rejected.append(row.alpha)
+            reconstructed_rejected += reconstructed
+        elif reconstructed:
+            reconstruction_unavailable += 1
+    reconstruction_attempts = reconstructed_passed + reconstructed_rejected + reconstruction_unavailable
+    reconstructed_note = (
+        "（含回溯计算 "
+        f"QFQ强通过{reconstructed_strong_passed}/未复权弱通过{reconstructed_weak_passed}/"
+        f"拒绝{reconstructed_rejected}/不可计算{reconstruction_unavailable}）"
+        if reconstruction_attempts
+        else ""
+    )
     if not passed and not rejected:
-        return f"L3 v2（高分候选>={strong_threshold:.0f}）：暂无门禁结果已记录的对齐样本"
+        return (
+            f"L3 v2（高分候选>={strong_threshold:.0f}）：暂无门禁结果已记录或可回溯计算的对齐样本{reconstructed_note}"
+        )
     if not rejected:
-        return f"L3 v2（高分候选>={strong_threshold:.0f}）：通过 n={len(passed)}；拒绝 n=0，暂无选择能力样本"
+        return (
+            f"L3 v2（高分候选>={strong_threshold:.0f}）：通过 n={len(passed)}；"
+            f"拒绝 n=0，暂无选择能力样本{reconstructed_note}"
+        )
     return (
         f"L3 v2（高分候选>={strong_threshold:.0f}）："
         f"通过 n={len(passed)} 平均alpha={_fmt_percent(fmean(passed) if passed else None)}；"
         f"拒绝 n={len(rejected)} 平均alpha={_fmt_percent(fmean(rejected) if rejected else None)}"
+        f"{reconstructed_note}"
     )
 
 
@@ -370,7 +423,7 @@ def build_accuracy_report(db: sqlite3.Connection, strong_threshold: float = 44.0
                 f"Q5−观察池等权累计收益差：{_fmt_percent(path.q5_minus_equal_weight)}",
                 f"沪深300全收益：{_fmt_percent(path.benchmark_return)}",
                 f"Q5 策略最大回撤：{_fmt_percent(path.max_drawdown)}",
-                _l3_summary(sections, strong_threshold),
+                _l3_summary(db, sections, strong_threshold),
             ]
         )
     return "\n".join(lines)
