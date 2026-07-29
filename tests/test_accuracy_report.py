@@ -58,7 +58,7 @@ def test_qfq_report_computes_core_strategy_metrics() -> None:
     db = _strategy_db()
     report = build_accuracy_report(db, strong_threshold=4.0)
 
-    assert "当前评分版本：weights_hash=current + qualitative provenance 已记录" in report
+    assert "当前评分版本：weights_hash=current；" in report
     assert "对齐样本：5；非重叠样本：5；非重叠截面：1；IC有效截面：1" in report
     assert "截面 Spearman IC 均值：1.000" in report
     assert "Q5−Q1 平均 alpha spread：40.00%" in report
@@ -97,7 +97,7 @@ def test_qfq_report_uses_latest_weights_hash_only() -> None:
 
     report = build_accuracy_report(db)
 
-    assert "当前评分版本：weights_hash=current + qualitative provenance 已记录" in report
+    assert "当前评分版本：weights_hash=current；" in report
     assert "对齐样本：5；" in report
     assert "100.00%" not in report
 
@@ -130,16 +130,45 @@ def test_qfq_report_deduplicates_overlapping_score_dates() -> None:
 
 
 def test_qfq_report_excludes_rows_without_qualitative_provenance() -> None:
+    """After QUALITATIVE_V1_ONLY_CUTOFF, a NULL qualitative_mode is ambiguous (the
+    prediction may have used qualitative_scores_v2) and must stay excluded."""
     db = _strategy_db()
     for index in range(5):
         db.execute(
-            "INSERT INTO predictions VALUES (?, 'A', '2026-01-06', ?, 1, 'current', NULL)",
+            "INSERT INTO predictions VALUES (?, 'A', '2026-07-20', ?, 1, 'current', NULL)",
             (f"60000{index}", float(index + 1)),
         )
 
     report = build_accuracy_report(db)
 
     assert "记录区间：2026-01-05 至 2026-01-05" in report
+
+
+def test_qfq_report_includes_rows_before_qualitative_v1_only_cutoff_without_provenance() -> None:
+    """Rows written by the pre-v2 production path are usable without the later snapshot."""
+    db = _strategy_db()
+    db.execute("UPDATE predictions SET qualitative_mode=NULL")
+
+    report = build_accuracy_report(db)
+
+    assert "记录区间：2026-01-05 至 2026-01-05" in report
+    assert "对齐样本：5；非重叠样本：5；非重叠截面：1；IC有效截面：1" in report
+
+
+def test_qfq_report_excludes_cutoff_date_without_provenance_from_version_selection() -> None:
+    """The cutoff date itself is v2-capable, so a newer ambiguous hash cannot become current."""
+    db = _strategy_db()
+    for index in range(5):
+        db.execute(
+            "INSERT INTO predictions VALUES (?, 'A', '2026-07-19', ?, 1, 'ambiguous', NULL)",
+            (f"60000{index}", float(index + 1)),
+        )
+
+    report = build_accuracy_report(db)
+
+    assert "当前评分版本：weights_hash=current；" in report
+    assert "记录区间：2026-01-05 至 2026-01-05" in report
+    assert "weights_hash=ambiguous" not in report
 
 
 def test_qfq_report_rejects_incomplete_cross_section() -> None:
@@ -160,3 +189,13 @@ def test_qfq_report_compares_l3_only_within_strong_candidates() -> None:
 
     assert "L3 v2（高分候选>=4）：通过 n=1" in report
     assert "拒绝 n=1" in report
+
+
+def test_qfq_report_distinguishes_missing_l3_results_from_zero_rejects() -> None:
+    db = _strategy_db()
+    db.execute("UPDATE predictions SET l3_v2_signal=NULL")
+
+    report = build_accuracy_report(db, strong_threshold=4.0)
+
+    assert "L3 v2（高分候选>=4）：暂无门禁结果已记录的对齐样本" in report
+    assert "拒绝 n=0" not in report

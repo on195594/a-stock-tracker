@@ -18,6 +18,12 @@ MAX_LAG_DAYS = 10
 MIN_CROSS_SECTION = 5
 MIN_CROSS_SECTION_COVERAGE = 0.9
 
+# The v2 production consumer and the first qualitative_scores_v2 rows were introduced on this
+# date. Earlier predictions were written by the legacy v1-only path, before the per-prediction
+# qualitative_mode snapshot existed; rows from this date onward require that snapshot.
+QUALITATIVE_V1_ONLY_CUTOFF = "2026-07-19"
+PROVENANCE_CONFIRMED_CLAUSE = "(score_date < ? OR qualitative_mode IS NOT NULL)"
+
 
 @dataclass(frozen=True)
 class StrategyObservation:
@@ -94,35 +100,36 @@ def _aligned_close(
 
 def _current_scoring_version(db: sqlite3.Connection) -> tuple[str | None, str | None, str | None]:
     row = db.execute(
-        """SELECT weights_hash
+        f"""SELECT weights_hash
            FROM predictions
            WHERE framework='A'
              AND total_score IS NOT NULL
              AND weights_hash IS NOT NULL
-             AND qualitative_mode IS NOT NULL
+             AND {PROVENANCE_CONFIRMED_CLAUSE}
              AND score_date = (
                  SELECT MAX(score_date)
                  FROM predictions
                  WHERE framework='A'
                    AND total_score IS NOT NULL
                    AND weights_hash IS NOT NULL
-                   AND qualitative_mode IS NOT NULL
+                   AND {PROVENANCE_CONFIRMED_CLAUSE}
              )
            GROUP BY weights_hash
            ORDER BY COUNT(*) DESC, weights_hash
-           LIMIT 1"""
+           LIMIT 1""",
+        (QUALITATIVE_V1_ONLY_CUTOFF, QUALITATIVE_V1_ONLY_CUTOFF),
     ).fetchone()
     if row is None:
         return None, None, None
     weights_hash = str(row[0])
     first_date, last_date = db.execute(
-        """SELECT MIN(score_date), MAX(score_date)
+        f"""SELECT MIN(score_date), MAX(score_date)
            FROM predictions
            WHERE framework='A'
              AND total_score IS NOT NULL
              AND weights_hash=?
-             AND qualitative_mode IS NOT NULL""",
-        (weights_hash,),
+             AND {PROVENANCE_CONFIRMED_CLAUSE}""",
+        (weights_hash, QUALITATIVE_V1_ONLY_CUTOFF),
     ).fetchone()
     return weights_hash, str(first_date), str(last_date)
 
@@ -135,31 +142,31 @@ def _load_observations(
     if weights_hash is None:
         return [], 0
     expected_size = db.execute(
-        """SELECT COALESCE(MAX(prediction_count), 0)
+        f"""SELECT COALESCE(MAX(prediction_count), 0)
            FROM (
                SELECT COUNT(*) AS prediction_count
                FROM predictions
                WHERE framework='A'
                  AND total_score IS NOT NULL
                  AND weights_hash=?
-                 AND qualitative_mode IS NOT NULL
+                 AND {PROVENANCE_CONFIRMED_CLAUSE}
                GROUP BY score_date
            )""",
-        (weights_hash,),
+        (weights_hash, QUALITATIVE_V1_ONLY_CUTOFF),
     ).fetchone()[0]
     stocks, benchmark = _load_price_series(db)
     if not benchmark[0]:
         return [], int(expected_size)
     as_of_date = date.fromisoformat(benchmark[0][-1])
     predictions = db.execute(
-        """SELECT code, score_date, total_score, l3_v2_signal
+        f"""SELECT code, score_date, total_score, l3_v2_signal
            FROM predictions
            WHERE framework='A'
              AND total_score IS NOT NULL
              AND weights_hash=?
-             AND qualitative_mode IS NOT NULL
+             AND {PROVENANCE_CONFIRMED_CLAUSE}
            ORDER BY score_date, code""",
-        (weights_hash,),
+        (weights_hash, QUALITATIVE_V1_ONLY_CUTOFF),
     ).fetchall()
     observations: list[StrategyObservation] = []
     for raw_code, raw_score_date, raw_score, raw_signal in predictions:
@@ -310,7 +317,7 @@ def _l3_summary(sections: list[list[StrategyObservation]], strong_threshold: flo
     passed = [row.alpha for row in rows if row.l3_v2_signal == 1]
     rejected = [row.alpha for row in rows if row.l3_v2_signal == 0]
     if not passed and not rejected:
-        return f"L3 v2（高分候选>={strong_threshold:.0f}）：暂无已对齐样本"
+        return f"L3 v2（高分候选>={strong_threshold:.0f}）：暂无门禁结果已记录的对齐样本"
     if not rejected:
         return f"L3 v2（高分候选>={strong_threshold:.0f}）：通过 n={len(passed)}；拒绝 n=0，暂无选择能力样本"
     return (
@@ -329,7 +336,9 @@ def build_accuracy_report(db: sqlite3.Connection, strong_threshold: float = 44.0
         "=" * 60,
         "口径：个股前复权总收益 vs 沪深300全收益指数；仅统计交易日对齐样本。",
         (
-            f"当前评分版本：weights_hash={weights_hash} + qualitative provenance 已记录；"
+            f"当前评分版本：weights_hash={weights_hash}；"
+            f"定性 provenance 口径：{QUALITATIVE_V1_ONLY_CUTOFF} 前按 v2 上线前历史确认为 v1，"
+            f"自该日起要求预测快照已记录；"
             f"记录区间：{first_date} 至 {last_date}。"
             if weights_hash is not None
             else "当前评分版本：暂无 Framework A 记录。"
