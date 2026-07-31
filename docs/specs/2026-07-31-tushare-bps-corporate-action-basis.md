@@ -1,5 +1,7 @@
 # TuShare BPS 送转口径修正
 
+状态：implemented and production-verified（2026-07-31）
+
 ## Goal
 
 让 `stock_fundamentals.bps` 与估值日 `daily_basic.pb` 使用相同的股本口径：保留 TuShare `fina_indicator.bps` 原值，并按最新财报期之后、估值日之前已实施的送股/转增事件累计调整每股净资产，消除因除权导致的伪估值冲突。
@@ -86,3 +88,13 @@ TuShare 官方 `dividend` 文档（https://tushare.pro/document/2?doc_id=103）�
 - 在隔离 worktree 开发；生产切换前记录代码 SHA，并使用 SQLite online backup 生成带时间戳备份。
 - 若 preview 变化股票集合不是恰好 `{600785, 603606}`、任一 PB 差异仍超过 1%、候选 quick_check 失败、非目标表摘要变化、或审查存在 blocker，则停止生产写入。
 - 生产 execute 使用现有原子 materializer；执行后独立只读验证。失败时停止监控依赖链并从已验证备份恢复 `tracker.db`。
+
+## Production verification
+
+- 实现提交：`4279c22`。
+- 生产 SQLite online backup：`/home/lin/.hermes/backups/a-stock-tracker/tracker.db.pre-bps-basis-20260731T205416+0800`；`PRAGMA integrity_check=ok`。
+- 生产物化：35 只 watchlist 全部写入 BPS basis 审计字段；旧 `bps` 仅 `600785`、`603606` 两只发生数值变化。
+- `600785`：`10.235 -> 7.31071429`，因子 `1.4`；adapter 重算 PB `1.1449`，`valuation_consistent=true`。
+- `603606`：`12.368 -> 10.30666667`，因子 `1.2`；adapter 重算 PB `3.9926`，相对源 PB `3.9904` 差异约 `0.0542%`，`valuation_consistent=true`。
+- `PRAGMA quick_check=ok`；14 张非目标表摘要与备份一致；`stock_fundamentals.data` 无非 basis 字段变化。
+- 生产 checkout：263 tests passed；Ruff、format、mypy、`git diff --check` 通过；独立聚焦复审结论 `APPROVE`。
