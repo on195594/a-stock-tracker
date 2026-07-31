@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-import subprocess
 import sys
 import types
 from datetime import date, timedelta
@@ -895,54 +894,6 @@ def test_ttl_expiry_regression(tmp_db):
 
 
 # ---------------------------------------------------------------------------
-# 44. _refresh_fundamentals：成功和失败计数正确，返回 (success, failed)
-# ---------------------------------------------------------------------------
-def test_refresh_fundamentals_counts(tmp_db, small_watchlist, monkeypatch):
-    """_refresh_fundamentals 正确统计成功/失败次数并返回元组。"""
-    call_count = [0]
-
-    def fake_run_fetcher_process(code):
-        call_count[0] += 1
-        if code == "000858":  # 五粮液失败
-            return 1
-        return 0
-
-    monkeypatch.setattr(pipeline, "_run_fetcher_process", fake_run_fetcher_process)
-
-    success, failed = pipeline._refresh_fundamentals("test")
-    assert success == 1  # 600036 成功
-    assert failed == 1  # 000858 失败
-    assert call_count[0] == 2
-
-
-def test_refresh_fundamentals_continues_after_fetch_timeout(tmp_db, small_watchlist, monkeypatch):
-    """单只 fetch 超时应计入失败，并继续刷新后续股票。"""
-    seen = []
-
-    def fake_run_fetcher_process(code):
-        seen.append(code)
-        if code == "600036":
-            return "TIMEOUT"
-        return 0
-
-    monkeypatch.setattr(pipeline, "_run_fetcher_process", fake_run_fetcher_process)
-
-    success, failed = pipeline._refresh_fundamentals("test")
-    assert success == 1
-    assert failed == 1
-    assert seen == ["600036", "000858"]
-
-
-def test_run_fetcher_process_returns_timeout_on_subprocess_timeout(monkeypatch):
-    def fake_run(*args, **kwargs):
-        raise subprocess.TimeoutExpired(cmd=kwargs.get("args", "fetch"), timeout=kwargs["timeout"])
-
-    monkeypatch.setattr(pipeline.subprocess, "run", fake_run)
-
-    assert pipeline._run_fetcher_process("600036", timeout=1) == "TIMEOUT"
-
-
-# ---------------------------------------------------------------------------
 # 45. cmd_remove：删除已有股票；对未知股票发 WARNING 但不报错
 # ---------------------------------------------------------------------------
 def test_cmd_remove(tmp_db, monkeypatch):
@@ -1032,60 +983,3 @@ def test_backfill_null_prices_uses_db_cache(tmp_db) -> None:
     assert provider.calls == 0
     assert row is not None
     assert row[0] == pytest.approx(38.50)
-
-
-# ---------------------------------------------------------------------------
-# cmd_init and cmd_weekly entry point tests
-# ---------------------------------------------------------------------------
-
-
-def test_cmd_init_delegates_to_refresh_fundamentals(tmp_db, small_watchlist, monkeypatch):
-    """cmd_init 必须以 'init' 标签调用 _refresh_fundamentals。"""
-    calls = []
-
-    def fake_refresh(label: str):
-        calls.append(label)
-        return (len(config.WATCHLIST), 0)
-
-    monkeypatch.setattr(pipeline, "_refresh_fundamentals", fake_refresh)
-    pipeline.cmd_init()
-    assert calls == ["init"]
-
-
-def test_cmd_weekly_delegates_to_refresh_fundamentals(tmp_db, small_watchlist, monkeypatch):
-    """cmd_weekly 必须以 'weekly' 标签调用 _refresh_fundamentals。"""
-    calls = []
-
-    def fake_refresh(label: str):
-        calls.append(label)
-        return (len(config.WATCHLIST), 0)
-
-    monkeypatch.setattr(pipeline, "_refresh_fundamentals", fake_refresh)
-    pipeline.cmd_weekly()
-    assert calls == ["weekly"]
-
-
-def test_cmd_init_attempts_all_stocks_on_fetcher_failure(tmp_db, small_watchlist, monkeypatch):
-    """cmd_init 在全部 fetch 失败时仍尝试全部股票，不抛出异常。"""
-    calls = []
-
-    def fake_run_fetcher_process(code, timeout=None):
-        calls.append(code)
-        return 1  # all fail
-
-    monkeypatch.setattr(pipeline, "_run_fetcher_process", fake_run_fetcher_process)
-    pipeline.cmd_init()
-    assert len(calls) == len(config.WATCHLIST)
-
-
-def test_cmd_weekly_attempts_all_stocks_on_fetcher_timeout(tmp_db, small_watchlist, monkeypatch):
-    """cmd_weekly 在全部 fetch 超时时仍尝试全部股票，不抛出异常。"""
-    calls = []
-
-    def fake_run_fetcher_process(code, timeout=None):
-        calls.append(code)
-        return "TIMEOUT"
-
-    monkeypatch.setattr(pipeline, "_run_fetcher_process", fake_run_fetcher_process)
-    pipeline.cmd_weekly()
-    assert len(calls) == len(config.WATCHLIST)

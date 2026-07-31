@@ -2,8 +2,8 @@
 a-stock-tracker 主编排器
 
 子命令：
-  init            首次初始化，对 watchlist 每只股票执行 fetch，填充 stock_fundamentals
-  daily           每日评分并写入 predictions 表（cron: 工作日 16:30）
+  daily           每日评分并写入 predictions 表（cron: 工作日 17:30）
+  remove          删除指定股票的缓存和预测记录
 """
 
 import argparse
@@ -13,7 +13,6 @@ import json
 import logging
 import os
 import sqlite3
-import subprocess
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -55,8 +54,6 @@ from a_stock_tracker.scoring import (
     score_stock,
 )
 from a_stock_tracker.paths import PROJECT_ROOT
-
-FETCHER_STOCK_TIMEOUT_SECONDS = 420
 
 
 def _load_dotenv() -> None:
@@ -154,69 +151,6 @@ def _get_score_price(
         logger.warning(f"  {code} price_at_score 获取失败：{result.error_code or 'UNKNOWN'}")
         return None
     return result.value
-
-
-def _refresh_fundamentals(label: str) -> tuple[int, int]:
-    """对 WATCHLIST 每只股票执行 fetch，刷新 stock_fundamentals 缓存。返回 (success, failed)。"""
-    success = failed = 0
-    for item in config.WATCHLIST:
-        code = item["code"]
-        logger.info(f"  fetch {code} {item['name']} ...")
-        result = _run_fetcher_process(code)
-        if result == 0:
-            logger.info(f"  ✓ {code}")
-            success += 1
-        else:
-            logger.error(f"  ✗ {code} fetch 失败：exit={result}")
-            failed += 1
-    logger.info(f"{label} 完成：成功 {success} 只，失败 {failed} 只")
-    return success, failed
-
-
-def _run_fetcher_process(code: str, timeout: int = FETCHER_STOCK_TIMEOUT_SECONDS) -> int | str:
-    """用独立进程刷新单只股票，避免底层 SDK 卡死拖住整轮 weekly。"""
-    try:
-        completed = subprocess.run(
-            [sys.executable, "-m", "a_stock_tracker.data.fetcher", "fetch", code],
-            cwd=PROJECT_ROOT,
-            timeout=timeout,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        if completed.stderr:
-            for line in completed.stderr.strip().splitlines():
-                logger.warning("fetcher[%s] %s", code, line)
-    except subprocess.TimeoutExpired as e:
-        logger.error("  ✗ %s fetch 超过 %ss，已终止子进程", code, timeout)
-        stderr = e.stderr.decode(errors="replace") if isinstance(e.stderr, bytes) else e.stderr
-        if stderr:
-            for line in stderr.strip().splitlines():
-                logger.warning("fetcher[%s] %s", code, line)
-        return "TIMEOUT"
-    return completed.returncode
-
-
-# ──────────────────────────────────────────────
-# init 命令
-# ──────────────────────────────────────────────
-
-
-def cmd_init() -> None:
-    """对 WATCHLIST 每只股票执行首次 fetch，填充 stock_fundamentals 表。"""
-    logger.info(f"=== pipeline init：共 {len(config.WATCHLIST)} 只股票 ===")
-    _refresh_fundamentals("init")
-
-
-# ──────────────────────────────────────────────
-# weekly 命令（每周刷新基本面缓存，取代 daily 内的批量 fetch）
-# ──────────────────────────────────────────────
-
-
-def cmd_weekly() -> None:
-    """每周刷新 WATCHLIST 所有股票的基本面缓存（财务/PE/分红），供 daily 评分使用。"""
-    logger.info(f"=== pipeline weekly：批量刷新基本面数据（{_today()}）共 {len(config.WATCHLIST)} 只 ===")
-    _refresh_fundamentals("weekly")
 
 
 # ──────────────────────────────────────────────
@@ -552,9 +486,7 @@ def cmd_remove(code: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="a-stock-tracker 管道")
     sub = parser.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("init", help="首次初始化，预填 watchlist 基本面缓存")
-    sub.add_parser("weekly", help="每周刷新基本面缓存（cron: 每周六 10:00）")
-    sub.add_parser("daily", help="每日评分，写入 predictions 表（依赖 weekly 缓存）")
+    sub.add_parser("daily", help="每日评分，写入 predictions 表（依赖 TuShare 物化缓存）")
     p_remove = sub.add_parser(
         "remove",
         help="删除一只股票在 predictions 和 stock_fundamentals 表中的记录（先从 a_stock_tracker/config.py 移除）",
@@ -563,11 +495,7 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    if args.cmd == "init":
-        cmd_init()
-    elif args.cmd == "weekly":
-        cmd_weekly()
-    elif args.cmd == "daily":
+    if args.cmd == "daily":
         cmd_daily()
     elif args.cmd == "remove":
         cmd_remove(args.code)

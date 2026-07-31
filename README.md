@@ -24,14 +24,11 @@ TuShare 基本面、估值与 QFQ 行情
 ## 常用命令
 
 ```bash
-python3 pipeline.py init
-python3 pipeline.py weekly
-python3 pipeline.py daily
-
 python3 scripts/fetch_qfq_daily_bars_tushare.py
 python3 scripts/check_market_data_readiness.py --scope cron
 python3 -m scripts.run_tushare_primary_production_cycle daily
 python3 -m scripts.run_tushare_primary_production_cycle weekly
+python3 pipeline.py daily
 ```
 
 自动报告写入被 Git 忽略的 `artifacts/reports/accuracy-report.txt`。SQLite 是数据真相来源；Telegram 只展示未验证观察名单，不构成买入建议。

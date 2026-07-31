@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -91,9 +92,24 @@ def test_package_root_contains_only_composition_modules_and_domains() -> None:
 
 def test_legacy_layout_is_not_reintroduced() -> None:
     assert not (PROJECT_ROOT / "lib").exists()
+    assert not (PACKAGE_ROOT / "data" / "fetcher.py").exists()
+    assert not (PACKAGE_ROOT / "data" / "akshare_provider.py").exists()
     assert list(PROJECT_ROOT.glob("qualitative_v2_*.py")) == []
     assert list(PROJECT_ROOT.glob("*.json")) == []
     assert {path.name for path in PROJECT_ROOT.glob("*.py")} == {"pipeline.py"}
+
+
+def test_legacy_fetcher_is_not_referenced_by_production_code() -> None:
+    violations = [
+        str(path.relative_to(PROJECT_ROOT))
+        for path in _production_modules()
+        if any(
+            marker in path.read_text(encoding="utf-8")
+            for marker in ("a_stock_tracker.data.fetcher", "akshare_provider", "import akshare")
+        )
+    ]
+
+    assert violations == []
 
 
 def test_credentials_and_runtime_reports_are_not_tracked() -> None:
@@ -148,3 +164,15 @@ def test_root_pipeline_remains_a_thin_compatibility_launcher() -> None:
     assert len(source.splitlines()) <= 20
     assert "from a_stock_tracker import cli as _cli" in source
     assert "_cli.run()" in source
+
+
+def test_cli_exposes_only_supported_commands() -> None:
+    result = subprocess.run(
+        [sys.executable, "pipeline.py", "--help"],
+        cwd=PROJECT_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "{daily,remove}" in result.stdout

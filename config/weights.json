@@ -27,7 +27,7 @@
           "max_score": 10,
           "breakpoints": [[0, 0], [15, 4], [25, 7], [35, 10], [60, 10]],
           "interpolate": true,
-          "note": "毛利率%。若AKShare无此字段，Phase1改为phase1_fixed: 5"
+          "note": "毛利率%。若TuShare字段缺失，Phase1改为phase1_fixed: 5"
         },
         "moat_fixed": {
           "max_score": 10,
