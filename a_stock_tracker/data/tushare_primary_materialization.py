@@ -193,12 +193,118 @@ def _financial_patch(rows: list[dict[str, Any]], as_of: str, industry: str) -> d
         "net_profit_growth": _mean(annual, "netprofit_yoy"),
         "debt_ratio": _finite(latest.get("debt_to_assets")),
         "gross_margin": gross_margin,
-        "bps": _finite(latest.get("bps")),
         "report_period": _compact(latest.get("end_date")),
         "financial_annual_periods": [_compact(row.get("end_date")) for row in annual],
         "financial_effective_ann_date": _effective_date(latest),
         "financial_source": latest.get("source"),
         "financial_source_as_of": _iso_date(latest.get("source_as_of")) or _iso_date(_effective_date(latest)),
+    }
+
+
+def _invalid_share_distribution(code: str, row: dict[str, Any]) -> MaterializationReadinessError:
+    return MaterializationReadinessError(f"INVALID_SHARE_DISTRIBUTION_RATE:{code}:{_compact(row.get('ex_date'))}")
+
+
+def _share_distribution_rate(row: dict[str, Any], code: str) -> float:
+    """Return one action's per-share distribution without double counting."""
+    aggregate_raw = row.get("stk_div")
+    component_raw = (row.get("stk_bo_rate"), row.get("stk_co_rate"))
+    components: list[float] = []
+    for raw in component_raw:
+        if raw is None:
+            components.append(0.0)
+            continue
+        value = _finite(raw)
+        if value is None or value < 0:
+            raise _invalid_share_distribution(code, row)
+        components.append(value)
+
+    if aggregate_raw is None:
+        return sum(components)
+
+    aggregate = _finite(aggregate_raw)
+    if aggregate is None or aggregate < 0:
+        raise _invalid_share_distribution(code, row)
+    if any(raw is not None for raw in component_raw) and not math.isclose(
+        aggregate,
+        sum(components),
+        rel_tol=0.0,
+        abs_tol=1e-9,
+    ):
+        raise _invalid_share_distribution(code, row)
+    return aggregate
+
+
+def _bps_basis_patch(
+    financial_rows: list[dict[str, Any]],
+    dividend_rows: list[dict[str, Any]],
+    as_of: str,
+    code: str,
+) -> dict[str, Any]:
+    """Build valuation-comparable BPS from reported BPS and later share distributions."""
+    selected = _dedupe_financial(financial_rows, as_of)
+    if not selected:
+        return {}
+    latest = selected[0]
+    reported = _finite(latest.get("bps"))
+    report_period = _compact(latest.get("end_date"))
+    cutoff = _compact(as_of)
+    if reported is None or reported <= 0 or not report_period or not cutoff:
+        return {}
+
+    deduped: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for row in dividend_rows:
+        ex_date = _compact(row.get("ex_date"))
+        if row.get("div_proc") != "实施" or not ex_date or not report_period < ex_date <= cutoff:
+            continue
+        key = (
+            str(row.get("code") or code),
+            _compact(row.get("end_date")),
+            _compact(row.get("record_date")),
+            ex_date,
+        )
+        rank = (
+            str(row.get("observed_at") or ""),
+            _compact(row.get("ann_date")),
+            str(row.get("payload_sha256") or ""),
+        )
+        previous = deduped.get(key)
+        if previous is None:
+            deduped[key] = row
+            continue
+        previous_rank = (
+            str(previous.get("observed_at") or ""),
+            _compact(previous.get("ann_date")),
+            str(previous.get("payload_sha256") or ""),
+        )
+        if rank > previous_rank:
+            deduped[key] = row
+
+    factor = 1.0
+    adjusted_dates: list[str] = []
+    for row in sorted(deduped.values(), key=lambda value: _compact(value.get("ex_date"))):
+        rate = _share_distribution_rate(row, code)
+        if rate <= 0:
+            continue
+        next_factor = factor * (1.0 + rate)
+        if not math.isfinite(next_factor):
+            raise _invalid_share_distribution(code, row)
+        factor = next_factor
+        iso_ex_date = _iso_date(row.get("ex_date"))
+        if iso_ex_date is not None:
+            adjusted_dates.append(iso_ex_date)
+
+    source = "tushare.fina_indicator.bps"
+    if adjusted_dates:
+        source += "+tushare.dividend.share_distribution"
+    return {
+        "bps_reported": reported,
+        "bps": round(reported / factor, 8),
+        "bps_share_adjustment_factor": round(factor, 12),
+        "bps_adjustment_ex_dates": adjusted_dates,
+        "bps_basis_report_period": report_period,
+        "bps_basis_as_of": date.fromisoformat(as_of).isoformat(),
+        "bps_basis_source": source,
     }
 
 
@@ -247,17 +353,30 @@ def build_stock_fundamentals_payload(
         conn.row_factory = sqlite3.Row
         for code in watchlist:
             domains: dict[str, dict[str, Any]] = {}
-            if enabled[0]:
-                domains["valuation"] = _valuation_patch(_load_rows(conn, "valuation_observations", code), as_of_date)
-            if enabled[1]:
-                rows = [
+            financial_rows: list[dict[str, Any]] = []
+            dividend_rows: list[dict[str, Any]] = []
+            if enabled[0] or enabled[1]:
+                financial_rows = [
                     row
                     for row in _load_rows(conn, "financial_observations", code)
                     if row.get("endpoint") == "fina_indicator"
                 ]
-                domains["financial"] = _financial_patch(rows, as_of_date, industries.get(code, ""))
+                dividend_rows = _load_rows(conn, "dividend_observations", code)
+            if enabled[0]:
+                domains["valuation"] = _valuation_patch(_load_rows(conn, "valuation_observations", code), as_of_date)
+            if enabled[1]:
+                domains["financial"] = _financial_patch(financial_rows, as_of_date, industries.get(code, ""))
             if enabled[2]:
-                domains["dividend"] = _dividend_patch(_load_rows(conn, "dividend_observations", code), as_of_date)
+                if not dividend_rows:
+                    dividend_rows = _load_rows(conn, "dividend_observations", code)
+                domains["dividend"] = _dividend_patch(dividend_rows, as_of_date)
+            if enabled[0] or enabled[1]:
+                domains["valuation_basis"] = _bps_basis_patch(
+                    financial_rows,
+                    dividend_rows,
+                    as_of_date,
+                    str(code),
+                )
             payload[str(code)] = domains
     return payload
 
@@ -275,6 +394,21 @@ def _validate_payload(
     as_of_date: str,
 ) -> None:
     for code, domains in payload.items():
+        basis = domains.get("valuation_basis", {})
+        basis_bps = _finite(basis.get("bps"))
+        basis_reported = _finite(basis.get("bps_reported"))
+        basis_factor = _finite(basis.get("bps_share_adjustment_factor"))
+        basis_ready = (
+            basis_bps is not None
+            and basis_bps > 0
+            and basis_reported is not None
+            and basis_reported > 0
+            and basis_factor is not None
+            and basis_factor >= 1.0
+            and bool(basis.get("bps_basis_report_period"))
+            and _compact(basis.get("bps_basis_as_of")) == _compact(as_of_date)
+            and isinstance(basis.get("bps_adjustment_ex_dates"), list)
+        )
         if enabled[0]:
             values = domains.get("valuation", {})
             source_date = _compact(values.get("valuation_source_as_of"))
@@ -284,12 +418,13 @@ def _validate_payload(
                 or values.get("float_to_total_ratio") is None
                 or source_date != _compact(as_of_date)
                 or int(values.get("valuation_valid_months", 0)) <= 0
+                or not basis_ready
             ):
                 raise MaterializationReadinessError(f"VALUATION_NOT_READY:{code}")
         if enabled[1]:
             values = domains.get("financial", {})
             periods = values.get("financial_annual_periods", [])
-            if len(periods) < 3 or values.get("roe_3y_avg") is None or values.get("bps") is None:
+            if len(periods) < 3 or values.get("roe_3y_avg") is None or not basis_ready:
                 raise MaterializationReadinessError(f"FINANCIAL_NOT_READY:{code}")
         if enabled[2] and "dividend" not in domains:
             raise MaterializationReadinessError(f"DIVIDEND_NOT_READY:{code}")
@@ -358,8 +493,8 @@ def run_materialization(
         dividend_enabled=enabled[2],
         watchlist_industries=watchlist_industries,
     )
+    _validate_payload(payload, enabled, as_of_date)
     if execute:
-        _validate_payload(payload, enabled, as_of_date)
         changed = _write_payload(target_db_path, payload)
     else:
         changed = sum(1 for domains in payload.values() if _flatten_domains(domains))

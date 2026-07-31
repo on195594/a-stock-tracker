@@ -91,6 +91,7 @@ def _insert_fina_indicator(
     source_as_of: str,
     observed_at: str,
     f_ann_date: str | None = None,
+    bps: float = 10.0,
 ) -> None:
     row = {
         "ts_code": f"{code}.SH",
@@ -105,6 +106,7 @@ def _insert_fina_indicator(
         "netprofit_yoy": netprofit_yoy,
         "debt_to_assets": debt_to_assets,
         "grossprofit_margin": grossprofit_margin,
+        "bps": bps,
     }
     tushare_primary_cache.persist_observations(
         conn,
@@ -131,6 +133,10 @@ def _insert_dividend(
     source: str,
     source_as_of: str,
     observed_at: str,
+    *,
+    stk_div: float | None = None,
+    stk_bo_rate: float | None = None,
+    stk_co_rate: float | None = None,
 ) -> None:
     row = {
         "ts_code": f"{code}.SH",
@@ -141,6 +147,9 @@ def _insert_dividend(
         "div_proc": div_proc,
         "cash_div_tax": cash_div_tax,
         "cash_div": cash_div_tax * 0.7,
+        "stk_div": stk_div,
+        "stk_bo_rate": stk_bo_rate,
+        "stk_co_rate": stk_co_rate,
     }
     tushare_primary_cache.persist_observations(
         conn,
@@ -154,7 +163,7 @@ def _insert_dividend(
     )
 
 
-def _build_tracker_db(db_path: Path) -> None:
+def _build_tracker_db(db_path: Path, codes: tuple[str, ...] = ("600036",)) -> None:
     with sqlite3.connect(db_path) as conn:
         conn.execute(
             """CREATE TABLE IF NOT EXISTS stock_fundamentals (
@@ -166,10 +175,13 @@ def _build_tracker_db(db_path: Path) -> None:
             ttl_hours INTEGER DEFAULT 168
         )"""
         )
-        conn.execute(
-            """INSERT OR REPLACE INTO stock_fundamentals (code, name, industry, data, updated_at, ttl_hours)
-            VALUES ('600036', '招商银行', '银行', '{\"pe_ttm\": 8.0}', '2000-01-01T00:00:00', 168)"""
-        )
+        for code in codes:
+            conn.execute(
+                """INSERT OR REPLACE INTO stock_fundamentals
+                (code, name, industry, data, updated_at, ttl_hours)
+                VALUES (?, ?, '银行', '{"pe_ttm": 8.0}', '2000-01-01T00:00:00', 168)""",
+                (code, f"测试-{code}"),
+            )
         conn.commit()
 
 
@@ -566,18 +578,311 @@ def test_dividend_uses_cash_div_tax_when_implemented_and_ex_date_before_asof(tmp
     assert div["dividend_source_as_of"] == "2026-07-14"
 
 
-def test_preview_does_not_write_target_db_and_shows_patch(tmp_path: Path) -> None:
+def test_share_distribution_rate_prefers_aggregate_and_validates_components() -> None:
+    assert (
+        tpm._share_distribution_rate(
+            {"stk_div": 0.2, "stk_bo_rate": None, "stk_co_rate": 0.2, "ex_date": "20260526"},
+            "603606",
+        )
+        == 0.2
+    )
+    assert tpm._share_distribution_rate(
+        {"stk_div": None, "stk_bo_rate": 0.1, "stk_co_rate": 0.2, "ex_date": "20260526"},
+        "600036",
+    ) == pytest.approx(0.3)
+    assert (
+        tpm._share_distribution_rate(
+            {"stk_div": None, "stk_bo_rate": None, "stk_co_rate": None, "ex_date": "20260526"},
+            "600036",
+        )
+        == 0.0
+    )
+    with pytest.raises(tpm.MaterializationReadinessError, match="INVALID_SHARE_DISTRIBUTION_RATE:600036:20260526"):
+        tpm._share_distribution_rate(
+            {"stk_div": 0.2, "stk_bo_rate": 0.1, "stk_co_rate": 0.2, "ex_date": "20260526"},
+            "600036",
+        )
+    for invalid in (-0.1, float("nan"), float("inf")):
+        with pytest.raises(
+            tpm.MaterializationReadinessError,
+            match="INVALID_SHARE_DISTRIBUTION_RATE:600036:20260526",
+        ):
+            tpm._share_distribution_rate({"stk_div": invalid, "ex_date": "20260526"}, "600036")
+        with pytest.raises(
+            tpm.MaterializationReadinessError,
+            match="INVALID_SHARE_DISTRIBUTION_RATE:600036:20260526",
+        ):
+            tpm._share_distribution_rate(
+                {"stk_div": None, "stk_bo_rate": invalid, "stk_co_rate": 0.0, "ex_date": "20260526"},
+                "600036",
+            )
+    for boundary in (0.0, 1e-12, 10.0):
+        assert tpm._share_distribution_rate(
+            {"stk_div": None, "stk_bo_rate": boundary, "stk_co_rate": None, "ex_date": "20260526"},
+            "600036",
+        ) == pytest.approx(boundary)
+
+
+def test_bps_basis_accumulates_only_post_report_events_and_dedupes_revisions() -> None:
+    financial_rows = [
+        {
+            "bps": 12.368,
+            "end_date": "20260331",
+            "ann_date": "20260422",
+            "observed_at": "2026-04-22T10:00:00",
+            "payload_sha256": "financial",
+        }
+    ]
+    dividend_rows = [
+        # Before the financial report period: ignored.
+        {
+            "code": "603606",
+            "end_date": "2025-12-31",
+            "record_date": "2026-03-01",
+            "ex_date": "20260302",
+            "div_proc": "实施",
+            "stk_div": 0.5,
+            "observed_at": "2026-03-02T10:00:00",
+            "ann_date": "20260201",
+            "payload_sha256": "old",
+        },
+        # Older revision of the same implemented action: deduped away.
+        {
+            "code": "603606",
+            "end_date": "2025-12-31",
+            "record_date": "2026-05-25",
+            "ex_date": "20260526",
+            "div_proc": "实施",
+            "stk_div": 0.1,
+            "observed_at": "2026-05-25T09:00:00",
+            "ann_date": "20260420",
+            "payload_sha256": "revision-a",
+        },
+        {
+            "code": "603606",
+            "end_date": "2025-12-31",
+            "record_date": "2026-05-25",
+            "ex_date": "20260526",
+            "div_proc": "实施",
+            "stk_div": 0.2,
+            "stk_co_rate": 0.2,
+            "observed_at": "2026-05-25T10:00:00",
+            "ann_date": "20260422",
+            "payload_sha256": "revision-b",
+        },
+        {
+            "code": "603606",
+            "end_date": "2026-06-30",
+            "record_date": "2026-06-29",
+            "ex_date": "20260630",
+            "div_proc": "实施",
+            "stk_div": 0.1,
+            "observed_at": "2026-06-29T10:00:00",
+            "ann_date": "20260601",
+            "payload_sha256": "second",
+        },
+        # Future event: ignored.
+        {
+            "code": "603606",
+            "end_date": "2026-12-31",
+            "record_date": "2026-08-01",
+            "ex_date": "20260802",
+            "div_proc": "实施",
+            "stk_div": 0.3,
+            "observed_at": "2026-07-01T10:00:00",
+            "ann_date": "20260701",
+            "payload_sha256": "future",
+        },
+    ]
+
+    patch = tpm._bps_basis_patch(financial_rows, dividend_rows, "2026-07-31", "603606")
+
+    assert patch["bps_reported"] == 12.368
+    assert patch["bps_share_adjustment_factor"] == pytest.approx(1.32)
+    assert patch["bps"] == pytest.approx(12.368 / 1.32)
+    assert patch["bps_adjustment_ex_dates"] == ["2026-05-26", "2026-06-30"]
+    assert patch["bps_basis_report_period"] == "20260331"
+    assert patch["bps_basis_as_of"] == "2026-07-31"
+
+
+def test_bps_basis_fails_closed_when_cumulative_factor_overflows() -> None:
+    financial_rows = [{"bps": 12.368, "end_date": "20260331", "ann_date": "20260422"}]
+    dividend_rows = [
+        {
+            "code": "603606",
+            "end_date": "20251231",
+            "record_date": "20260525",
+            "ex_date": "20260526",
+            "div_proc": "实施",
+            "stk_div": 1e308,
+        },
+        {
+            "code": "603606",
+            "end_date": "20251231",
+            "record_date": "20260629",
+            "ex_date": "20260630",
+            "div_proc": "实施",
+            "stk_div": 1e308,
+        },
+    ]
+
+    with pytest.raises(
+        tpm.MaterializationReadinessError,
+        match="INVALID_SHARE_DISTRIBUTION_RATE:603606:20260630",
+    ):
+        tpm._bps_basis_patch(financial_rows, dividend_rows, "2026-07-31", "603606")
+
+
+def test_valuation_only_and_financial_only_materialize_same_bps_basis(tmp_path: Path) -> None:
+    shadow = tmp_path / "shadow.db"
+    with tushare_primary_cache.open_shadow_store(shadow) as conn:
+        financial_run = _create_shadow_run(shadow, "fina_indicator", source_as_of="2026-07-31")
+        dividend_run = _create_shadow_run(shadow, "dividend", source_as_of="2026-07-31")
+        valuation_run = _create_shadow_run(shadow, "daily_basic", source_as_of="2026-07-31")
+        _insert_fina_indicator(
+            conn,
+            financial_run,
+            "600036",
+            "2026-04-22",
+            "20260331",
+            12.0,
+            8.0,
+            40.0,
+            28.0,
+            "tushare.fina_indicator",
+            "2026-07-31",
+            "2026-04-22T10:00:00",
+            bps=12.368,
+        )
+        _insert_dividend(
+            conn,
+            dividend_run,
+            "600036",
+            "2026-04-22",
+            "2025-12-31",
+            "2026-05-25",
+            "2026-05-26",
+            "实施",
+            0.56,
+            "tushare.dividend",
+            "2026-07-31",
+            "2026-05-25T10:00:00",
+            stk_div=0.2,
+            stk_co_rate=0.2,
+        )
+        _insert_valuation(
+            conn,
+            valuation_run,
+            "600036",
+            "2026-07-31",
+            41.15,
+            20.0,
+            3.9904,
+            1000.0,
+            800.0,
+            1.0,
+            "tushare.daily_basic",
+            "2026-07-31",
+            "2026-07-31T17:00:00",
+        )
+        conn.commit()
+
+    valuation_only = tpm.build_stock_fundamentals_payload(
+        shadow_db_path=shadow,
+        as_of_date="2026-07-31",
+        watchlist=("600036",),
+        execute=False,
+        target_db_path=tmp_path / "tracker.db",
+        valuation_enabled=True,
+        financial_enabled=False,
+        dividend_enabled=False,
+    )
+    financial_only = tpm.build_stock_fundamentals_payload(
+        shadow_db_path=shadow,
+        as_of_date="2026-07-31",
+        watchlist=("600036",),
+        execute=False,
+        target_db_path=tmp_path / "tracker.db",
+        valuation_enabled=False,
+        financial_enabled=True,
+        dividend_enabled=False,
+    )
+
+    expected = pytest.approx(12.368 / 1.2)
+    assert valuation_only["600036"]["valuation_basis"]["bps"] == expected
+    assert financial_only["600036"]["valuation_basis"]["bps"] == expected
+
+
+def test_invalid_share_distribution_aborts_all_watchlist_writes(tmp_path: Path) -> None:
+    shadow = tmp_path / "shadow.db"
+    tracker = tmp_path / "tracker.db"
+    _build_tracker_db(tracker, ("600036", "603606"))
+    with tushare_primary_cache.open_shadow_store(shadow) as conn:
+        financial_run = _create_shadow_run(shadow, "fina_indicator", source_as_of="2026-07-31")
+        dividend_run = _create_shadow_run(shadow, "dividend", source_as_of="2026-07-31")
+        for code in ("600036", "603606"):
+            _insert_fina_indicator(
+                conn,
+                financial_run,
+                code,
+                "2026-04-22",
+                "20260331",
+                12.0,
+                8.0,
+                40.0,
+                28.0,
+                "tushare.fina_indicator",
+                "2026-07-31",
+                "2026-04-22T10:00:00",
+                bps=12.368,
+            )
+        _insert_dividend(
+            conn,
+            dividend_run,
+            "603606",
+            "2026-04-22",
+            "2025-12-31",
+            "2026-05-25",
+            "2026-05-26",
+            "实施",
+            0.56,
+            "tushare.dividend",
+            "2026-07-31",
+            "2026-05-25T10:00:00",
+            stk_div=-0.2,
+        )
+        conn.commit()
+    before = tracker.read_bytes()
+
+    with pytest.raises(
+        tpm.MaterializationReadinessError,
+        match="INVALID_SHARE_DISTRIBUTION_RATE:603606:20260526",
+    ):
+        tpm.run_materialization(
+            shadow_db_path=shadow,
+            as_of_date="2026-07-31",
+            target_db_path=tracker,
+            execute=True,
+            financial_enabled=True,
+            valuation_enabled=False,
+            dividend_enabled=False,
+            watchlist=("600036", "603606"),
+        )
+
+    assert tracker.read_bytes() == before
+
+
+def test_preview_fails_closed_when_valuation_basis_is_missing(tmp_path: Path) -> None:
     shadow = tmp_path / "shadow.db"
     tracker = tmp_path / "tracker.db"
     _build_tracker_db(tracker)
-
     with tushare_primary_cache.open_shadow_store(shadow) as conn:
-        run_id = _create_shadow_run(shadow, "daily_basic")
+        run_id = _create_shadow_run(shadow, "daily_basic", source_as_of="2026-07-31")
         _insert_valuation(
             conn,
             run_id,
             "600036",
-            "2026-07-20",
+            "2026-07-31",
             25.0,
             10.0,
             2.0,
@@ -585,8 +890,61 @@ def test_preview_does_not_write_target_db_and_shows_patch(tmp_path: Path) -> Non
             500.0,
             2.5,
             "tushare.daily_basic",
-            "2026-07-20",
-            "2026-07-20T00:00:00",
+            "2026-07-31",
+            "2026-07-31T17:00:00",
+        )
+        conn.commit()
+
+    with pytest.raises(tpm.MaterializationReadinessError, match="VALUATION_NOT_READY:600036"):
+        tpm.run_materialization(
+            shadow_db_path=shadow,
+            as_of_date="2026-07-31",
+            target_db_path=tracker,
+            execute=False,
+            valuation_enabled=True,
+            financial_enabled=False,
+            dividend_enabled=False,
+            watchlist=("600036",),
+        )
+
+
+def test_preview_does_not_write_target_db_and_shows_patch(tmp_path: Path) -> None:
+    shadow = tmp_path / "shadow.db"
+    tracker = tmp_path / "tracker.db"
+    _build_tracker_db(tracker)
+
+    with tushare_primary_cache.open_shadow_store(shadow) as conn:
+        run_id = _create_shadow_run(shadow, "daily_basic")
+        financial_run = _create_shadow_run(shadow, "fina_indicator")
+        _insert_fina_indicator(
+            conn,
+            financial_run,
+            "600036",
+            "2026-04-22",
+            "20260331",
+            12.0,
+            8.0,
+            40.0,
+            28.0,
+            "tushare.fina_indicator",
+            "2026-07-21",
+            "2026-04-22T10:00:00",
+            bps=12.368,
+        )
+        _insert_valuation(
+            conn,
+            run_id,
+            "600036",
+            "2026-07-21",
+            25.0,
+            10.0,
+            2.0,
+            1000.0,
+            500.0,
+            2.5,
+            "tushare.daily_basic",
+            "2026-07-21",
+            "2026-07-21T00:00:00",
         )
         conn.commit()
 
@@ -668,6 +1026,22 @@ def test_execute_accepts_valuation_with_market_cap_ratio(tmp_path: Path) -> None
     _build_tracker_db(tracker)
     with tushare_primary_cache.open_shadow_store(shadow) as conn:
         run_id = _create_shadow_run(shadow, "daily_basic")
+        financial_run = _create_shadow_run(shadow, "fina_indicator")
+        _insert_fina_indicator(
+            conn,
+            financial_run,
+            "600036",
+            "2026-04-22",
+            "20260331",
+            roe_waa=12.0,
+            netprofit_yoy=8.0,
+            debt_to_assets=40.0,
+            grossprofit_margin=28.0,
+            source="tushare.fina_indicator",
+            source_as_of="2026-07-21",
+            observed_at="2026-04-22T10:00:00",
+            bps=12.368,
+        )
         _insert_valuation(
             conn,
             run_id,

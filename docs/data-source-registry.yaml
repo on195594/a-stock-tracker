@@ -156,13 +156,24 @@ fields:
     affects_outcome: false
     failure_behavior: fallback_to_phase1_fixed
 
-  - field: bps
+  - field: bps_reported
     owner: derived_support
     requirement: derived
     source_primary: tushare.fina_indicator.bps_latest_effective_announcement
     source_fallback: none
-    cache: stock_fundamentals.data.bps
+    cache: stock_fundamentals.data.bps_reported
     refresh: weekly_materialized
+    affects_scoring: false
+    affects_outcome: false
+    failure_behavior: fail_closed
+
+  - field: bps
+    owner: derived_support
+    requirement: derived
+    source_primary: tushare.fina_indicator.bps_adjusted_by_implemented_tushare.dividend.share_distribution
+    source_fallback: none
+    cache: stock_fundamentals.data.bps
+    refresh: daily_valuation_basis_materialized
     affects_scoring: true
     affects_outcome: false
     failure_behavior: mark_pb_percentile_missing_or_stale
