@@ -578,6 +578,18 @@ def test_dividend_uses_cash_div_tax_when_implemented_and_ex_date_before_asof(tmp
     assert div["dividend_source_as_of"] == "2026-07-14"
 
 
+def test_dividend_rejects_negative_dps() -> None:
+    row = {
+        "div_proc": "实施",
+        "ex_date": "20260801",
+        "cash_div_tax": -1.0,
+        "observed_at": "2026-08-01",
+    }
+
+    with pytest.raises(tpm.MaterializationReadinessError, match="INVALID_DPS:20260801"):
+        tpm._dividend_patch([row], "2026-08-07")
+
+
 def test_share_distribution_rate_prefers_aggregate_and_validates_components() -> None:
     assert (
         tpm._share_distribution_rate(

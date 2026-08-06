@@ -318,8 +318,11 @@ def _dividend_patch(rows: list[dict[str, Any]], as_of: str) -> dict[str, Any]:
     if not eligible:
         return {"dps": None, "dividend_status": "BUSINESS_EMPTY"}
     latest = max(eligible, key=lambda row: (_compact(row.get("ex_date")), str(row.get("observed_at", ""))))
+    dps = _finite(latest.get("cash_div_tax"))
+    if dps is not None and dps < 0:
+        raise MaterializationReadinessError(f"INVALID_DPS:{_compact(latest.get('ex_date'))}")
     return {
-        "dps": _finite(latest.get("cash_div_tax")),
+        "dps": dps,
         "dividend_status": "IMPLEMENTED",
         "dividend_ex_date": _iso_date(latest.get("ex_date")),
         "dividend_ann_date": _iso_date(latest.get("ann_date")),
