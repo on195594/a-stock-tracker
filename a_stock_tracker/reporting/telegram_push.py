@@ -125,11 +125,11 @@ def _format_stock_line(
     label = f"{name}({code})" if name else code
     interp = _interpret(moat, market_pos)
     if l3_v2_signal == 1:
-        l3_tag = "L3风险门禁:通过(v2)"
+        l3_tag = "L3极端风险提示:正常(v2)"
     elif l3_v2_signal == 0:
-        l3_tag = "L3风险门禁:拒绝(v2)"
+        l3_tag = "L3极端风险提示:触发(v2)"
     else:
-        l3_tag = "L3风险门禁:不可用(v2)"
+        l3_tag = "L3极端风险提示:不可用(v2)"
 
     line = f"  {label}  总分:{total_score:.1f}  量化:{quant_score:.1f}  {l3_tag}"
     if interp:
@@ -157,23 +157,7 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
             AND q.scored_date = (
               SELECT MAX(sq.scored_date) FROM qualitative_scores sq WHERE sq.code = p.code
             )
-           WHERE p.score_date=? AND p.total_score >= ? AND p.l3_v2_signal = 1
-           ORDER BY p.total_score DESC""",
-        (score_date, threshold),
-    ).fetchall()
-    backup = db.execute(
-        """SELECT p.code, p.name, p.total_score, p.quant_score,
-                  q.moat, q.market_pos, p.l3_v2_signal,
-                  p.qualitative_snapshot_json, p.qualitative_sources_json,
-                  p.qualitative_mode
-           FROM predictions p
-           LEFT JOIN qualitative_scores q
-             ON p.code = q.code
-            AND q.scored_date = (
-              SELECT MAX(sq.scored_date) FROM qualitative_scores sq WHERE sq.code = p.code
-            )
            WHERE p.score_date=? AND p.total_score >= ?
-             AND (p.l3_v2_signal IS NULL OR p.l3_v2_signal != 1)
            ORDER BY p.total_score DESC""",
         (score_date, threshold),
     ).fetchall()
@@ -197,7 +181,7 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
     sections = [f"📊 A股未验证观察名单 {score_date}\n"]
 
     if primary:
-        lines = [f"🟢 高分观察（风险门禁通过，总分>={threshold:.0f}）"]
+        lines = [f"🟢 高分观察（总分>={threshold:.0f}）"]
         for (
             code,
             name,
@@ -223,37 +207,6 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
                 v2_signal,
             )
             lines.append(stock_line)
-        sections.append("\n".join(lines))
-
-    if backup:
-        lines = [f"🟡 高分风险观察（风险门禁未通过，总分>={threshold:.0f}）"]
-        for row in backup:
-            (
-                code,
-                name,
-                total,
-                quant,
-                moat,
-                market_pos,
-                v2_signal,
-                snapshot_json,
-                sources_json,
-                qualitative_mode,
-            ) = row
-            snapshot = _prediction_qualitative_snapshot(code, snapshot_json, sources_json, qualitative_mode)
-            display_moat = snapshot.scores["moat"] if snapshot else moat
-            display_market_pos = snapshot.scores["market_pos"] if snapshot else market_pos
-            lines.append(
-                _format_stock_line(
-                    code,
-                    name,
-                    total,
-                    quant,
-                    display_moat,
-                    display_market_pos,
-                    v2_signal,
-                )
-            )
         sections.append("\n".join(lines))
 
     if radar:
@@ -287,7 +240,7 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
             )
         sections.append("\n".join(lines))
 
-    total_counted = len(primary) + len(backup) + len(radar)
+    total_counted = len(primary) + len(radar)
     if total_counted == 0:
         sections.append("今日无观察信号")
 

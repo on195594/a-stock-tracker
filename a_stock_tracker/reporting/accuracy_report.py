@@ -20,6 +20,11 @@ MAX_LAG_DAYS = 10
 MIN_CROSS_SECTION = 5
 MIN_CROSS_SECTION_COVERAGE = 0.9
 
+# 2026-07-31 only changed a descriptive note from AKShare to TuShare. Keep the
+# existing rows comparable without rewriting production history.
+CANONICAL_WEIGHTS_HASH = "8181a13c"
+NOTE_ONLY_EQUIVALENT_HASHES = (CANONICAL_WEIGHTS_HASH, "8aea81ed", "832893a3")
+
 # The v2 production consumer and the first qualitative_scores_v2 rows were introduced on this
 # date. Earlier predictions were written by the legacy v1-only path, before the per-prediction
 # qualitative_mode snapshot existed; rows from this date onward require that snapshot.
@@ -100,7 +105,15 @@ def _aligned_close(
     return dates[index], closes[index]
 
 
-def _current_scoring_version(db: sqlite3.Connection) -> tuple[str | None, str | None, str | None]:
+def _equivalent_weights_hashes(weights_hash: str) -> tuple[str, ...]:
+    if weights_hash in NOTE_ONLY_EQUIVALENT_HASHES:
+        return NOTE_ONLY_EQUIVALENT_HASHES
+    return (weights_hash,)
+
+
+def _current_scoring_version(
+    db: sqlite3.Connection,
+) -> tuple[str | None, tuple[str, ...], str | None, str | None]:
     row = db.execute(
         f"""SELECT weights_hash
            FROM predictions
@@ -122,27 +135,31 @@ def _current_scoring_version(db: sqlite3.Connection) -> tuple[str | None, str | 
         (QUALITATIVE_V1_ONLY_CUTOFF, QUALITATIVE_V1_ONLY_CUTOFF),
     ).fetchone()
     if row is None:
-        return None, None, None
-    weights_hash = str(row[0])
+        return None, (), None, None
+    selected_hash = str(row[0])
+    weights_hashes = _equivalent_weights_hashes(selected_hash)
+    placeholders = ",".join("?" for _ in weights_hashes)
     first_date, last_date = db.execute(
         f"""SELECT MIN(score_date), MAX(score_date)
            FROM predictions
            WHERE framework='A'
              AND total_score IS NOT NULL
-             AND weights_hash=?
+             AND weights_hash IN ({placeholders})
              AND {PROVENANCE_CONFIRMED_CLAUSE}""",
-        (weights_hash, QUALITATIVE_V1_ONLY_CUTOFF),
+        (*weights_hashes, QUALITATIVE_V1_ONLY_CUTOFF),
     ).fetchone()
-    return weights_hash, str(first_date), str(last_date)
+    canonical_hash = CANONICAL_WEIGHTS_HASH if selected_hash in NOTE_ONLY_EQUIVALENT_HASHES else selected_hash
+    return canonical_hash, weights_hashes, str(first_date), str(last_date)
 
 
 def _load_observations(
     db: sqlite3.Connection,
     window_days: int,
-    weights_hash: str | None,
+    weights_hashes: tuple[str, ...],
 ) -> tuple[list[StrategyObservation], int]:
-    if weights_hash is None:
+    if not weights_hashes:
         return [], 0
+    placeholders = ",".join("?" for _ in weights_hashes)
     expected_size = db.execute(
         f"""SELECT COALESCE(MAX(prediction_count), 0)
            FROM (
@@ -150,11 +167,11 @@ def _load_observations(
                FROM predictions
                WHERE framework='A'
                  AND total_score IS NOT NULL
-                 AND weights_hash=?
+                 AND weights_hash IN ({placeholders})
                  AND {PROVENANCE_CONFIRMED_CLAUSE}
                GROUP BY score_date
            )""",
-        (weights_hash, QUALITATIVE_V1_ONLY_CUTOFF),
+        (*weights_hashes, QUALITATIVE_V1_ONLY_CUTOFF),
     ).fetchone()[0]
     stocks, benchmark = _load_price_series(db)
     if not benchmark[0]:
@@ -165,10 +182,10 @@ def _load_observations(
            FROM predictions
            WHERE framework='A'
              AND total_score IS NOT NULL
-             AND weights_hash=?
+             AND weights_hash IN ({placeholders})
              AND {PROVENANCE_CONFIRMED_CLAUSE}
            ORDER BY score_date, code""",
-        (weights_hash, QUALITATIVE_V1_ONLY_CUTOFF),
+        (*weights_hashes, QUALITATIVE_V1_ONLY_CUTOFF),
     ).fetchall()
     observations: list[StrategyObservation] = []
     for raw_code, raw_score_date, raw_score, raw_signal in predictions:
@@ -364,24 +381,32 @@ def _l3_summary(db: sqlite3.Connection, sections: list[list[StrategyObservation]
         else ""
     )
     if not passed and not rejected:
-        return (
-            f"L3 v2（高分候选>={strong_threshold:.0f}）：暂无门禁结果已记录或可回溯计算的对齐样本{reconstructed_note}"
-        )
+        return f"L3 v2 极端风险提示（高分候选>={strong_threshold:.0f}）：暂无提示结果已记录或可回溯计算的对齐样本{reconstructed_note}"
     if not rejected:
         return (
-            f"L3 v2（高分候选>={strong_threshold:.0f}）：通过 n={len(passed)}；"
-            f"拒绝 n=0，暂无选择能力样本{reconstructed_note}"
+            f"L3 v2 极端风险提示（高分候选>={strong_threshold:.0f}）：正常 n={len(passed)}；"
+            f"触发 n=0，暂无选择能力样本{reconstructed_note}"
         )
     return (
-        f"L3 v2（高分候选>={strong_threshold:.0f}）："
-        f"通过 n={len(passed)} 平均alpha={_fmt_percent(fmean(passed) if passed else None)}；"
-        f"拒绝 n={len(rejected)} 平均alpha={_fmt_percent(fmean(rejected) if rejected else None)}"
+        f"L3 v2 极端风险提示（高分候选>={strong_threshold:.0f}）："
+        f"正常 n={len(passed)} 平均alpha={_fmt_percent(fmean(passed) if passed else None)}；"
+        f"触发 n={len(rejected)} 平均alpha={_fmt_percent(fmean(rejected) if rejected else None)}"
         f"{reconstructed_note}"
     )
 
 
 def build_accuracy_report(db: sqlite3.Connection, strong_threshold: float = 44.0) -> str:
-    weights_hash, first_date, last_date = _current_scoring_version(db)
+    weights_hash, weights_hashes, first_date, last_date = _current_scoring_version(db)
+    stock_as_of = db.execute(
+        "SELECT MAX(trade_date) FROM daily_bars WHERE adjusted=? AND source=?",
+        (STOCK_ADJUSTED, STOCK_SOURCE),
+    ).fetchone()[0]
+    benchmark_as_of = db.execute("SELECT MAX(date) FROM index_prices WHERE symbol=?", (BENCHMARK_SYMBOL,)).fetchone()[0]
+    compatibility = (
+        "；兼容历史hash=" + ",".join(value for value in weights_hashes if value != weights_hash)
+        if len(weights_hashes) > 1
+        else ""
+    )
     lines = [
         "=" * 60,
         "a-stock-tracker QFQ 策略评估报告",
@@ -389,18 +414,19 @@ def build_accuracy_report(db: sqlite3.Connection, strong_threshold: float = 44.0
         "=" * 60,
         "口径：个股前复权总收益 vs 沪深300全收益指数；仅统计交易日对齐样本。",
         (
-            f"当前评分版本：weights_hash={weights_hash}；"
+            f"当前评分版本：weights_hash={weights_hash}{compatibility}；"
             f"定性 provenance 口径：{QUALITATIVE_V1_ONLY_CUTOFF} 前按 v2 上线前历史确认为 v1，"
             f"自该日起要求预测快照已记录；"
             f"记录区间：{first_date} 至 {last_date}。"
             if weights_hash is not None
             else "当前评分版本：暂无 Framework A 记录。"
         ),
+        f"数据新鲜度：个股QFQ截至 {stock_as_of or 'N/A'}；沪深300全收益截至 {benchmark_as_of or 'N/A'}。",
         "去重：各窗口按 score_date 选取非重叠截面；IC、spread、组合收益和 L3 使用相同批次。",
         "限制：watchlist 为人工维护标的，结果不代表样本外泛化能力。",
     ]
     for window_days in WINDOWS:
-        observations, expected_size = _load_observations(db, window_days, weights_hash)
+        observations, expected_size = _load_observations(db, window_days, weights_hashes)
         lines.extend(["", f"── {window_days}d ──"])
         if not observations:
             lines.append("暂无可用的 QFQ/沪深300全收益对齐样本。")

@@ -114,7 +114,7 @@ def test_prediction_snapshot_validation_rejects_invalid_values_and_modes():
     )
 
 
-def test_push_daily_signals_sends_only_when_score_and_l3_pass(tmp_db, telegram_env, monkeypatch):
+def test_push_daily_signals_keeps_l3_as_extreme_risk_hint(tmp_db, telegram_env, monkeypatch):
     sent: list[tuple[str, str, str]] = []
     monkeypatch.setattr(telegram_push, "_send", lambda token, chat_id, text: sent.append((token, chat_id, text)))
     _insert_prediction("600036", 66.0, 1, l3_v2_signal=1)
@@ -126,7 +126,7 @@ def test_push_daily_signals_sends_only_when_score_and_l3_pass(tmp_db, telegram_e
     assert "📊 A股未验证观察名单" in text
     assert "🟢 高分观察" in text
     assert "N600036(600036)" in text
-    assert "L3风险门禁:通过(v2)" in text
+    assert "L3极端风险提示:正常(v2)" in text
     assert "L3买点" not in text
 
 
@@ -144,7 +144,7 @@ def test_l3_v2_pass_triggers_primary_when_v1_rejects(tmp_db, telegram_env, monke
     assert "🟡 高分风险观察" not in text
 
 
-def test_l3_v2_reject_routes_v1_pass_to_backup(tmp_db, telegram_env, monkeypatch):
+def test_l3_v2_reject_remains_high_score_with_extreme_risk_warning(tmp_db, telegram_env, monkeypatch):
     sent: list[tuple[Any, ...]] = []
     monkeypatch.setattr(telegram_push, "_send", lambda *args: sent.append(args))
     _insert_prediction("600038", 66.0, 1, l3_v2_signal=0)
@@ -153,12 +153,13 @@ def test_l3_v2_reject_routes_v1_pass_to_backup(tmp_db, telegram_env, monkeypatch
 
     assert len(sent) == 1
     text = sent[0][2]
-    assert "🟢 高分观察" not in text
-    assert "🟡 高分风险观察" in text
+    assert "🟢 高分观察" in text
+    assert "🟡 高分风险观察" not in text
     assert "N600038(600038)" in text
+    assert "L3极端风险提示:触发(v2)" in text
 
 
-def test_l3_v2_null_routes_v1_pass_to_backup(tmp_db, telegram_env, monkeypatch):
+def test_l3_v2_null_remains_high_score_with_unavailable_hint(tmp_db, telegram_env, monkeypatch):
     sent: list[tuple[Any, ...]] = []
     monkeypatch.setattr(telegram_push, "_send", lambda *args: sent.append(args))
     _insert_prediction("600039", 66.0, 1, l3_v2_signal=None)
@@ -167,14 +168,14 @@ def test_l3_v2_null_routes_v1_pass_to_backup(tmp_db, telegram_env, monkeypatch):
 
     assert len(sent) == 1
     text = sent[0][2]
-    assert "🟢 高分观察" not in text
-    assert "🟡 高分风险观察" in text
+    assert "🟢 高分观察" in text
+    assert "🟡 高分风险观察" not in text
     assert "N600039(600039)" in text
-    assert "L3风险门禁:不可用(v2)" in text
-    assert "L3风险门禁:拒绝(v2)" not in text
+    assert "L3极端风险提示:不可用(v2)" in text
+    assert "L3极端风险提示:触发(v2)" not in text
 
 
-def test_tiered_push_backup_tier_sends_when_l3_zero(tmp_db, telegram_env, monkeypatch):
+def test_tiered_push_does_not_create_backup_tier_when_l3_zero(tmp_db, telegram_env, monkeypatch):
     sent: list[tuple[Any, ...]] = []
     monkeypatch.setattr(telegram_push, "_send", lambda *args: sent.append(args))
     _insert_prediction("600036", 66.0, 0, l3_v2_signal=0)
@@ -183,9 +184,10 @@ def test_tiered_push_backup_tier_sends_when_l3_zero(tmp_db, telegram_env, monkey
 
     assert len(sent) == 1
     text = sent[0][2]
-    assert "🟡 高分风险观察" in text
+    assert "🟢 高分观察" in text
+    assert "🟡 高分风险观察" not in text
     assert "N600036(600036)" in text
-    assert "L3风险门禁:拒绝(v2)" in text
+    assert "L3极端风险提示:触发(v2)" in text
     assert "(v1)" not in text
 
 
@@ -228,7 +230,7 @@ def test_tiered_push_always_sends_when_all_tiers_empty(tmp_db, telegram_env, mon
     assert "今日无观察信号" in sent[0][2]
 
 
-def test_tiered_push_all_three_tiers(tmp_db, telegram_env, monkeypatch):
+def test_tiered_push_high_score_and_radar_tiers(tmp_db, telegram_env, monkeypatch):
     sent: list[tuple[Any, ...]] = []
     monkeypatch.setattr(telegram_push, "_send", lambda *args: sent.append(args))
     _insert_prediction("600001", 66.0, 1, l3_v2_signal=1)
@@ -240,7 +242,7 @@ def test_tiered_push_all_three_tiers(tmp_db, telegram_env, monkeypatch):
     assert len(sent) == 1
     text = sent[0][2]
     assert "🟢 高分观察" in text
-    assert "🟡 高分风险观察" in text
+    assert "🟡 高分风险观察" not in text
     assert "🔵 一般观察" in text
 
 
@@ -355,7 +357,7 @@ def test_qualitative_score_gap_is_not_described_as_timing(monkeypatch, tmp_db, t
     assert len(sent) == 1
     assert "择时佳" not in sent[0][2]
     assert "择时弱" not in sent[0][2]
-    assert "L3风险门禁:通过(v2)" in sent[0][2]
+    assert "L3极端风险提示:正常(v2)" in sent[0][2]
 
 
 def test_send_real_execution(monkeypatch):

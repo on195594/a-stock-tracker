@@ -28,6 +28,24 @@ from a_stock_tracker.data import market_data  # noqa: E402
 import a_stock_tracker.cli as pipeline  # noqa: E402
 
 
+def test_weights_hash_ignores_descriptive_notes():
+    weights = {
+        "frameworks": {
+            "A": {
+                "metric": {
+                    "max_score": 10,
+                    "breakpoints": [[0, 0], [1, 10]],
+                    "note": "old provider wording",
+                }
+            }
+        }
+    }
+    changed_note = json.loads(json.dumps(weights))
+    changed_note["frameworks"]["A"]["metric"]["note"] = "new provider wording"
+
+    assert pipeline._compute_weights_hash(weights) == pipeline._compute_weights_hash(changed_note)
+
+
 def _with_ohlc(df: pd.DataFrame) -> pd.DataFrame:
     """Fill minimal OHLC columns in AKShare test fixtures before shared normalization."""
     if df.empty:

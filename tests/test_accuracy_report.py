@@ -92,7 +92,7 @@ def test_qfq_report_computes_core_strategy_metrics() -> None:
     assert "Q5−观察池等权累计收益差：20.00%" in report
     assert "沪深300全收益：5.00%" in report
     assert "Q5 策略最大回撤：0.00%" in report
-    assert "L3 v2（高分候选>=4）：通过 n=2；拒绝 n=0，暂无选择能力样本" in report
+    assert "L3 v2 极端风险提示（高分候选>=4）：正常 n=2；触发 n=0，暂无选择能力样本" in report
 
 
 def test_qfq_report_excludes_wrong_source_and_framework() -> None:
@@ -125,6 +125,22 @@ def test_qfq_report_uses_latest_weights_hash_only() -> None:
     assert "当前评分版本：weights_hash=current；" in report
     assert "对齐样本：5；" in report
     assert "100.00%" not in report
+
+
+def test_qfq_report_combines_known_note_only_hashes() -> None:
+    db = _strategy_db()
+    db.execute("UPDATE predictions SET weights_hash='8aea81ed'")
+    for index in range(5):
+        db.execute(
+            "INSERT INTO predictions VALUES (?, 'A', '2026-01-06', ?, 1, '832893a3', 'v1')",
+            (f"60000{index}", float(index + 1)),
+        )
+
+    report = build_accuracy_report(db)
+
+    assert "当前评分版本：weights_hash=8181a13c" in report
+    assert "兼容历史hash=8aea81ed,832893a3" in report
+    assert "记录区间：2026-01-05 至 2026-01-06" in report
 
 
 def test_qfq_report_deduplicates_overlapping_score_dates() -> None:
@@ -212,8 +228,8 @@ def test_qfq_report_compares_l3_only_within_strong_candidates() -> None:
 
     report = build_accuracy_report(db, strong_threshold=4.0)
 
-    assert "L3 v2（高分候选>=4）：通过 n=1" in report
-    assert "拒绝 n=1" in report
+    assert "L3 v2 极端风险提示（高分候选>=4）：正常 n=1" in report
+    assert "触发 n=1" in report
 
 
 def test_qfq_report_distinguishes_missing_l3_results_from_zero_rejects() -> None:
@@ -225,7 +241,7 @@ def test_qfq_report_distinguishes_missing_l3_results_from_zero_rejects() -> None
     report = build_accuracy_report(db, strong_threshold=4.0)
 
     assert (
-        "L3 v2（高分候选>=4）：暂无门禁结果已记录或可回溯计算的对齐样本"
+        "L3 v2 极端风险提示（高分候选>=4）：暂无提示结果已记录或可回溯计算的对齐样本"
         "（含回溯计算 QFQ强通过0/未复权弱通过0/拒绝0/不可计算2）"
     ) in report
     assert "拒绝 n=0" not in report
@@ -239,7 +255,7 @@ def test_qfq_report_reconstructs_l3_v2_signal_when_not_recorded() -> None:
 
     report = build_accuracy_report(db, strong_threshold=4.0)
 
-    assert "通过 n=1；拒绝 n=0" in report
+    assert "正常 n=1；触发 n=0" in report
     assert "含回溯计算 QFQ强通过1/未复权弱通过0/拒绝0/不可计算1" in report
 
 
@@ -250,8 +266,8 @@ def test_qfq_report_reconstructs_l3_v2_reject_when_not_recorded() -> None:
 
     report = build_accuracy_report(db, strong_threshold=4.0)
 
-    assert "通过 n=1 平均alpha=" in report
-    assert "；拒绝 n=1 平均alpha=" in report
+    assert "正常 n=1 平均alpha=" in report
+    assert "；触发 n=1 平均alpha=" in report
     assert "含回溯计算 QFQ强通过0/未复权弱通过0/拒绝1/不可计算0" in report
 
 
@@ -262,7 +278,7 @@ def test_qfq_report_discloses_unadjusted_reconstruction_fallback() -> None:
 
     report = build_accuracy_report(db, strong_threshold=4.0)
 
-    assert "通过 n=2；拒绝 n=0" in report
+    assert "正常 n=2；触发 n=0" in report
     assert "含回溯计算 QFQ强通过0/未复权弱通过1/拒绝0/不可计算0" in report
 
 
@@ -275,5 +291,5 @@ def test_qfq_report_reconstruction_excludes_score_date_close() -> None:
 
     report = build_accuracy_report(db, strong_threshold=4.0)
 
-    assert "通过 n=2；拒绝 n=0" in report
+    assert "正常 n=2；触发 n=0" in report
     assert "含回溯计算 QFQ强通过1/未复权弱通过0/拒绝0/不可计算0" in report

@@ -99,7 +99,15 @@ def _load_weights() -> dict:
 
 
 def _compute_weights_hash(weights: dict) -> str:
-    return hashlib.md5(json.dumps(weights["frameworks"], sort_keys=True).encode()).hexdigest()[:8]
+    def scoring_values(value):
+        if isinstance(value, dict):
+            return {key: scoring_values(item) for key, item in value.items() if key != "note"}
+        if isinstance(value, list):
+            return [scoring_values(item) for item in value]
+        return value
+
+    payload = json.dumps(scoring_values(weights["frameworks"]), sort_keys=True)
+    return hashlib.md5(payload.encode()).hexdigest()[:8]
 
 
 def _today() -> str:
