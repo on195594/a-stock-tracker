@@ -10,7 +10,6 @@ from a_stock_lib.market_data import (
     EMPTY_RESPONSE,
     INSUFFICIENT_WINDOW,
     MISSING_COLUMNS,
-    MIXED_SOURCE_VOLUME_UNSAFE,
     PERMISSION_DENIED,
     RATE_LIMITED,
     REMOTE_DISCONNECTED,
@@ -19,17 +18,12 @@ from a_stock_lib.market_data import (
     SOURCE_STALE,
     TIMEOUT,
     UNKNOWN_ERROR,
-    CompositeMarketDataProvider,
     MarketDataProvider,
     MarketDataResult,
     MarketDataStatus,
-    exception_result,
-    normalize_bars_result,
     now,
 )
 
-_normalize_bars_result = normalize_bars_result
-_exception_result = exception_result
 _now = now
 
 __all__ = [
@@ -37,7 +31,6 @@ __all__ = [
     "EMPTY_RESPONSE",
     "INSUFFICIENT_WINDOW",
     "MISSING_COLUMNS",
-    "MIXED_SOURCE_VOLUME_UNSAFE",
     "PERMISSION_DENIED",
     "RATE_LIMITED",
     "REMOTE_DISCONNECTED",
@@ -46,18 +39,13 @@ __all__ = [
     "SOURCE_STALE",
     "TIMEOUT",
     "UNKNOWN_ERROR",
-    "CompositeMarketDataProvider",
     "MarketDataProvider",
     "MarketDataResult",
     "MarketDataStatus",
     "RemovedMarketDataProvider",
     "ak",
-    "exception_result",
     "get_default_market_data_provider",
-    "normalize_bars_result",
     "now",
-    "_exception_result",
-    "_normalize_bars_result",
     "_now",
 ]
 

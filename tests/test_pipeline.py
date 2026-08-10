@@ -64,6 +64,41 @@ def _with_ohlc(df: pd.DataFrame) -> pd.DataFrame:
     return normalized
 
 
+def _fixture_bars_result(df: pd.DataFrame, source: str, purpose: str):
+    if df.empty:
+        return market_data.MarketDataResult(
+            None,
+            "failed",
+            source,
+            market_data.now(),
+            error_code=market_data.EMPTY_RESPONSE,
+        )
+    normalized = df.rename(
+        columns={"日期": "date", "开盘": "open", "最高": "high", "最低": "low", "收盘": "close", "成交量": "volume"}
+    )
+    required = {"date", "close"} | ({"volume"} if purpose == "l3_bars" else set())
+    if not required.issubset(normalized.columns):
+        return market_data.MarketDataResult(
+            None,
+            "failed",
+            source,
+            market_data.now(),
+            error_code=market_data.MISSING_COLUMNS,
+        )
+    return market_data.MarketDataResult(normalized, "ok", source, market_data.now())
+
+
+def _fixture_exception_result(source: str, exc: Exception):
+    return market_data.MarketDataResult(
+        None,
+        "failed",
+        source,
+        market_data.now(),
+        error_code=market_data.UNKNOWN_ERROR,
+        error_message=str(exc),
+    )
+
+
 # ---------------------------------------------------------------------------
 # fixtures
 # ---------------------------------------------------------------------------
@@ -94,8 +129,8 @@ class _AkLikeTestProvider:
         try:
             df = market_data.ak.stock_zh_a_hist_tx(symbol=f"{prefix}{code}", start_date=start, end_date=end)
         except Exception as exc:
-            return market_data._exception_result("test.stock_zh_a_hist_tx", exc)
-        result = market_data._normalize_bars_result(_with_ohlc(df), "test.stock_zh_a_hist_tx", "score_price")
+            return _fixture_exception_result("test.stock_zh_a_hist_tx", exc)
+        result = _fixture_bars_result(_with_ohlc(df), "test.stock_zh_a_hist_tx", "score_price")
         if result.value is None:
             return market_data.MarketDataResult(
                 None,
@@ -114,18 +149,18 @@ class _AkLikeTestProvider:
         prefix = "sh" if code.startswith("6") else "sz"
         try:
             tx_df = market_data.ak.stock_zh_a_hist_tx(symbol=f"{prefix}{code}", start_date=start, end_date=end)
-            primary = market_data._normalize_bars_result(_with_ohlc(tx_df), "test.stock_zh_a_hist_tx", "l3_bars")
+            primary = _fixture_bars_result(_with_ohlc(tx_df), "test.stock_zh_a_hist_tx", "l3_bars")
         except Exception as exc:
-            primary = market_data._exception_result("test.stock_zh_a_hist_tx", exc)
+            primary = _fixture_exception_result("test.stock_zh_a_hist_tx", exc)
         if primary.status != "failed" and primary.value is not None and len(primary.value) >= window:
             return primary
         try:
             em_df = market_data.ak.stock_zh_a_hist(
                 symbol=code, period="daily", start_date=start, end_date=end, adjust=""
             )
-            fallback = market_data._normalize_bars_result(_with_ohlc(em_df), "test.stock_zh_a_hist", "l3_bars")
+            fallback = _fixture_bars_result(_with_ohlc(em_df), "test.stock_zh_a_hist", "l3_bars")
         except Exception as exc:
-            return market_data._exception_result("test.stock_zh_a_hist", exc)
+            return _fixture_exception_result("test.stock_zh_a_hist", exc)
         if fallback.status != "failed":
             return market_data.MarketDataResult(
                 fallback.value,
@@ -148,9 +183,9 @@ class _AkLikeTestProvider:
                     symbol=code, period="daily", start_date=compact, end_date=compact, adjust=""
                 )
             except Exception as exc:
-                result = market_data._exception_result("test.stock_zh_a_hist", exc)
+                result = _fixture_exception_result("test.stock_zh_a_hist", exc)
                 continue
-            result = market_data._normalize_bars_result(_with_ohlc(df), "test.stock_zh_a_hist", "outcome_price")
+            result = _fixture_bars_result(_with_ohlc(df), "test.stock_zh_a_hist", "outcome_price")
             if result.value is not None and not result.value.empty:
                 return market_data.MarketDataResult(
                     float(result.value.iloc[-1]["close"]),
@@ -166,8 +201,8 @@ class _AkLikeTestProvider:
         try:
             df = market_data.ak.stock_zh_index_daily_tx(symbol=symbol)
         except Exception as exc:
-            return market_data._exception_result("test.stock_zh_index_daily_tx", exc)
-        result = market_data._normalize_bars_result(_with_ohlc(df), "test.stock_zh_index_daily_tx", "benchmark_price")
+            return _fixture_exception_result("test.stock_zh_index_daily_tx", exc)
+        result = _fixture_bars_result(_with_ohlc(df), "test.stock_zh_index_daily_tx", "benchmark_price")
         if result.value is None:
             return result
         return market_data.MarketDataResult(result.value[["date", "close"]], "ok", result.source, result.fetched_at)
@@ -810,27 +845,6 @@ def test_daily_with_disabled_default_provider_writes_audit_but_no_predictions(
     assert audit_rows == [
         ("score_price", market_data.SOURCE_DISABLED, len(small_watchlist)),
     ]
-
-
-def test_daily_with_baostock_only_env_still_does_not_write_predictions(
-    tmp_db,
-    small_watchlist,
-    fake_weights,
-    monkeypatch,
-):
-    monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
-    monkeypatch.setenv("MARKET_DATA_ALLOW_BAOSTOCK_ONLY", "1")
-    monkeypatch.setattr(pipeline, "get_default_market_data_provider", market_data.get_default_market_data_provider)
-
-    pipeline.cmd_daily()
-
-    db = cache_mod.get_db()
-    prediction_count = db.execute("SELECT COUNT(*) FROM predictions").fetchone()[0]
-    audit_error_codes = {row[0] for row in db.execute("SELECT DISTINCT error_code FROM market_data_audit").fetchall()}
-    db.close()
-
-    assert prediction_count == 0
-    assert audit_error_codes == {market_data.SOURCE_DISABLED}
 
 
 # 42. daily 回填近期 NULL price_at_score
