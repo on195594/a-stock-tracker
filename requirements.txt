@@ -1,6 +1,6 @@
 tushare==1.4.29
 --find-links ../a-stock-lib/dist
-a-stock-lib==0.5.2
+a-stock-lib==0.5.3
 pytest
 python-dotenv
 pypdf==6.14.2

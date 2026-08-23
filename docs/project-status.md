@@ -11,7 +11,7 @@
 | Framework A | 自动 daily 写入；live DB 截至 2026-08-21 为 2,661 条，最新批次 35/35 |
 | Framework B | 活动代码、入口和 cron 已删除；历史 73 条 prediction 与 15 条 cohort 数据保持只读 |
 | TuShare 基本面/估值/分红 | 35/35 生产物化 |
-| 共享数据包 | `a-stock-lib==0.5.2`；生产 `.venv` 已回读 metadata/module 版本 `0.5.2` 与 site-packages 路径；项目结构 10 tests、全量 256 tests、Ruff、format、mypy、pip check 和 CLI smoke 通过 |
+| 共享数据包 | `a-stock-lib==0.5.3` 候选；补齐请求/观测日期严格解析，待候选影子与生产切换回读 |
 | QFQ 日线与全收益基准 | 35/35 个股截至 2026-08-21；`H00300` 148 条，截至 2026-08-20 |
 | L3 v2 | 700 条：688 正常、12 触发；高分候选 352 正常、0 触发；仅作极端风险提示，不参与候选分层 |
 | L3 v1 | 计算、写入和回填已删除；历史字段与 1,393 条记录保持只读 |
