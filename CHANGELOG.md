@@ -2,6 +2,11 @@
 
 所有重大变更按时间倒序记录。
 
+## 2026-08-23 — 共享数据包升级至 0.5.1
+
+- 使用本地校验wheel将生产 `.venv` 从 `a-stock-lib==0.5.0` 原地切换至 `0.5.1`；新增字段只扩展 `fina_indicator` 读取合同，不修改 tracker 源码、数据库 schema、配置或 cron。
+- 切换前后均通过项目结构 10 tests、活动产品 256 tests、Ruff、format、mypy、pip check 和 `pipeline.py --help` smoke；0.5.0 wheel保留为直接回滚输入。
+
 ## 2026-07-24 — 历史 outcome versioned shadow 生产导入
 
 - Phase 1 新增不可变的历史 outcome shadow：冻结 `as_of_date=2026-07-23` 的 1,776 个 prediction/window 事件，以 TuShare raw close 重建实际交易日、个股/基准收益与来源证据；结果为 1,767 个 `computed_aligned`、9 个 `missing_stock_entry`，不覆盖 legacy outcome。
