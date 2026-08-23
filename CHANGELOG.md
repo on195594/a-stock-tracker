@@ -2,10 +2,11 @@
 
 所有重大变更按时间倒序记录。
 
-## 2026-08-23 — 共享数据包候选升级至 0.6.0
+## 2026-08-23 — 共享数据包生产升级至 0.6.0
 
 - 仅升级共享 Provider/metadata 能力；Framework A 生产 scorer、weights、股票池、数据库和 cron 保持不变。
 - Research A—F 新评分内核不接入 tracker，避免重置现有预注册实验口径。
+- 候选 shadow 与生产安装后均通过全量 256 tests、Ruff、format、mypy、pip check 和 CLI smoke；生产回读 metadata/module 版本为 0.6.0。
 
 ## 2026-08-23 — 共享数据包日期边界修复至 0.5.3
 
