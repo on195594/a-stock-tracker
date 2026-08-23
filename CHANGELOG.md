@@ -4,9 +4,10 @@
 
 ## 2026-08-23 — 共享数据包升级至 0.5.2
 
-- 声明依赖由 `a-stock-lib==0.5.0` 对齐到 `0.5.2`；候选 wheel 在隔离环境通过 tracker 全量 256 tests。
+- 声明依赖由 `a-stock-lib==0.5.0` 对齐到 `0.5.2`；候选影子与生产安装后均通过 tracker 全量 256 tests。
 - 新版本拒绝非法行情值和请求日期之后的观测，并在行业缓存写失败时返回结构化降级；不修改 tracker 源码、数据库 schema、配置或 cron。
 - 当前 runbook 的回滚输入更新为切换前已验证的 `0.5.1` wheel。
+- 生产回读确认 metadata/module 版本均为 `0.5.2`，且项目结构、Ruff、format、mypy、pip check 与 CLI smoke 全部通过。
 
 ## 2026-08-23 — 共享数据包升级至 0.5.1
 
