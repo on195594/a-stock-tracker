@@ -9,7 +9,7 @@
 - Shadow DB：`data/tushare-primary.db`
 - 原始响应：`artifacts/tushare-ingestion/<run_id>/<endpoint>.jsonl.gz`
 - 生产目标：`tracker.db.stock_fundamentals`
-- 运行依赖：`a-stock-lib==0.5.1`、`tushare==1.4.29`
+- 运行依赖：`a-stock-lib==0.5.2`、`tushare==1.4.29`
 - 生产 cycle：`a_stock_tracker.data.tushare_primary_production_cycle`
 - Token：只从环境读取 `TUSHARE_TOKEN`，不得写入命令、日志、artifact 或 Git
 
@@ -227,7 +227,7 @@ backups/crontab/crontab-YYYYMMDD-HHMMSS.txt
 
 ```bash
 .venv/bin/python -m pip install --no-index --no-deps \
-  /absolute/path/to/a_stock_lib-0.2.0-py3-none-any.whl
+  /absolute/path/to/a_stock_lib-0.5.1-py3-none-any.whl
 .venv/bin/python -m pip check
 ```
 
