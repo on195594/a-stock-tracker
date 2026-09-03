@@ -2,6 +2,11 @@
 
 所有重大变更按时间倒序记录。
 
+## 2026-09-03 — 共享数据包生产升级至 0.6.2
+
+- 升级共享 Provider 导出、规则哈希缓存与运行健壮性补丁；tracker 仍只消费 Provider，不接入 Research scorer。
+- 生产安装后 256 tests、mypy、pip check 和版本回读通过。
+
 ## 2026-08-23 — 共享数据包生产升级至 0.6.1
 
 - 评分规则 hash 改为跟随可执行 scorer 源码自动变化；tracker 仍只消费 Provider，不接入 Research scorer。
