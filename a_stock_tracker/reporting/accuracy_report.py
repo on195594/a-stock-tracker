@@ -441,6 +441,7 @@ def build_accuracy_report(db: sqlite3.Connection, strong_threshold: float = 44.0
                     f"对齐样本：{len(observations)}；非重叠样本：{sum(len(rows) for rows in sections)}；"
                     f"非重叠截面：{path.batches}；IC有效截面：{cross_sections}"
                 ),
+                "采用截面：" + (", ".join(rows[0].score_date for rows in sections) if sections else "无"),
                 f"截面完整性门槛：至少 {required_size}/{expected_size} 只",
                 f"截面 Spearman IC 均值：{_fmt_number(information_coefficient)}",
                 f"Q5−Q1 平均 alpha spread：{_fmt_percent(spread)}",

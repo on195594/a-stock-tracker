@@ -167,6 +167,7 @@ def test_qfq_report_deduplicates_overlapping_score_dates() -> None:
     report = build_accuracy_report(db)
 
     assert "对齐样本：10；非重叠样本：5；非重叠截面：1；IC有效截面：1" in report
+    assert "采用截面：2026-01-05" in report
     assert "截面 Spearman IC 均值：1.000" in report
 
 
