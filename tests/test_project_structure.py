@@ -28,6 +28,7 @@ ALLOWED_TOP_LEVEL_FILES = {
 }
 ALLOWED_TOP_LEVEL_DIRECTORIES = {
     ".claude",
+    ".github",
     "a_stock_tracker",
     "config",
     "docs",
@@ -50,6 +51,11 @@ PRIVATE_KEY_MARKERS = (
     b"-----BEGIN RSA " + b"PRIVATE KEY-----",
     b"-----BEGIN EC " + b"PRIVATE KEY-----",
     b'"private_' + b'key"',
+)
+EXPECTED_A_STOCK_LIB_REQUIREMENT = (
+    "a-stock-lib @ https://github.com/on195594/a-stock-lib/releases/download/"
+    "v0.6.4/a_stock_lib-0.6.4-py3-none-any.whl#sha256="
+    "14235b314b8af7304d72ee1d6a9754ee4034d64e637741fc7a5e2c8690228396"
 )
 
 
@@ -131,6 +137,13 @@ def test_repository_files_do_not_contain_private_key_material() -> None:
 
 def test_tracked_configuration_stays_in_config_directory() -> None:
     assert (PROJECT_ROOT / "config" / "weights.json").is_file()
+
+
+def test_shared_library_uses_the_immutable_release_artifact() -> None:
+    requirements = (PROJECT_ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
+
+    assert EXPECTED_A_STOCK_LIB_REQUIREMENT in requirements
+    assert not any(line.startswith("--find-links") for line in requirements)
 
 
 def test_production_modules_use_package_imports_without_path_injection() -> None:
