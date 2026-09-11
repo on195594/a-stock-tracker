@@ -9,6 +9,7 @@ a-stock-tracker 主编排器
 import argparse
 from contextlib import contextmanager
 import hashlib
+from importlib.metadata import version
 import json
 import logging
 import os
@@ -47,11 +48,12 @@ from a_stock_tracker.qualitative.production import (
     get_production_qualitative_selection,
 )
 from a_stock_tracker.scoring import (
+    SCORING_INPUT_VERSION,
     SUPPORTED_FRAMEWORKS,
     InsufficientDataError,
     UnsupportedFrameworkError,
-    compute_daily_pb_percentile,
     score_stock,
+    validated_pb_percentile,
 )
 from a_stock_tracker.paths import PROJECT_ROOT
 
@@ -98,6 +100,19 @@ def _load_weights() -> dict:
         return json.load(f)
 
 
+def _scoring_implementation() -> dict:
+    """Conservative cohort boundary: input/scorer code or provider changes require new evidence."""
+    # ponytail: full-file hashes also split comment-only changes; reviewed semantic hashes if deploy churn matters.
+    files = ("cli.py", "scoring.py", "data/tushare_primary_materialization.py", "qualitative/production.py")
+    return {
+        "input_policy_version": SCORING_INPUT_VERSION,
+        "a_stock_lib": version("a-stock-lib"),
+        "source_sha256": {
+            name: hashlib.sha256((PROJECT_ROOT / "a_stock_tracker" / name).read_bytes()).hexdigest() for name in files
+        },
+    }
+
+
 def _compute_weights_hash(weights: dict) -> str:
     def scoring_values(value):
         if isinstance(value, dict):
@@ -106,16 +121,15 @@ def _compute_weights_hash(weights: dict) -> str:
             return [scoring_values(item) for item in value]
         return value
 
-    payload = json.dumps(scoring_values(weights["frameworks"]), sort_keys=True)
-    return hashlib.md5(payload.encode()).hexdigest()[:8]
+    payload = json.dumps(
+        {"frameworks": scoring_values(weights["frameworks"]), "implementation": _scoring_implementation()},
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 
 def _today() -> str:
     return date.today().isoformat()
-
-
-def _compute_daily_pb_percentile(price: float, data: dict) -> float | None:
-    return compute_daily_pb_percentile(price, data)
 
 
 _LOCAL_QUALITATIVE_FALLBACK = {"moat": 5, "market_pos": 2, "sentiment": 3}
@@ -223,8 +237,7 @@ def _ensure_no_weights_hash_conflict(db, today: str, weights_hash: str) -> None:
             logger.error(
                 f"冲突：今日 {today} 已有 weights_hash={existing_hashes}，"
                 f"当前 hash={weights_hash}。\n"
-                f"请手动删除今日记录后重跑：\n"
-                f"  DELETE FROM predictions WHERE score_date='{today}';"
+                "保留今日历史记录，下一交易日自然启用新 cohort；不得删除历史记录后重跑。"
             )
             sys.exit(1)
 
@@ -239,15 +252,10 @@ def _collect_score_prices(db, provider, today: str) -> dict[str, float]:
     return score_prices
 
 
-def _inject_daily_pb_percentile(data: dict, price_at_score: float | None, code: str) -> None:
-    # 注入日度实时 PB 分位（股价变化→分位变化→评分每日变化）
-    if price_at_score:
-        daily_pct = _compute_daily_pb_percentile(price_at_score, data)
-        if daily_pct is not None:
-            data["pb_percentile_10y"] = daily_pct
-            logger.debug(f"  {code} 实时PB分位={daily_pct}%（价={price_at_score}, bps={data.get('bps')}）")
-        else:
-            logger.debug(f"  {code} 无法计算实时PB分位（bps/hist缺失），使用缓存值")
+def _validate_daily_pb_percentile(data: dict, today: str, code: str) -> None:
+    data["pb_percentile_10y"] = validated_pb_percentile(data, today)
+    if data["pb_percentile_10y"] is None:
+        logger.warning("%s 无合格当日十年PB分位；保持缺失，不用短历史或旧值补齐", code)
 
 
 def _apply_qualitative_scores(db, code: str, name: str, data: dict) -> ProductionQualitativeSelection:
@@ -284,6 +292,32 @@ def _qualitative_snapshot_fields(selection: ProductionQualitativeSelection) -> d
     }
 
 
+def _qualitative_as_of_dates(db, code: str, selection: ProductionQualitativeSelection) -> dict[str, str | None]:
+    rows = {
+        "v1": db.execute(
+            "SELECT moat, market_pos, sentiment, scored_date FROM qualitative_scores WHERE code=? ORDER BY scored_date DESC LIMIT 1",
+            (code,),
+        ).fetchone(),
+        "v2": db.execute(
+            "SELECT moat, market_pos, sentiment, as_of_date FROM qualitative_scores_v2 WHERE code=? ORDER BY as_of_date DESC, scored_at DESC LIMIT 1",
+            (code,),
+        ).fetchone(),
+    }
+    legacy = rows["v1"]
+    if legacy is not None and any(
+        isinstance(legacy[index], bool)
+        or not isinstance(legacy[index], int)
+        or not SCORE_RANGES[dimension][0] <= legacy[index] <= SCORE_RANGES[dimension][1]
+        for index, dimension in enumerate(DIMENSION_NAMES)
+    ):
+        rows["v1"] = None
+    dates: dict[str, str | None] = {}
+    for index, dimension in enumerate(DIMENSION_NAMES):
+        row = rows.get(selection.sources[dimension])
+        dates[dimension] = str(row[3]) if row is not None and row[index] == selection.scores[dimension] else None
+    return dates
+
+
 def _prepare_stock_scoring_input(
     db, item: dict, today: str, weights_hash: str, score_prices: dict[str, float], skipped: list[str]
 ) -> dict | None:
@@ -302,15 +336,25 @@ def _prepare_stock_scoring_input(
     if written_today == len(SUPPORTED_FRAMEWORKS):
         logger.info(f"  检查点跳过 {code}：今日 {written_today}/{len(SUPPORTED_FRAMEWORKS)} 框架已完整写入")
         return None
-    data = dict(fundamentals.get("data", fundamentals))
+    raw_data = dict(fundamentals.get("data", fundamentals))
+    data = dict(raw_data)
     report_period = data.get("report_period")
     price_at_score = score_prices.get(code)
-    _inject_daily_pb_percentile(data, price_at_score, code)
+    _validate_daily_pb_percentile(data, today, code)
     qualitative_selection = _apply_qualitative_scores(db, code, name, data)
     return {
         "code": code,
         "name": name,
         "data": data,
+        "scoring_snapshot": {
+            "implementation": _scoring_implementation(),
+            "raw_fundamentals": raw_data,
+            "fundamentals_updated_at": raw_data.get("_cache_meta", {}).get("updated_at"),
+            "industry": raw_data.get("_cache_meta", {}).get("industry"),
+            "scoring_inputs": data,
+            "price_at_score": price_at_score,
+            "qualitative_as_of": _qualitative_as_of_dates(db, code, qualitative_selection),
+        },
         "report_period": report_period,
         "price_at_score": price_at_score,
         "threshold_adjusted": 0,
@@ -330,8 +374,8 @@ def _upsert_one_framework_prediction(
                                 quant_score, total_score, weights_hash, report_period,
                                 threshold_adjusted, l3_v2_signal, l3_v2_version, l3_v2_status, l3_v2_reason,
                                 l3_v2_fetched_at, qualitative_snapshot_json,
-                                qualitative_sources_json, qualitative_mode, created_at)
-                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                qualitative_sources_json, qualitative_mode, scoring_snapshot_json, created_at)
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             prep["code"], prep["name"], framework, today, prep["price_at_score"],
             result["quant_score"], result["total_score"], weights_hash, prep["report_period"],
@@ -339,7 +383,7 @@ def _upsert_one_framework_prediction(
             prep["l3_v2_result"].version, prep["l3_v2_result"].status,
             prep["l3_v2_result"].reason, prep["l3_v2_fetched_at"],
             prep["qualitative_snapshot_json"], prep["qualitative_sources_json"],
-            prep["qualitative_mode"], datetime.now().isoformat(),
+            prep["qualitative_mode"], prep["scoring_snapshot_json"], datetime.now().isoformat(),
         ),
     )
     if cursor.rowcount == 0:
@@ -379,6 +423,13 @@ def _write_stock_predictions(db, prep: dict, today: str, weights_hash: str, weig
                 logger.error(f"  错误 {code}/{framework}：{e}")
                 skipped.append(f"{code}/{framework}")
                 continue
+            prep["scoring_snapshot_json"] = json.dumps(
+                {**prep["scoring_snapshot"], "weights": weights["frameworks"][framework], "result": result},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
             if _upsert_one_framework_prediction(db, prep, today, weights_hash, framework, result):
                 stock_written += 1
             logger.info(

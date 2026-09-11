@@ -1,5 +1,6 @@
 # Framework A 定量评分引擎。从 weights.json 读取 breakpoints，对基本面/估值字段线性插值后加权求和。
 import json
+import math
 from typing import Any
 
 from a_stock_tracker.paths import WEIGHTS_PATH
@@ -19,17 +20,26 @@ SUPPORTED_FRAMEWORKS = {"A"}
 NON_FIXED_FIELDS = {"roe_3y_avg", "net_profit_growth", "debt_ratio", "gross_margin", "pb_percentile_10y"}
 
 
-def compute_daily_pb_percentile(price: float, data: dict[str, Any]) -> float | None:
-    """用当日价格 + 缓存 BPS/PB 历史序列计算实时 PB 历史分位。纯函数，不写 DB。"""
-    bps = data.get("bps")
-    hist = data.get("pb_hist_monthly")
-    if not bps or bps <= 0 or not hist or len(hist) < 12:
+SCORING_INPUT_VERSION = "2026-09-07-materialized-pb-10y-v1"
+
+
+def validated_pb_percentile(data: dict[str, Any], as_of: str) -> float | None:
+    """Consume the PIT materializer's daily PB rank; never recompute from an undated history."""
+    value = data.get("pb_percentile_10y")
+    months = data.get("valuation_valid_months")
+    if (
+        data.get("valuation_coverage_status") != "FULL_10Y"
+        or data.get("valuation_source_as_of") != as_of
+        or isinstance(months, bool)
+        or not isinstance(months, int)
+        or not 120 <= months <= 121
+        or isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or not 0 <= value <= 100
+    ):
         return None
-    current_pb = price / bps
-    if current_pb <= 0:
-        return None
-    pct = sum(1 for x in hist if float(x) < current_pb) / len(hist) * 100
-    return round(pct, 1)
+    return float(value)
 
 
 def _interpolate(value: float, breakpoints: list[list[float]]) -> float:

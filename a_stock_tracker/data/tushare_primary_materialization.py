@@ -87,11 +87,12 @@ def _month_key(trade_date: Any) -> str:
 
 def _monthly_valuation(rows: Iterable[dict[str, Any]], as_of: str) -> list[dict[str, Any]]:
     cutoff = _compact(as_of)
+    start = (pd.Timestamp(as_of) - pd.DateOffset(years=10)).strftime("%Y%m%d")
     monthly: dict[str, dict[str, Any]] = {}
     for row in rows:
         trade_date = _compact(row.get("trade_date"))
         pb = _finite(row.get("pb"))
-        if not trade_date or trade_date > cutoff or pb is None or pb <= 0:
+        if not start <= trade_date <= cutoff or pb is None or pb <= 0:
             continue
         key = _month_key(trade_date)
         if key and (key not in monthly or trade_date > _compact(monthly[key].get("trade_date"))):
@@ -105,7 +106,10 @@ def _coverage_status(monthly: list[dict[str, Any]], as_of: str) -> str:
     first = _month_key(monthly[0].get("trade_date"))
     cutoff = _month_key(as_of)
     month_span = (int(cutoff[:4]) - int(first[:4])) * 12 + int(cutoff[4:6]) - int(first[4:6])
-    return "FULL_10Y" if len(monthly) >= 120 and month_span >= 120 else "SINCE_LISTING"
+    # An inclusive ten-year interval contains 120 or 121 calendar-month buckets.
+    if month_span >= 119:
+        return "FULL_10Y" if len(monthly) >= 120 else "INSUFFICIENT_HISTORY"
+    return "SINCE_LISTING"
 
 
 def _compute_valuation_percentile(rows: list[dict[str, Any]], as_of: str) -> float | None:

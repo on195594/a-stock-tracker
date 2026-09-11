@@ -87,12 +87,62 @@ def test_qfq_report_computes_core_strategy_metrics() -> None:
     assert "对齐样本：5；非重叠样本：5；非重叠截面：1；IC有效截面：1" in report
     assert "截面 Spearman IC 均值：1.000" in report
     assert "Q5−Q1 平均 alpha spread：40.00%" in report
-    assert "Q5 策略累计总收益：30.00%" in report
+    assert "Q5 研究累计收益：30.00%" in report
     assert "观察池等权累计总收益：10.00%" in report
     assert "Q5−观察池等权累计收益差：20.00%" in report
     assert "沪深300全收益：5.00%" in report
-    assert "Q5 策略最大回撤：0.00%" in report
+    assert "Q5 批次端点回撤（旧口径，非最大回撤）：0.00%" in report
+    assert "Q5 日收盘最大回撤：0.00%" in report
+    assert "盘后信号无法按该价格成交" in report
+    assert "不是可执行策略或账户净值" in report
+    assert "样本门槛：INSUFFICIENT_EVIDENCE" in report
+    assert "Q5 策略最大回撤" not in report
     assert "L3 v2 极端风险提示（高分候选>=4）：正常 n=2；触发 n=0，暂无选择能力样本" in report
+
+
+def test_daily_drawdown_captures_intra_window_loss_and_rejects_missing_marks() -> None:
+    db = _strategy_db()
+    for day, close in (("2026-01-12", 150.0), ("2026-01-19", 75.0)):
+        db.execute("INSERT INTO index_prices VALUES ('H00300',?,100)", (day,))
+        for index in range(5):
+            db.execute(
+                "INSERT INTO daily_bars(code,trade_date,close,source,adjusted) VALUES (?,?,?,'tushare.pro_bar.qfq','qfq')",
+                (f"60000{index}", day, close),
+            )
+    report = build_accuracy_report(db)
+    assert "Q5 批次端点回撤（旧口径，非最大回撤）：0.00%" in report
+    assert "Q5 日收盘最大回撤：-50.00%" in report
+    db.execute("DELETE FROM daily_bars WHERE code='600004' AND trade_date='2026-01-19'")
+    assert "Q5 日收盘最大回撤：N/A" in build_accuracy_report(db)
+
+
+def test_daily_drawdown_preserves_peak_across_batches_and_holds_cash_in_gaps() -> None:
+    from a_stock_tracker.reporting.accuracy_report import StrategyObservation, _daily_max_drawdown
+
+    dates = ["2026-01-01", "2026-01-15", "2026-01-31", "2026-02-10", "2026-03-01", "2026-03-15", "2026-03-31"]
+    stocks = {"600001": (dates, [100.0, 150.0, 120.0, 1.0, 60.0, 90.0, 45.0])}
+    sections = [
+        [StrategyObservation(day, "600001", 80.0, 1, ret, 0.0, ret)]
+        for day, ret in (("2026-01-01", 20.0), ("2026-03-01", -25.0))
+    ]
+    assert _daily_max_drawdown(sections, 30, stocks, (dates, [100.0] * len(dates))) == -50.0
+
+
+def test_new_input_hash_does_not_inherit_mature_legacy_evidence() -> None:
+    from a_stock_tracker.reporting.accuracy_report import _current_scoring_version
+
+    db = _strategy_db()
+    db.execute("UPDATE predictions SET weights_hash='8aea81ed'")
+    for index in range(5):
+        db.execute(
+            "INSERT INTO predictions VALUES (?, 'A', '2026-08-01', ?, 1, 'new-input-hash', 'v1')",
+            (f"60000{index}", float(index)),
+        )
+    assert _current_scoring_version(db) == ("new-input-hash", ("new-input-hash",), "2026-08-01", "2026-08-01")
+    report = build_accuracy_report(db)
+    assert report.count("暂无可用的 QFQ/沪深300全收益对齐样本") == 3
+    assert "记录区间：2026-08-01 至 2026-08-01" in report
+    assert "不与历史权重hash合并" in report
 
 
 def test_qfq_report_excludes_wrong_source_and_framework() -> None:

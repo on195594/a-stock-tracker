@@ -225,16 +225,34 @@ def test_phase3_fixed_field_override():
     assert cs2["sentiment_fixed"] == pytest.approx(3.0)
 
 
-def test_compute_daily_pb_percentile_matches_pipeline_contract() -> None:
-    from a_stock_tracker.scoring import compute_daily_pb_percentile
+def test_validated_pb_uses_only_same_day_full_ten_year_materialization() -> None:
+    from a_stock_tracker.scoring import validated_pb_percentile
 
-    hist = [0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.2, 2.4, 2.6, 2.8, 3.0]
-    data = {"bps": 10.0, "pb_hist_monthly": hist}
-
-    assert compute_daily_pb_percentile(20.0, data) == 50.0
-    assert compute_daily_pb_percentile(0, data) is None
-    assert compute_daily_pb_percentile(20.0, {"bps": 0, "pb_hist_monthly": hist}) is None
-    assert compute_daily_pb_percentile(20.0, {"bps": 10.0, "pb_hist_monthly": hist[:3]}) is None
+    data = {
+        "pb_percentile_10y": 42.1,
+        "valuation_coverage_status": "FULL_10Y",
+        "valuation_valid_months": 120,
+        "valuation_source_as_of": "2026-09-04",
+        # Conflicting price/BPS history must not override the canonical materialized rank.
+        "bps": 1.0,
+        "pb_hist_monthly": [0.01] * 186,
+    }
+    assert validated_pb_percentile(data, "2026-09-04") == 42.1
+    assert validated_pb_percentile(data, "2026-09-07") is None
+    for invalid in (
+        {"valuation_coverage_status": "SINCE_LISTING"},
+        {"valuation_coverage_status": "INSUFFICIENT_HISTORY"},
+        {"valuation_valid_months": 54},
+        {"valuation_valid_months": 186},
+        {"valuation_valid_months": None},
+        {"pb_percentile_10y": float("nan")},
+        {"pb_percentile_10y": float("inf")},
+        {"pb_percentile_10y": True},
+        {"pb_percentile_10y": -1},
+        {"pb_percentile_10y": 101},
+    ):
+        assert validated_pb_percentile({**data, **invalid}, "2026-09-04") is None
+    assert validated_pb_percentile({}, "2026-09-04") is None
 
 
 def test_score_stock_loads_weights_from_disk():

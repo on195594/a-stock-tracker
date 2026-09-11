@@ -1,4 +1,4 @@
-"""Compact QFQ strategy evaluation for the default report."""
+"""QFQ factor research, not an executable or cost-adjusted trading backtest."""
 
 from __future__ import annotations
 
@@ -331,6 +331,56 @@ def _strategy_path(
     )
 
 
+def _daily_max_drawdown(
+    sections: list[list[StrategyObservation]],
+    window_days: int,
+    stocks: dict[str, tuple[list[str], list[float]]],
+    benchmark: tuple[list[str], list[float]],
+) -> float | None:
+    """Daily mark-to-market of equal-initial-weight Q5 baskets; cash between batches.
+
+    Missing marks are not silently forward-filled: without suspension/calendar evidence,
+    an incomplete path cannot establish maximum drawdown. Fees and execution are not modeled.
+    """
+    if not sections:
+        return None
+    closes = {code: dict(zip(*series, strict=True)) for code, series in stocks.items()}
+    equity = peak = 1.0
+    drawdown = 0.0
+    for rows in sections:
+        top = sorted(rows, key=lambda row: row.total_score)[-max(1, len(rows) // 5) :]
+        anchor = date.fromisoformat(rows[0].score_date)
+        entry = _aligned_close(benchmark, anchor)
+        target = _aligned_close(benchmark, anchor + timedelta(days=window_days))
+        if entry is None or target is None:
+            return None
+        start, end = entry[0], target[0]
+        dates = {day for day in benchmark[0] if start <= day <= end}
+        for row in top:
+            dates.update(day for day in closes.get(row.code, {}) if start <= day <= end)
+        nav = equity
+        for day in sorted(dates):
+            ratios: list[float] = []
+            for row in top:
+                initial = closes.get(row.code, {}).get(start)
+                mark = closes.get(row.code, {}).get(day)
+                if (
+                    initial is None
+                    or mark is None
+                    or not math.isfinite(initial)
+                    or not math.isfinite(mark)
+                    or initial <= 0
+                    or mark <= 0
+                ):
+                    return None
+                ratios.append(mark / initial)
+            nav = equity * fmean(ratios)
+            peak = max(peak, nav)
+            drawdown = min(drawdown, nav / peak - 1.0)
+        equity = nav
+    return drawdown * 100.0
+
+
 def _resolve_l3_v2_signal(
     db: sqlite3.Connection,
     code: str,
@@ -407,12 +457,24 @@ def build_accuracy_report(db: sqlite3.Connection, strong_threshold: float = 44.0
         if len(weights_hashes) > 1
         else ""
     )
+    stocks, benchmark = _load_price_series(db)
     lines = [
         "=" * 60,
         "a-stock-tracker QFQ 策略评估报告",
         f"生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}",
         "=" * 60,
-        "口径：个股前复权总收益 vs 沪深300全收益指数；仅统计交易日对齐样本。",
+        "口径：个股前复权收益 vs 沪深300全收益指数；仅统计交易日对齐样本。",
+        "仅为选股研究：30/60/90为自然日；收益从评分日收盘起算，盘后信号无法按该价格成交。",
+        "不含费用、滑点、涨跌停/停牌成交约束；批次间按空仓零收益处理，不是可执行策略或账户净值。",
+        f"验证对象为Q5（评分最高约20%等权），不等于Telegram总分>={strong_threshold:.0f}的观察名单；阈值不是买入线。",
+        "投资边界：固定股票池、跨行业分数不可直接解释为质量优劣；无已验证买点、仓位或退出规则。",
+        "定性分为冻结研究输入，不代表当日重新核实的护城河、行业地位或市场情绪。",
+        "不同期限复用同一批股票，不能视为独立重复验证；方向为正也不代表统计显著或已证明有效。",
+        (
+            "历史cohort：缺量化输入快照且存在输入口径修复；仅供历史诊断，不作为修正版本的有效性证据。"
+            if weights_hash in NOTE_ONLY_EQUIVALENT_HASHES
+            else "版本边界：修正后的评分输入/实现hash单独积累，不与历史权重hash合并；不沿用原9月最终检查日期。"
+        ),
         (
             f"当前评分版本：weights_hash={weights_hash}{compatibility}；"
             f"定性 provenance 口径：{QUALITATIVE_V1_ONLY_CUTOFF} 前按 v2 上线前历史确认为 v1，"
@@ -430,11 +492,14 @@ def build_accuracy_report(db: sqlite3.Connection, strong_threshold: float = 44.0
         lines.extend(["", f"── {window_days}d ──"])
         if not observations:
             lines.append("暂无可用的 QFQ/沪深300全收益对齐样本。")
+            lines.append("样本门槛：INSUFFICIENT_EVIDENCE（无成熟对齐截面）")
             continue
         required_size = max(MIN_CROSS_SECTION, math.ceil(expected_size * MIN_CROSS_SECTION_COVERAGE))
         sections = _non_overlapping_sections(observations, window_days, expected_size)
         cross_sections, information_coefficient, spread = _cross_section_metrics(sections)
         path = _strategy_path(sections)
+        daily_drawdown = _daily_max_drawdown(sections, window_days, stocks, benchmark)
+        minimum_sections = {30: 3, 60: 2, 90: 1}[window_days]
         lines.extend(
             [
                 (
@@ -442,14 +507,21 @@ def build_accuracy_report(db: sqlite3.Connection, strong_threshold: float = 44.0
                     f"非重叠截面：{path.batches}；IC有效截面：{cross_sections}"
                 ),
                 "采用截面：" + (", ".join(rows[0].score_date for rows in sections) if sections else "无"),
+                (
+                    f"样本门槛：INSUFFICIENT_EVIDENCE（{path.batches}/{minimum_sections}个截面）"
+                    if path.batches < minimum_sections
+                    else "样本门槛：仅达到原协议截面数量要求，不构成有效性裁决。"
+                ),
                 f"截面完整性门槛：至少 {required_size}/{expected_size} 只",
                 f"截面 Spearman IC 均值：{_fmt_number(information_coefficient)}",
                 f"Q5−Q1 平均 alpha spread：{_fmt_percent(spread)}",
-                f"Q5 策略累计总收益：{_fmt_percent(path.q5_return)}",
+                f"Q5 研究累计收益：{_fmt_percent(path.q5_return)}",
                 f"观察池等权累计总收益：{_fmt_percent(path.equal_weight_return)}",
                 f"Q5−观察池等权累计收益差：{_fmt_percent(path.q5_minus_equal_weight)}",
                 f"沪深300全收益：{_fmt_percent(path.benchmark_return)}",
-                f"Q5 策略最大回撤：{_fmt_percent(path.max_drawdown)}",
+                f"Q5 批次端点回撤（旧口径，非最大回撤）：{_fmt_percent(path.max_drawdown)}",
+                f"Q5 日收盘最大回撤：{_fmt_percent(daily_drawdown)}",
+                "回撤口径：持有期间逐日盯市；必要日线缺失时返回N/A，不以端点回撤代替。",
                 _l3_summary(db, sections, strong_threshold),
             ]
         )

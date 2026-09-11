@@ -46,6 +46,15 @@ def test_weights_hash_ignores_descriptive_notes():
     assert pipeline._compute_weights_hash(weights) == pipeline._compute_weights_hash(changed_note)
 
 
+def test_input_implementation_changes_start_a_new_cohort(monkeypatch):
+    weights = {"frameworks": {"A": {"valuation": {}}}}
+    first = pipeline._compute_weights_hash(weights)
+    monkeypatch.setattr(pipeline, "_scoring_implementation", lambda: {"input_policy_version": "changed"})
+    assert pipeline._compute_weights_hash(weights) != first
+    assert len(first) == 16
+    assert first not in {"8181a13c", "8aea81ed", "832893a3"}
+
+
 def _with_ohlc(df: pd.DataFrame) -> pd.DataFrame:
     """Fill minimal OHLC columns in AKShare test fixtures before shared normalization."""
     if df.empty:
@@ -438,7 +447,7 @@ def test_predictions_schema_includes_l3_entry_signal_columns(tmp_db):
 
 
 def test_predictions_schema_includes_qualitative_snapshot_columns(tmp_db):
-    assert QUALITATIVE_SNAPSHOT_COLUMNS.issubset(_prediction_columns())
+    assert (QUALITATIVE_SNAPSHOT_COLUMNS | {"scoring_snapshot_json"}).issubset(_prediction_columns())
 
 
 def test_get_db_adds_l3_entry_signal_columns_to_legacy_predictions(tmp_path, monkeypatch):
@@ -491,7 +500,7 @@ def test_get_db_adds_l3_entry_signal_columns_to_legacy_predictions(tmp_path, mon
     db.close()
 
     assert L3_AUDIT_COLUMNS.issubset(columns)
-    assert QUALITATIVE_SNAPSHOT_COLUMNS.issubset(columns)
+    assert (QUALITATIVE_SNAPSHOT_COLUMNS | {"scoring_snapshot_json"}).issubset(columns)
     assert row == ("600036", 66.0, None, None, None, None, None, None)
 
     migrated = cache_mod.get_db()
@@ -523,6 +532,7 @@ def test_prediction_insert_persists_snapshot_and_conflict_does_not_overwrite(tmp
         "qualitative_snapshot_json": '{"market_pos":4,"moat":7,"sentiment":3}',
         "qualitative_sources_json": '{"market_pos":"v2","moat":"v2","sentiment":"v1"}',
         "qualitative_mode": "hybrid_v2",
+        "scoring_snapshot_json": '{"scoring_inputs":{"roe_3y_avg":15}}',
     }
     result = {"quant_score": 40.0, "total_score": 54.0}
     db = cache_mod.get_db()
@@ -531,9 +541,10 @@ def test_prediction_insert_persists_snapshot_and_conflict_does_not_overwrite(tmp
     prep["qualitative_snapshot_json"] = '{"market_pos":1,"moat":1,"sentiment":1}'
     prep["qualitative_sources_json"] = '{"market_pos":"v1","moat":"v1","sentiment":"v1"}'
     prep["qualitative_mode"] = "v1"
+    prep["scoring_snapshot_json"] = '{"scoring_inputs":{"roe_3y_avg":0}}'
     assert not pipeline._upsert_one_framework_prediction(db, prep, "2026-05-30", "hash", "A", result)
     row = db.execute(
-        """SELECT qualitative_snapshot_json, qualitative_sources_json, qualitative_mode
+        """SELECT qualitative_snapshot_json, qualitative_sources_json, qualitative_mode, scoring_snapshot_json
            FROM predictions WHERE code='600036' AND framework='A'"""
     ).fetchone()
     db.close()
@@ -542,6 +553,7 @@ def test_prediction_insert_persists_snapshot_and_conflict_does_not_overwrite(tmp
         '{"market_pos":4,"moat":7,"sentiment":3}',
         '{"market_pos":"v2","moat":"v2","sentiment":"v1"}',
         "hybrid_v2",
+        '{"scoring_inputs":{"roe_3y_avg":15}}',
     )
 
 
@@ -633,6 +645,43 @@ def test_daily_happy_path(tmp_db, small_watchlist, fake_fetcher, fake_weights, m
     assert codes["000858"][1] == pytest.approx(128.40)
     # total_score 非 NULL 且 weights_hash 一致
     assert all(r[2] is not None and r[3] and r[4] == "2024-09-30" for r in rows)
+
+
+def test_daily_snapshot_reproduces_score_without_current_cache(
+    tmp_db, small_watchlist, fake_fetcher, fake_weights, monkeypatch
+):
+    for item in small_watchlist:
+        data = {
+            **_full_data(),
+            "valuation_coverage_status": "FULL_10Y",
+            "valuation_valid_months": 120,
+            "valuation_source_as_of": date.today().isoformat(),
+        }
+        _insert_fundamentals(item["code"], item["name"], "银行", data)
+    db = cache_mod.get_db()
+    db.execute("INSERT INTO qualitative_scores VALUES ('600036',8,4,2,'2026-07-13')")
+    db.commit()
+    db.close()
+    monkeypatch.setattr(
+        market_data.ak, "stock_zh_a_hist_tx", _tencent_hist_side_effect({"600036": 35.2, "000858": 128.4})
+    )
+    pipeline.cmd_daily()
+    db = cache_mod.get_db()
+    rows = db.execute("SELECT code,total_score,scoring_snapshot_json FROM predictions").fetchall()
+    db.execute("DELETE FROM stock_fundamentals")
+    db.commit()
+    db.close()
+    for code, total, raw in rows:
+        snapshot = json.loads(raw)
+        result = pipeline.score_stock(
+            code, "A", snapshot["scoring_inputs"], weights={"frameworks": {"A": snapshot["weights"]}}
+        )
+        assert result == snapshot["result"]
+        assert result["total_score"] == total
+        assert snapshot["fundamentals_updated_at"]
+        assert snapshot["implementation"]["source_sha256"]
+        assert snapshot["industry"] == "银行"
+        assert snapshot["qualitative_as_of"]["moat"] == ("2026-07-13" if code == "600036" else None)
 
 
 def test_daily_persists_report_period_from_cache(tmp_db, small_watchlist, fake_fetcher, fake_weights, monkeypatch):
@@ -769,9 +818,10 @@ def test_accuracy_report_excludes_retired_default_sections(tmp_db):
     assert "命中率" not in out
 
 
-def test_pipeline_pb_percentile_wrapper_uses_scorer() -> None:
-    hist = [1.0] * 12
-    assert pipeline._compute_daily_pb_percentile(20.0, {"bps": 10.0, "pb_hist_monthly": hist}) == 100.0
+def test_pipeline_clears_invalid_pb_instead_of_retaining_cached_value() -> None:
+    data = {"pb_percentile_10y": 0.0, "bps": 10.0, "pb_hist_monthly": [1.0] * 54}
+    pipeline._validate_daily_pb_percentile(data, "2026-09-04", "600938")
+    assert data["pb_percentile_10y"] is None
 
 
 # ---------------------------------------------------------------------------

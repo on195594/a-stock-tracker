@@ -279,8 +279,9 @@ def test_tiered_push_no_duplicate_when_multiple_qualitative_dates(tmp_db, telegr
     text = sent[0][2]
     # Stock must appear exactly once (no duplicates from multi-date JOIN)
     assert text.count("N600036(600036)") == 1
-    # Must use the most recent scored_date (2026-07-01: moat=8 -> "护城河8/10(强)")
-    assert "护城河8/10(强)" in text
+    # A later cache must never masquerade as a missing historical snapshot.
+    assert "护城河8/10(强)" not in text
+    assert "历史定性快照缺失，不展示当前缓存" in text
 
 
 def test_interpret_edge_cases(monkeypatch, tmp_db, telegram_env):
@@ -399,7 +400,7 @@ def test_display_uses_prediction_hybrid_snapshot_not_latest_legacy(tmp_db, teleg
     assert "护城河9/10(强)" in sent[0][2]
 
 
-def test_display_falls_back_to_legacy_cache_when_prediction_snapshot_is_missing(tmp_db, telegram_env, monkeypatch):
+def test_display_omits_qualitative_claims_when_prediction_snapshot_is_missing(tmp_db, telegram_env, monkeypatch):
     sent: list[tuple[Any, ...]] = []
     monkeypatch.setattr(telegram_push, "_send", lambda *args: sent.append(args))
     _insert_prediction("600010", 66.0, 1, l3_v2_signal=1, with_snapshot=False)
@@ -415,7 +416,36 @@ def test_display_falls_back_to_legacy_cache_when_prediction_snapshot_is_missing(
 
     telegram_push.push_daily_signals("2026-05-30", threshold=44.0)
 
-    assert "护城河7/10" in sent[0][2]
+    assert "护城河7/10" not in sent[0][2]
+    assert "历史定性快照缺失，不展示当前缓存" in sent[0][2]
+
+
+def test_frozen_dates_counts_and_risk_boundaries_come_from_prediction(tmp_db, telegram_env, monkeypatch):
+    sent = []
+    monkeypatch.setattr(telegram_push, "_send", lambda *args: sent.append(args))
+    _insert_prediction("600001", 60.0, 1, l3_v2_signal=1)
+    _insert_prediction("600002", 20.0, 1)
+    _insert_prediction("600003", 90.0, 1)
+    db = cache_mod.get_db()
+    db.execute("UPDATE predictions SET framework='B' WHERE code='600003'")
+    db.execute(
+        "UPDATE predictions SET scoring_snapshot_json=? WHERE code='600001'",
+        (
+            json.dumps(
+                {"qualitative_as_of": {"moat": "2026-04-01", "market_pos": "2026-04-01", "sentiment": "2026-04-02"}}
+            ),
+        ),
+    )
+    db.commit()
+    db.close()
+    telegram_push.push_daily_signals("2026-05-30")
+    text = sent[0][2]
+    assert "共评估2只，列入观察1只" in text
+    assert "N600003" not in text
+    assert "定性冻结日期：2026-04-01/2026-04-02" in text
+    assert "L3正常不代表安全或买点" in text
+    assert "分数阈值未通过收益验证" in text
+    assert "非当日核实" in text
 
 
 def test_pathological_message_is_truncated_to_telegram_limit(tmp_db, telegram_env, monkeypatch, caplog):
@@ -437,3 +467,5 @@ def test_pathological_message_is_truncated_to_telegram_limit(tmp_db, telegram_en
     assert len(text) <= telegram_push.TELEGRAM_TEXT_LIMIT
     assert text.endswith(telegram_push.MESSAGE_TRUNCATION_MARKER)
     assert "Telegram 消息过长" in caplog.text
+    assert "仅供研究，不构成买入建议" in text
+    assert "无仓位/退出规则" in text

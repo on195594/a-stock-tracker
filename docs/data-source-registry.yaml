@@ -60,13 +60,13 @@ fields:
   - field: pb_percentile_10y
     owner: scorer_input
     requirement: required
-    source_primary: derived_from_tushare_daily_basic_pb_history_and_fina_indicator_bps
+    source_primary: a_stock_lib.valuation.strict_less_month_end_rank_of_tushare_daily_basic_pb_within_ten_years
     source_fallback: none
     cache: stock_fundamentals.data.pb_percentile_10y
-    refresh: daily_materialized_then_recomputed_in_memory
+    refresh: weekday_1715_materialized_then_validated_without_recomputation
     affects_scoring: true
     affects_outcome: false
-    failure_behavior: full_10y_only; insufficient_history_writes_null; data_quality_degrades
+    failure_behavior: same_day_full_10y_120_to_121_months_only; invalid_or_stale_or_short_history_stays_null; no_price_bps_override
 
   - field: pe_ttm
     owner: scorer_input
@@ -181,7 +181,7 @@ fields:
   - field: pb_hist_monthly
     owner: derived_support
     requirement: derived
-    source_primary: tushare.daily_basic.pb_month_end_history
+    source_primary: tushare.daily_basic.pb_month_end_history_within_ten_years_including_current_month
     source_fallback: none
     cache: stock_fundamentals.data.pb_hist_monthly
     refresh: weekday_1715_materialized
@@ -247,13 +247,24 @@ fields:
   - field: weights_hash
     owner: audit_contract
     requirement: required
-    source_primary: md5_json_weights_frameworks_subtree
+    source_primary: sha256_16_weights_frameworks_and_scoring_input_code_and_dependency_version
     source_fallback: none
     cache: predictions.weights_hash
     refresh: per_score
     affects_scoring: false
     affects_outcome: false
     failure_behavior: block_prediction_write_if_missing_or_conflict
+
+  - field: scoring_snapshot_json
+    owner: audit_contract
+    requirement: required_for_new_predictions
+    source_primary: decision_time_raw_inputs_used_inputs_weights_components_and_implementation_hashes
+    source_fallback: none
+    cache: predictions.scoring_snapshot_json
+    refresh: insert_only_per_score
+    affects_scoring: false
+    affects_outcome: false
+    failure_behavior: never_backfill_historical_inputs; serialization_failure_blocks_prediction
 
   - field: framework
     owner: audit_contract

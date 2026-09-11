@@ -116,6 +116,7 @@ def get_db() -> sqlite3.Connection:
         qualitative_snapshot_json TEXT,
         qualitative_sources_json TEXT,
         qualitative_mode TEXT,
+        scoring_snapshot_json TEXT,
         created_at      TEXT,
         UNIQUE(code, framework, score_date)
     )""")
@@ -137,6 +138,7 @@ def get_db() -> sqlite3.Connection:
             "qualitative_snapshot_json": "TEXT",
             "qualitative_sources_json": "TEXT",
             "qualitative_mode": "TEXT",
+            "scoring_snapshot_json": "TEXT",
         },
     )
     conn.execute("""CREATE TABLE IF NOT EXISTS daily_bars (

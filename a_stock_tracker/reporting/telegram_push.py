@@ -52,10 +52,10 @@ def _prediction_qualitative_snapshot(
     scores_raw = _parse_json_object(snapshot_json)
     sources_raw = _parse_json_object(sources_json)
     if scores_raw is None or sources_raw is None or not isinstance(mode, str):
-        logger.warning("%s prediction 缺少合法定性快照，展示降级为 legacy cache", code)
+        logger.warning("%s prediction 缺少合法定性快照，不以当前缓存替代历史判断", code)
         return None
     if set(scores_raw) != set(DIMENSION_NAMES) or set(sources_raw) != set(DIMENSION_NAMES):
-        logger.warning("%s prediction 定性快照字段漂移，展示降级为 legacy cache", code)
+        logger.warning("%s prediction 定性快照字段漂移，不展示定性解读", code)
         return None
     scores: dict[str, int] = {}
     sources: dict[str, str] = {}
@@ -64,15 +64,15 @@ def _prediction_qualitative_snapshot(
         source = sources_raw[dimension]
         minimum, maximum = SCORE_RANGES[dimension]
         if isinstance(score, bool) or not isinstance(score, int) or not minimum <= score <= maximum:
-            logger.warning("%s prediction 定性快照分值无效，展示降级为 legacy cache", code)
+            logger.warning("%s prediction 定性快照分值无效，不展示定性解读", code)
             return None
         if not isinstance(source, str) or source not in {"v1", "v2"}:
-            logger.warning("%s prediction 定性快照来源无效，展示降级为 legacy cache", code)
+            logger.warning("%s prediction 定性快照来源无效，不展示定性解读", code)
             return None
         scores[dimension] = score
         sources[dimension] = source
     if not _sources_match_mode(sources, mode):
-        logger.warning("%s prediction 定性快照模式不一致，展示降级为 legacy cache", code)
+        logger.warning("%s prediction 定性快照模式不一致，不展示定性解读", code)
         return None
     return PredictionQualitativeSnapshot(scores=scores, sources=sources, mode=mode)
 
@@ -137,8 +137,19 @@ def _format_stock_line(
     return line
 
 
+def _frozen_dates(raw: object) -> str:
+    snapshot = _parse_json_object(raw)
+    dates = snapshot.get("qualitative_as_of") if snapshot else None
+    if not isinstance(dates, dict) or set(dates) != set(DIMENSION_NAMES):
+        return "日期未记录"
+    values = sorted({value for value in dates.values() if isinstance(value, str)})
+    if any(not isinstance(value, str) for value in dates.values()):
+        values.append("部分未知/固定回退")
+    return "/".join(values)
+
+
 def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: float = 35.0) -> None:
-    """查询当日分层观察股票，发送 Telegram 消息。"""
+    """Show research observations, using only the prediction's immutable snapshots."""
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
     if not token or not chat_id:
@@ -146,111 +157,62 @@ def push_daily_signals(score_date: str, threshold: float = 44.0, radar_min: floa
         return
 
     db = get_db()
-    primary = db.execute(
-        """SELECT p.code, p.name, p.total_score, p.quant_score,
-                  q.moat, q.market_pos, p.l3_v2_signal,
-                  p.qualitative_snapshot_json,
-                  p.qualitative_sources_json, p.qualitative_mode
-           FROM predictions p
-           LEFT JOIN qualitative_scores q
-             ON p.code = q.code
-            AND q.scored_date = (
-              SELECT MAX(sq.scored_date) FROM qualitative_scores sq WHERE sq.code = p.code
-            )
-           WHERE p.score_date=? AND p.total_score >= ?
-           ORDER BY p.total_score DESC""",
-        (score_date, threshold),
-    ).fetchall()
-    radar = db.execute(
-        """SELECT p.code, p.name, p.total_score, p.quant_score,
-                  q.moat, q.market_pos, p.l3_v2_signal,
-                  p.qualitative_snapshot_json, p.qualitative_sources_json,
-                  p.qualitative_mode
-           FROM predictions p
-           LEFT JOIN qualitative_scores q
-             ON p.code = q.code
-            AND q.scored_date = (
-              SELECT MAX(sq.scored_date) FROM qualitative_scores sq WHERE sq.code = p.code
-            )
-           WHERE p.score_date=? AND p.total_score >= ? AND p.total_score < ?
-           ORDER BY p.total_score DESC""",
-        (score_date, radar_min, threshold),
-    ).fetchall()
-    db.close()
-
-    sections = [f"📊 A股未验证观察名单 {score_date}\n"]
-
-    if primary:
-        lines = [f"🟢 高分观察（总分>={threshold:.0f}）"]
-        for (
-            code,
-            name,
-            total,
-            quant,
-            moat,
-            market_pos,
-            v2_signal,
-            snapshot_json,
-            sources_json,
-            qualitative_mode,
-        ) in primary:
-            snapshot = _prediction_qualitative_snapshot(code, snapshot_json, sources_json, qualitative_mode)
-            display_moat = snapshot.scores["moat"] if snapshot else moat
-            display_market_pos = snapshot.scores["market_pos"] if snapshot else market_pos
-            stock_line = _format_stock_line(
-                code,
-                name,
-                total,
-                quant,
-                display_moat,
-                display_market_pos,
-                v2_signal,
-            )
-            lines.append(stock_line)
-        sections.append("\n".join(lines))
-
-    if radar:
-        lines = [f"🔵 一般观察（{radar_min:.0f}~{threshold:.0f}分）"]
-        for row in radar:
-            (
-                code,
-                name,
-                total,
-                quant,
-                moat,
-                market_pos,
-                v2_signal,
-                snapshot_json,
-                sources_json,
-                qualitative_mode,
-            ) = row
-            snapshot = _prediction_qualitative_snapshot(code, snapshot_json, sources_json, qualitative_mode)
-            display_moat = snapshot.scores["moat"] if snapshot else moat
-            display_market_pos = snapshot.scores["market_pos"] if snapshot else market_pos
+    try:
+        rows = db.execute(
+            """SELECT code, name, total_score, quant_score, l3_v2_signal,
+                      qualitative_snapshot_json, qualitative_sources_json, qualitative_mode,
+                      scoring_snapshot_json
+               FROM predictions WHERE framework='A' AND score_date=? AND total_score IS NOT NULL
+               ORDER BY total_score DESC, code""",
+            (score_date,),
+        ).fetchall()
+    finally:
+        db.close()
+    primary = [row for row in rows if row[2] >= threshold]
+    radar = [row for row in rows if radar_min <= row[2] < threshold]
+    # Safety context stays before the stock list so truncation cannot remove it.
+    sections = [
+        f"📊 A股未验证观察名单 {score_date}\n",
+        "仅供研究，不构成买入建议。报告验证Q5约前20%，不是本名单；分数阈值未通过收益验证。\n"
+        "跨行业分数有适用性偏差；无仓位/退出规则。L3正常不代表安全或买点。\n"
+        "以下定性分均为冻结缓存（非当日核实），情绪分不代表当前情绪。",
+    ]
+    for title, candidates in (
+        (f"🟢 高分观察（总分>={threshold:.0f}）", primary),
+        (f"🔵 一般观察（{radar_min:.0f}~{threshold:.0f}分）", radar),
+    ):
+        if not candidates:
+            continue
+        lines = [title]
+        for code, name, total, quant, signal, scores_json, sources_json, mode, scoring_json in candidates:
+            snapshot = _prediction_qualitative_snapshot(code, scores_json, sources_json, mode)
             lines.append(
                 _format_stock_line(
                     code,
                     name,
                     total,
                     quant,
-                    display_moat,
-                    display_market_pos,
-                    v2_signal,
+                    snapshot.scores["moat"] if snapshot else None,
+                    snapshot.scores["market_pos"] if snapshot else None,
+                    signal,
                 )
+            )
+            lines.append(
+                f"    定性冻结日期：{_frozen_dates(scoring_json)}"
+                if snapshot
+                else "    历史定性快照缺失，不展示当前缓存"
             )
         sections.append("\n".join(lines))
 
     total_counted = len(primary) + len(radar)
     if total_counted == 0:
         sections.append("今日无观察信号")
-
-    sections.append(f"\n共评估{total_counted}只股票（{score_date}盘后）")
-    text = "\n\n".join(section for section in sections if section)
+    sections.append(f"\n共评估{len(rows)}只，列入观察{total_counted}只（{score_date}盘后）")
+    text = "\n\n".join(sections)
     original_length = len(text)
     if original_length > TELEGRAM_TEXT_LIMIT:
         text = text[: TELEGRAM_TEXT_LIMIT - len(MESSAGE_TRUNCATION_MARKER)] + MESSAGE_TRUNCATION_MARKER
         logger.warning("Telegram 消息过长，已从 %d 字符截断至 %d 字符", original_length, len(text))
-
     try:
         _send(token, chat_id, text)
         logger.info(f"Telegram 推送成功：{total_counted} 只股票")

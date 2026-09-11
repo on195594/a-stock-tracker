@@ -443,11 +443,10 @@ def test_full_10y_pb_window_populates_legacy_key(tmp_path: Path, monkeypatch: py
     shadow = tmp_path / "shadow.db"
     with tushare_primary_cache.open_shadow_store(shadow) as conn:
         run_id = _create_shadow_run(shadow, "daily_basic")
-        for month in range(120):
-            day = 1 + (month % 28)
-            year = 2016 + month // 12
-            month_number = month % 12 + 1
-            date = f"{year}-{month_number:02d}-{day:02d}"
+        for month in range(121):
+            year = 2016 + (month + 6) // 12
+            month_number = (month + 6) % 12 + 1
+            date = f"{year}-{month_number:02d}-20"
             _insert_valuation(
                 conn,
                 run_id,
@@ -481,6 +480,46 @@ def test_full_10y_pb_window_populates_legacy_key(tmp_path: Path, monkeypatch: py
     val = payload["600036"]["valuation"]
     assert val["valuation_coverage_status"] == "FULL_10Y"
     assert val["pb_percentile_10y"] == 42.0
+
+
+def test_pb_materialization_bounds_history_and_consumer_uses_same_rank() -> None:
+    from a_stock_tracker.scoring import validated_pb_percentile
+
+    rows = [
+        {
+            "trade_date": f"{year}{month:02d}28",
+            "pb": float(year - 2010),
+            "source": "tushare.daily_basic",
+            "source_as_of": "2026-09-30",
+        }
+        for year in range(2011, 2027)
+        for month in range(1, 13)
+    ]
+    patch = tpm._valuation_patch(rows, "2026-09-30")
+    assert patch["valuation_valid_months"] == 120
+    assert patch["valuation_window_start"] == "20161028"
+    assert patch["valuation_window_end"] == "20260928"
+    assert patch["valuation_coverage_status"] == "FULL_10Y"
+    assert validated_pb_percentile(patch, "2026-09-30") == patch["pb_percentile_10y"]
+    assert patch["pb_percentile_10y"] is not None
+    gap = tpm._valuation_patch([row for row in rows if row["trade_date"] != "20200128"], "2026-09-30")
+    assert gap["valuation_valid_months"] == 119
+    assert gap["valuation_coverage_status"] == "INSUFFICIENT_HISTORY"
+    assert gap["pb_percentile_10y"] is None
+    short = tpm._valuation_patch(rows[-60:], "2026-09-30")
+    assert short["pb_percentile_10y"] is None
+    assert validated_pb_percentile(short, "2026-09-30") is None
+    # Leap-day cutoffs remain valid and never admit future observations.
+    leap = tpm._monthly_valuation(
+        [
+            {"trade_date": "20140227", "pb": 1},
+            {"trade_date": "20140228", "pb": 2},
+            {"trade_date": "20240229", "pb": 3},
+            {"trade_date": "20240301", "pb": 4},
+        ],
+        "2024-02-29",
+    )
+    assert [row["trade_date"] for row in leap] == ["20140228", "20240229"]
 
 
 def test_financial_gross_margin_allowed_empty_for_financial_industry(tmp_path: Path) -> None:
