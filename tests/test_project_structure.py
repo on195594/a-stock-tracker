@@ -28,6 +28,7 @@ ALLOWED_TOP_LEVEL_FILES = {
 }
 ALLOWED_TOP_LEVEL_DIRECTORIES = {
     ".claude",
+    ".github",
     "a_stock_tracker",
     "config",
     "docs",
