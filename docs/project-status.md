@@ -1,8 +1,15 @@
 # 项目状态
 
-**更新时间：** 2026-09-07
+**更新时间：** 2026-09-12
 **当前阶段：** 三阶段路线的阶段一
 **当前目标：** 证明 Framework A 是否具有可复验投资价值；L3 v2 已完成判定
+
+## 2026-09-12 共享架构收敛
+
+- 运行依赖已切换到不可变的 `a-stock-lib==0.7.0` GitHub Release wheel，SHA-256 为 `7c4a16d452f34574584531bab6fe9d150f3cb844e5c9b2fe072295f6bb2ee385`。
+- A-F executable scoring contract 与 cache-only 行业映射由 `a-stock-lib` 单独拥有；tracker 只消费公开 contract，不读取共享包私有 cache。
+- release-candidate 下游验证、完整测试、Ruff、format、mypy、独立 cwd import 与跨仓只读验收通过。
+- 本次只调整代码、依赖与文档；未修改生产数据库、cron、真实持仓或 W1 状态。以下投资有效性 blocker 保持不变。
 
 ## 2026-09-07 投资审查修复
 
