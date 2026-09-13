@@ -9,7 +9,7 @@
 - Shadow DB：`data/tushare-primary.db`
 - 原始响应：`artifacts/tushare-ingestion/<run_id>/<endpoint>.jsonl.gz`
 - 生产目标：`tracker.db.stock_fundamentals`
-- 运行依赖：`a-stock-lib==0.7.0`（固定 GitHub Release wheel 与 SHA256）、`tushare==1.4.29`
+- 声明依赖：`a-stock-lib==0.8.0`（固定 GitHub Release wheel 与 SHA256）、`tushare==1.4.29`；生产安装版本仍以 `docs/project-status.md` 的部署记录为准
 - 生产 cycle：`a_stock_tracker.data.tushare_primary_production_cycle`
 - Token：只从环境读取 `TUSHARE_TOKEN`，不得写入命令、日志、artifact 或 Git
 

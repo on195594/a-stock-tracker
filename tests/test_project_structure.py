@@ -54,8 +54,8 @@ PRIVATE_KEY_MARKERS = (
 )
 EXPECTED_A_STOCK_LIB_REQUIREMENT = (
     "a-stock-lib @ https://github.com/on195594/a-stock-lib/releases/download/"
-    "v0.7.0/a_stock_lib-0.7.0-py3-none-any.whl#sha256="
-    "7c4a16d452f34574584531bab6fe9d150f3cb844e5c9b2fe072295f6bb2ee385"
+    "v0.8.0/a_stock_lib-0.8.0-py3-none-any.whl#sha256="
+    "a811945b23d97eb121ff82d54bc0ba0810000a5379a9e9786fdcdc9220b30310"
 )
 
 

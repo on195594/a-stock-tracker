@@ -2,6 +2,11 @@
 
 所有重大变更按时间倒序记录。
 
+## 2026-09-13 — 声明依赖升级至 a-stock-lib 0.8.0
+
+- 固定不可变的 `a-stock-lib==0.8.0` Release wheel 与 SHA-256；共享 Provider 行为不变，移除的 legacy report parser 无 tracker 调用方。
+- 仅更新仓库依赖、合同测试和当前态文档；不修改生产 `.venv`、数据库、配置或 cron。
+
 ## 2026-09-04 — 共享数据包生产升级至 0.6.3
 
 - 升级共享 Provider 日期紧凑化容错与规则哈希缓存清理接口；tracker 仍只消费 Provider，不接入 Research scorer。

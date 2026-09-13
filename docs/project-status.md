@@ -6,7 +6,7 @@
 
 ## 2026-09-12 共享架构收敛
 
-- 运行依赖已切换到不可变的 `a-stock-lib==0.7.0` GitHub Release wheel，SHA-256 为 `7c4a16d452f34574584531bab6fe9d150f3cb844e5c9b2fe072295f6bb2ee385`。
+- 仓库声明依赖已切换到不可变的 `a-stock-lib==0.8.0` GitHub Release wheel，SHA-256 为 `a811945b23d97eb121ff82d54bc0ba0810000a5379a9e9786fdcdc9220b30310`；本次未修改生产 `.venv`。
 - A-F executable scoring contract 与 cache-only 行业映射由 `a-stock-lib` 单独拥有；tracker 只消费公开 contract，不读取共享包私有 cache。
 - release-candidate 下游验证、完整测试、Ruff、format、mypy、独立 cwd import 与跨仓只读验收通过。
 - 本次只调整代码、依赖与文档；未修改生产数据库、cron、真实持仓或 W1 状态。以下投资有效性 blocker 保持不变。
