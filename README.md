@@ -60,7 +60,7 @@ python3 pipeline.py daily
 
 ## 配置
 
-复制 `.env.example` 为 `.env`，按需设置：
+创建项目根目录 `.env` 文件，按需设置：
 
 ```dotenv
 TUSHARE_TOKEN=你的_TuShare_Token

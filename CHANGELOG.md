@@ -7,6 +7,18 @@
 - 固定不可变的 `a-stock-lib==0.8.0` Release wheel 与 SHA-256；共享 Provider 行为不变，移除的 legacy report parser 无 tracker 调用方。
 - 仅更新仓库依赖、合同测试和当前态文档；不修改生产 `.venv`、数据库、配置或 cron。
 
+## 2026-09-12 — 共享数据包升级至 a-stock-lib 0.7.0 与架构收敛
+
+- 依赖切换至不可变 `a-stock-lib==0.7.0` GitHub Release wheel；消费公开 contract，不读取共享包私有缓存。
+- release-candidate 下游验证、全量测试、Ruff、format、mypy 与跨仓验收通过。
+
+## 2026-09-07 — 估值输入与研究报告审计边界修复
+
+- 修复 PB 历史长度混用：统一消费当日 TuShare 十年窗口（120–121 个月桶）物化分位；短历史或窗口内缺月保持缺失，不再以价格/BPS 重新覆盖。
+- 回撤口径修正：原“最大回撤”更名为批次端点回撤，新增持有期日收盘最大回撤。
+- 快照与指纹升级：新 prediction 记录原始基本面、实际输入、配置、分项得分、定性缓存日期与 16 位 SHA-256 实现指纹，新旧 cohort 严格隔离；不改写历史评分与快照。
+- 报告与 Telegram 语义明确：验证对象为 Q5 而非 ≥44 分名单，标明冻结日期与未验证边界。
+
 ## 2026-09-04 — 共享数据包生产升级至 0.6.3
 
 - 升级共享 Provider 日期紧凑化容错与规则哈希缓存清理接口；tracker 仍只消费 Provider，不接入 Research scorer。
