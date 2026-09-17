@@ -1,8 +1,20 @@
 # 项目状态
 
-**更新时间：** 2026-09-14
+**更新时间：** 2026-09-17
 **当前阶段：** 三阶段路线的阶段一
 **当前目标：** 证明 Framework A 是否具有可复验投资价值；L3 v2 已完成判定
+
+## 2026-09-17 S2 评估实现（软件证据；manifest pending）
+
+- 评估 as-of 独立于 enrollment `effective_to`；评分时资格仍按 manifest 日期范围限制，后续 outcome 可以成熟。正式指标只消费已到自然日观察期限的固定批次；未成熟批次保留诊断、不阻塞已有成熟结果，到期坏批次绝不剔除或替换。
+- 历史资格只校验 prediction 已记录的 scoring/qualitative 输入、结果、来源、mode 和 as-of；不回查可变 qualitative 缓存，允许真实的 hybrid 各维度来源向量。
+- 历史结果还校验真实 scorer `component_scores` 的固定定性分项；非法 UTF-8/超大 JSON 受控为证据不足；固定批次与 Q1/Q5 权重不消费未来行情来选样本。
+- entry 与 d+window endpoint 均按已证明日历向后对齐（沿用 10 日 lag），并披露实际日期；相关冻结篮子逐日路径或批次连续性缺失时，全链复合指标为 NULL，端点数仅作批次诊断；无关坏行情保留独立诊断。
+- pending manifest 报告已知 expected=35，实际/合格/结果计数保持 NULL，不读取 DB；尚未执行评估时 evaluation_version 为 NULL，不伪造有效样本。
+- 默认 manifest 位于 `config/experiment_manifest.json`，由 `paths.py` 解析为与 cwd 无关的项目路径。它只固定原始 35 股来源 commit/content hash；生产 scoring hash、适用日期和证据引用使用空/NULL unknown，状态保持 `pending`。
+- 软件评估口径为 `2026-09-17.e2`。无 live calendar；未注入显式 `CalendarEvidence` 时 fail-closed，畸形日历受控降级；未联网补日历或生成生产表。e2 是软件口径，不是生产启用或投资有效性证明。
+- 隔离 Python 3.13.5 / 声明 lib 0.8.0 验证：299 tests、11 structure tests、Ruff check/format、mypy 均通过。真实 Codex 只读审查发现的两个 blocker（未成熟批次阻塞、畸形日历异常）已补反例修复；限定复审 PASS，53 focused tests 通过。完整生产登记/日历仍 NOT_VERIFIED。
+- 本次未修改评分、预测写入、股票池、schema、cron、通知、生产数据库或 a-stock-lib；真实生产 manifest、样本成熟度和客户端/生产证据仍未核实。
 
 ## 2026-09-13 声明依赖对齐 a-stock-lib 0.8.0 与共享架构收敛
 
@@ -35,7 +47,7 @@
 | 定性输入 | 不联网、不更新；只读已有本地 v1/v2 或固定 fallback |
 | Telegram | 自动展示未验证观察名单；高分候选不再按 L3 分层，L3 仅显示极端风险提示 |
 | Google Sheets | 代码、依赖和自动同步已删除 |
-| 默认策略报告 | daily 成败均自动刷新；合并经核实语义等价且 qualitative provenance 合格的当前评分 cohort |
+| 默认策略报告 | S2 代码已接入结构化评估；默认 manifest pending 时 fail-closed，不宣称生产启用 |
 | legacy outcome / Phase4 | 写入、手工 CLI、cron 和里程碑通知已删除；历史字段与数据只读保留 |
 | qualitative acceptance | 已删除 |
 | weekly PM loop | 已删除 |

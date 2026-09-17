@@ -782,7 +782,8 @@ def test_accuracy_report_empty(tmp_db):
     pipeline._write_accuracy_report()
     out = Path(config.ACCURACY_REPORT_PATH).read_text(encoding="utf-8")
     assert "a-stock-tracker QFQ 策略评估报告" in out
-    assert out.count("暂无可用的 QFQ/沪深300全收益对齐样本") == 3
+    assert "总体证据状态：INSUFFICIENT_EVIDENCE" in out
+    assert "manifest_pending" in out
     assert "人工维护标的" in out
 
 
