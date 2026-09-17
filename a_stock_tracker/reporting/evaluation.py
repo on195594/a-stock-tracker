@@ -702,14 +702,11 @@ def _normalise_calendar(
         parsed = sorted({item for item in calendar.dates if item <= evaluation_as_of})
     except (TypeError, ValueError) as exc:
         return [], f"calendar_invalid:{exc}"
-    parsed = [item for item in parsed if item <= evaluation_as_of]
     return parsed, None if parsed else "calendar_empty"
 
 
 def _endpoint_date(score_date: date, window_days: int, calendar: Sequence[date]) -> date | None:
-    target = score_date + timedelta(days=window_days)
-    available = [item for item in calendar if item <= target and (target - item).days <= MAX_LAG_DAYS]
-    return available[-1] if available else None
+    return _aligned_calendar_date(score_date + timedelta(days=window_days), calendar)
 
 
 def _aligned_calendar_date(anchor: date, calendar: Sequence[date]) -> date | None:

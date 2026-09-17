@@ -16,9 +16,15 @@
 - 隔离 Python 3.13.5 / 声明 lib 0.8.0 验证：299 tests、11 structure tests、Ruff check/format、mypy 均通过。真实 Codex 只读审查发现的两个 blocker（未成熟批次阻塞、畸形日历异常）已补反例修复；限定复审 PASS，53 focused tests 通过。完整生产登记/日历仍 NOT_VERIFIED。
 - 本次未修改评分、预测写入、股票池、schema、cron、通知、生产数据库或 a-stock-lib；真实生产 manifest、样本成熟度和客户端/生产证据仍未核实。
 
+### 后续文档与等价清理（2026-09-17）
+
+- README、路线图和 TODOS 对齐 S2/e2 源码状态与未部署/未登记边界；历史协议、生产版本记录和旧指标不冒充当前核验。
+- endpoint 复用已有日期对齐函数，删除重复的 as-of 过滤；10 日 lag、固定选择、权重和缺口处理不变。未发现可直接删除的无调用 Tracker 私有函数，不为清理而删测试或兼容入口。
+- 重新通过 299 tests、11 structure tests、Ruff check/format、mypy；日志 `/tmp/a-stock-tracker-cleanup-check.log`。本次未新增独立审查，上方审查结论对应 S2 落地范围；旧发布候选继续按原 commit/hash 识别。
+
 ## 2026-09-13 声明依赖对齐 a-stock-lib 0.8.0 与共享架构收敛
 
-- 仓库声明依赖已切换到不可变的 `a-stock-lib==0.8.0` GitHub Release wheel，SHA-256 为 `a811945b23d97eb121ff82d54bc0ba0810000a5379a9e9786fdcdc9220b30310`；生产 `.venv` 当前保留为 `0.7.0`。
+- 仓库声明依赖已切换到不可变的 `a-stock-lib==0.8.0` GitHub Release wheel，SHA-256 为 `a811945b23d97eb121ff82d54bc0ba0810000a5379a9e9786fdcdc9220b30310`；当时记录的生产 `.venv` 为 `0.7.0`，本次未重新核验现场版本。
 - A-F executable scoring contract 与 cache-only 行业映射由 `a-stock-lib` 单独拥有；tracker 只消费公开 contract，不读取共享包私有 cache。
 - release-candidate 下游验证、全量 264 tests、项目结构 11 tests、Ruff、format、mypy、独立 cwd import 与跨仓只读验收通过。
 - 本次只调整代码、依赖与文档；未修改生产数据库、cron、真实持仓或 W1 状态。以下投资有效性 blocker 保持不变。

@@ -9,7 +9,17 @@
 
 当前生产仍是固定 35 股跟踪系统，不代表全 A 股选股能力。
 
-## 当前事实
+## 2026-09-17 软件落地对齐（不改投资规则）
+
+S2 `2026-09-17.e2` 已完成仓库/合成 fixture 验证，尚未部署；它不是本路线的
+阶段二。默认清单在 `config/experiment_manifest.json`，固定原始 35 股来源，
+真实 scoring hash、适用日期和日历仍未核实，保持 pending/证据不足。
+当前实现不自动选择最新 hash，也不以当前定性缓存补验历史快照；具体口径及
+验收边界见 `project-status.md` 与
+[2026-09-17 风险闭环规范 §7](https://github.com/on195594/a-stock-agent-skills/blob/af36de5/docs/specs/2026-09-17-a-stock-risk-closure-and-performance-validation-spec-v1.1.md)。
+下方历史协议、统计和既有生产描述保留原日期含义，不是新的现场核验或投资有效性结论。
+
+## 阶段一已记录事实
 
 - Framework A 尚未证明跨时间、跨窗口的稳定截面排序能力；
 - `buy_strong=44` 是可得分上限校准，不是收益最优门槛；
