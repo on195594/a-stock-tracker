@@ -712,7 +712,7 @@ DELETE FROM predictions WHERE score_date='2026-04-21' AND price_at_score IS NULL
 ```python
 # pipeline.py _ensure_index_prices()
 try:
-    df = _retry(ak.index_zh_a_hist, ...)        # 东方财富主路径
+    df = _retry(ak.index_zh_a_hist, ...)  # 东方财富主路径
 except:
     df = _retry(ak.stock_zh_index_daily_tx, symbol="sh000300")  # 腾讯 fallback
     assert "date" in df.columns and "close" in df.columns
@@ -786,9 +786,9 @@ return float(value) if value is not None else float(field_cfg["phase1_fixed"])
    ```python
    qual = get_qualitative_score(code, name)
    data = dict(fundamentals.get("data", fundamentals))  # 必须 copy，避免污染缓存
-   data["moat_fixed"]       = qual["moat"]
+   data["moat_fixed"] = qual["moat"]
    data["market_pos_fixed"] = qual["market_pos"]
-   data["sentiment_fixed"]  = qual["sentiment"]
+   data["sentiment_fixed"] = qual["sentiment"]
    ```
 3. **spot_em fallback**：东方财富批量失败 → 腾讯日线逐股（`stock_zh_a_hist_tx`，5日窗口）
 4. **Telegram 推送**：`push_daily_signals()` 在 cmd_daily 末尾调用，try/except 包裹不阻断流程

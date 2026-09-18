@@ -139,6 +139,7 @@ T = TypeVar("T")
 
 MarketDataStatus = Literal["ok", "degraded", "failed"]
 
+
 @dataclass(frozen=True)
 class MarketDataResult(Generic[T]):
     value: T | None
@@ -534,14 +535,11 @@ Stop 条件：
 
 ```python
 class MarketDataProvider:
-    def fetch_score_price(self, code: str, score_date: str) -> MarketDataResult[float]:
-        ...
+    def fetch_score_price(self, code: str, score_date: str) -> MarketDataResult[float]: ...
 
-    def fetch_l3_bars(self, code: str, end_date: str, window: int) -> MarketDataResult[pd.DataFrame]:
-        ...
+    def fetch_l3_bars(self, code: str, end_date: str, window: int) -> MarketDataResult[pd.DataFrame]: ...
 
-    def fetch_outcome_price(self, code: str, target_date: str) -> MarketDataResult[float]:
-        ...
+    def fetch_outcome_price(self, code: str, target_date: str) -> MarketDataResult[float]: ...
 ```
 
 改动：

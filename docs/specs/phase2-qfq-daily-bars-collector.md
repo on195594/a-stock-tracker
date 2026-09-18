@@ -106,8 +106,12 @@ from a_stock_lib.providers.baostock_quotes import to_baostock_stock_code as to_b
 
 def query_qfq(code: str, start_date: str, end_date: str) -> pd.DataFrame:
     result = bs.query_history_k_data_plus(
-        to_bs_code(code), FIELDS, start_date=start_date, end_date=end_date,
-        frequency="d", adjustflag="2",
+        to_bs_code(code),
+        FIELDS,
+        start_date=start_date,
+        end_date=end_date,
+        frequency="d",
+        adjustflag="2",
     )
     if result.error_code != "0":
         raise QfqFetchError("QFQ_QUERY_FAILED", result.error_msg)
@@ -131,14 +135,21 @@ def normalize_frame(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def fetch_one(
-    conn: sqlite3.Connection, code: str, start_date: str, end_date: str,
+    conn: sqlite3.Connection,
+    code: str,
+    start_date: str,
+    end_date: str,
 ) -> int:
     frame = query_qfq(code, start_date, end_date)
     if frame.empty:
         logger.warning("QFQ_EMPTY_RESULT code=%s", code)
         return 0
     count = upsert_daily_bars(
-        conn, code, frame, source="baostock.qfq", adjusted="qfq",
+        conn,
+        code,
+        frame,
+        source="baostock.qfq",
+        adjusted="qfq",
         volume_unit="share",
     )
     conn.commit()
@@ -251,16 +262,12 @@ def compute_l3_v2_from_daily_bars(
     try:
         rows, contract = _select_daily_rows(db, code, today)
         if not rows:
-            return SignalResult(
-                None, V2_VERSION, "unavailable", "NO_DAILY_BARS", empty_metrics()
-            )
+            return SignalResult(None, V2_VERSION, "unavailable", "NO_DAILY_BARS", empty_metrics())
         panel = _build_price_panel(code, rows, contract)
         return compute_l3_v2_candidate(panel, contract)
     except Exception as exc:  # existing wrapper-level fault isolation
         logger.warning("L3 v2 computation failed for %s: %s", code, exc)
-        return SignalResult(
-            None, V2_VERSION, "unavailable", "L3_V2_ERROR", empty_metrics()
-        )
+        return SignalResult(None, V2_VERSION, "unavailable", "L3_V2_ERROR", empty_metrics())
 ```
 
 `_build_price_panel()` is a typed extraction of the current date parsing and `DailyBar` tuple construction. Its `PricePanel.adjusted`, `source`, and `volume_unit` fields come from the selected contract, not hardcoded `"none"`. `preload_start` remains the first selected row's date; `stale_reason` and `limitation` remain `None`. Extracting selection and construction keeps the public function below 50 lines and preserves its no-network and exception-isolation guarantees.
@@ -314,10 +321,8 @@ Representative test structure:
 ```python
 def test_qfq_takes_priority_over_unadjusted() -> None:
     db = make_db()
-    insert_bars(db, adjusted="qfq", closes=[100.0] * 120,
-                source="baostock.qfq")
-    insert_bars(db, adjusted="none", closes=[100.0] * 119 + [60.0],
-                source="tushare.daily")
+    insert_bars(db, adjusted="qfq", closes=[100.0] * 120, source="baostock.qfq")
+    insert_bars(db, adjusted="none", closes=[100.0] * 119 + [60.0], source="tushare.daily")
 
     result = compute_l3_v2_from_daily_bars(db, CODE, END_DATE)
 

@@ -74,16 +74,16 @@ def _fetch_pb_hist_and_percentile(code: str) -> tuple[float | None, list[float] 
     """
     result = timed_call(
         ak.stock_zh_valuation_baidu,
-        code, timeout=PB_TIMEOUT,
-        indicator='市净率', period='近十年',
+        code,
+        timeout=PB_TIMEOUT,
+        indicator="市净率",
+        period="近十年",
     )
     if isinstance(result, (str, tuple)) or result is None:
         return None, None
     df = result
-    assert 'value' in df.columns, (
-        f"stock_zh_valuation_baidu 列名变更，期望含 'value'，实际：{df.columns.tolist()}"
-    )
-    values = df['value'].dropna()
+    assert "value" in df.columns, f"stock_zh_valuation_baidu 列名变更，期望含 'value'，实际：{df.columns.tolist()}"
+    values = df["value"].dropna()
     if len(values) < 12:
         return None, None
     series = [round(float(v), 4) for v in values]
@@ -101,12 +101,12 @@ def _fetch_pb_hist_and_percentile(code: str) -> tuple[float | None, list[float] 
 print("  [5/7] PB 历史分位 + 月度序列...", flush=True)
 pct, series = _fetch_pb_hist_and_percentile(code)
 if pct is not None:
-    results['pb_percentile_10y'] = pct
-    results['pb_hist_monthly'] = series
+    results["pb_percentile_10y"] = pct
+    results["pb_hist_monthly"] = series
     print(f"  ✅ PB历史10年分位={pct}%，序列 {len(series)} 个数据点")
 else:
-    null_reasons['pb_percentile_10y'] = 'PB历史数据不足或接口失败'
-    null_reasons['pb_hist_monthly'] = '同上'
+    null_reasons["pb_percentile_10y"] = "PB历史数据不足或接口失败"
+    null_reasons["pb_hist_monthly"] = "同上"
     logger.warning("  ⚠️ PB历史分位获取失败")
 ```
 
@@ -115,11 +115,11 @@ else:
 在已有的 `results['debt_ratio'] = ...` 之后添加：
 
 ```python
-bps = parse_float(fin_df['每股净资产'].iloc[-1])
+bps = parse_float(fin_df["每股净资产"].iloc[-1])
 if bps is not None:
-    results['bps'] = bps
+    results["bps"] = bps
 else:
-    null_reasons['bps'] = '每股净资产数据缺失'
+    null_reasons["bps"] = "每股净资产数据缺失"
 ```
 
 （注：`bps` 变量已被计算，仅需写入 `results`）
@@ -129,8 +129,8 @@ else:
 在 FIELDS 后添加辅助集合与函数：
 
 ```python
-_FINANCIAL_INDUSTRY_SKIP = frozenset({'银行', '保险', '证券', '信托', '期货',
-                                       '多元金融', '非银金融', '券商'})
+_FINANCIAL_INDUSTRY_SKIP = frozenset({"银行", "保险", "证券", "信托", "期货", "多元金融", "非银金融", "券商"})
+
 
 def _compute_gross_margin(code: str, industry: str) -> float | None:
     """从新浪利润表计算近3年年报平均毛利率（金融行业返回 None）。
@@ -140,22 +140,23 @@ def _compute_gross_margin(code: str, industry: str) -> float | None:
     """
     if any(kw in industry for kw in _FINANCIAL_INDUSTRY_SKIP):
         return None
-    prefix = 'sh' if code.startswith('6') else 'sz'
+    prefix = "sh" if code.startswith("6") else "sz"
     result = timed_call(
         ak.stock_financial_report_sina,
-        stock=f'{prefix}{code}', symbol='利润表',
+        stock=f"{prefix}{code}",
+        symbol="利润表",
         timeout=API_TIMEOUT,
     )
     if isinstance(result, (str, tuple)) or result is None:
         return None
     df = result
-    required_cols = {'报告日', '营业收入', '营业成本'}
+    required_cols = {"报告日", "营业收入", "营业成本"}
     if not required_cols.issubset(df.columns):
         return None
     # 只取年报（报告日以 1231 结尾），最近3年
-    annual = df[df['报告日'].astype(str).str.endswith('1231')].head(3)
-    rev = pd.to_numeric(annual['营业收入'], errors='coerce')
-    cos = pd.to_numeric(annual['营业成本'], errors='coerce')
+    annual = df[df["报告日"].astype(str).str.endswith("1231")].head(3)
+    rev = pd.to_numeric(annual["营业收入"], errors="coerce")
+    cos = pd.to_numeric(annual["营业成本"], errors="coerce")
     # 过滤：营业收入必须为正
     valid_mask = rev > 0
     rev_v, cos_v = rev[valid_mask], cos[valid_mask]
@@ -176,12 +177,13 @@ def _compute_gross_margin(code: str, industry: str) -> float | None:
 # ── Step 4.5：毛利率（新浪利润表，近3年年报均值）──
 print("  [4.5/7] 计算毛利率（新浪利润表）...", flush=True)
 import pandas as pd  # 在函数顶部已有，确认 import
+
 gm = _compute_gross_margin(code, industry)
 if gm is not None:
-    results['gross_margin'] = gm
+    results["gross_margin"] = gm
     print(f"  ✅ 毛利率={gm}%")
 else:
-    null_reasons['gross_margin'] = '金融行业跳过或接口失败或数据不足'
+    null_reasons["gross_margin"] = "金融行业跳过或接口失败或数据不足"
     logger.warning("  ⚠️ 毛利率 获取失败")
 ```
 
@@ -246,38 +248,49 @@ if price_at_score:
 ```python
 # test_fetcher.py（新建或添加到 test_pipeline.py）
 
+
 def test_compute_gross_margin_financial_skip():
     """银行行业应返回 None"""
     result = _compute_gross_margin("600036", "银行")
     assert result is None
 
+
 def test_compute_gross_margin_missing_columns(monkeypatch):
     """利润表缺列时返回 None"""
     import pandas as pd
-    monkeypatch.setattr("akshare.stock_financial_report_sina",
-                        lambda **kw: pd.DataFrame({"报告日": ["20251231"], "营业收入": [100]}))
+
+    monkeypatch.setattr(
+        "akshare.stock_financial_report_sina", lambda **kw: pd.DataFrame({"报告日": ["20251231"], "营业收入": [100]})
+    )
     result = _compute_gross_margin("603606", "制造")
     assert result is None
+
 
 def test_compute_gross_margin_insufficient_data(monkeypatch):
     """少于2年数据时返回 None"""
     import pandas as pd
+
     df = pd.DataFrame({"报告日": ["20251231"], "营业收入": [100.0], "营业成本": [80.0]})
     monkeypatch.setattr("akshare.stock_financial_report_sina", lambda **kw: df)
     result = _compute_gross_margin("603606", "制造")
     assert result is None
 
+
 def test_compute_gross_margin_zero_revenue(monkeypatch):
     """零营业收入行应被跳过"""
     import pandas as pd
-    df = pd.DataFrame({
-        "报告日": ["20251231", "20241231", "20231231"],
-        "营业收入": [0.0, 100.0, 120.0],
-        "营业成本": [0.0, 80.0, 90.0],
-    })
+
+    df = pd.DataFrame(
+        {
+            "报告日": ["20251231", "20241231", "20231231"],
+            "营业收入": [0.0, 100.0, 120.0],
+            "营业成本": [0.0, 80.0, 90.0],
+        }
+    )
     monkeypatch.setattr("akshare.stock_financial_report_sina", lambda **kw: df)
     result = _compute_gross_margin("603606", "制造")
     assert result is not None  # 应用2条有效数据计算
+
 
 def test_compute_daily_pb_percentile_normal():
     """正常情况：价格变化导致分位变化"""
@@ -287,15 +300,18 @@ def test_compute_daily_pb_percentile_normal():
     # price=5 → pb=0.5 → 低于全部 → 0%
     assert _compute_daily_pb_percentile(5.0, data) == 0.0
 
+
 def test_compute_daily_pb_percentile_missing_bps():
     """缺 bps 时返回 None"""
     data = {"pb_hist_monthly": [1.0] * 50}
     assert _compute_daily_pb_percentile(25.0, data) is None
 
+
 def test_compute_daily_pb_percentile_insufficient_hist():
     """序列不足12个点返回 None"""
     data = {"bps": 10.0, "pb_hist_monthly": [1.0] * 5}
     assert _compute_daily_pb_percentile(25.0, data) is None
+
 
 def test_daily_pb_percentile_injected_before_scoring(monkeypatch, tmp_path):
     """cmd_daily 中 pb_percentile_10y 被实时值覆盖后传给 score_stock"""

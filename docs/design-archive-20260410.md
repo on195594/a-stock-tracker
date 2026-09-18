@@ -306,6 +306,7 @@ GROUP BY signal_tier;
 1. **[门控任务，必须先完成]** 测试 `gross_margin` 能否从 AKShare 获取：
    ```python
    import akshare as ak
+
    df = ak.stock_financial_abstract_ths(symbol="603288", indicator="按报告期")
    print(df.columns.tolist())  # 看是否有毛利率相关字段
    ```

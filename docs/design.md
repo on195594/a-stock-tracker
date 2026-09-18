@@ -208,8 +208,7 @@ DB_PATH = os.path.expanduser("~/a-stock-tracker/tracker.db")
 ### scorer.py 函数契约
 
 ```python
-def score_stock(code: str, framework: str, data: dict[str, float | None],
-                weights: dict | None = None) -> dict:
+def score_stock(code: str, framework: str, data: dict[str, float | None], weights: dict | None = None) -> dict:
     """
     Args:
         code:      股票代码，例如 "601288"
@@ -236,10 +235,10 @@ def score_stock(code: str, framework: str, data: dict[str, float | None],
 **Phase 3 Gemini 注入路径（scorer.py 关键改动）：**
 pipeline.py 在调用 `score_stock()` 前，将 `get_qualitative_score()` 的返回值注入 `data` dict：
 ```python
-qual = get_qualitative_score(code, name)   # 返回 {moat, market_pos, sentiment}
-data["moat_fixed"]        = qual["moat"]
-data["market_pos_fixed"]  = qual["market_pos"]
-data["sentiment_fixed"]   = qual["sentiment"]
+qual = get_qualitative_score(code, name)  # 返回 {moat, market_pos, sentiment}
+data["moat_fixed"] = qual["moat"]
+data["market_pos_fixed"] = qual["market_pos"]
+data["sentiment_fixed"] = qual["sentiment"]
 result = score_stock(code, framework, data, weights)
 ```
 scorer.py 中，`phase1_fixed` 字段的取值逻辑从 `return float(field_cfg["phase1_fixed"])` 改为 `return float(value) if value is not None else float(field_cfg["phase1_fixed"])`，从而允许运行时覆盖。
@@ -421,9 +420,12 @@ CREATE TABLE IF NOT EXISTS qualitative_scores (
 earliest_score_date = db.execute("SELECT MIN(score_date) FROM predictions").fetchone()[0]
 latest_cached = db.execute("SELECT MAX(date) FROM index_prices WHERE symbol='000300'").fetchone()[0]
 if earliest_score_date and (not latest_cached or latest_cached < earliest_score_date):
-    df = ak.index_zh_a_hist(symbol="000300", period="daily",
-                            start_date=earliest_score_date.replace("-",""),
-                            end_date=today.replace("-",""))
+    df = ak.index_zh_a_hist(
+        symbol="000300",
+        period="daily",
+        start_date=earliest_score_date.replace("-", ""),
+        end_date=today.replace("-", ""),
+    )
     # bulk insert into index_prices, skip existing dates (INSERT OR IGNORE)
 ```
 
@@ -565,6 +567,7 @@ END;
 1. **[门控任务]** 测试 `gross_margin` 能否从 AKShare 获取：
    ```python
    import akshare as ak
+
    df = ak.stock_financial_abstract_ths(symbol="603288", indicator="按报告期")
    print(df.columns.tolist())
    ```
@@ -598,7 +601,7 @@ END;
 # 记录最新财报所属期（新增）
 if fin_df is not None and not isinstance(fin_df, (str, tuple)):
     report_period_raw = fin_df.sort_values("报告期", ascending=False).iloc[0]["报告期"]
-    results['report_period'] = str(report_period_raw)[:10]  # YYYY-MM-DD 格式
+    results["report_period"] = str(report_period_raw)[:10]  # YYYY-MM-DD 格式
 ```
 （字段名 `报告期` 需以 Open Question 5 验证结果为准）
 

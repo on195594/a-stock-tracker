@@ -89,18 +89,19 @@ from dataclasses import dataclass
 
 ENTRY_SIGNAL_VERSION = "v1"
 
+
 @dataclass(frozen=True)
 class EntrySignalResult:
     signal: int | None
     version: str | None
     reason: str
 
+
 # reason 使用固定常量，便于报告聚合：
 # PASS / BELOW_MA60 / BELOW_MA120 / LOW_VOLUME / INSUFFICIENT_DATA / MISSING_COLUMNS
 
 
-def compute_entry_signal(daily_bars) -> EntrySignalResult:
-    ...
+def compute_entry_signal(daily_bars) -> EntrySignalResult: ...
 ```
 
 ### 规则

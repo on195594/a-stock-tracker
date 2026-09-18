@@ -223,8 +223,16 @@ REGISTRY_PATH = Path(__file__).resolve().parents[1] / "docs" / "data-source-regi
 WEIGHTS_PATH = Path(__file__).resolve().parents[1] / "weights.json"
 
 REQUIRED_KEYS = {
-    "field", "owner", "requirement", "source_primary", "source_fallback",
-    "cache", "refresh", "affects_scoring", "affects_outcome", "failure_behavior",
+    "field",
+    "owner",
+    "requirement",
+    "source_primary",
+    "source_fallback",
+    "cache",
+    "refresh",
+    "affects_scoring",
+    "affects_outcome",
+    "failure_behavior",
 }
 
 
@@ -259,6 +267,7 @@ def test_registry_blocks_have_required_keys() -> None:
 
 def test_registry_covers_framework_a_scored_fields() -> None:
     import json
+
     weights = json.loads(WEIGHTS_PATH.read_text(encoding="utf-8"))
     framework_a = weights["frameworks"]["A"]
     expected = set(framework_a["fundamental"]) | set(framework_a["valuation"])
@@ -267,9 +276,16 @@ def test_registry_covers_framework_a_scored_fields() -> None:
 
 def test_registry_covers_report_contract_fields() -> None:
     expected = {
-        "framework", "weights_hash", "report_period", "price_at_score",
-        "outcome_30d", "outcome_60d", "outcome_90d",
-        "benchmark_30d", "benchmark_60d", "benchmark_90d",
+        "framework",
+        "weights_hash",
+        "report_period",
+        "price_at_score",
+        "outcome_30d",
+        "outcome_60d",
+        "outcome_90d",
+        "benchmark_30d",
+        "benchmark_60d",
+        "benchmark_90d",
     }
     assert expected <= _fields()
 
@@ -532,7 +548,9 @@ _DERIVED_SUPPORT = ("bps", "pb_hist_monthly")
 _PB_DAILY_DEPENDENCIES = ("price_at_score", "bps", "pb_hist_monthly")
 
 
-def evaluate_data_quality(code: str, data: dict[str, Any], fallback_sources: dict[str, str] | None = None) -> DataQualityResult:
+def evaluate_data_quality(
+    code: str, data: dict[str, Any], fallback_sources: dict[str, str] | None = None
+) -> DataQualityResult:
     fallback_sources = fallback_sources or {}
     fields: list[DataQualityField] = []
 
@@ -551,20 +569,24 @@ def evaluate_data_quality(code: str, data: dict[str, Any], fallback_sources: dic
     def add_pb_percentile() -> None:
         name = "pb_percentile_10y"
         if name in fallback_sources:
-            fields.append(DataQualityField(name, FieldRequirement.REQUIRED, FieldStatus.FALLBACK, name, fallback_sources[name]))
+            fields.append(
+                DataQualityField(name, FieldRequirement.REQUIRED, FieldStatus.FALLBACK, name, fallback_sources[name])
+            )
             return
         if data.get(name) is None:
             fields.append(DataQualityField(name, FieldRequirement.REQUIRED, FieldStatus.MISSING, name, "missing"))
             return
         missing_inputs = [dep for dep in _PB_DAILY_DEPENDENCIES if not data.get(dep)]
         if missing_inputs:
-            fields.append(DataQualityField(
-                name,
-                FieldRequirement.REQUIRED,
-                FieldStatus.STALE,
-                name,
-                "cached_without_daily_inputs:" + ",".join(missing_inputs),
-            ))
+            fields.append(
+                DataQualityField(
+                    name,
+                    FieldRequirement.REQUIRED,
+                    FieldStatus.STALE,
+                    name,
+                    "cached_without_daily_inputs:" + ",".join(missing_inputs),
+                )
+            )
             return
         fields.append(DataQualityField(name, FieldRequirement.REQUIRED, FieldStatus.OK, name, "daily_computable"))
 
@@ -577,11 +599,14 @@ def evaluate_data_quality(code: str, data: dict[str, Any], fallback_sources: dic
         add(name, FieldRequirement.DERIVED)
 
     missing_required = tuple(
-        item.name for item in fields
+        item.name
+        for item in fields
         if item.requirement == FieldRequirement.REQUIRED and item.status == FieldStatus.MISSING
     )
     fallback_fields = tuple(item.name for item in fields if item.status == FieldStatus.FALLBACK)
-    return DataQualityResult(code=code, fields=tuple(fields), missing_required=missing_required, fallback_fields=fallback_fields)
+    return DataQualityResult(
+        code=code, fields=tuple(fields), missing_required=missing_required, fallback_fields=fallback_fields
+    )
 ```
 
 实现时可按测试微调，但保持：类型注解、dataclass、纯函数、无外部副作用。
@@ -815,8 +840,17 @@ from typing import Any
 
 
 FORBIDDEN_OUTPUT_KEYS = {
-    "score", "total_score", "quant_score", "threshold", "thresholds", "weights",
-    "weights_hash", "db_write", "trade_action", "position", "data_fetch_instruction",
+    "score",
+    "total_score",
+    "quant_score",
+    "threshold",
+    "thresholds",
+    "weights",
+    "weights_hash",
+    "db_write",
+    "trade_action",
+    "position",
+    "data_fetch_instruction",
 }
 
 

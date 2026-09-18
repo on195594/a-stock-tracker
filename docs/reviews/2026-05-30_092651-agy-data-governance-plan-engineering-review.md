@@ -37,6 +37,7 @@
   修改 Smoke 测试脚本中的匹配逻辑，不要依赖样本不足的警告段落，而是通过正则检查 `分 Framework 统计` 的表格输出中 Framework A 的数值。
   ```python
   import re
+
   # 匹配表头下的分 Framework A 结案统计数值
   match = re.search(r"A\s+\d+\s+(\d+)", out)
   found_count = int(match.group(1)) if match else -1
