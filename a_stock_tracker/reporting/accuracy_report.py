@@ -12,7 +12,7 @@ import sqlite3
 from typing import Any, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
-from a_stock_tracker.paths import EXPERIMENT_MANIFEST_PATH
+from a_stock_tracker import paths
 from a_stock_tracker.reporting.evaluation import (
     EVALUATION_VERSION,
     ExperimentManifest,
@@ -21,6 +21,7 @@ from a_stock_tracker.reporting.evaluation import (
     ManifestError,
     evaluate_manifest,
     load_experiment_manifest,
+    load_calendar_evidence,
     pending_manifest_summary,
     strip_internal_evaluations,
 )
@@ -89,7 +90,7 @@ def build_accuracy_summary(
     central paths owner. A pending manifest remains fail-closed.
     """
     if manifest is None:
-        manifest = EXPERIMENT_MANIFEST_PATH
+        manifest = paths.experiment_manifest_path()
     try:
         loaded = load_experiment_manifest(manifest)
     except ManifestError as exc:
@@ -114,6 +115,12 @@ def build_accuracy_summary(
         return pending_manifest_summary(loaded, parsed_as_of)
     as_of = parsed_as_of or _current_shanghai_date()
     try:
+        if calendar is None:
+            try:
+                calendar = load_calendar_evidence(paths.trading_calendar_path())
+            except EvaluationInputError as exc:
+                if not str(exc).startswith("calendar_evidence_missing:"):
+                    raise
         return strip_internal_evaluations(evaluate_manifest(db, loaded, evaluation_as_of=as_of, calendar=calendar))
     except (EvaluationInputError, sqlite3.Error) as exc:
         return {

@@ -22,6 +22,23 @@ MAX_LAG_DAYS = 10
 MINIMUM_SECTIONS = {30: 3, 60: 2, 90: 1}
 MIN_COVERAGE = 0.90
 EXPECTED_FRAMEWORK = "A"
+SCORING_FIELDS = {
+    "roe_3y_avg",
+    "net_profit_growth",
+    "debt_ratio",
+    "gross_margin",
+    "pb_percentile_10y",
+    "moat_fixed",
+    "market_pos_fixed",
+    "sentiment_fixed",
+}
+QUANTITATIVE_FIELDS = SCORING_FIELDS - {"moat_fixed", "market_pos_fixed", "sentiment_fixed"}
+IMPLEMENTATION_SOURCES = {
+    "cli.py",
+    "scoring.py",
+    "data/tushare_primary_materialization.py",
+    "qualitative/production.py",
+}
 
 
 class ManifestError(ValueError):
@@ -249,8 +266,20 @@ def _parse_json_object(value: Any, field: str) -> dict[str, Any]:
     def reject_constant(raw: str) -> None:
         raise EvaluationInputError(f"{field}_non_finite")
 
+    def reject_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        keys = [key for key, _ in pairs]
+        if len(set(keys)) != len(keys):
+            raise EvaluationInputError(f"{field}_duplicate_key")
+        return dict(pairs)
+
     try:
-        parsed = json.loads(value, parse_float=Decimal, parse_int=Decimal, parse_constant=reject_constant)
+        parsed = json.loads(
+            value,
+            object_pairs_hook=reject_duplicates,
+            parse_float=Decimal,
+            parse_int=Decimal,
+            parse_constant=reject_constant,
+        )
     except EvaluationInputError:
         raise
     except (json.JSONDecodeError, TypeError, ValueError, UnicodeError) as exc:
@@ -308,18 +337,10 @@ def _finite_snapshot_numbers(value: Any) -> bool:
 
 
 def _validate_known_numeric_fields(inputs: Mapping[str, Any], result: Mapping[str, Any]) -> None:
-    numeric_inputs = {
-        "roe_3y_avg",
-        "net_profit_growth",
-        "debt_ratio",
-        "gross_margin",
-        "pb_percentile_10y",
-        "moat_fixed",
-        "market_pos_fixed",
-        "sentiment_fixed",
-    }
-    for field in numeric_inputs:
-        if field in inputs and inputs[field] is not None and _finite_float(inputs[field]) is None:
+    if not SCORING_FIELDS.issubset(inputs):
+        raise EvaluationInputError("scoring_inputs_incomplete")
+    for field in SCORING_FIELDS:
+        if inputs[field] is not None and _finite_float(inputs[field]) is None:
             raise EvaluationInputError(f"scoring_input_invalid:{field}")
     for field in ("quant_score", "total_score", "data_quality"):
         if field in result and _finite_float(result[field]) is None:
@@ -327,11 +348,13 @@ def _validate_known_numeric_fields(inputs: Mapping[str, Any], result: Mapping[st
     component_scores = result.get("component_scores")
     if not isinstance(component_scores, Mapping):
         raise EvaluationInputError("snapshot_component_scores_missing")
-    if any(_finite_float(item) is None for item in component_scores.values()):
+    if set(component_scores) != SCORING_FIELDS or any(
+        _finite_float(item) is None for item in component_scores.values()
+    ):
         raise EvaluationInputError("snapshot_component_scores_invalid")
 
 
-def _same_recorded_precision(db_value: Any, snapshot_value: Any) -> bool:
+def _same_recorded_precision(db_value: Any, snapshot_value: Any, decimal_places: int = 2) -> bool:
     try:
         recorded = Decimal(str(snapshot_value))
         actual = Decimal(str(db_value))
@@ -339,12 +362,9 @@ def _same_recorded_precision(db_value: Any, snapshot_value: Any) -> bool:
         return False
     if not recorded.is_finite() or not actual.is_finite():
         return False
-    exponent = recorded.as_tuple().exponent
-    if not isinstance(exponent, int):
-        return False
-    quantum = Decimal(1).scaleb(exponent)
+    quantum = Decimal(1).scaleb(-decimal_places)
     try:
-        return actual.quantize(quantum) == recorded
+        return actual.quantize(quantum) == recorded.quantize(quantum)
     except (InvalidOperation, ValueError, ArithmeticError):
         return False
 
@@ -361,7 +381,7 @@ def _validate_snapshot(
 ) -> None:
     snapshot = _parse_json_object(scoring_snapshot, "scoring_snapshot")
     for key in ("scoring_inputs", "weights", "result", "implementation"):
-        if not isinstance(snapshot.get(key), Mapping):
+        if not isinstance(snapshot.get(key), Mapping) or not snapshot[key]:
             raise EvaluationInputError(f"scoring_snapshot_{key}_missing")
     if (
         not _finite_snapshot_numbers(snapshot)
@@ -383,6 +403,49 @@ def _validate_snapshot(
         raise EvaluationInputError("snapshot_quant_score_conflict")
     scoring_inputs = snapshot["scoring_inputs"]
     _validate_known_numeric_fields(scoring_inputs, result)
+    implementation = snapshot["implementation"]
+    if not all(
+        isinstance(implementation.get(field), str) and implementation[field].strip()
+        for field in ("input_policy_version", "a_stock_lib")
+    ):
+        raise EvaluationInputError("snapshot_implementation_identity_missing")
+    source_hashes = implementation.get("source_sha256")
+    if (
+        not isinstance(source_hashes, Mapping)
+        or set(source_hashes) != IMPLEMENTATION_SOURCES
+        or any(
+            not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None
+            for value in source_hashes.values()
+        )
+    ):
+        raise EvaluationInputError("snapshot_implementation_sources_invalid")
+    weights = snapshot["weights"]
+    fundamental = weights.get("fundamental")
+    valuation = weights.get("valuation")
+    if (
+        set(weights) != {"fundamental", "valuation"}
+        or not isinstance(fundamental, Mapping)
+        or not isinstance(valuation, Mapping)
+        or set(fundamental) & set(valuation)
+        or set(fundamental) | set(valuation) != SCORING_FIELDS
+        or any(not isinstance(item, Mapping) or not item for item in (*fundamental.values(), *valuation.values()))
+    ):
+        raise EvaluationInputError("snapshot_weights_invalid")
+    missing_fields = result.get("missing_fields")
+    expected_missing = {field for field in QUANTITATIVE_FIELDS if scoring_inputs[field] is None}
+    if (
+        not isinstance(missing_fields, list)
+        or any(not isinstance(field, str) for field in missing_fields)
+        or len(missing_fields) != len(set(missing_fields))
+        or set(missing_fields) != expected_missing
+    ):
+        raise EvaluationInputError("snapshot_missing_fields_invalid")
+    expected_quality = Decimal(len(QUANTITATIVE_FIELDS) - len(expected_missing)) / Decimal(len(QUANTITATIVE_FIELDS))
+    if not _same_recorded_precision(expected_quality, result.get("data_quality"), 3):
+        raise EvaluationInputError("snapshot_data_quality_invalid")
+    quant_components = sum(Decimal(str(component_scores[field])) for field in QUANTITATIVE_FIELDS)
+    if not _same_recorded_precision(quant_components, result["quant_score"]):
+        raise EvaluationInputError("snapshot_quant_components_conflict")
     qualitative = _parse_json_object(qualitative_snapshot, "qualitative_snapshot")
     sources = _parse_json_object(qualitative_sources, "qualitative_sources")
     dimensions = {"moat", "market_pos", "sentiment"}
@@ -418,12 +481,17 @@ def _validate_snapshot(
         for dimension, field in fixed_fields.items()
     ):
         raise EvaluationInputError("qualitative_component_score_conflict")
+    all_components = sum(Decimal(str(component_scores[field])) for field in SCORING_FIELDS)
+    if not _same_recorded_precision(all_components, result["total_score"]):
+        raise EvaluationInputError("snapshot_total_components_conflict")
 
     as_of = snapshot.get("qualitative_as_of")
     if not isinstance(as_of, Mapping) or set(as_of) != dimensions:
         raise EvaluationInputError("qualitative_as_of_conflict")
     for dimension, raw_as_of in as_of.items():
         if raw_as_of is None:
+            if sources[dimension] == "v2":
+                raise EvaluationInputError("qualitative_as_of_missing_for_v2")
             continue
         if not isinstance(raw_as_of, str):
             raise EvaluationInputError("qualitative_as_of_invalid")
@@ -467,6 +535,30 @@ def load_experiment_manifest(source: str | Path | Mapping[str, Any] | Experiment
             raise ManifestError("manifest experiments must contain exactly one experiment")
         value = experiments[0]
     return ExperimentManifest.from_mapping(value)
+
+
+def load_calendar_evidence(source: str | Path) -> CalendarEvidence:
+    """Load a local, auditable trading-calendar artifact without network fallback."""
+    path = Path(source)
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise EvaluationInputError(f"calendar_evidence_missing:{path}") from exc
+    except (OSError, UnicodeError) as exc:
+        raise EvaluationInputError(f"calendar_evidence_unreadable:{path}") from exc
+    value = _parse_json_object(raw, "calendar_evidence")
+    if set(value) != {"dates", "covered_from", "covered_to", "as_of", "source"} or not isinstance(value["dates"], list):
+        raise EvaluationInputError("calendar_evidence_invalid_shape")
+    try:
+        return CalendarEvidence.from_dates(
+            value["dates"],
+            covered_from=value["covered_from"],
+            covered_to=value["covered_to"],
+            as_of=value["as_of"],
+            source=value["source"],
+        )
+    except ValueError as exc:
+        raise EvaluationInputError(f"calendar_evidence_invalid:{exc}") from exc
 
 
 def build_bucket_weights(scores: Mapping[str, float], bucket: str = "q5") -> dict[str, float]:
@@ -877,8 +969,10 @@ def _chained_nav_path(
     for item in evaluations:
         if item.entry_date is None or item.endpoint is None:
             return [], f"nav_path_missing:{item.score_date.isoformat()}"
-        if previous_endpoint is not None and item.entry_date != previous_endpoint:
-            return [], f"nav_path_gap:{previous_endpoint.isoformat()}:{item.entry_date.isoformat()}"
+        if previous_endpoint is not None and item.entry_date < previous_endpoint:
+            return [], f"nav_path_overlap:{previous_endpoint.isoformat()}:{item.entry_date.isoformat()}"
+        if previous_endpoint is not None and item.entry_date > previous_endpoint:
+            chain.extend((day, base) for day in calendar if previous_endpoint < day < item.entry_date)
         path = _daily_nav_path(
             weight_factory(item),
             item.entry_date,
@@ -1324,8 +1418,8 @@ def _evaluate_manifest(
             "benchmark_path_ready": all(item.benchmark_path_ready for item in evaluations) if evaluations else False,
             "tie_disclosure": [item.tie_disclosure for item in evaluations],
             "l3_recorded": {
-                "normal": sum(row.l3_v2_signal == 0 for item in evaluations for row in item.rows),
-                "triggered": sum(row.l3_v2_signal == 1 for item in evaluations for row in item.rows),
+                "triggered": sum(row.l3_v2_signal == 0 for item in evaluations for row in item.rows),
+                "normal": sum(row.l3_v2_signal == 1 for item in evaluations for row in item.rows),
                 "unknown": sum(row.l3_v2_signal is None for item in evaluations for row in item.rows),
             },
             "evaluations": evaluations,

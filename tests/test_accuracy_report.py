@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from a_stock_tracker import paths
 from a_stock_tracker.paths import EXPERIMENT_MANIFEST_PATH
 from a_stock_tracker.reporting.accuracy_report import _parse_as_of, build_accuracy_report, build_accuracy_summary
 from a_stock_tracker.reporting.evaluation import (
@@ -20,6 +21,12 @@ from a_stock_tracker.reporting.evaluation import (
     build_bucket_weights,
     evaluate_section,
     load_experiment_manifest,
+)
+from a_stock_tracker.signals.l3_v2 import (
+    DailyBar,
+    DataContractState,
+    PricePanel,
+    compute_l3_v2_candidate,
 )
 
 
@@ -100,21 +107,36 @@ def _manifest(codes: tuple[str, ...] = FIXED_CODES, *, status: str = "verified")
 def _snapshot(score: float, *, pb: float | None = 1.0) -> tuple[str, str, str, str]:
     quant_score = score - 10.0
     scoring = {
-        "implementation": {"source_sha256": {"fixture": "fixture"}},
+        "implementation": {
+            "input_policy_version": "2026-09-15.v1",
+            "a_stock_lib": "0.1.0",
+            "source_sha256": {
+                name: "a" * 64
+                for name in (
+                    "cli.py",
+                    "scoring.py",
+                    "data/tushare_primary_materialization.py",
+                    "qualitative/production.py",
+                )
+            },
+        },
         "scoring_inputs": {
             "pb_percentile_10y": pb,
-            "roe": 10.0,
+            "roe_3y_avg": 10.0,
+            "net_profit_growth": 10.0,
+            "debt_ratio": 40.0,
+            "gross_margin": 30.0,
             "moat_fixed": 5,
             "market_pos_fixed": 2,
             "sentiment_fixed": 3,
         },
         "qualitative_as_of": {"moat": None, "market_pos": None, "sentiment": None},
-        "weights": {"fixture": 1.0},
+        "weights": json.loads(paths.WEIGHTS_PATH.read_text(encoding="utf-8"))["frameworks"]["A"],
         "result": {
             "quant_score": quant_score,
             "total_score": score,
             "component_scores": {
-                "roe_3y_avg": 0.0,
+                "roe_3y_avg": quant_score,
                 "net_profit_growth": 0.0,
                 "debt_ratio": 0.0,
                 "gross_margin": 0.0,
@@ -123,6 +145,8 @@ def _snapshot(score: float, *, pb: float | None = 1.0) -> tuple[str, str, str, s
                 "market_pos_fixed": 2.0,
                 "sentiment_fixed": 3.0,
             },
+            "data_quality": 0.8 if pb is None else 1.0,
+            "missing_fields": ["pb_percentile_10y"] if pb is None else [],
         },
     }
     qualitative = {"moat": 5, "market_pos": 2, "sentiment": 3}
@@ -524,9 +548,10 @@ def test_counterexample_hybrid_qualitative_vectors_are_valid_when_each_dimension
     parsed = json.loads(snapshot)
     parsed["scoring_inputs"].update({"moat_fixed": 8, "market_pos_fixed": 1, "sentiment_fixed": 4})
     parsed["result"]["component_scores"].update({"moat_fixed": 8, "market_pos_fixed": 1, "sentiment_fixed": 4})
+    parsed["result"]["total_score"] = 4.0
     parsed["qualitative_as_of"] = {"moat": "2026-01-01", "market_pos": None, "sentiment": None}
     db.execute(
-        "UPDATE predictions SET scoring_snapshot_json=?, qualitative_snapshot_json=?, "
+        "UPDATE predictions SET total_score=4, scoring_snapshot_json=?, qualitative_snapshot_json=?, "
         "qualitative_sources_json=?, qualitative_mode=? WHERE code=?",
         (
             json.dumps(parsed),
@@ -811,17 +836,20 @@ def test_unrepresentable_asof_is_a_controlled_report_gap() -> None:
     assert "INSUFFICIENT_EVIDENCE" in report
 
 
-def test_counterexample_all_tied_discontinuous_aligned_batches_are_not_ready() -> None:
+@pytest.mark.parametrize("tied", [False, True])
+def test_non_overlapping_batches_treat_inter_batch_dates_as_cash(tied: bool) -> None:
     db = _db()
     dates = ("2026-01-05", "2026-02-06", "2026-03-10")
-    _insert_scores(db, FIXED_CODES[:5], dates=(dates[0],), tied=True)
+    _insert_scores(db, FIXED_CODES[:5], dates=(dates[0],), tied=tied)
     for day in dates[1:]:
-        for code in FIXED_CODES[:5]:
-            snapshot, qualitative, sources, mode = _snapshot(10.0)
+        for code_index, code in enumerate(FIXED_CODES[:5]):
+            score = 10.0 if tied else float(code_index + 1)
+            snapshot, qualitative, sources, mode = _snapshot(score)
             db.execute(
-                "INSERT INTO predictions VALUES (?, 'A', ?, 0, 10, 0, 'synthetic-scoring-hash', ?, ?, ?, ?)",
-                (code, day, snapshot, qualitative, sources, mode),
+                "INSERT INTO predictions VALUES (?, 'A', ?, ?, ?, 0, 'synthetic-scoring-hash', ?, ?, ?, ?)",
+                (code, day, score - 10.0, score, snapshot, qualitative, sources, mode),
             )
+    cash_dates = ["2026-02-05", "2026-03-09"]
     extra_dates = ["2026-02-06", "2026-03-10", "2026-04-09"]
     for offset, day in enumerate(extra_dates, start=10):
         db.execute("INSERT INTO index_prices VALUES ('H00300', ?, ?)", (day, 100.0 + offset))
@@ -831,7 +859,7 @@ def test_counterexample_all_tied_discontinuous_aligned_batches_are_not_ready() -
                 (code, day, 120.0 + code_index + offset),
             )
     calendar = CalendarEvidence.from_dates(
-        [*CALENDAR_DATES, *extra_dates],
+        [*CALENDAR_DATES, *cash_dates, *extra_dates],
         covered_from="2026-01-01",
         covered_to="2026-05-05",
         as_of="2026-05-05",
@@ -841,9 +869,229 @@ def test_counterexample_all_tied_discontinuous_aligned_batches_are_not_ready() -
         db, manifest=_manifest(FIXED_CODES[:5]), evaluation_as_of="2026-05-05", calendar=calendar
     )
     window = summary["windows"]["30"]
-    assert window["all_scores_tied"] is True
-    assert window["metrics"]["equal_return"] is None
-    assert window["metrics"]["benchmark_return"] is None
-    assert any(gap.startswith("equal_nav_path_gap:") for gap in window["gaps"])
+    assert window["all_scores_tied"] is tied
+    assert (window["metrics"]["q5_return"] is None) is tied
+    assert window["metrics"]["equal_return"] is not None
+    assert window["metrics"]["benchmark_return"] is not None
+    assert not any("nav_path_gap" in gap for gap in window["gaps"])
     assert window["endpoint_diagnostics"][0]["metrics"]["equal_return"] is not None
+    assert window["readiness_status"] == "READY_FOR_DIRECTION_REVIEW"
+
+
+def _replace_first_snapshot(db: sqlite3.Connection, mutate) -> str:
+    raw = db.execute(
+        "SELECT scoring_snapshot_json FROM predictions WHERE code=? ORDER BY score_date LIMIT 1", (FIXED_CODES[0],)
+    ).fetchone()[0]
+    value = json.loads(raw)
+    mutate(value)
+    changed = json.dumps(value, separators=(",", ":"), allow_nan=False)
+    db.execute(
+        "UPDATE predictions SET scoring_snapshot_json=? WHERE code=? AND score_date='2026-01-05'",
+        (changed, FIXED_CODES[0]),
+    )
+    return changed
+
+
+@pytest.mark.parametrize("section", ["implementation", "weights", "scoring_inputs", "result"])
+def test_empty_required_snapshot_sections_fail_closed(section: str) -> None:
+    db = _db()
+    _insert_scores(db, FIXED_CODES[:5], dates=("2026-01-05",))
+    _replace_first_snapshot(db, lambda value: value.__setitem__(section, {}))
+    summary = _summary(db)
+    assert summary["windows"]["90"]["selected_sections"] == 0
+    assert any("scoring_snapshot" in gap for gap in summary["gaps"])
+
+
+@pytest.mark.parametrize(
+    ("container", "field"),
+    [
+        ("scoring_inputs", "roe_3y_avg"),
+        ("component_scores", "roe_3y_avg"),
+        ("result", "data_quality"),
+        ("result", "missing_fields"),
+    ],
+)
+def test_missing_frozen_score_contract_fields_fail_closed(container: str, field: str) -> None:
+    db = _db()
+    _insert_scores(db, FIXED_CODES[:5], dates=("2026-01-05",))
+
+    def mutate(value: dict[str, Any]) -> None:
+        target = value["result"]["component_scores"] if container == "component_scores" else value[container]
+        target.pop(field)
+
+    _replace_first_snapshot(db, mutate)
+    summary = _summary(db)
+    assert summary["windows"]["90"]["selected_sections"] == 0
+    assert any(FIXED_CODES[0] in gap for gap in summary["gaps"])
+
+
+def test_v2_qualitative_source_without_source_date_fails_closed() -> None:
+    db = _db()
+    _insert_scores(db, FIXED_CODES[:5], dates=("2026-01-05",))
+    db.execute(
+        "UPDATE predictions SET qualitative_sources_json=?, qualitative_mode='hybrid_v2' "
+        "WHERE code=? AND score_date='2026-01-05'",
+        (json.dumps({"moat": "v2", "market_pos": "v1", "sentiment": "v1"}), FIXED_CODES[0]),
+    )
+    summary = _summary(db)
+    assert summary["windows"]["90"]["selected_sections"] == 0
+    assert any("qualitative_as_of" in gap for gap in summary["gaps"])
+
+
+def test_duplicate_snapshot_keys_fail_closed_even_when_values_agree() -> None:
+    db = _db()
+    _insert_scores(db, FIXED_CODES[:5], dates=("2026-01-05",))
+    raw = db.execute("SELECT scoring_snapshot_json FROM predictions WHERE code=?", (FIXED_CODES[0],)).fetchone()[0]
+    duplicate = raw.replace('"total_score":1.0', '"total_score":1.0,"total_score":1.0')
+    assert duplicate != raw
+    db.execute(
+        "UPDATE predictions SET scoring_snapshot_json=? WHERE code=? AND score_date='2026-01-05'",
+        (duplicate, FIXED_CODES[0]),
+    )
+    summary = _summary(db)
+    assert summary["windows"]["90"]["selected_sections"] == 0
+    assert any("duplicate" in gap for gap in summary["gaps"])
+
+
+def test_boolean_snapshot_number_fails_closed() -> None:
+    db = _db()
+    _insert_scores(db, FIXED_CODES[:5], dates=("2026-01-05",))
+    _replace_first_snapshot(db, lambda value: value["result"].__setitem__("total_score", True))
+    summary = _summary(db)
+    assert summary["windows"]["90"]["selected_sections"] == 0
+
+
+def test_runtime_weights_metadata_qualifies_but_non_finite_numeric_weight_does_not() -> None:
+    db = _db()
+    _insert_scores(db, FIXED_CODES[:5], dates=("2026-01-05",))
+    assert _summary(db)["windows"]["90"]["selected_sections"] == 1
+
+    raw = db.execute(
+        "SELECT scoring_snapshot_json FROM predictions WHERE code=? AND score_date='2026-01-05'",
+        (FIXED_CODES[0],),
+    ).fetchone()[0]
+    snapshot = json.loads(raw)
+    snapshot["weights"]["fundamental"]["roe_3y_avg"]["max_score"] = float("nan")
+    db.execute(
+        "UPDATE predictions SET scoring_snapshot_json=? WHERE code=? AND score_date='2026-01-05'",
+        (json.dumps(snapshot), FIXED_CODES[0]),
+    )
+    summary = _summary(db)
+    assert summary["windows"]["90"]["selected_sections"] == 0
+    assert any("snapshot_non_finite" in gap for gap in summary["gaps"])
+
+
+def test_score_comparison_uses_frozen_two_decimal_contract_not_json_lexeme_precision() -> None:
+    db = _db()
+    _insert_scores(db, FIXED_CODES[:5], dates=("2026-01-05",))
+    db.execute(
+        "UPDATE predictions SET total_score=50.04, quant_score=40.04 WHERE code=? AND score_date='2026-01-05'",
+        (FIXED_CODES[0],),
+    )
+    _replace_first_snapshot(
+        db,
+        lambda value: (
+            value["result"].__setitem__("total_score", 50.0),
+            value["result"].__setitem__("quant_score", 40.0),
+            value["result"]["component_scores"].__setitem__("roe_3y_avg", 40.0),
+        ),
+    )
+    summary = _summary(db)
+    assert summary["windows"]["90"]["selected_sections"] == 0
+    assert any("score_conflict" in gap for gap in summary["gaps"])
+
+
+def test_default_report_loads_local_calendar_from_configured_project_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_root = tmp_path / "configured-project"
+    config_dir = project_root / "config"
+    config_dir.mkdir(parents=True)
+    (config_dir / "experiment_manifest.json").write_text(json.dumps(_manifest(FIXED_CODES[:5])), encoding="utf-8")
+    (config_dir / "trading_calendar.json").write_text(
+        json.dumps(
+            {
+                "source": "fixture:local-calendar",
+                "covered_from": "2026-01-01",
+                "covered_to": "2026-05-05",
+                "as_of": "2026-05-05",
+                "dates": CALENDAR_DATES,
+            }
+        ),
+        encoding="utf-8",
+    )
+    unrelated = tmp_path / "unrelated-cwd"
+    unrelated.mkdir()
+    monkeypatch.setattr(paths, "PROJECT_ROOT", project_root)
+    monkeypatch.chdir(unrelated)
+    db = _db()
+    _insert_scores(db, FIXED_CODES[:5])
+    summary = build_accuracy_summary(db, evaluation_as_of="2026-05-05")
+    assert summary["evidence_status"] == "READY_FOR_DIRECTION_REVIEW"
+    assert not any("calendar" in gap for gap in summary["gaps"])
+
+
+@pytest.mark.parametrize("content", [None, "not-json", "{}"])
+def test_default_local_calendar_missing_or_malformed_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, content: str | None
+) -> None:
+    project_root = tmp_path / "configured-project"
+    config_dir = project_root / "config"
+    config_dir.mkdir(parents=True)
+    (config_dir / "experiment_manifest.json").write_text(json.dumps(_manifest(FIXED_CODES[:5])), encoding="utf-8")
+    if content is not None:
+        (config_dir / "trading_calendar.json").write_text(content, encoding="utf-8")
+    monkeypatch.setattr(paths, "PROJECT_ROOT", project_root)
+    db = _db()
+    _insert_scores(db, FIXED_CODES[:5])
+    summary = build_accuracy_summary(db, evaluation_as_of="2026-05-05")
     assert summary["evidence_status"] == "INSUFFICIENT_EVIDENCE"
+    assert any("calendar" in gap for gap in summary["gaps"])
+
+
+def _l3_result(latest_close: float | None):
+    contract = DataContractState("qfq", "fixture", "shares", False, None, None, None)
+    if latest_close is None:
+        return compute_l3_v2_candidate(None, contract)
+    bars = tuple(
+        DailyBar(
+            date(2025, 1, 1),
+            None,
+            None,
+            None,
+            latest_close if index == 119 else 100.0,
+            None,
+            "fixture",
+            "qfq",
+            "shares",
+            None,
+            None,
+        )
+        for index in range(120)
+    )
+    panel = PricePanel("000001", "qfq", bars, "fixture", "shares", date(2025, 1, 1), None, None)
+    return compute_l3_v2_candidate(panel, contract)
+
+
+def test_l3_owner_semantics_survive_aggregation_and_text_rendering() -> None:
+    db = _db()
+    _insert_scores(db, FIXED_CODES[:5], dates=("2026-01-05",))
+    db.execute("UPDATE predictions SET l3_v2_signal=1")
+    owner_results = (_l3_result(60.0), _l3_result(100.0), _l3_result(None))
+    assert [(item.signal, item.status) for item in owner_results] == [
+        (0, "reject"),
+        (1, "pass_strong"),
+        (None, "unavailable"),
+    ]
+    for code, result in zip(FIXED_CODES[:3], owner_results, strict=True):
+        db.execute(
+            "UPDATE predictions SET l3_v2_signal=? WHERE code=? AND score_date='2026-01-05'",
+            (result.signal, code),
+        )
+    summary = _summary(db)
+    counts = summary["windows"]["90"]["l3_recorded"]
+    assert counts == {"triggered": 1, "normal": 3, "unknown": 1}
+    report = build_accuracy_report(
+        db, manifest=_manifest(FIXED_CODES[:5]), evaluation_as_of="2026-05-05", calendar=CALENDAR
+    )
+    assert "正常 n=3；触发 n=1；未知 n=1" in report
