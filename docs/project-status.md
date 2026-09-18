@@ -6,7 +6,7 @@
 
 ## 2026-09-18 S2 生产部署（manifest pending）
 
-- Tracker 生产 checkout 已从 `69f11c9` 快进到远端 `7516535`，运行依赖从 a-stock-lib 0.7.0 对齐到锁定的 0.8.0；源码 HEAD 与 `origin/master` 一致。
+- Tracker 的 S2 软件源码 `7516535` 已从原生产基线 `69f11c9` 上线，运行依赖从 a-stock-lib 0.7.0 对齐到锁定的 0.8.0；后续仅追加状态文档，生产 checkout 与远端 master 保持同步。
 - 上线后通过 299 tests、11 structure tests、Ruff check/format、mypy 与 diff check；只读生产报告 smoke 返回 `MANIFEST_PENDING / INSUFFICIENT_EVIDENCE`。
 - 既有 cron 未修改，未手工运行 daily、未写生产数据库、未发通知、未登记真实 scoring hash/日期/日历。S2 软件已部署，但生产实验与投资有效性仍未验证，S4 继续延后。
 
