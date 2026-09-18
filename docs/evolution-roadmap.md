@@ -11,8 +11,9 @@
 
 ## 2026-09-17 软件落地对齐（不改投资规则）
 
-S2 `2026-09-17.e2` 已完成仓库/合成 fixture 验证，尚未部署；它不是本路线的
-阶段二。默认清单在 `config/experiment_manifest.json`，固定原始 35 股来源，
+S2 `2026-09-17.e2` 已完成仓库/合成 fixture 验证，并于 2026-09-18 以
+Tracker `7516535` / lib 0.8.0 部署；它不是本路线的阶段二。默认清单在
+`config/experiment_manifest.json`，固定原始 35 股来源，
 真实 scoring hash、适用日期和日历仍未核实，保持 pending/证据不足。
 当前实现不自动选择最新 hash，也不以当前定性缓存补验历史快照；具体口径及
 验收边界见 `project-status.md` 与

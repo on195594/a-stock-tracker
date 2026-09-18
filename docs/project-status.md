@@ -1,8 +1,14 @@
 # 项目状态
 
-**更新时间：** 2026-09-17
+**更新时间：** 2026-09-18
 **当前阶段：** 三阶段路线的阶段一
 **当前目标：** 证明 Framework A 是否具有可复验投资价值；L3 v2 已完成判定
+
+## 2026-09-18 S2 生产部署（manifest pending）
+
+- Tracker 生产 checkout 已从 `69f11c9` 快进到远端 `7516535`，运行依赖从 a-stock-lib 0.7.0 对齐到锁定的 0.8.0；源码 HEAD 与 `origin/master` 一致。
+- 上线后通过 299 tests、11 structure tests、Ruff check/format、mypy 与 diff check；只读生产报告 smoke 返回 `MANIFEST_PENDING / INSUFFICIENT_EVIDENCE`。
+- 既有 cron 未修改，未手工运行 daily、未写生产数据库、未发通知、未登记真实 scoring hash/日期/日历。S2 软件已部署，但生产实验与投资有效性仍未验证，S4 继续延后。
 
 ## 2026-09-17 S2 评估实现（软件证据；manifest pending）
 
@@ -18,7 +24,7 @@
 
 ### 后续文档与等价清理（2026-09-17）
 
-- README、路线图和 TODOS 对齐 S2/e2 源码状态与未部署/未登记边界；历史协议、生产版本记录和旧指标不冒充当前核验。
+- README、路线图和 TODOS 对齐 S2/e2 当时的未部署/未登记边界；历史协议、生产版本记录和旧指标不冒充当前核验。
 - endpoint 复用已有日期对齐函数，删除重复的 as-of 过滤；10 日 lag、固定选择、权重和缺口处理不变。未发现可直接删除的无调用 Tracker 私有函数，不为清理而删测试或兼容入口。
 - 重新通过 299 tests、11 structure tests、Ruff check/format、mypy；日志 `/tmp/a-stock-tracker-cleanup-check.log`。本次未新增独立审查，上方审查结论对应 S2 落地范围；旧发布候选继续按原 commit/hash 识别。
 
