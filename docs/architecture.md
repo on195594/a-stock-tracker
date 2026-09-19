@@ -31,7 +31,7 @@ a-stock-tracker/
 - `qualitative/` 只读取已有 SQLite 定性分，不采集证据、不调用模型、不写定性缓存。
 - `cli.py` 负责组装上述模块；其他模块不得反向导入 CLI。
 
-新增业务模块时先选择上述领域，不再向仓库根目录添加 Python 实现文件。新增运行时生成文件应进入已忽略的 `data/`、`logs/` 或 `artifacts/`，其中准确率报告固定写入 `artifacts/reports/accuracy-report.txt`；受审查的静态配置（包括 S2 `experiment_manifest.json`）进入 `config/`，由 `paths.py` 提供项目绝对路径。当前 manifest 只固定原始 35 股来源和内容 hash，生产评分 hash/适用日期未知时保持 pending；无实时日历接口，报告仅接受显式 `CalendarEvidence` 合成覆盖。凭据、私钥和 token 只能放在被忽略的 `credentials/` 或环境变量中，绝不能纳入版本控制。
+新增业务模块时先选择上述领域，不再向仓库根目录添加 Python 实现文件。新增运行时生成文件应进入已忽略的 `data/`、`logs/` 或 `artifacts/`，其中准确率报告固定写入 `artifacts/reports/accuracy-report.txt`；受审查的静态配置（包括 S2 `experiment_manifest.json`）进入 `config/`，由 `paths.py` 提供项目绝对路径。当前 manifest 只固定原始 35 股来源和内容 hash，生产评分 hash/适用日期未知时保持 pending。默认报告已具备本地只读日历证据加载能力；真实生产日历的核实与启用状态，以对应取证和部署回执为准。凭据、私钥和 token 只能放在被忽略的 `credentials/` 或环境变量中，绝不能纳入版本控制。
 
 ## 自动约束
 

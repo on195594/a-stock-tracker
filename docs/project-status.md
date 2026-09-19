@@ -1,8 +1,16 @@
 # 项目状态
 
-**更新时间：** 2026-09-18
+**更新时间：** 2026-09-19
 **当前阶段：** 三阶段路线的阶段一
 **当前目标：** 证明 Framework A 是否具有可复验投资价值；L3 v2 已完成判定
+
+## 2026-09-19 生产实验取证候选（未启用）
+
+- 生产 checkout 保持 `c455f7d`；当前评估器最后功能提交为 `913dc37`，既有 cron 仍直接引用该可变 checkout。实际安装的 a-stock-lib 0.8.0 与发布 wheel `a811945b23d97eb121ff82d54bc0ba0810000a5379a9e9786fdcdc9220b30310` 的包文件一致。
+- 落库证据确认当前 writer 身份对应 scoring hash `d312c8995522b563`，于 2026-09-18 首次出现且有预定 35/35 唯一记录；固定 35 股的来源文件和 universe hash 与 manifest 一致。
+- 当前评估器只接受其中 27/35。8 行均可由冻结 writer 输入精确复算，但 producer 先汇总未舍入分项、evaluator 则汇总已舍入分项，产生 0.01 分差并被判冲突。因此首次完整合格日期与 90% 协议合格日期尚未成立，登记候选保持 `pending`，`effective_from/effective_to` 均未填写。
+- 已在仓库外生成 TuShare SSE `trade_cal` 候选，并用上交所 2026 年休市公告交叉检查；它覆盖 2026-01-01 至取证日 2026-09-19，未启用，也不冒充未来 30/60/90 日持有期证据。活动 manifest 未修改，活动 `config/trading_calendar.json` 仍不存在。
+- 隔离 master 检出从无关 cwd 通过默认报告入口加载 pending manifest，返回 `MANIFEST_PENDING / INSUFFICIENT_EVIDENCE`；该分支按设计不读取生产行，不能替代上述只读取证。未发现用户已提供的真实账户样例，S3b 状态为 `NOT_RUN_INPUT_NOT_PROVIDED`。
 
 ## 2026-09-18 S2 生产部署（manifest pending）
 
@@ -18,7 +26,7 @@
 - entry 与 d+window endpoint 均按已证明日历向后对齐（沿用 10 日 lag），并披露实际日期；相关冻结篮子逐日路径或批次连续性缺失时，全链复合指标为 NULL，端点数仅作批次诊断；无关坏行情保留独立诊断。
 - pending manifest 报告已知 expected=35，实际/合格/结果计数保持 NULL，不读取 DB；尚未执行评估时 evaluation_version 为 NULL，不伪造有效样本。
 - 默认 manifest 位于 `config/experiment_manifest.json`，由 `paths.py` 解析为与 cwd 无关的项目路径。它只固定原始 35 股来源 commit/content hash；生产 scoring hash、适用日期和证据引用使用空/NULL unknown，状态保持 `pending`。
-- 软件评估口径为 `2026-09-17.e2`。无 live calendar；未注入显式 `CalendarEvidence` 时 fail-closed，畸形日历受控降级；未联网补日历或生成生产表。e2 是软件口径，不是生产启用或投资有效性证明。
+- 软件评估口径为 `2026-09-17.e2`。默认报告已具备本地只读日历证据加载能力；真实生产日历的核实与启用状态，以对应取证和部署回执为准。缺失或畸形日历仍 fail-closed，且运行时不联网补日历或生成生产表。e2 是软件口径，不是生产启用或投资有效性证明。
 - 隔离 Python 3.13.5 / 声明 lib 0.8.0 验证：299 tests、11 structure tests、Ruff check/format、mypy 均通过。真实 Codex 只读审查发现的两个 blocker（未成熟批次阻塞、畸形日历异常）已补反例修复；限定复审 PASS，53 focused tests 通过。完整生产登记/日历仍 NOT_VERIFIED。
 - 本次未修改评分、预测写入、股票池、schema、cron、通知、生产数据库或 a-stock-lib；真实生产 manifest、样本成熟度和客户端/生产证据仍未核实。
 
