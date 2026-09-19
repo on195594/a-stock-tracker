@@ -778,12 +778,17 @@ def test_daily_price_from_tencent_hist(tmp_db, small_watchlist, fake_fetcher, fa
     assert rows["000858"] is None
 
 
-def test_accuracy_report_empty(tmp_db):
+def test_accuracy_report_empty(tmp_db, monkeypatch):
+    from a_stock_tracker.reporting import accuracy_report
+
+    monkeypatch.setattr(accuracy_report, "_current_shanghai_date", lambda: date(2026, 9, 20))
     pipeline._write_accuracy_report()
     out = Path(config.ACCURACY_REPORT_PATH).read_text(encoding="utf-8")
     assert "a-stock-tracker QFQ 策略评估报告" in out
     assert "总体证据状态：INSUFFICIENT_EVIDENCE" in out
-    assert "manifest_pending" in out
+    assert "协议状态：S2_EVALUATION" in out
+    assert "manifest_pending" not in out
+    assert "no_selected_sections" in out
     assert "人工维护标的" in out
 
 

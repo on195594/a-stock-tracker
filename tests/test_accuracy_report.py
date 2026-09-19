@@ -460,7 +460,8 @@ def test_t18_snapshot_score_conflict_is_not_recomputed_or_smoothed() -> None:
     assert summary["windows"]["90"]["selected_sections"] == 0
 
 
-def test_t19_without_proven_calendar_report_does_not_self_prove_from_latest_prices() -> None:
+def test_t19_without_proven_calendar_report_does_not_self_prove_from_latest_prices(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(paths, "trading_calendar_path", lambda: tmp_path / "missing-calendar.json")
     db = _db()
     _insert_scores(db, FIXED_CODES[:5], dates=("2026-01-05",))
     summary = build_accuracy_summary(db, manifest=_manifest(FIXED_CODES[:5]), evaluation_as_of="2026-05-05")
@@ -666,16 +667,18 @@ def test_counterexample_as_of_requires_timezone_and_converts_to_shanghai() -> No
     assert parsed.isoformat() == "2026-01-01"
 
 
-def test_default_manifest_path_is_project_relative_and_pending_across_cwd(monkeypatch, tmp_path) -> None:
+def test_default_manifest_and_calendar_are_project_relative_and_verified_across_cwd(monkeypatch, tmp_path) -> None:
     monkeypatch.chdir(tmp_path)
-    summary = build_accuracy_summary(_db())
+    summary = build_accuracy_summary(_db(), evaluation_as_of="2026-09-20")
     manifest = load_experiment_manifest(EXPERIMENT_MANIFEST_PATH)
     assert Path(EXPERIMENT_MANIFEST_PATH).is_file()
-    assert manifest.registration_status == "pending"
-    assert manifest.scoring_hashes == ()
-    assert manifest.effective_from is None and manifest.effective_to is None
-    assert summary["protocol_status"] == "MANIFEST_PENDING"
-    assert summary["gaps"] == ["manifest_pending"]
+    assert paths.trading_calendar_path().is_file()
+    assert manifest.registration_status == "verified"
+    assert manifest.scoring_hashes == ("d312c8995522b563",)
+    assert manifest.effective_from == date(2026, 9, 18)
+    assert manifest.effective_to == date(2026, 11, 17)
+    assert summary["protocol_status"] == "S2_EVALUATION"
+    assert all(window["expected"] == 35 for window in summary["windows"].values())
 
 
 def test_closed_cohort_keeps_later_evaluation_as_of_for_mature_outcomes() -> None:
@@ -835,10 +838,11 @@ def test_counterexample_public_report_controls_invalid_unicode_and_huge_manifest
     assert "NaN" not in report and "Infinity" not in report
 
 
-def test_default_pending_report_exposes_known_denominator_and_unknown_counts() -> None:
+def test_explicit_pending_report_exposes_known_denominator_and_unknown_counts() -> None:
     db = _db()
-    summary = build_accuracy_summary(db)
-    report = build_accuracy_report(db)
+    pending = _manifest(status="pending")
+    summary = build_accuracy_summary(db, manifest=pending)
+    report = build_accuracy_report(db, manifest=pending)
     for window in summary["windows"].values():
         assert window["expected"] == 35
         assert window["actual_unique_predictions"] is None

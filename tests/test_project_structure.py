@@ -137,6 +137,8 @@ def test_repository_files_do_not_contain_private_key_material() -> None:
 
 def test_tracked_configuration_stays_in_config_directory() -> None:
     assert (PROJECT_ROOT / "config" / "weights.json").is_file()
+    assert (PROJECT_ROOT / "config" / "experiment_manifest.json").is_file()
+    assert (PROJECT_ROOT / "config" / "trading_calendar.json").is_file()
 
 
 def test_shared_library_uses_the_immutable_release_artifact() -> None:

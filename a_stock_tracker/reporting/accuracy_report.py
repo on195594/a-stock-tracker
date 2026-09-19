@@ -235,7 +235,7 @@ def build_accuracy_report(
         [
             "",
             "限制：watchlist 为人工维护标的，结果不代表样本外泛化能力。",
-            "报告生产启用仍需单独授权；本实现不修改评分、预测、股票池、schema、cron或通知。",
+            "配置登记与报告生成不等于投资有效性；本报告不修改评分、预测、股票池、schema、cron或通知。",
         ]
     )
     return "\n".join(lines)
