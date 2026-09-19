@@ -22,6 +22,7 @@ from a_stock_tracker.reporting.evaluation import (
     evaluate_section,
     load_experiment_manifest,
 )
+from a_stock_tracker.scoring import score_stock
 from a_stock_tracker.signals.l3_v2 import (
     DailyBar,
     DataContractState,
@@ -156,6 +157,53 @@ def _snapshot(score: float, *, pb: float | None = 1.0) -> tuple[str, str, str, s
         json.dumps(qualitative, separators=(",", ":")),
         json.dumps(sources, separators=(",", ":")),
         "v1",
+    )
+
+
+def _writer_rounding_snapshot(mode: str) -> tuple[str, str, str, str, dict[str, Any]]:
+    quantitative = ("roe_3y_avg", "net_profit_growth", "debt_ratio", "gross_margin", "pb_percentile_10y")
+    framework: dict[str, dict[str, dict[str, Any]]] = {"fundamental": {}, "valuation": {}}
+    for index, field in enumerate(quantitative):
+        endpoint = 0.01 if mode == "quant" and index < 3 else 0.03 if mode == "total" and index == 0 else 0.0
+        framework["fundamental"][field] = {
+            "interpolate": True,
+            "breakpoints": [[0.0, 0.0], [1.0, endpoint]],
+        }
+    for field, value in (("moat_fixed", 5), ("market_pos_fixed", 2), ("sentiment_fixed", 3)):
+        framework["valuation"][field] = {"phase1_fixed": value}
+    inputs = {field: 0.5 for field in quantitative} | {
+        "moat_fixed": 5,
+        "market_pos_fixed": 2,
+        "sentiment_fixed": 3,
+    }
+    result = score_stock("000786", "A", inputs, weights={"frameworks": {"A": framework}})
+    scoring = {
+        "implementation": {
+            "input_policy_version": "2026-09-15.v1",
+            "a_stock_lib": "0.1.0",
+            "source_sha256": {
+                name: "a" * 64
+                for name in (
+                    "cli.py",
+                    "scoring.py",
+                    "data/tushare_primary_materialization.py",
+                    "qualitative/production.py",
+                )
+            },
+        },
+        "scoring_inputs": inputs,
+        "qualitative_as_of": {"moat": None, "market_pos": None, "sentiment": None},
+        "weights": framework,
+        "result": result,
+    }
+    qualitative = {"moat": 5, "market_pos": 2, "sentiment": 3}
+    sources = {key: "v1" for key in qualitative}
+    return (
+        json.dumps(scoring, separators=(",", ":")),
+        json.dumps(qualitative, separators=(",", ":")),
+        json.dumps(sources, separators=(",", ":")),
+        "v1",
+        result,
     )
 
 
@@ -697,6 +745,80 @@ def test_counterexample_result_components_are_required_and_match_frozen_qualitat
         summary = _summary(db)
         assert summary["windows"]["90"]["selected_sections"] == 0
         assert any(expected_gap in gap for gap in summary["gaps"])
+
+
+@pytest.mark.parametrize("mode", ["quant", "total"])
+def test_writer_valid_component_rounding_is_accepted(mode: str) -> None:
+    db = _db()
+    _insert_scores(db, FIXED_CODES[:5], dates=("2026-01-05",))
+    snapshot, qualitative, sources, qualitative_mode, result = _writer_rounding_snapshot(mode)
+    db.execute(
+        """UPDATE predictions
+           SET quant_score=?, total_score=?, scoring_snapshot_json=?, qualitative_snapshot_json=?,
+               qualitative_sources_json=?, qualitative_mode=?
+           WHERE code=? AND score_date='2026-01-05'""",
+        (
+            result["quant_score"],
+            result["total_score"],
+            snapshot,
+            qualitative,
+            sources,
+            qualitative_mode,
+            FIXED_CODES[0],
+        ),
+    )
+
+    summary = _summary(db)
+
+    assert summary["windows"]["90"]["qualified_snapshots"] == 5
+    assert not any("snapshot_quant_components_conflict" in gap for gap in summary["gaps"])
+    assert not any("snapshot_total_components_conflict" in gap for gap in summary["gaps"])
+
+
+@pytest.mark.parametrize(
+    ("mode", "mutate", "expected_gap"),
+    [
+        (
+            "quant",
+            lambda snapshot, _result: snapshot["result"]["component_scores"].__setitem__("roe_3y_avg", 0.03),
+            "snapshot_quant_components_conflict",
+        ),
+        (
+            "total",
+            lambda snapshot, result: (
+                snapshot["result"].__setitem__("total_score", 10.06),
+                result.__setitem__("total_score", 10.06),
+            ),
+            "snapshot_total_components_conflict",
+        ),
+    ],
+)
+def test_component_rounding_interval_rejects_out_of_range_tampering(mode, mutate, expected_gap: str) -> None:
+    db = _db()
+    _insert_scores(db, FIXED_CODES[:5], dates=("2026-01-05",))
+    snapshot_json, qualitative, sources, qualitative_mode, result = _writer_rounding_snapshot(mode)
+    snapshot = json.loads(snapshot_json)
+    mutate(snapshot, result)
+    db.execute(
+        """UPDATE predictions
+           SET quant_score=?, total_score=?, scoring_snapshot_json=?, qualitative_snapshot_json=?,
+               qualitative_sources_json=?, qualitative_mode=?
+           WHERE code=? AND score_date='2026-01-05'""",
+        (
+            result["quant_score"],
+            result["total_score"],
+            json.dumps(snapshot, separators=(",", ":")),
+            qualitative,
+            sources,
+            qualitative_mode,
+            FIXED_CODES[0],
+        ),
+    )
+
+    summary = _summary(db)
+
+    assert summary["windows"]["90"]["qualified_snapshots"] == 4
+    assert any(expected_gap in gap for gap in summary["gaps"])
 
 
 def test_counterexample_public_report_controls_invalid_unicode_and_huge_manifest_json(tmp_path) -> None:

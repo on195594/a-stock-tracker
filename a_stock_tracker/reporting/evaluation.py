@@ -369,6 +369,22 @@ def _same_recorded_precision(db_value: Any, snapshot_value: Any, decimal_places:
         return False
 
 
+def _aggregate_matches_rounded_components(
+    component_sum: Decimal,
+    aggregate: Any,
+    uncertain_component_count: int,
+    decimal_places: int = 2,
+) -> bool:
+    """Accept only aggregate drift possible from writer-side independent rounding."""
+    try:
+        recorded = Decimal(str(aggregate))
+        quantum = Decimal(1).scaleb(-decimal_places)
+        maximum_drift = quantum * Decimal(uncertain_component_count + 1) / 2
+    except (InvalidOperation, TypeError, ValueError, ArithmeticError):
+        return False
+    return recorded.is_finite() and abs(recorded - component_sum) <= maximum_drift
+
+
 def _validate_snapshot(
     *,
     score_date: date,
@@ -443,8 +459,13 @@ def _validate_snapshot(
     expected_quality = Decimal(len(QUANTITATIVE_FIELDS) - len(expected_missing)) / Decimal(len(QUANTITATIVE_FIELDS))
     if not _same_recorded_precision(expected_quality, result.get("data_quality"), 3):
         raise EvaluationInputError("snapshot_data_quality_invalid")
-    quant_components = sum(Decimal(str(component_scores[field])) for field in QUANTITATIVE_FIELDS)
-    if not _same_recorded_precision(quant_components, result["quant_score"]):
+    quant_components = sum((Decimal(str(component_scores[field])) for field in QUANTITATIVE_FIELDS), Decimal(0))
+    uncertain_component_count = len(QUANTITATIVE_FIELDS - expected_missing)
+    if not _aggregate_matches_rounded_components(
+        quant_components,
+        result["quant_score"],
+        uncertain_component_count,
+    ):
         raise EvaluationInputError("snapshot_quant_components_conflict")
     qualitative = _parse_json_object(qualitative_snapshot, "qualitative_snapshot")
     sources = _parse_json_object(qualitative_sources, "qualitative_sources")
@@ -481,8 +502,12 @@ def _validate_snapshot(
         for dimension, field in fixed_fields.items()
     ):
         raise EvaluationInputError("qualitative_component_score_conflict")
-    all_components = sum(Decimal(str(component_scores[field])) for field in SCORING_FIELDS)
-    if not _same_recorded_precision(all_components, result["total_score"]):
+    all_components = sum((Decimal(str(component_scores[field])) for field in SCORING_FIELDS), Decimal(0))
+    if not _aggregate_matches_rounded_components(
+        all_components,
+        result["total_score"],
+        uncertain_component_count,
+    ):
         raise EvaluationInputError("snapshot_total_components_conflict")
 
     as_of = snapshot.get("qualitative_as_of")
