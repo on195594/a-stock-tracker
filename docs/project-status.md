@@ -4,13 +4,13 @@
 **当前阶段：** 三阶段路线的阶段一
 **当前目标：** 证明 Framework A 是否具有可复验投资价值；L3 v2 已完成判定
 
-## 2026-09-19 生产实验取证候选（修复已验证、未启用）
+## 2026-09-19 生产实验取证候选（修复已部署、候选未启用）
 
-- 生产 checkout 保持 `c455f7d`；生产评估器最后功能提交为 `913dc37`，既有 cron 仍直接引用该可变 checkout。实际安装的 a-stock-lib 0.8.0 与发布 wheel `a811945b23d97eb121ff82d54bc0ba0810000a5379a9e9786fdcdc9220b30310` 的包文件一致。
+- 经单独授权，生产 checkout 已从 `c455f7d` 快进到包含舍入修复 `db2df78` 的 master；322 tests、11 structure tests、Ruff、format、mypy、diff check 及生产只读回验通过。既有 cron 仍直接引用该可变 checkout；实际安装的 a-stock-lib 0.8.0 与发布 wheel `a811945b23d97eb121ff82d54bc0ba0810000a5379a9e9786fdcdc9220b30310` 的包文件一致。
 - 落库证据确认当前 writer 身份对应 scoring hash `d312c8995522b563`，于 2026-09-18 首次出现且有预定 35/35 唯一记录；固定 35 股的来源文件和 universe hash 与 manifest 一致。
-- 生产 checkout `c455f7d` 的评估器只接受其中 27/35；根因是 producer 汇总未舍入分项，而 evaluator 汇总已舍入分项。master `db2df78` 已按可证明舍入区间修复并通过独立复审、322 tests、Ruff、format 与 mypy；同一生产只读数据现为 35/35，首次完整及 90% 协议合格日期均为 2026-09-18。该修复尚未部署，候选继续 `pending`，只填写 `effective_from=2026-09-18`；`effective_to` 仍待批准，历史 prediction 未改写。
+- 旧生产评估器曾因舍入顺序错误只接受 27/35；`db2df78` 按可证明区间修复后，同一生产只读数据为 35/35，首次完整及 90% 协议合格日期均为 2026-09-18。用户已预先裁决 enrollment 为 2026-09-18 至 2026-11-17；未启用的 manifest 候选现为 `verified`，历史 prediction 未改写。
 - 已在仓库外生成 TuShare SSE `trade_cal` 候选，并用上交所 2026 年休市公告交叉检查；它覆盖 2026-01-01 至取证日 2026-09-19，未启用，也不冒充未来 30/60/90 日持有期证据。活动 manifest 未修改，活动 `config/trading_calendar.json` 仍不存在。
-- 修复版隔离 master 从无关 cwd 通过默认报告入口加载 pending manifest，仍返回 `MANIFEST_PENDING / INSUFFICIENT_EVIDENCE`；该分支按设计不读取生产行，不能替代显式只读取证。真实 30/60/90 日窗口尚未成熟，未发现用户已提供的真实账户样例，S3b 状态为 `NOT_RUN_INPUT_NOT_PROVIDED`。
+- 修复版隔离 master 从无关 cwd 通过默认报告入口加载 verified 候选和本地日历，以只读事务读取生产数据并返回 `S2_EVALUATION / INSUFFICIENT_EVIDENCE`，三个窗口均固定 2026-09-18 的 35/35 截面。真实 30/60/90 日窗口尚未成熟；活动 manifest 与日历仍未修改，状态为 `CANDIDATE_READY_NOT_ACTIVATED`。未发现用户已提供的真实账户样例，S3b 状态为 `NOT_RUN_INPUT_NOT_PROVIDED`。
 
 ## 2026-09-18 S2 生产部署（manifest pending）
 
