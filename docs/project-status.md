@@ -4,13 +4,13 @@
 **当前阶段：** 三阶段路线的阶段一
 **当前目标：** 证明 Framework A 是否具有可复验投资价值；L3 v2 已完成判定
 
-## 2026-09-19 生产实验取证候选（未启用）
+## 2026-09-19 生产实验取证候选（修复已验证、未启用）
 
-- 生产 checkout 保持 `c455f7d`；当前评估器最后功能提交为 `913dc37`，既有 cron 仍直接引用该可变 checkout。实际安装的 a-stock-lib 0.8.0 与发布 wheel `a811945b23d97eb121ff82d54bc0ba0810000a5379a9e9786fdcdc9220b30310` 的包文件一致。
+- 生产 checkout 保持 `c455f7d`；生产评估器最后功能提交为 `913dc37`，既有 cron 仍直接引用该可变 checkout。实际安装的 a-stock-lib 0.8.0 与发布 wheel `a811945b23d97eb121ff82d54bc0ba0810000a5379a9e9786fdcdc9220b30310` 的包文件一致。
 - 落库证据确认当前 writer 身份对应 scoring hash `d312c8995522b563`，于 2026-09-18 首次出现且有预定 35/35 唯一记录；固定 35 股的来源文件和 universe hash 与 manifest 一致。
-- 当前评估器只接受其中 27/35。8 行均可由冻结 writer 输入精确复算，但 producer 先汇总未舍入分项、evaluator 则汇总已舍入分项，产生 0.01 分差并被判冲突。因此首次完整合格日期与 90% 协议合格日期尚未成立，登记候选保持 `pending`，`effective_from/effective_to` 均未填写。
+- 生产 checkout `c455f7d` 的评估器只接受其中 27/35；根因是 producer 汇总未舍入分项，而 evaluator 汇总已舍入分项。master `db2df78` 已按可证明舍入区间修复并通过独立复审、322 tests、Ruff、format 与 mypy；同一生产只读数据现为 35/35，首次完整及 90% 协议合格日期均为 2026-09-18。该修复尚未部署，候选继续 `pending`，只填写 `effective_from=2026-09-18`；`effective_to` 仍待批准，历史 prediction 未改写。
 - 已在仓库外生成 TuShare SSE `trade_cal` 候选，并用上交所 2026 年休市公告交叉检查；它覆盖 2026-01-01 至取证日 2026-09-19，未启用，也不冒充未来 30/60/90 日持有期证据。活动 manifest 未修改，活动 `config/trading_calendar.json` 仍不存在。
-- 隔离 master 检出从无关 cwd 通过默认报告入口加载 pending manifest，返回 `MANIFEST_PENDING / INSUFFICIENT_EVIDENCE`；该分支按设计不读取生产行，不能替代上述只读取证。未发现用户已提供的真实账户样例，S3b 状态为 `NOT_RUN_INPUT_NOT_PROVIDED`。
+- 修复版隔离 master 从无关 cwd 通过默认报告入口加载 pending manifest，仍返回 `MANIFEST_PENDING / INSUFFICIENT_EVIDENCE`；该分支按设计不读取生产行，不能替代显式只读取证。真实 30/60/90 日窗口尚未成熟，未发现用户已提供的真实账户样例，S3b 状态为 `NOT_RUN_INPUT_NOT_PROVIDED`。
 
 ## 2026-09-18 S2 生产部署（manifest pending）
 
