@@ -97,7 +97,7 @@ $MANAGED_START
 # a-stock-tracker weekly 基本面刷新 (每周六 10:00)
 $WEEKLY_RULE
 
-# a-stock-tracker QFQ 日线采集 (TuShare, 工作日 16:00，pipeline 前)
+# a-stock-tracker QFQ 日线与交易日历证据刷新 (TuShare, 工作日 16:00，pipeline 前)
 $QFQ_RULE
 
 # a-stock-tracker TuShare primary daily (工作日 17:15)
@@ -105,7 +105,7 @@ $PRIMARY_DAILY_RULE
 EOF
 )
 echo "✅ 已配置 weekly 任务"
-echo "✅ 已配置 qfq-daily-bars 任务"
+echo "✅ 已配置 qfq-daily-bars + trading-calendar 任务"
 echo "✅ 已配置 tushare-primary-daily 任务"
 
 if [ "$MARKET_DATA_READY" -eq 1 ] || [ "$PRESERVE_EXISTING_DAILY" -eq 1 ]; then
@@ -144,7 +144,7 @@ echo "=========================================="
 echo "rollback snapshot: $CRON_BACKUP_PATH"
 echo "任务详情："
 echo "  • weekly:         每周六 10:00 刷新基本面缓存"
-echo "  • qfq-daily-bars: 每个工作日 16:00 采集 QFQ 前复权日线"
+echo "  • qfq-daily-bars: 每个工作日 16:00 刷新交易日历并采集 QFQ 前复权日线"
 if [ "$MARKET_DATA_READY" -eq 1 ] || [ "$PRESERVE_EXISTING_DAILY" -eq 1 ]; then
     echo "  • primary-daily:  每个工作日 17:15 采集并物化 TuShare 估值"
     echo "  • daily:          每个工作日 17:30 评分 + 自动报告 + Telegram 观察名单"

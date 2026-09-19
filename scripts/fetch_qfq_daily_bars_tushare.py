@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import logging
 import math
 import os
@@ -14,7 +16,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -29,6 +31,7 @@ from a_stock_lib.providers.tushare_fundamentals import read_tushare_token
 from a_stock_lib.providers.tushare_quotes import to_tushare_stock_code
 from a_stock_tracker.config import WATCHLIST
 from a_stock_tracker.data.cache import DB_PATH, upsert_daily_bars
+from a_stock_tracker.paths import RUNTIME_TRADING_CALENDAR_PATH, TRACKED_TRADING_CALENDAR_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +40,9 @@ SOURCE = "tushare.pro_bar.qfq"
 BENCHMARK_SOURCE = "tushare.index_daily"
 BENCHMARK_API_SYMBOL = "H00300.CSI"
 BENCHMARK_DB_SYMBOL = "H00300"
+CALENDAR_SOURCE = "tushare.trade_cal"
+CALENDAR_OFFICIAL_REFERENCE = "上证公告〔2025〕45号"
+CALENDAR_SOURCE_DIR = RUNTIME_TRADING_CALENDAR_PATH.parent / "trading-calendar-sources"
 MAX_ATTEMPTS = 3
 RETRY_BUDGET_SECONDS = 60.0
 OVERLAP_BUFFER_DAYS = 40
@@ -63,6 +69,7 @@ _TRANSIENT_MARKERS = (
 class Args:
     backfill_days: int
     code: str | None
+    calendar_only: bool = False
 
 
 def parse_args(argv: Sequence[str] | None = None) -> Args:
@@ -71,12 +78,17 @@ def parse_args(argv: Sequence[str] | None = None) -> Args:
         "--backfill-days", type=int, default=200, help="Calendar days to fetch (default: 200 ≈ 134 trading days)"
     )
     parser.add_argument("--code", default=None, help="Single 6-digit stock code (omit to fetch full watchlist)")
+    parser.add_argument(
+        "--calendar-only", action="store_true", help="Refresh local SSE calendar evidence without DB writes"
+    )
     ns = parser.parse_args(argv)
     if ns.backfill_days <= 0:
         parser.error("--backfill-days must be positive")
     if ns.code is not None and not _CODE_RE.match(ns.code):
         parser.error("--code must be a 6-digit string")
-    return Args(ns.backfill_days, ns.code)
+    if ns.code is not None and ns.calendar_only:
+        parser.error("--calendar-only cannot be combined with --code")
+    return Args(ns.backfill_days, ns.code, ns.calendar_only)
 
 
 def _is_permission_error(exc: Exception) -> bool:
@@ -341,6 +353,143 @@ def _collect_codes(
     return failures, latest_dates
 
 
+def _atomic_write_bytes(path: Path, payload: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        with temporary.open("wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _calendar_seed_start(path: Path) -> date:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if set(payload) != {"dates", "covered_from", "covered_to", "as_of", "source"}:
+            raise ValueError("invalid shape")
+        if not isinstance(payload["dates"], list) or not isinstance(payload["source"], str) or not payload["source"]:
+            raise ValueError("invalid metadata")
+        return date.fromisoformat(payload["covered_from"])
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"invalid tracked calendar seed: {path}") from exc
+
+
+def _compact_calendar_date(value: Any, field: str) -> date:
+    text = str(value)
+    if len(text) != 8 or not text.isdigit():
+        raise RuntimeError(f"invalid {field}: {value}")
+    try:
+        return date.fromisoformat(f"{text[:4]}-{text[4:6]}-{text[6:]}")
+    except ValueError as exc:
+        raise RuntimeError(f"invalid {field}: {value}") from exc
+
+
+def _refresh_trading_calendar(
+    api: Any,
+    as_of: date,
+    *,
+    tracked_path: Path = TRACKED_TRADING_CALENDAR_PATH,
+    runtime_path: Path = RUNTIME_TRADING_CALENDAR_PATH,
+    source_dir: Path = CALENDAR_SOURCE_DIR,
+) -> Path:
+    covered_from = _calendar_seed_start(tracked_path)
+    if as_of < covered_from:
+        raise RuntimeError("calendar as_of precedes tracked coverage start")
+    frame = api.trade_cal(
+        exchange="SSE",
+        start_date=covered_from.strftime("%Y%m%d"),
+        end_date=as_of.strftime("%Y%m%d"),
+        fields="exchange,cal_date,is_open,pretrade_date",
+    )
+    if not isinstance(frame, pd.DataFrame) or frame.empty:
+        raise RuntimeError("no SSE trading-calendar rows")
+    missing = {"cal_date", "is_open"} - set(frame.columns)
+    if missing:
+        raise RuntimeError(f"missing SSE trading-calendar columns: {', '.join(sorted(missing))}")
+
+    rows: list[dict[str, Any]] = []
+    for raw in frame.to_dict(orient="records"):
+        exchange = str(raw.get("exchange") or "")
+        if exchange not in {"", "SSE"}:
+            raise RuntimeError(f"unexpected trading-calendar exchange: {exchange}")
+        calendar_date = _compact_calendar_date(raw.get("cal_date"), "cal_date")
+        raw_is_open = raw.get("is_open")
+        if isinstance(raw_is_open, bool) or raw_is_open not in (0, 1):
+            raise RuntimeError(f"invalid is_open for {calendar_date}: {raw_is_open}")
+        raw_pretrade = raw.get("pretrade_date")
+        pretrade_date = None
+        if raw_pretrade is not None and not pd.isna(raw_pretrade) and str(raw_pretrade):
+            pretrade_date = _compact_calendar_date(raw_pretrade, "pretrade_date").isoformat()
+        rows.append(
+            {
+                "exchange": "SSE",
+                "cal_date": calendar_date.isoformat(),
+                "is_open": int(raw_is_open),
+                "pretrade_date": pretrade_date,
+            }
+        )
+    rows.sort(key=lambda item: item["cal_date"])
+    observed_dates = [date.fromisoformat(item["cal_date"]) for item in rows]
+    if len(observed_dates) != len(set(observed_dates)):
+        raise RuntimeError("duplicate SSE trading-calendar dates")
+    expected_dates = [covered_from + timedelta(days=offset) for offset in range((as_of - covered_from).days + 1)]
+    if observed_dates != expected_dates:
+        raise RuntimeError("SSE trading calendar does not cover every natural date in the requested range")
+    open_dates = [date.fromisoformat(item["cal_date"]) for item in rows if item["is_open"] == 1]
+    weekend_open = [item.isoformat() for item in open_dates if item.weekday() >= 5]
+    if weekend_open:
+        raise RuntimeError(f"SSE calendar marks weekend open: {','.join(weekend_open)}")
+
+    fetched_at = datetime.now().astimezone().isoformat()
+    raw_payload = {
+        "schema_version": 1,
+        "source": CALENDAR_SOURCE,
+        "exchange": "SSE",
+        "request": {"start_date": covered_from.isoformat(), "end_date": as_of.isoformat()},
+        "fetched_at": fetched_at,
+        "rows": rows,
+    }
+    raw_bytes = (json.dumps(raw_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    raw_hash = hashlib.sha256(raw_bytes).hexdigest()
+    raw_path = source_dir / f"{raw_hash}.json"
+    if raw_path.exists() and raw_path.read_bytes() != raw_bytes:
+        raise RuntimeError(f"calendar source hash collision: {raw_hash}")
+    if not raw_path.exists():
+        _atomic_write_bytes(raw_path, raw_bytes)
+    try:
+        raw_reference = raw_path.relative_to(PROJECT_ROOT).as_posix()
+    except ValueError:
+        raw_reference = str(raw_path)
+    calendar_payload = {
+        "dates": [item.isoformat() for item in open_dates],
+        "covered_from": covered_from.isoformat(),
+        "covered_to": as_of.isoformat(),
+        "as_of": as_of.isoformat(),
+        "source": (
+            f"tushare.trade_cal:SSE;raw_path={raw_reference};raw_sha256={raw_hash};"
+            f"fetched_at={fetched_at};official_cross_check={CALENDAR_OFFICIAL_REFERENCE}"
+        ),
+    }
+    calendar_bytes = (json.dumps(calendar_payload, ensure_ascii=False, indent=2) + "\n").encode()
+    _atomic_write_bytes(runtime_path, calendar_bytes)
+    logger.info(
+        "TRADING_CALENDAR_REFRESH_OK as_of=%s open_dates=%d raw_sha256=%s",
+        as_of.isoformat(),
+        len(open_dates),
+        raw_hash,
+    )
+    return runtime_path
+
+
 def _create_api() -> Any:
     token = os.environ.get("TUSHARE_TOKEN") or read_tushare_token()
     return ts.pro_api(token) if token else ts.pro_api()
@@ -398,6 +547,16 @@ def run(args: Args) -> int:
         for code in codes:
             print(f"  {code}: client initialization failed", file=sys.stderr)
         return 1
+
+    if args.code is None or args.calendar_only:
+        try:
+            _refresh_trading_calendar(api, end)
+        except Exception as exc:
+            logger.error("TRADING_CALENDAR_REFRESH_FAILED as_of=%s detail=%s", end.isoformat(), exc)
+            print(f"TRADING_CALENDAR_REFRESH_FAILED: {exc}", file=sys.stderr)
+            return 1
+        if args.calendar_only:
+            return 0
 
     benchmark_failure: str | None = None
     with sqlite3.connect(DB_PATH) as conn:

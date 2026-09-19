@@ -5,9 +5,12 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIR = PROJECT_ROOT / "config"
+DATA_DIR = PROJECT_ROOT / "data"
 QUALITATIVE_CONFIG_DIR = CONFIG_DIR / "qualitative"
 WEIGHTS_PATH = CONFIG_DIR / "weights.json"
 EXPERIMENT_MANIFEST_PATH = CONFIG_DIR / "experiment_manifest.json"
+TRACKED_TRADING_CALENDAR_PATH = CONFIG_DIR / "trading_calendar.json"
+RUNTIME_TRADING_CALENDAR_PATH = DATA_DIR / "trading_calendar.json"
 
 
 def experiment_manifest_path() -> Path:
@@ -16,8 +19,10 @@ def experiment_manifest_path() -> Path:
 
 
 def trading_calendar_path() -> Path:
-    """Resolve the configured read-only local calendar evidence at call time."""
-    return PROJECT_ROOT / "config" / "trading_calendar.json"
+    """Prefer refreshed runtime evidence, falling back to the tracked seed."""
+    runtime = PROJECT_ROOT / "data" / "trading_calendar.json"
+    tracked = PROJECT_ROOT / "config" / "trading_calendar.json"
+    return runtime if runtime.is_file() else tracked
 
 
 ARTIFACTS_DIR = PROJECT_ROOT / "artifacts"

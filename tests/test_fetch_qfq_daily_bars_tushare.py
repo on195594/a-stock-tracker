@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+import hashlib
+import json
+from pathlib import Path
 import sqlite3
 import time
 from unittest.mock import ANY, Mock
@@ -10,6 +13,7 @@ import pytest
 
 from a_stock_lib.providers.tushare_quotes import to_tushare_stock_code
 from a_stock_tracker.data import cache as cache_mod
+from a_stock_tracker.reporting.evaluation import load_calendar_evidence
 from scripts import fetch_qfq_daily_bars_tushare as script
 
 
@@ -27,6 +31,13 @@ def isolated_db(tmp_path, monkeypatch):
 def stub_total_return_index(monkeypatch):
     original = script._fetch_total_return_index
     monkeypatch.setattr(script, "_fetch_total_return_index", Mock(return_value=(1, date.today().isoformat())))
+    return original
+
+
+@pytest.fixture(autouse=True)
+def stub_calendar_refresh(monkeypatch):
+    original = script._refresh_trading_calendar
+    monkeypatch.setattr(script, "_refresh_trading_calendar", Mock(return_value=Path("calendar.json")))
     return original
 
 
@@ -62,6 +73,26 @@ def _responses(dates: list[str], closes: list[float]) -> pd.DataFrame:
             for trade_date, close in zip(dates, closes, strict=True)
         ]
     )
+
+
+def _calendar_response(start: date, end: date) -> pd.DataFrame:
+    rows = []
+    previous_open = None
+    current = start
+    while current <= end:
+        is_open = int(current.weekday() < 5)
+        rows.append(
+            {
+                "exchange": "SSE",
+                "cal_date": current.strftime("%Y%m%d"),
+                "is_open": is_open,
+                "pretrade_date": previous_open,
+            }
+        )
+        if is_open:
+            previous_open = current.strftime("%Y%m%d")
+        current += timedelta(days=1)
+    return pd.DataFrame(reversed(rows))
 
 
 def _seed_target(db_path: str, code: str, dates: list[str], closes: list[float]) -> None:
@@ -119,6 +150,106 @@ def test_create_api_uses_shared_token_reader_when_environment_token_is_absent(mo
     assert script._create_api() is api
     read_token.assert_called_once_with()
     pro_api.assert_called_once_with("dotenv-token")
+
+
+def test_calendar_refresh_writes_auditable_runtime_evidence(tmp_path, stub_calendar_refresh) -> None:
+    tracked = tmp_path / "config" / "trading_calendar.json"
+    runtime = tmp_path / "data" / "trading_calendar.json"
+    sources = tmp_path / "data" / "trading-calendar-sources"
+    tracked.parent.mkdir()
+    tracked.write_text(
+        json.dumps(
+            {
+                "dates": ["2026-09-18"],
+                "covered_from": "2026-09-18",
+                "covered_to": "2026-09-18",
+                "as_of": "2026-09-18",
+                "source": "seed",
+            }
+        ),
+        encoding="utf-8",
+    )
+    api = Mock()
+    api.trade_cal.return_value = _calendar_response(date(2026, 9, 18), date(2026, 9, 20))
+
+    result = stub_calendar_refresh(
+        api,
+        date(2026, 9, 20),
+        tracked_path=tracked,
+        runtime_path=runtime,
+        source_dir=sources,
+    )
+
+    evidence = load_calendar_evidence(result)
+    raw_files = list(sources.glob("*.json"))
+    assert evidence.covered_from == date(2026, 9, 18)
+    assert evidence.covered_to == date(2026, 9, 20)
+    assert evidence.as_of == date(2026, 9, 20)
+    assert evidence.dates == (date(2026, 9, 18),)
+    assert len(raw_files) == 1
+    raw_hash = hashlib.sha256(raw_files[0].read_bytes()).hexdigest()
+    assert raw_files[0].stem == raw_hash
+    assert f"raw_sha256={raw_hash}" in evidence.source
+    assert script.CALENDAR_OFFICIAL_REFERENCE in evidence.source
+    api.trade_cal.assert_called_once_with(
+        exchange="SSE",
+        start_date="20260918",
+        end_date="20260920",
+        fields="exchange,cal_date,is_open,pretrade_date",
+    )
+
+
+def test_calendar_refresh_failure_preserves_previous_runtime_file(tmp_path, stub_calendar_refresh) -> None:
+    tracked = tmp_path / "tracked.json"
+    runtime = tmp_path / "runtime.json"
+    tracked.write_text(
+        json.dumps(
+            {
+                "dates": ["2026-09-18"],
+                "covered_from": "2026-09-18",
+                "covered_to": "2026-09-18",
+                "as_of": "2026-09-18",
+                "source": "seed",
+            }
+        ),
+        encoding="utf-8",
+    )
+    runtime.write_bytes(b"previous-calendar\n")
+    api = Mock()
+    incomplete = _calendar_response(date(2026, 9, 18), date(2026, 9, 20))
+    api.trade_cal.return_value = incomplete[incomplete["cal_date"] != "20260919"]
+
+    with pytest.raises(RuntimeError, match="does not cover every natural date"):
+        stub_calendar_refresh(
+            api,
+            date(2026, 9, 20),
+            tracked_path=tracked,
+            runtime_path=runtime,
+            source_dir=tmp_path / "sources",
+        )
+
+    assert runtime.read_bytes() == b"previous-calendar\n"
+
+
+def test_calendar_only_refresh_avoids_database_access(monkeypatch) -> None:
+    api = object()
+    calendar_refresh = Mock(return_value=Path("calendar.json"))
+    monkeypatch.setattr(script, "_create_api", lambda: api)
+    monkeypatch.setattr(script, "_refresh_trading_calendar", calendar_refresh)
+    monkeypatch.setattr(script.sqlite3, "connect", Mock(side_effect=AssertionError("database must not open")))
+
+    assert script.run(script.Args(backfill_days=200, code=None, calendar_only=True)) == 0
+    calendar_refresh.assert_called_once_with(api, date.today())
+
+
+def test_calendar_refresh_failure_blocks_batch_before_database(monkeypatch, capsys) -> None:
+    calendar_refresh = Mock(side_effect=RuntimeError("calendar unavailable"))
+    monkeypatch.setattr(script, "_create_api", lambda: object())
+    monkeypatch.setattr(script, "_refresh_trading_calendar", calendar_refresh)
+    monkeypatch.setattr(script.sqlite3, "connect", Mock(side_effect=AssertionError("database must not open")))
+
+    assert script.run(script.Args(backfill_days=200, code=None)) == 1
+    assert "TRADING_CALENDAR_REFRESH_FAILED: calendar unavailable" in capsys.readouterr().err
 
 
 def test_total_return_index_is_upserted_for_automatic_report(isolated_db, stub_total_return_index) -> None:

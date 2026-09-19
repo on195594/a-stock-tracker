@@ -19,11 +19,11 @@ TuShare 基本面、估值与 QFQ 行情
 
 2026-07-28 三轮减法已完成：前两轮移除 Framework B、L3 v1 新写入与回填、Google Sheets、在线 Gemini、M4/M5、历史 qualitative/outcome shadow 和手工离线入口；阶段一收口进一步删除 legacy outcome/Phase4 和手工报告入口，并降级 Telegram 语义。Git 历史承担恢复职责，生产数据库历史行不做破坏性迁移。
 
-定性输入不再联网或更新：daily 只读已有本地 v1/v2 分数，不存在或无效时使用固定 fallback。16:00 QFQ 自动任务同时更新沪深300全收益指数；17:30 daily 落库后自动刷新 30/60/90 自然日研究收益、IC、Q5−Q1 spread、批次端点回撤和日收盘最大回撤报告。
+定性输入不再联网或更新：daily 只读已有本地 v1/v2 分数，不存在或无效时使用固定 fallback。16:00 QFQ 自动任务先刷新有来源的 SSE 本地交易日历，再更新个股日线与沪深300全收益指数；17:30 daily 落库后自动刷新 30/60/90 自然日研究收益、IC、Q5−Q1 spread、批次端点回撤和日收盘最大回撤报告。日历刷新失败保留旧文件，报告在证据过期时 fail-closed。
 
 2026-09-07 投资审查修复：PB只消费合格的当日十年窗口物化分位，不再用短历史或价格/BPS重算覆盖；未来预测保存量化输入/分项/定性日期快照。输入处理、评分源码及共享包版本进入新hash，与历史cohort隔离，原9月最终检查日期不适用于新版本。历史评分不回填、不改写。
 
-S2 `2026-09-17.e2` 与舍入合同修复已部署。默认从与 cwd 无关的 `config/experiment_manifest.json` 加载已登记实验：固定 35 股、scoring hash `d312c8995522b563`，收样范围 2026-09-18 至 2026-11-17；`config/trading_calendar.json` 提供有来源的本地只读日历。当前真实窗口尚未成熟，报告仍为 `INSUFFICIENT_EVIDENCE`；日历证据过期时 fail-closed，不联网补造。详见 `docs/project-status.md`。
+S2 `2026-09-17.e2` 与舍入合同修复已部署。默认从与 cwd 无关的 `config/experiment_manifest.json` 加载已登记实验：固定 35 股、scoring hash `d312c8995522b563`，收样范围 2026-09-18 至 2026-11-17。报告优先读取 16:00 任务原子刷新的 `data/trading_calendar.json`，首次运行前以 tracked seed 回退。当前真实窗口尚未成熟，仍为 `INSUFFICIENT_EVIDENCE`；运行态证据过期时 fail-closed，不联网补造。详见 `docs/project-status.md`。
 
 **使用边界：** 报告收益从评分日收盘起算，盘后信号无法以该价格成交，且未纳入费用、滑点或成交限制；它不是可执行策略回测。报告验证Q5，不是Telegram的≥44分名单。跨行业评分适用性、冻结定性分及仓位/退出规则仍未完成投资验证。
 
@@ -44,7 +44,7 @@ python3 pipeline.py daily
 `cron-setup.sh` 管理以下任务：
 
 - 周六 10:00：财务与分红刷新；
-- 工作日 16:00：TuShare QFQ 日线；
+- 工作日 16:00：TuShare SSE 日历证据、QFQ 日线与沪深300全收益；
 - 工作日 17:15：TuShare 估值物化；
 - 工作日 17:30：Framework A daily、自动策略报告与 Telegram 观察名单。
 

@@ -14,8 +14,9 @@
 S2 `2026-09-17.e2` 已完成仓库/合成 fixture 验证，并在舍入合同修复后完成
 生产部署。默认清单在 `config/experiment_manifest.json`，固定原始 35 股、
 scoring hash `d312c8995522b563` 与 2026-09-18 至 2026-11-17 收样范围；
-`config/trading_calendar.json` 保存有来源的本地日历证据。登记不等于本路线的
-阶段二，真实窗口尚未成熟，仍为 `INSUFFICIENT_EVIDENCE`。
+tracked 日历提供首次回退；既有 16:00 QFQ 任务自动原子刷新有来源的运行态
+SSE 日历证据。登记不等于本路线的阶段二，真实窗口尚未成熟，仍为
+`INSUFFICIENT_EVIDENCE`。
 当前实现不自动选择最新 hash，也不以当前定性缓存补验历史快照；具体口径及
 验收边界见 `project-status.md` 与
 [2026-09-17 风险闭环规范 §7](https://github.com/on195594/a-stock-agent-skills/blob/af36de5/docs/specs/2026-09-17-a-stock-risk-closure-and-performance-validation-spec-v1.1.md)。

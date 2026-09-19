@@ -9,7 +9,7 @@
 - 经单独授权，生产 checkout 已从 `c455f7d` 快进到包含舍入修复 `db2df78` 的 master；322 tests、11 structure tests、Ruff、format、mypy、diff check 及生产只读回验通过。既有 cron 仍直接引用该可变 checkout；实际安装的 a-stock-lib 0.8.0 与发布 wheel `a811945b23d97eb121ff82d54bc0ba0810000a5379a9e9786fdcdc9220b30310` 的包文件一致。
 - 落库证据确认当前 writer 身份对应 scoring hash `d312c8995522b563`，于 2026-09-18 首次出现且有预定 35/35 唯一记录；固定 35 股的来源文件和 universe hash 与 manifest 一致。
 - 旧生产评估器曾因舍入顺序错误只接受 27/35；`db2df78` 按可证明区间修复后，同一生产只读数据为 35/35，首次完整及 90% 协议合格日期均为 2026-09-18。用户已预先裁决 enrollment 为 2026-09-18 至 2026-11-17；活动 manifest 以 `verified` 登记该边界，历史 prediction 未改写。
-- 经单独授权，verified manifest 与 TuShare SSE `trade_cal` 本地证据已作为活动 `config/` 配置提交并部署；日历覆盖 2026-01-01 至 2026-09-20，并由上交所 2026 年休市公告交叉检查。它不预填未来交易日，后续报告前须从批准来源刷新。
+- 经单独授权，verified manifest 与 TuShare SSE `trade_cal` 本地证据已激活。工作日 16:00 的既有 QFQ 任务会先原子刷新忽略目录中的运行态日历和按 hash 保存的原始响应；默认报告优先读取运行态证据，首次运行前回退到 tracked seed。刷新失败保留旧文件并告警，过期报告 fail-closed，不预填未来交易日。
 - 默认报告从无关 cwd 加载活动 manifest 和日历，以只读事务读取生产数据并返回 `S2_EVALUATION / INSUFFICIENT_EVIDENCE`；三个窗口均固定 2026-09-18 的 35/35 截面。实验已登记生效，但真实 30/60/90 日窗口尚未成熟，策略仍未验证有效。未发现用户已提供的真实账户样例，S3b 状态为 `NOT_RUN_INPUT_NOT_PROVIDED`。
 
 ## 2026-09-18 S2 生产部署（manifest pending）

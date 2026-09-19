@@ -681,6 +681,63 @@ def test_default_manifest_and_calendar_are_project_relative_and_verified_across_
     assert all(window["expected"] == 35 for window in summary["windows"].values())
 
 
+def test_trading_calendar_path_prefers_refreshed_runtime_evidence(tmp_path, monkeypatch) -> None:
+    tracked = tmp_path / "config" / "trading_calendar.json"
+    runtime = tmp_path / "data" / "trading_calendar.json"
+    tracked.parent.mkdir()
+    tracked.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(paths, "PROJECT_ROOT", tmp_path)
+
+    assert paths.trading_calendar_path() == tracked
+
+    runtime.parent.mkdir()
+    runtime.write_text("{}", encoding="utf-8")
+    assert paths.trading_calendar_path() == runtime
+
+
+def test_stale_runtime_calendar_fails_closed_without_falling_back_to_seed(tmp_path, monkeypatch) -> None:
+    tracked = tmp_path / "config" / "trading_calendar.json"
+    runtime = tmp_path / "data" / "trading_calendar.json"
+    tracked.parent.mkdir()
+    runtime.parent.mkdir()
+    tracked.write_text(
+        json.dumps(
+            {
+                "dates": CALENDAR_DATES,
+                "covered_from": "2026-01-01",
+                "covered_to": "2026-05-05",
+                "as_of": "2026-05-05",
+                "source": "valid-seed",
+            }
+        ),
+        encoding="utf-8",
+    )
+    runtime.write_text(
+        json.dumps(
+            {
+                "dates": CALENDAR_DATES[:-1],
+                "covered_from": "2026-01-01",
+                "covered_to": "2026-05-04",
+                "as_of": "2026-05-04",
+                "source": "stale-runtime",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(paths, "PROJECT_ROOT", tmp_path)
+    db = _db()
+    _insert_scores(db, FIXED_CODES[:5], dates=("2026-01-05",))
+
+    summary = build_accuracy_summary(
+        db,
+        manifest=_manifest(FIXED_CODES[:5]),
+        evaluation_as_of="2026-05-05",
+    )
+
+    assert summary["evidence_status"] == "INSUFFICIENT_EVIDENCE"
+    assert "calendar_coverage_insufficient" in summary["gaps"]
+
+
 def test_closed_cohort_keeps_later_evaluation_as_of_for_mature_outcomes() -> None:
     db = _db()
     _insert_scores(db, FIXED_CODES[:5], dates=("2026-01-05",))
