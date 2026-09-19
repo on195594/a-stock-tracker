@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Sequence
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import tushare as ts
@@ -42,7 +43,17 @@ BENCHMARK_API_SYMBOL = "H00300.CSI"
 BENCHMARK_DB_SYMBOL = "H00300"
 CALENDAR_SOURCE = "tushare.trade_cal"
 CALENDAR_OFFICIAL_REFERENCE = "上证公告〔2025〕45号"
+CALENDAR_OFFICIAL_CLOSURES = (
+    (date(2026, 1, 1), date(2026, 1, 3), "元旦"),
+    (date(2026, 2, 15), date(2026, 2, 23), "春节"),
+    (date(2026, 4, 4), date(2026, 4, 6), "清明节"),
+    (date(2026, 5, 1), date(2026, 5, 5), "劳动节"),
+    (date(2026, 6, 19), date(2026, 6, 21), "端午节"),
+    (date(2026, 9, 25), date(2026, 9, 27), "中秋节"),
+    (date(2026, 10, 1), date(2026, 10, 7), "国庆节"),
+)
 CALENDAR_SOURCE_DIR = RUNTIME_TRADING_CALENDAR_PATH.parent / "trading-calendar-sources"
+SHANGHAI_ZONE = ZoneInfo("Asia/Shanghai")
 MAX_ATTEMPTS = 3
 RETRY_BUDGET_SECONDS = 60.0
 OVERLAP_BUFFER_DAYS = 40
@@ -356,19 +367,43 @@ def _collect_codes(
 def _atomic_write_bytes(path: Path, payload: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    rollback = path.with_name(f".{path.name}.{os.getpid()}.rollback")
+    previous = path.read_bytes() if path.is_file() else None
+    replaced = False
     try:
         with temporary.open("wb") as handle:
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, path)
+        replaced = True
         directory_fd = os.open(path.parent, os.O_RDONLY)
         try:
             os.fsync(directory_fd)
         finally:
             os.close(directory_fd)
+    except Exception:
+        if replaced:
+            try:
+                if previous is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    with rollback.open("wb") as handle:
+                        handle.write(previous)
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                    os.replace(rollback, path)
+                directory_fd = os.open(path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+            except Exception as rollback_error:
+                raise RuntimeError(f"atomic write failed and rollback failed: {path}") from rollback_error
+        raise
     finally:
         temporary.unlink(missing_ok=True)
+        rollback.unlink(missing_ok=True)
 
 
 def _calendar_seed_start(path: Path) -> date:
@@ -445,17 +480,41 @@ def _refresh_trading_calendar(
     if observed_dates != expected_dates:
         raise RuntimeError("SSE trading calendar does not cover every natural date in the requested range")
     open_dates = [date.fromisoformat(item["cal_date"]) for item in rows if item["is_open"] == 1]
+    open_set = set(open_dates)
     weekend_open = [item.isoformat() for item in open_dates if item.weekday() >= 5]
     if weekend_open:
         raise RuntimeError(f"SSE calendar marks weekend open: {','.join(weekend_open)}")
+    closure_conflicts: list[str] = []
+    for closure_start, closure_end, label in CALENDAR_OFFICIAL_CLOSURES:
+        current = max(closure_start, covered_from)
+        last = min(closure_end, as_of)
+        while current <= last:
+            if current in open_set:
+                closure_conflicts.append(f"{label}:{current.isoformat()}:marked_open")
+            current += timedelta(days=1)
+    if closure_conflicts:
+        raise RuntimeError(f"SSE calendar conflicts with {CALENDAR_OFFICIAL_REFERENCE}: {','.join(closure_conflicts)}")
 
-    fetched_at = datetime.now().astimezone().isoformat()
+    official_range_start = max(covered_from, date(2026, 1, 1))
+    official_range_end = min(as_of, date(2026, 12, 31))
+    official_cross_check = (
+        {
+            "notice": CALENDAR_OFFICIAL_REFERENCE,
+            "covered_from": official_range_start.isoformat(),
+            "covered_to": official_range_end.isoformat(),
+            "closure_conflicts": [],
+        }
+        if official_range_start <= official_range_end
+        else None
+    )
+    fetched_at = datetime.now(SHANGHAI_ZONE).isoformat()
     raw_payload = {
         "schema_version": 1,
         "source": CALENDAR_SOURCE,
         "exchange": "SSE",
         "request": {"start_date": covered_from.isoformat(), "end_date": as_of.isoformat()},
         "fetched_at": fetched_at,
+        "official_cross_check": official_cross_check,
         "rows": rows,
     }
     raw_bytes = (json.dumps(raw_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode()
@@ -469,6 +528,12 @@ def _refresh_trading_calendar(
         raw_reference = raw_path.relative_to(PROJECT_ROOT).as_posix()
     except ValueError:
         raw_reference = str(raw_path)
+    official_source = (
+        f";official_cross_check={CALENDAR_OFFICIAL_REFERENCE};"
+        f"official_cross_check_range={official_range_start.isoformat()}..{official_range_end.isoformat()}"
+        if official_cross_check is not None
+        else ""
+    )
     calendar_payload = {
         "dates": [item.isoformat() for item in open_dates],
         "covered_from": covered_from.isoformat(),
@@ -476,7 +541,7 @@ def _refresh_trading_calendar(
         "as_of": as_of.isoformat(),
         "source": (
             f"tushare.trade_cal:SSE;raw_path={raw_reference};raw_sha256={raw_hash};"
-            f"fetched_at={fetched_at};official_cross_check={CALENDAR_OFFICIAL_REFERENCE}"
+            f"fetched_at={fetched_at}{official_source}"
         ),
     }
     calendar_bytes = (json.dumps(calendar_payload, ensure_ascii=False, indent=2) + "\n").encode()
@@ -535,7 +600,7 @@ def _fetch_total_return_index(
 
 
 def run(args: Args) -> int:
-    end = date.today()
+    end = datetime.now(SHANGHAI_ZONE).date()
     start = end - timedelta(days=args.backfill_days)
     codes = [args.code] if args.code else [item["code"] for item in WATCHLIST]
 
