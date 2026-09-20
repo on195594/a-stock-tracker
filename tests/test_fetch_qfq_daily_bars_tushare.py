@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 import hashlib
 import json
 from pathlib import Path
 import sqlite3
 import time
 from unittest.mock import ANY, Mock
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import pytest
@@ -39,6 +40,17 @@ def stub_calendar_refresh(monkeypatch):
     original = script._refresh_trading_calendar
     monkeypatch.setattr(script, "_refresh_trading_calendar", Mock(return_value=Path("calendar.json")))
     return original
+
+
+def _freeze_shanghai_clock(monkeypatch, utc_now: datetime) -> date:
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            current = utc_now.astimezone(timezone.utc)
+            return current.astimezone(tz) if tz is not None else current.replace(tzinfo=None)
+
+    monkeypatch.setattr(script, "datetime", FrozenDateTime)
+    return utc_now.astimezone(ZoneInfo("Asia/Shanghai")).date()
 
 
 def _response(trade_date: str | None = None, volume: float = 123.45) -> pd.DataFrame:
@@ -289,15 +301,24 @@ def test_calendar_refresh_rejects_official_closure_marked_open(tmp_path, stub_ca
         )
 
 
-def test_calendar_only_refresh_avoids_database_access(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    "utc_now, expected_today",
+    [
+        (datetime(2026, 9, 19, 15, 59, 59, tzinfo=timezone.utc), date(2026, 9, 19)),
+        (datetime(2026, 9, 19, 16, 0, tzinfo=timezone.utc), date(2026, 9, 20)),
+        (datetime(2026, 12, 31, 16, 0, tzinfo=timezone.utc), date(2027, 1, 1)),
+    ],
+)
+def test_calendar_only_refresh_avoids_database_access(monkeypatch, utc_now, expected_today) -> None:
     api = object()
     calendar_refresh = Mock(return_value=Path("calendar.json"))
     monkeypatch.setattr(script, "_create_api", lambda: api)
     monkeypatch.setattr(script, "_refresh_trading_calendar", calendar_refresh)
     monkeypatch.setattr(script.sqlite3, "connect", Mock(side_effect=AssertionError("database must not open")))
 
+    assert _freeze_shanghai_clock(monkeypatch, utc_now) == expected_today
     assert script.run(script.Args(backfill_days=200, code=None, calendar_only=True)) == 0
-    calendar_refresh.assert_called_once_with(api, date.today())
+    calendar_refresh.assert_called_once_with(api, expected_today)
 
 
 def test_calendar_refresh_failure_blocks_batch_before_database(monkeypatch, capsys) -> None:
@@ -654,7 +675,8 @@ def test_bse_style_code_pins_shared_converter_current_behavior() -> None:
 
 
 def test_full_watchlist_missing_today_emits_freshness_warning(isolated_db, monkeypatch, caplog) -> None:
-    yesterday = (date.today() - timedelta(days=1)).strftime("%Y%m%d")
+    expected_today = _freeze_shanghai_clock(monkeypatch, datetime(2026, 9, 19, 16, 0, tzinfo=timezone.utc))
+    yesterday = (expected_today - timedelta(days=1)).strftime("%Y%m%d")
     monkeypatch.setattr(script, "WATCHLIST", [{"code": "600036"}])
     monkeypatch.setattr(script, "_create_api", lambda: object())
     monkeypatch.setattr(script.ts, "pro_bar", Mock(return_value=_response(yesterday)))
@@ -665,4 +687,4 @@ def test_full_watchlist_missing_today_emits_freshness_warning(isolated_db, monke
     assert isinstance(script._fetch_total_return_index, Mock)
     script._fetch_total_return_index.assert_called_once()
     assert "QFQ_TUSHARE_FRESHNESS_WARNING" in caplog.text
-    assert date.today().isoformat() in caplog.text
+    assert expected_today.isoformat() in caplog.text
