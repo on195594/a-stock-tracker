@@ -4,6 +4,14 @@
 **当前阶段：** 三阶段路线的阶段一
 **当前目标：** 证明 Framework A 是否具有可复验投资价值；L3 v2 已完成判定
 
+## 2026-09-20 S2.1 amendment 最后验收
+
+- 仓库已采用 `effective_to=2026-11-30`；本次只改该字段，`effective_from=2026-09-18`、scoring hash、固定 35 股、universe hash、30/60/90、3/2/1、`min_coverage=0.90` 和 `registration_status=verified` 均不变。原始预注册历史不改写。
+- 生产激活已由独立只读回验确认：生产读取路径为 `/home/lin/a-stock-tracker/config/experiment_manifest.json`，checkout 为 activation commit `a81e1b5`；回执与脱敏证据见本轮 `round-20260920-s2.1-final` 审计包。
+- 软件验收在独立副本完成：修复默认 manifest 日期断言后，相关测试 1 passed、全量 pytest 332 passed、structure 11 passed、Ruff、format、mypy、`git diff --check` 均通过。生产 checkout 未因本轮测试修复而更新或发布。
+- 生产只读报告仍为 `S2_EVALUATION / INSUFFICIENT_EVIDENCE`；三个窗口仅有 `2026-09-18`、成熟截面 `0/0/0`、收益指标为空。未来交易日、真实样本和正式绩效证据继续 pending。
+- 状态：**S2.1 ACTIVE / DEVELOPMENT FROZEN / WAITING FOR REAL SAMPLES**。
+
 ## 2026-09-20 生产实验配置激活
 
 - 经单独授权，生产 checkout 已从 `c455f7d` 快进到包含舍入修复 `db2df78` 的 master；生产回验记录为 322 tests、11 structure tests、Ruff、format、mypy、diff check 通过。既有 cron 仍直接引用该可变 checkout；实际安装的 a-stock-lib 0.8.0 与发布 wheel `a811945b23d97eb121ff82d54bc0ba0810000a5379a9e9786fdcdc9220b30310` 的包文件一致。
@@ -17,11 +25,13 @@
 - 隔离副本仅冻结 `Asia/Shanghai` 时钟，修复 QFQ 日历跨日/跨年测试对主机 `date.today()` 的依赖；未修改生产逻辑、评分、预测、数据库、配置或 cron。
 - 隔离副本验证：focused 29 passed、全量 332 passed、structure 11 passed、Ruff、format、mypy、`git diff --check` 通过。该测试修复已合入远端 master 的 `e8a6ce8`；生产 checkout 尚未部署该提交。
 
-## 2026-09-20 S2.1 协议修订候选（未启用）
+## 2026-09-20 S2.1 协议修订候选（历史记录，已由后续激活替代）
+
+本节保留候选阶段的原始状态，不代表当前活动 manifest，也不改写原始预注册。
 
 - 只读审计确认原 `2026-09-18..2026-11-17` 边界无法在开放日评分假设下容纳 30 日的 3 个非重叠截面；用户已裁决 pending candidate 将 `effective_to` 延至 `2026-11-30`，为数学下界 2026-11-18 提供 12 天运行容错，起点、35 股、scoring hash `d312c8995522b563`、3/2/1 门槛和 90% 覆盖率均不变。
-- 候选保持 `registration_status=pending`、`evidence_ref=null`，未覆盖活动 manifest；未来交易日证据、未来写入完整性和成熟收益仍为 pending/`INSUFFICIENT_EVIDENCE`。该 amendment 在观察到起始截面后提出，不冒充原始预注册。
-- 当前仅观察到 `2026-09-18` 的 35/35 合格截面；停止新增开发，等待协议裁决与真实样本，不因候选修订或软件通过宣称投资有效。
+- 候选当时保持 `registration_status=pending`、`evidence_ref=null`，未覆盖活动 manifest；未来交易日证据、未来写入完整性和成熟收益仍为 pending/`INSUFFICIENT_EVIDENCE`。该 amendment 在观察到起始截面后提出，不冒充原始预注册。
+- 当时仅观察到 `2026-09-18` 的 35/35 合格截面；候选阶段停止新增开发，等待协议裁决与真实样本，不因候选修订或软件通过宣称投资有效。
 
 ## 2026-09-18 S2 生产部署（manifest pending）
 

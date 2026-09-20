@@ -676,7 +676,7 @@ def test_default_manifest_and_calendar_are_project_relative_and_verified_across_
     assert manifest.registration_status == "verified"
     assert manifest.scoring_hashes == ("d312c8995522b563",)
     assert manifest.effective_from == date(2026, 9, 18)
-    assert manifest.effective_to == date(2026, 11, 17)
+    assert manifest.effective_to == date(2026, 11, 30)
     assert summary["protocol_status"] == "S2_EVALUATION"
     assert all(window["expected"] == 35 for window in summary["windows"].values())
 
