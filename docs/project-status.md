@@ -15,7 +15,13 @@
 ## 2026-09-20 隔离审计测试修复（未部署）
 
 - 隔离副本仅冻结 `Asia/Shanghai` 时钟，修复 QFQ 日历跨日/跨年测试对主机 `date.today()` 的依赖；未修改生产逻辑、评分、预测、数据库、配置或 cron。
-- 隔离副本验证：focused 29 passed、全量 332 passed、structure 11 passed、Ruff、format、mypy、`git diff --check` 通过。该修复仅提交到隔离审计分支，不能视为生产 checkout 已部署。
+- 隔离副本验证：focused 29 passed、全量 332 passed、structure 11 passed、Ruff、format、mypy、`git diff --check` 通过。该测试修复已合入远端 master 的 `e8a6ce8`；生产 checkout 尚未部署该提交。
+
+## 2026-09-20 S2.1 协议修订候选（未启用）
+
+- 只读审计确认原 `2026-09-18..2026-11-17` 边界无法在开放日评分假设下容纳 30 日的 3 个非重叠截面；推荐候选仅将 `effective_to` 延至 `2026-11-18`，起点、35 股、scoring hash `d312c8995522b563`、3/2/1 门槛和 90% 覆盖率均不变。
+- 候选保持 `registration_status=pending`、`evidence_ref=null`，未覆盖活动 manifest；未来交易日证据、未来写入完整性和成熟收益仍为 pending/`INSUFFICIENT_EVIDENCE`。该 amendment 在观察到起始截面后提出，不冒充原始预注册。
+- 当前仅观察到 `2026-09-18` 的 35/35 合格截面；停止新增开发，等待协议裁决与真实样本，不因候选修订或软件通过宣称投资有效。
 
 ## 2026-09-18 S2 生产部署（manifest pending）
 

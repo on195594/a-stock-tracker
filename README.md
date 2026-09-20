@@ -23,7 +23,9 @@ TuShare 基本面、估值与 QFQ 行情
 
 2026-09-07 投资审查修复：PB只消费合格的当日十年窗口物化分位，不再用短历史或价格/BPS重算覆盖；未来预测保存量化输入/分项/定性日期快照。输入处理、评分源码及共享包版本进入新hash，与历史cohort隔离，原9月最终检查日期不适用于新版本。历史评分不回填、不改写。
 
-S2 `2026-09-17.e2` 与舍入合同修复已部署。默认从与 cwd 无关的 `config/experiment_manifest.json` 加载已登记实验：固定 35 股、scoring hash `d312c8995522b563`，收样范围 2026-09-18 至 2026-11-17。报告优先读取 16:00 任务原子刷新的 `data/trading_calendar.json`，首次运行前以 tracked seed 回退。当前真实窗口尚未成熟，仍为 `INSUFFICIENT_EVIDENCE`；运行态证据过期时 fail-closed，不联网补造。详见 `docs/project-status.md`。
+S2 `2026-09-17.e2` 与舍入合同修复已部署。默认从与 cwd 无关的 `config/experiment_manifest.json` 加载已登记实验：固定 35 股、scoring hash `d312c8995522b563`，收样范围 2026-09-18 至 2026-11-17。报告优先读取 16:00 任务原子刷新的 `data/trading_calendar.json`，首次运行前以 tracked seed 回退。当前真实窗口尚未成熟，仍为 `INSUFFICIENT_EVIDENCE`；运行态证据过期时 fail-closed，不联网补造。
+
+S2.1 只读审计提出未启用的 pending amendment candidate，将候选收样截止日延至 2026-11-18 以容纳 30 日 3 个非重叠开放日候选；活动 manifest 未改变，未来日历和投资证据仍待真实样本。详见 `docs/project-status.md`。
 
 **使用边界：** 报告收益从评分日收盘起算，盘后信号无法以该价格成交，且未纳入费用、滑点或成交限制；它不是可执行策略回测。报告验证Q5，不是Telegram的≥44分名单。跨行业评分适用性、冻结定性分及仓位/退出规则仍未完成投资验证。
 
