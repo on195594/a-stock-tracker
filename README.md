@@ -1,33 +1,23 @@
 # a-stock-tracker
 
-A 股选股与买入决策支持系统。系统帮助用户判断“买什么、什么时候买”，目标是提高获得较高风险调整后收益的概率，不承诺收益。
+已结案的 A 股选股研究项目；历史代码和数据保留供审计，通用 TuShare 数据采集继续运行。
 
-## 当前阶段
+## 当前状态
 
-项目处于三阶段路线的阶段一：证明 Framework A 是否具有可复验投资价值；L3 v2 已完成判定，仅保留为极端风险提示。
+**`CLOSED_UNPROVEN`（2026-09-21）**：Framework A 未在可接受的时间与证据预算内证明可复验投资价值。原 2026-08-12 实验因数据和协议缺陷失效，S2.1 successor 实验以“未证明”结案；不进入阶段二或阶段三，不再用于买入判断、候选扩张或实盘授权。
 
-当前自动链（截至 2026-09-20 的仓库与生产回验）：
+结案后保留的自动链：
 
 ```text
 TuShare 基本面、估值与 QFQ 行情
-  → Framework A 评分
-  → L3 v2 极端下跌风险提示（不参与候选分层）
-  → SQLite 决策快照
-  → 自动 30/60/90 日 QFQ 策略报告
-  → Telegram 未验证观察名单
+  → SQLite 通用数据与历史审计记录
 ```
 
-2026-07-28 三轮减法已完成：前两轮移除 Framework B、L3 v1 新写入与回填、Google Sheets、在线 Gemini、M4/M5、历史 qualitative/outcome shadow 和手工离线入口；阶段一收口进一步删除 legacy outcome/Phase4 和手工报告入口，并降级 Telegram 语义。Git 历史承担恢复职责，生产数据库历史行不做破坏性迁移。
+Framework A 评分、30/60/90 日策略报告和 Telegram 观察名单的定时任务已停止。相关代码、`config/experiment_manifest.json`、数据库历史行和既有报告仅作为历史证据保留，不回填、不改写，也不继续等待新的投资裁决。
 
-定性输入不再联网或更新：daily 只读已有本地 v1/v2 分数，不存在或无效时使用固定 fallback。16:00 QFQ 自动任务先刷新有来源的 SSE 本地交易日历，再更新个股日线与沪深300全收益指数；17:30 daily 落库后自动刷新 30/60/90 自然日研究收益、IC、Q5−Q1 spread、批次端点回撤和日收盘最大回撤报告。日历刷新失败保留旧文件，报告在证据过期时 fail-closed。
+16:00 QFQ 数据任务继续刷新有来源的 SSE 本地交易日历、个股日线与沪深300全收益指数；17:15 TuShare production cycle 继续物化估值。二者只维护通用数据，不产生新的 Framework A 评分或投资结论。
 
-2026-09-07 投资审查修复：PB只消费合格的当日十年窗口物化分位，不再用短历史或价格/BPS重算覆盖；未来预测保存量化输入/分项/定性日期快照。输入处理、评分源码及共享包版本进入新hash，与历史cohort隔离，原9月最终检查日期不适用于新版本。历史评分不回填、不改写。
-
-S2 `2026-09-17.e2` 与舍入合同修复已部署。默认从与 cwd 无关的 `config/experiment_manifest.json` 加载已验证实验：固定 35 股、scoring hash `d312c8995522b563`，收样范围 2026-09-18 至 2026-11-30。报告优先读取 16:00 任务原子刷新的 `data/trading_calendar.json`，首次运行前以 tracked seed 回退。当前真实窗口尚未成熟，仍为 `INSUFFICIENT_EVIDENCE`；运行态证据过期时 fail-closed，不联网补造。
-
-S2.1 amendment 已激活；只延长收样截止日，不改起点、股票池、hash 或 3/2/1 门槛。详见 `docs/project-status.md`。
-
-**使用边界：** 报告收益从评分日收盘起算，盘后信号无法以该价格成交，且未纳入费用、滑点或成交限制；它不是可执行策略回测。报告验证Q5，不是Telegram的≥44分名单。跨行业评分适用性、冻结定性分及仓位/退出规则仍未完成投资验证。
+**结论边界：** `CLOSED_UNPROVEN` 表示项目未证明 Framework A 值得继续，不等于统计上证明其必然无效。历史收益从评分日收盘起算，未纳入费用、滑点、成交限制、仓位或退出，不能作为可执行策略回测。
 
 ## 常用命令
 
@@ -36,10 +26,9 @@ python3 scripts/fetch_qfq_daily_bars_tushare.py
 python3 scripts/check_market_data_readiness.py --scope cron
 python3 -m scripts.run_tushare_primary_production_cycle daily
 python3 -m scripts.run_tushare_primary_production_cycle weekly
-python3 pipeline.py daily
 ```
 
-自动报告写入被 Git 忽略的 `artifacts/reports/accuracy-report.txt`。SQLite 是数据真相来源；Telegram 只展示未验证观察名单，不构成买入建议。
+历史策略报告位于被 Git 忽略的 `artifacts/reports/accuracy-report.txt`。SQLite 继续作为通用数据和历史记录来源；不再自动生成 Framework A 评分、报告或 Telegram 观察名单。
 
 ## 自动任务
 
@@ -48,9 +37,8 @@ python3 pipeline.py daily
 - 周六 10:00：财务与分红刷新；
 - 工作日 16:00：TuShare SSE 日历证据、QFQ 日线与沪深300全收益；
 - 工作日 17:15：TuShare 估值物化；
-- 工作日 17:30：Framework A daily、自动策略报告与 Telegram 观察名单。
 
-脚本会清理已退休的 Framework B、weekly PM、qualitative acceptance 和 legacy outcome-update 旧 cron 规则。
+脚本会清理已退休的 Framework A daily、Framework B、weekly PM、qualitative acceptance 和 legacy outcome-update 旧 cron 规则。
 
 ## 目录
 
@@ -64,16 +52,13 @@ python3 pipeline.py daily
 
 ## 配置
 
-创建项目根目录 `.env` 文件，按需设置：
+保留数据任务只需要从环境提供 TuShare 凭据：
 
 ```dotenv
 TUSHARE_TOKEN=你的_TuShare_Token
-TELEGRAM_BOT_TOKEN=你的_Telegram_Bot_Token
-TELEGRAM_CHAT_ID=你的_Telegram_Chat_ID
-QUALITATIVE_V2_MODE=on
 ```
 
-daily 不读取 Gemini 或 Google 凭证；仓库不再提供 qualitative writer。
+历史手工入口可能仍识别 Telegram/qualitative 环境变量，但结案后的定时任务不再使用它们。
 
 ## 验证
 
@@ -86,4 +71,4 @@ daily 不读取 Gemini 或 Google 凭证；仓库不再提供 qualitative writer
 git diff --check
 ```
 
-当前方向和退出条件以 `docs/evolution-roadmap.md` 为准；运行事实与 blocker 以 `docs/project-status.md` 为准；当前动作只看 `TODOS.md`。
+结案依据见 `docs/evolution-roadmap.md`；最终状态与运行边界见 `docs/project-status.md`；剩余维护范围见 `TODOS.md`。

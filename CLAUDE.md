@@ -2,18 +2,15 @@
 
 ## 目标
 
-本项目是 A 股选股与买入决策支持系统。当前唯一优先级是证明 Framework A 与 L3 v2 是否能改善风险调整后收益。
+本项目已于 2026-09-21 以 `CLOSED_UNPROVEN` 结案。当前只维护通用 TuShare 数据采集、历史数据完整性和安全修复；不再验证或恢复 Framework A/L3 投资链路。
 
 ## 当前生产边界
 
-- 只写 Framework A prediction；
-- TuShare 提供基本面、估值、当前价格、QFQ 行情和沪深300全收益基准；
-- L3 v2 只称为极端下跌风险门禁；
-- 定性输入只读已有本地缓存或固定 fallback，daily 不调用外部模型；
-- SQLite 是真相来源，daily 自动刷新唯一策略报告，Telegram 只展示未验证观察名单；
-- 不存在 Framework B、L3 v1 新写入、Sheets、qualitative acceptance 或 weekly PM 活动链。
-
-历史数据库中的 Framework B、L3 v1、outcome shadow、legacy outcome 和 Phase4 里程碑数据保持不动，但活动代码、CLI、cron 与手工迁移入口均已删除，不得据此恢复。
+- 周六 10:00 采集并物化财务/分红；
+- 工作日 16:00 刷新 SSE 交易日历、QFQ 个股行情和沪深300全收益；
+- 工作日 17:15 采集并物化估值；
+- 不运行 Framework A daily，不生成自动策略报告，不发送 Telegram 观察名单；
+- SQLite 历史 prediction、manifest、报告和审计证据保持不动，不回填、不改写、不据此恢复投资链路。
 
 ## 架构
 
@@ -27,13 +24,13 @@
 ## 约束
 
 - 不修改历史核心评分字段；
-- 不在阶段一结论前修改权重或阈值；
-- 不把风险门禁称为已验证买点；
-- 策略报告只评估最新 `weights_hash` 且 qualitative provenance 已记录的 cohort，所有窗口统一使用完整的非重叠截面，并同时报告观察池等权基线；
+- 不恢复 Framework A daily、自动策略报告、Telegram 观察名单或 S2.1 cohort 收样；
+- 不把历史评分、风险门禁或报告称为已验证买点；
+- 不修改活动权重、阈值或 manifest 以续期已结案实验；
 - 不新增手工备用入口；
 - 不增加治理、reviewer、seal、authorization 或 migration；
 - 不在测试中真实访问网络；
-- 新功能必须直接验证 alpha、买入时点或回撤。
+- 新工作仅限通用数据可靠性、安全性和历史审计维护；新的投资研究必须另立项目。
 
 ## 验证
 

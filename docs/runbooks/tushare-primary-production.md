@@ -2,7 +2,7 @@
 
 适用范围：`a-stock-tracker` 估值/市值、通用财务指标和分红事实
 状态：active
-最后更新：2026-09-20
+最后更新：2026-09-21
 
 ## 生产边界
 
@@ -25,8 +25,9 @@ cycle 会根据 `daily|weekly` 显式启用对应域，因此紧急停用必须�
 00 10 * * 6   # weekly：财务、分红采集与物化
 00 16 * * 1-5 # QFQ 个股日线与沪深300全收益指数
 15 17 * * 1-5 # daily：当日估值采集与物化
-30 17 * * 1-5 # pipeline daily、自动策略报告与 Telegram 观察名单
 ```
+
+Framework A 已于 2026-09-21 以 `CLOSED_UNPROVEN` 结案；17:30 评分、策略报告和 Telegram 观察名单任务已移除。本文仅维护通用 TuShare 数据采集。
 
 权威安装入口：
 
@@ -174,15 +175,6 @@ LIMIT 20;
 ```
 
 不要直接执行脚本文件路径，也不要在生产模块中注入 `sys.path`。
-
-### cron 安装提示旧 market-data probe stale
-
-该提示针对 daily/index/calendar/close 行情恢复门禁。处理方式：
-
-1. 不伪造或手工修改 probe 结论；
-2. 按 `docs/runbooks/market-data-provider-recovery.md` 刷新真实 capability probe；
-3. 新三域任务仍以 `check_tushare_primary_readiness.py` 为门禁；
-4. 检查 `cron-setup.sh` 是否只是保留既有 daily 任务，而不是越权新启用旧行情能力。
 
 ### readiness 非 READY
 
