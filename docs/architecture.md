@@ -33,7 +33,7 @@ a-stock-tracker/
 - `qualitative/` 只读取已有 SQLite 定性分，不采集证据、不调用模型、不写定性缓存。
 - `cli.py` 负责组装上述模块；其他模块不得反向导入 CLI。
 
-新增业务模块时先选择上述领域，不再向仓库根目录添加 Python 实现文件。新增运行时生成文件应进入已忽略的 `data/`、`logs/` 或 `artifacts/`，其中准确率报告固定写入 `artifacts/reports/accuracy-report.txt`；受审查的静态配置（包括 S2 `experiment_manifest.json` 与日历种子）进入 `config/`，由 `paths.py` 提供项目绝对路径。当前 manifest 登记固定 35 股、精确 scoring hash 与 2026-09-18 至 2026-11-17 收样范围。工作日 16:00 的既有 QFQ 任务先从 TuShare SSE `trade_cal` 原子刷新 `data/trading_calendar.json` 及按 hash 保存的规范化提供方返回行，并核对当前已有的官方休市证据；默认报告优先读取该运行态证据，缺失时回退到 tracked seed。刷新失败恢复上一份文件，过期证据仍 fail-closed；不得预填未来日期。凭据、私钥和 token 只能放在被忽略的 `credentials/` 或环境变量中，绝不能纳入版本控制。
+新增业务模块时先选择上述领域，不再向仓库根目录添加 Python 实现文件。新增运行时生成文件应进入已忽略的 `data/`、`logs/` 或 `artifacts/`，其中准确率报告固定写入 `artifacts/reports/accuracy-report.txt`；受审查的静态配置（包括 S2 `experiment_manifest.json` 与日历种子）进入 `config/`，由 `paths.py` 提供项目绝对路径。当前 manifest 已验证登记固定 35 股、精确 scoring hash 与 2026-09-18 至 2026-11-30 收样范围。工作日 16:00 的既有 QFQ 任务先从 TuShare SSE `trade_cal` 原子刷新 `data/trading_calendar.json` 及按 hash 保存的规范化提供方返回行，并核对当前已有的官方休市证据；默认报告优先读取该运行态证据，缺失时回退到 tracked seed。刷新失败恢复上一份文件，过期证据仍 fail-closed；不得预填未来日期。凭据、私钥和 token 只能放在被忽略的 `credentials/` 或环境变量中，绝不能纳入版本控制。
 
 ## 自动约束
 

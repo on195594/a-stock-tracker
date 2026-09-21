@@ -2,6 +2,12 @@
 
 所有重大变更按时间倒序记录。
 
+## 2026-09-20 — S2.1 文档对齐与临时文件清理
+
+- 对齐 README、TODO、架构、路线图与活动 manifest 的 `2026-09-18..2026-11-30` 收样范围。
+- 删除已退出活动链路的 Phase 6/Framework B、BaoStock QFQ 与旧行情迁移计划/规格；保留审计和历史设计记录。
+- 清理测试缓存、Python 字节码、过期运行锁和孤立 qualitative smoke 产物。
+
 ## 2026-09-13 — 声明依赖升级至 a-stock-lib 0.8.0
 
 - 固定不可变的 `a-stock-lib==0.8.0` Release wheel 与 SHA-256；共享 Provider 行为不变，移除的 legacy report parser 无 tracker 调用方。

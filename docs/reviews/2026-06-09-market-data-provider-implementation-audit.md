@@ -2,7 +2,7 @@
 
 日期：2026-06-09
 
-范围：`docs/plans/2026-06-09-market-data-provider-replacement-plan.md`
+范围：2026-06-09 行情 provider 迁移计划（已清理；当前运维边界见 `docs/runbooks/market-data-provider-recovery.md`）
 
 ## 总体结论
 
