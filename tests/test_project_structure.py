@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ast
 import subprocess
-import sys
 from pathlib import Path
 
 
@@ -179,15 +178,3 @@ def test_root_pipeline_remains_a_thin_compatibility_launcher() -> None:
     assert len(source.splitlines()) <= 20
     assert "from a_stock_tracker import cli as _cli" in source
     assert "_cli.run()" in source
-
-
-def test_cli_exposes_only_supported_commands() -> None:
-    result = subprocess.run(
-        [sys.executable, "pipeline.py", "--help"],
-        cwd=PROJECT_ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-    assert "{daily,remove}" in result.stdout

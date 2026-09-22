@@ -482,9 +482,7 @@ def test_full_10y_pb_window_populates_legacy_key(tmp_path: Path, monkeypatch: py
     assert val["pb_percentile_10y"] == 42.0
 
 
-def test_pb_materialization_bounds_history_and_consumer_uses_same_rank() -> None:
-    from a_stock_tracker.scoring import validated_pb_percentile
-
+def test_pb_materialization_bounds_history() -> None:
     rows = [
         {
             "trade_date": f"{year}{month:02d}28",
@@ -500,7 +498,6 @@ def test_pb_materialization_bounds_history_and_consumer_uses_same_rank() -> None
     assert patch["valuation_window_start"] == "20161028"
     assert patch["valuation_window_end"] == "20260928"
     assert patch["valuation_coverage_status"] == "FULL_10Y"
-    assert validated_pb_percentile(patch, "2026-09-30") == patch["pb_percentile_10y"]
     assert patch["pb_percentile_10y"] is not None
     gap = tpm._valuation_patch([row for row in rows if row["trade_date"] != "20200128"], "2026-09-30")
     assert gap["valuation_valid_months"] == 119
@@ -508,7 +505,6 @@ def test_pb_materialization_bounds_history_and_consumer_uses_same_rank() -> None
     assert gap["pb_percentile_10y"] is None
     short = tpm._valuation_patch(rows[-60:], "2026-09-30")
     assert short["pb_percentile_10y"] is None
-    assert validated_pb_percentile(short, "2026-09-30") is None
     # Leap-day cutoffs remain valid and never admit future observations.
     leap = tpm._monthly_valuation(
         [

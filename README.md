@@ -42,12 +42,12 @@ python3 -m scripts.run_tushare_primary_production_cycle weekly
 
 ## 目录
 
-- `a_stock_tracker/data/`：SQLite、行情、TuShare ingestion/readiness/materialization；
-- `a_stock_tracker/signals/`：L3 v2 确定性风险信号；
-- `a_stock_tracker/reporting/`：Telegram 与策略报告；
-- `a_stock_tracker/qualitative/`：已有 qualitative 分数的只读选择；
-- `scripts/`：自动运维、采集和当前研究入口；
-- `tests/`：默认活动产品测试；
+- `a_stock_tracker/data/`：活动的 SQLite、行情、TuShare ingestion/readiness/materialization；
+- `a_stock_tracker/signals/`：历史 L3 v2 风险信号实现（不再运行）；
+- `a_stock_tracker/reporting/`：历史 Telegram 与策略报告实现（不再运行）；
+- `a_stock_tracker/qualitative/`：历史 qualitative 只读选择实现（不再运行）；
+- `scripts/`：通用数据自动运维、采集和诊断入口；
+- `tests/`：活动数据链与安全边界测试；
 - `docs/`：架构、路线图、状态和历史记录。
 
 ## 配置
@@ -57,8 +57,6 @@ python3 -m scripts.run_tushare_primary_production_cycle weekly
 ```dotenv
 TUSHARE_TOKEN=你的_TuShare_Token
 ```
-
-历史手工入口可能仍识别 Telegram/qualitative 环境变量，但结案后的定时任务不再使用它们。
 
 ## 验证
 

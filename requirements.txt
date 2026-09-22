@@ -1,7 +1,5 @@
 tushare==1.4.29
 a-stock-lib @ https://github.com/on195594/a-stock-lib/releases/download/v0.8.0/a_stock_lib-0.8.0-py3-none-any.whl#sha256=a811945b23d97eb121ff82d54bc0ba0810000a5379a9e9786fdcdc9220b30310
 pytest
-python-dotenv
-pypdf==6.14.2
 ruff
 mypy

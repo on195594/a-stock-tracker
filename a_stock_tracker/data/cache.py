@@ -4,17 +4,14 @@ A 股选股管道的 SQLite 缓存层。
 
 保留的职责：
 - stock_fundamentals 基本面缓存
-- spot_em_snapshot 当日行情快照缓存
-- predictions / index_prices / qualitative_scores schema
+- 通用行情和审计表 schema
 
-旧 skill 时代的分析结论缓存、预警和持仓 CLI 已移除。本项目只做选股信号验证，
-不做持仓或账户管理。
+旧 skill 时代的分析结论缓存、预警和持仓 CLI 已移除。
 """
 
 import json
 import re as _re
 import sqlite3
-import sys
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -75,72 +72,6 @@ def get_db() -> sqlite3.Connection:
         updated_at TEXT,
         ttl_hours INTEGER DEFAULT 168
     )""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS spot_em_snapshot (
-        snapshot_date TEXT PRIMARY KEY,
-        data JSON,
-        created_at TEXT
-    )""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS predictions (
-        id              INTEGER PRIMARY KEY AUTOINCREMENT,
-        code            TEXT    NOT NULL,
-        name            TEXT,
-        framework       TEXT    NOT NULL,
-        score_date      TEXT    NOT NULL,
-        price_at_score  REAL,
-        quant_score     REAL,
-        total_score     REAL,
-        weights_hash    TEXT,
-        report_period   TEXT,
-        outcome_30d     REAL,
-        outcome_60d     REAL,
-        outcome_90d     REAL,
-        benchmark_30d   REAL,
-        benchmark_60d   REAL,
-        benchmark_90d   REAL,
-        alpha_30d       REAL GENERATED ALWAYS AS (outcome_30d - benchmark_30d) VIRTUAL,
-        alpha_60d       REAL GENERATED ALWAYS AS (outcome_60d - benchmark_60d) VIRTUAL,
-        alpha_90d       REAL GENERATED ALWAYS AS (outcome_90d - benchmark_90d) VIRTUAL,
-        estimate_flag   INTEGER DEFAULT 0,
-        threshold_adjusted INTEGER DEFAULT 0,
-        entry_signal    INTEGER,
-        entry_signal_version TEXT,
-        entry_signal_status TEXT,
-        entry_signal_reason TEXT,
-        entry_signal_source TEXT,
-        entry_signal_fetched_at TEXT,
-        l3_v2_signal    INTEGER,
-        l3_v2_version   TEXT,
-        l3_v2_status    TEXT,
-        l3_v2_reason    TEXT,
-        l3_v2_fetched_at TEXT,
-        qualitative_snapshot_json TEXT,
-        qualitative_sources_json TEXT,
-        qualitative_mode TEXT,
-        scoring_snapshot_json TEXT,
-        created_at      TEXT,
-        UNIQUE(code, framework, score_date)
-    )""")
-    _ensure_columns(
-        conn,
-        "predictions",
-        {
-            "entry_signal": "INTEGER",
-            "entry_signal_version": "TEXT",
-            "entry_signal_status": "TEXT",
-            "entry_signal_reason": "TEXT",
-            "entry_signal_source": "TEXT",
-            "entry_signal_fetched_at": "TEXT",
-            "l3_v2_signal": "INTEGER",
-            "l3_v2_version": "TEXT",
-            "l3_v2_status": "TEXT",
-            "l3_v2_reason": "TEXT",
-            "l3_v2_fetched_at": "TEXT",
-            "qualitative_snapshot_json": "TEXT",
-            "qualitative_sources_json": "TEXT",
-            "qualitative_mode": "TEXT",
-            "scoring_snapshot_json": "TEXT",
-        },
-    )
     conn.execute("""CREATE TABLE IF NOT EXISTS daily_bars (
         code TEXT NOT NULL,
         trade_date TEXT NOT NULL,
@@ -187,47 +118,6 @@ def get_db() -> sqlite3.Connection:
         close   REAL NOT NULL,
         PRIMARY KEY (symbol, date)
     )""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS qualitative_scores (
-        code        TEXT NOT NULL,
-        moat        INTEGER NOT NULL,
-        market_pos  INTEGER NOT NULL,
-        sentiment   INTEGER NOT NULL,
-        scored_date TEXT NOT NULL,
-        PRIMARY KEY (code, scored_date)
-    )""")
-
-    # 保留已有 v2 行的兼容表。活动产品只读这些历史分数，不再提供 writer。
-    conn.execute("""CREATE TABLE IF NOT EXISTS qualitative_scores_v2 (
-        code          TEXT NOT NULL,
-        name          TEXT NOT NULL,
-        as_of_date    TEXT NOT NULL,
-        input_hash    TEXT NOT NULL,
-        model         TEXT NOT NULL,
-        overall_status TEXT NOT NULL CHECK (overall_status IN ('scored', 'insufficient_data')),
-        moat          INTEGER,
-        market_pos    INTEGER,
-        sentiment     INTEGER,
-        context_json  TEXT NOT NULL,
-        result_json   TEXT NOT NULL,
-        scored_at     TEXT NOT NULL,
-        PRIMARY KEY (code, as_of_date, input_hash, model)
-    )""")
-    conn.execute("""CREATE INDEX IF NOT EXISTS idx_qualitative_scores_v2_latest
-        ON qualitative_scores_v2(code, as_of_date DESC, scored_at DESC)""")
-
-    # 兼容旧库：qualitative_scores 曾经用 code 单列主键，无法支持漂移检测。
-    pk_cols = conn.execute("SELECT COUNT(*) FROM pragma_table_info('qualitative_scores') WHERE pk > 0").fetchone()[0]
-    if pk_cols == 1:
-        conn.execute("DROP TABLE qualitative_scores")
-        conn.execute("""CREATE TABLE qualitative_scores (
-            code        TEXT NOT NULL,
-            moat        INTEGER NOT NULL,
-            market_pos  INTEGER NOT NULL,
-            sentiment   INTEGER NOT NULL,
-            scored_date TEXT NOT NULL,
-            PRIMARY KEY (code, scored_date)
-        )""")
-
     conn.commit()
     return conn
 
@@ -376,35 +266,6 @@ def insert_market_data_audit(
     )
 
 
-def latest_market_data_audit(
-    conn: sqlite3.Connection,
-    purpose: str,
-    code: str,
-    run_date: str,
-) -> dict[str, Any] | None:
-    row = conn.execute(
-        """SELECT source, status, fallback_source, fallback_reason, error_code,
-                  error_message, fetched_at
-           FROM market_data_audit
-           WHERE purpose=? AND code=? AND run_date=?
-           ORDER BY id DESC
-           LIMIT 1""",
-        (purpose, code, run_date),
-    ).fetchone()
-    if not row:
-        return None
-    source, status, fallback_source, fallback_reason, error_code, error_message, fetched_at = row
-    return {
-        "source": source,
-        "status": status,
-        "fallback_source": fallback_source,
-        "fallback_reason": fallback_reason,
-        "error_code": error_code,
-        "error_message": error_message,
-        "fetched_at": fetched_at,
-    }
-
-
 def is_expired(updated_at_str: str, ttl_hours: int) -> bool:
     updated = datetime.fromisoformat(updated_at_str)
     return datetime.now() - updated > timedelta(hours=ttl_hours)
@@ -482,140 +343,3 @@ def set_fundamentals(
     conn.commit()
     conn.close()
     return f"已缓存 {name}({code}) 行业:{industry} TTL:{ttl_hours}h"
-
-
-def list_codes() -> list[str]:
-    """返回所有基本面缓存中的股票代码（含过期），按更新时间倒序。"""
-    conn = get_db()
-    rows = conn.execute("SELECT code FROM stock_fundamentals ORDER BY updated_at DESC").fetchall()
-    conn.close()
-    return [r[0] for r in rows]
-
-
-def get_spot_em_snapshot(date_str: str) -> list | None:
-    """查询当日全量行情快照，不存在返回 None。"""
-    conn = get_db()
-    row = conn.execute("SELECT data FROM spot_em_snapshot WHERE snapshot_date=?", (date_str,)).fetchone()
-    conn.close()
-    return None if row is None else json.loads(row[0])
-
-
-def get_recent_spot_em_snapshot(date_str: str, max_age_days: int = 3) -> tuple[str, list] | None:
-    """查询 date_str 前 max_age_days 天内最近一份行情快照。"""
-    cutoff = (datetime.fromisoformat(date_str) - timedelta(days=max_age_days)).date().isoformat()
-    conn = get_db()
-    row = conn.execute(
-        """SELECT snapshot_date, data
-           FROM spot_em_snapshot
-           WHERE snapshot_date < ? AND snapshot_date >= ?
-           ORDER BY snapshot_date DESC
-           LIMIT 1""",
-        (date_str, cutoff),
-    ).fetchone()
-    conn.close()
-    if row is None:
-        return None
-    snapshot_date, data = row
-    return snapshot_date, json.loads(data)
-
-
-def set_spot_em_snapshot(date_str: str, data: list) -> None:
-    """写入当日全量行情快照。"""
-    conn = get_db()
-    conn.execute(
-        """INSERT OR REPLACE INTO spot_em_snapshot (snapshot_date, data, created_at)
-           VALUES (?,?,?)""",
-        (date_str, json.dumps(data, ensure_ascii=False), datetime.now().isoformat()),
-    )
-    conn.commit()
-    conn.close()
-
-
-def cmd_get(args: list[str]) -> None:
-    if len(args) < 1:
-        print("CACHE_MISS")
-        return
-    result = get_fundamentals(args[0])
-    if result is None:
-        print("CACHE_MISS")
-        return
-    print(json.dumps(result, ensure_ascii=False, indent=2))
-
-
-def cmd_set(args: list[str]) -> None:
-    if len(args) < 4:
-        print("错误：需要参数 <代码> <名称> <行业> <JSON数据> [TTL]", file=sys.stderr)
-        sys.exit(1)
-    code, name, industry, data_str = args[0], args[1], args[2], args[3]
-    ttl_hours = int(args[4]) if len(args) > 4 else get_industry_ttl(industry)
-    try:
-        data = json.loads(data_str)
-    except json.JSONDecodeError as e:
-        print(f"JSON解析错误: {e}", file=sys.stderr)
-        sys.exit(1)
-    print(set_fundamentals(code, name, industry, data, ttl=ttl_hours))
-
-
-def cmd_list() -> None:
-    conn = get_db()
-    stocks = conn.execute(
-        "SELECT code, name, industry, updated_at, ttl_hours FROM stock_fundamentals ORDER BY updated_at DESC"
-    ).fetchall()
-    conn.close()
-
-    valid_count = sum(1 for s in stocks if not is_expired(s[3], s[4]))
-    print(f"=== 基本面缓存 ({valid_count}有效 / {len(stocks)}条) ===")
-    for code, name, industry, updated_at, ttl_hours in stocks:
-        status = "已过期" if is_expired(updated_at, ttl_hours) else "有效"
-        print(f"  {name}({code}) [{industry}] 更新:{updated_at[:16]} TTL:{ttl_hours}h [{status}]")
-
-
-def cmd_cleanup() -> None:
-    conn = get_db()
-    stocks = conn.execute("SELECT code, name, updated_at, ttl_hours FROM stock_fundamentals").fetchall()
-    expired_names = [f"{s[1]}({s[0]})" for s in stocks if is_expired(s[2], s[3])]
-    for code, _, updated_at, ttl_hours in stocks:
-        if is_expired(updated_at, ttl_hours):
-            conn.execute("DELETE FROM stock_fundamentals WHERE code=?", (code,))
-    conn.commit()
-    conn.close()
-
-    if expired_names:
-        print(f"已清除过期基本面缓存：{', '.join(expired_names)}")
-    else:
-        print("无过期缓存，无需清理")
-
-
-def cmd_clear(args: list[str]) -> None:
-    conn = get_db()
-    if args:
-        code = args[0]
-        conn.execute("DELETE FROM stock_fundamentals WHERE code=?", (code,))
-        conn.commit()
-        print(f"已清除 {code} 的基本面缓存")
-    else:
-        conn.execute("DELETE FROM stock_fundamentals")
-        conn.commit()
-        print("已清除全部基本面缓存")
-    conn.close()
-
-
-COMMANDS: dict[str, Any] = {
-    "get": cmd_get,
-    "set": cmd_set,
-    "list": cmd_list,
-    "cleanup": cmd_cleanup,
-    "clear": cmd_clear,
-}
-
-
-if __name__ == "__main__":
-    if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
-        print(__doc__)
-        sys.exit(0)
-    cmd = sys.argv[1]
-    remaining = sys.argv[2:]
-    if cmd in ("list", "cleanup"):
-        COMMANDS[cmd]()
-    else:
-        COMMANDS[cmd](remaining)

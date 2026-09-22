@@ -5,33 +5,32 @@
 ```text
 a-stock-tracker/
 ├── a_stock_tracker/          # 可导入的业务包
-│   ├── cli.py                # 主编排 CLI 的真实实现
-│   ├── config.py             # watchlist 与运行配置
+│   ├── cli.py                # 已退休 Framework A 编排（历史保留）
+│   ├── config.py             # watchlist 与历史运行配置
 │   ├── paths.py              # 项目路径的单一来源
-│   ├── scoring.py            # Framework A 确定性评分
-│   ├── data/                 # SQLite、行情、TuShare readiness/materialization 与缓存
-│   ├── signals/              # L3 v2 风险信号
-│   ├── reporting/            # Telegram 与策略报告
-│   └── qualitative/          # 已有本地定性分的只读选择
+│   ├── scoring.py            # Framework A 历史评分实现
+│   ├── data/                 # 活动的 SQLite、行情与 TuShare 数据链
+│   ├── signals/              # L3 v2 历史风险信号实现
+│   ├── reporting/            # 历史 Telegram 与策略报告实现
+│   └── qualitative/          # 历史本地定性分只读选择
 ├── config/                   # 受版本控制的运行配置
 │   ├── weights.json
 │   ├── experiment_manifest.json # 已结案 S2 实验的历史身份与收样边界
 │   └── trading_calendar.json # 有来源的本地日历种子与 fail-closed 回退
-├── scripts/                  # 独立运维、采集和研究入口
-├── tests/                    # 自动化测试与 fixture
-├── docs/                     # 设计、计划、规范、runbook 与历史审查
-├── reviews/                  # 受控里程碑证据（保留原路径）
+├── scripts/                  # 通用数据运维、采集和诊断入口
+├── tests/                    # 活动数据链与安全边界测试
+├── docs/                     # 当前文档、归档设计与历史审查
 ├── data/                     # 忽略的运行态日历、数据库与缓存
 ├── artifacts/                # 运行产物（忽略，不提交）
-└── pipeline.py               # 兼容旧命令的薄启动器
+└── pipeline.py               # 历史 CLI 的薄兼容启动器（不受 cron 调用）
 ```
 
 ## 依赖方向
 
-- `data/` 与 `signals/` 提供底层能力，不依赖通知或展示层；TuShare production cycle 只编排 data 层采集、readiness 和原子物化。
-- `reporting/` 可以读取数据与评分结果，但不能成为数据真相来源。
-- `qualitative/` 只读取已有 SQLite 定性分，不采集证据、不调用模型、不写定性缓存。
-- `cli.py` 负责组装上述模块；其他模块不得反向导入 CLI。
+- 活动链只由 `scripts/` 编排 `data/` 的采集、readiness 和原子物化；`data/` 不依赖历史评分、通知或展示层。
+- `cli.py`、`scoring.py`、`signals/`、`reporting/` 与 `qualitative/` 仅为结案审计保留，不属于活动生产链，也不再维持退休功能测试。
+- 历史 `reporting/` 不能成为数据真相来源；历史 `qualitative/` 不联网、不调用模型、不写定性缓存。
+- 其他模块不得反向导入 `cli.py`。
 
 新增业务模块时先选择上述领域，不再向仓库根目录添加 Python 实现文件。新增运行时生成文件应进入已忽略的 `data/`、`logs/` 或 `artifacts/`。S2 `experiment_manifest.json` 作为 `CLOSED_UNPROVEN` 实验的历史配置保留，不再驱动定时评分或报告；历史准确率报告仍位于 `artifacts/reports/accuracy-report.txt`。工作日 16:00 的 QFQ 数据任务继续从 TuShare SSE `trade_cal` 原子刷新 `data/trading_calendar.json` 及按 hash 保存的规范化提供方返回行，并核对已有官方休市证据；刷新失败恢复上一份文件，不得预填未来日期。凭据、私钥和 token 只能放在被忽略的 `credentials/` 或环境变量中，绝不能纳入版本控制。
 

@@ -14,12 +14,9 @@
 
 ## 架构
 
-- `a_stock_tracker/data/`：数据库、provider、采集、readiness、物化；
-- `a_stock_tracker/signals/`：L3 v2；
-- `a_stock_tracker/reporting/`：Telegram 与策略报告；
-- `a_stock_tracker/qualitative/`：本地 qualitative 只读选择；
-- `a_stock_tracker/cli.py`：应用编排；
-- `pipeline.py`：薄兼容启动器。
+- `a_stock_tracker/data/`：活动的数据库、provider、采集、readiness、物化；
+- `a_stock_tracker/signals/`、`reporting/`、`qualitative/`：结案审计保留的历史实现；
+- `a_stock_tracker/cli.py`、`pipeline.py`：已退休 Framework A 的历史编排与薄兼容启动器，不受 cron 调用。
 
 ## 约束
 

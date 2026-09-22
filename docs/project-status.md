@@ -107,14 +107,13 @@
 | qualitative acceptance | 已删除 |
 | weekly PM loop | 已删除 |
 
-## 自动 cron
+## 结案后自动 cron
 
 - 周六 10:00：TuShare 财务/分红；
-- 工作日 16:00：QFQ；
-- 工作日 17:15：TuShare 估值；
-- 工作日 17:30：Framework A daily、自动策略报告与 Telegram 观察名单。
+- 工作日 16:00：SSE 交易日历、QFQ 个股日线与沪深300全收益；
+- 工作日 17:15：TuShare 估值。
 
-`cron-setup.sh` 会清理已退休的 Framework B、weekly PM、acceptance 和 legacy outcome-update 旧规则。
+`cron-setup.sh` 只安装以上三类通用数据任务，并清理已退休的 Framework A daily、Framework B、weekly PM、acceptance 和 legacy outcome-update 旧规则。
 
 ## 减法结果
 

@@ -43,27 +43,10 @@ __all__ = [
     "MarketDataResult",
     "MarketDataStatus",
     "RemovedMarketDataProvider",
-    "ak",
     "get_default_market_data_provider",
     "now",
     "_now",
 ]
-
-
-class _RemovedAkshareShim:
-    """Test compatibility shim. Production code must not call this object."""
-
-    def stock_zh_a_hist_tx(self, **kwargs: Any) -> Any:
-        raise RuntimeError("AKShare market-data interface has been removed")
-
-    def stock_zh_a_hist(self, **kwargs: Any) -> Any:
-        raise RuntimeError("AKShare/Eastmoney market-data interface has been removed")
-
-    def stock_zh_index_daily_tx(self, **kwargs: Any) -> Any:
-        raise RuntimeError("AKShare index market-data interface has been removed")
-
-
-ak = _RemovedAkshareShim()
 
 
 class RemovedMarketDataProvider:

@@ -5,10 +5,10 @@ Last updated: 2026-05-12（Phase 3.6 完成）
 Design ref: `docs/design.md`
 Status: **历史实施计划，已归档（当前执行基线见 `docs/evolution-roadmap.md`）**
 
-> 归档说明（2026-06-08）：本文档记录 Phase 1 至 Phase 3.6 的早期建设步骤，
-> 不再作为当前项目计划来源。当前项目已进入 Framework A + L3 + Phase 6
-> report-only 准备期；后续阶段、门槛和边界以 `docs/evolution-roadmap.md`
-> 以及 `docs/plans/` 下的最新计划为准。
+> 归档说明：本文档记录 Phase 1 至 Phase 3.6 的早期建设步骤，文中的接口、
+> 数据源、命令和测试数量均为历史信息，不再作为当前实现或计划来源。项目已于
+> 2026-09-21 以 `CLOSED_UNPROVEN` 结案；当前状态以 `README.md` 和
+> `docs/project-status.md` 为准，不得按本文恢复 Framework A 或旧目录。
 
 Phase 1（Step 0-7）：✅ 完成
 Phase 3（Step 8-14）：✅ 完成

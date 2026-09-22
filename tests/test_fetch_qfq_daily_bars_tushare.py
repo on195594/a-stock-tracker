@@ -14,7 +14,6 @@ import pytest
 
 from a_stock_lib.providers.tushare_quotes import to_tushare_stock_code
 from a_stock_tracker.data import cache as cache_mod
-from a_stock_tracker.reporting.evaluation import load_calendar_evidence
 from scripts import fetch_qfq_daily_bars_tushare as script
 
 
@@ -192,12 +191,12 @@ def test_calendar_refresh_writes_auditable_runtime_evidence(tmp_path, stub_calen
         source_dir=sources,
     )
 
-    evidence = load_calendar_evidence(result)
+    evidence = json.loads(result.read_text(encoding="utf-8"))
     raw_files = list(sources.glob("*.json"))
-    assert evidence.covered_from == date(2026, 9, 18)
-    assert evidence.covered_to == date(2026, 9, 20)
-    assert evidence.as_of == date(2026, 9, 20)
-    assert evidence.dates == (date(2026, 9, 18),)
+    assert evidence["covered_from"] == "2026-09-18"
+    assert evidence["covered_to"] == "2026-09-20"
+    assert evidence["as_of"] == "2026-09-20"
+    assert evidence["dates"] == ["2026-09-18"]
     assert len(raw_files) == 1
     raw_hash = hashlib.sha256(raw_files[0].read_bytes()).hexdigest()
     raw_payload = json.loads(raw_files[0].read_text(encoding="utf-8"))
@@ -208,9 +207,9 @@ def test_calendar_refresh_writes_auditable_runtime_evidence(tmp_path, stub_calen
         "covered_to": "2026-09-20",
         "closure_conflicts": [],
     }
-    assert f"raw_sha256={raw_hash}" in evidence.source
-    assert script.CALENDAR_OFFICIAL_REFERENCE in evidence.source
-    assert "official_cross_check_range=2026-09-18..2026-09-20" in evidence.source
+    assert f"raw_sha256={raw_hash}" in evidence["source"]
+    assert script.CALENDAR_OFFICIAL_REFERENCE in evidence["source"]
+    assert "official_cross_check_range=2026-09-18..2026-09-20" in evidence["source"]
     api.trade_cal.assert_called_once_with(
         exchange="SSE",
         start_date="20260918",

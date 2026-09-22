@@ -1,29 +1,24 @@
 from __future__ import annotations
 
-import os
-import sys
+import sqlite3
 from datetime import date, timedelta
 
 import pandas as pd
 import pytest
 
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
-
-from a_stock_lib import __version__ as A_STOCK_LIB_VERSION  # noqa: E402
-from a_stock_tracker.data import cache as cache_mod  # noqa: E402
-from a_stock_tracker.data.market_data import (  # noqa: E402
-    AUTH_MISSING,
-    PERMISSION_DENIED,
-    SOURCE_DISABLED,
-    get_default_market_data_provider,
-)
-from a_stock_lib.providers.tushare_quotes import (  # noqa: E402
+from a_stock_lib import __version__ as A_STOCK_LIB_VERSION
+from a_stock_lib.providers.tushare_quotes import (
     INDEX_DAILY_SOURCE,
     TushareMarketDataProvider,
     to_tushare_index_code,
     to_tushare_stock_code,
+)
+from a_stock_tracker.data import cache as cache_mod
+from a_stock_tracker.data.market_data import (
+    AUTH_MISSING,
+    PERMISSION_DENIED,
+    SOURCE_DISABLED,
+    get_default_market_data_provider,
 )
 
 REQUIRES_A_STOCK_LIB_040 = pytest.mark.skipif(
@@ -39,6 +34,23 @@ def tmp_db(tmp_path, monkeypatch):
     conn = cache_mod.get_db()
     yield conn
     conn.close()
+
+
+def test_get_db_leaves_retired_research_tables_untouched(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "tracker.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE qualitative_scores (code TEXT PRIMARY KEY, scored_date TEXT)")
+        conn.execute("INSERT INTO qualitative_scores VALUES ('600036', '2026-09-01')")
+
+    monkeypatch.setattr(cache_mod, "DB_PATH", str(db_path))
+    with cache_mod.get_db() as conn:
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        historical_row = conn.execute("SELECT code, scored_date FROM qualitative_scores").fetchone()
+
+    assert "predictions" not in tables
+    assert "qualitative_scores_v2" not in tables
+    assert "spot_em_snapshot" not in tables
+    assert historical_row == ("600036", "2026-09-01")
 
 
 def _bars(days: int = 120) -> pd.DataFrame:
