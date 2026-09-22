@@ -3,7 +3,7 @@
 **更新时间：** 2026-09-22
 **Framework A 生命周期：** `CLOSED_UNPROVEN`
 **投资状态：** Framework A 未证明有效；其阶段二、阶段三均不启动
-**活动范围：** 通用 TuShare 数据采集，以及个人同业选股工具；同业发现和候选审查功能已在相邻目录实现
+**活动范围：** 通用 TuShare 数据采集，以及个人同业选股工具；同业发现、候选审查和显式快照对比已在相邻目录实现
 
 ## 2026-09-21 Framework A 结案
 
@@ -169,5 +169,5 @@
 
 1. 本仓库代码只维护通用数据采集的正确性、安全性和审计能力；不再维护 Framework A 的投资有效性路线图。
 2. 不手工运行或恢复 Framework A daily、策略报告或 Telegram 观察名单定时任务。
-3. 个人同业选股工具以 `plans/2026-09-22-personal-stock-selection-roadmap.md` 和 `specs/2026-09-22-peer-screen-spec.md` 为正式文档，实现在相邻的独立公开 Git 仓库 `a-stock-screen/`（`on195594/a-stock-screen`），不写旧实验数据；第一次同业发现交付已完成，第二次候选审查功能等待本人实际判断后验收。
+3. 个人同业选股工具以 `plans/2026-09-22-personal-stock-selection-roadmap.md` 和 `specs/2026-09-22-peer-screen-spec.md` 为正式文档，实现在相邻的独立公开 Git 仓库 `a-stock-screen/`（`on195594/a-stock-screen`），不写旧实验数据；同业发现、候选审查和显式快照对比均已实现；本人已接受“国投电力继续研究，甘肃能源、湖北能源暂不研究”作为第二次交付判断。监管门与部分股息输入仍不完整，正式评分和动作保持 `not_formed`。
 4. 超出该路线图的新研究必须另立项目并重新提出假设、数据可达性、硬截止日和独立样本外验证；不得恢复或继续顺延 Framework A。
