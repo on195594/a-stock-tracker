@@ -5,7 +5,7 @@
 
 ## 当前范围
 
-`a-stock-tracker` 已以 `CLOSED_UNPROVEN` 结案。本文只处理 TuShare 通用数据任务的恢复：
+Framework A 已以 `CLOSED_UNPROVEN` 结案。本文只处理 TuShare 通用数据任务的恢复：
 
 - 周六财务/分红采集与物化；
 - 工作日 16:00 SSE 交易日历、QFQ 个股行情和沪深300全收益；

@@ -25,6 +25,10 @@ a-stock-tracker/
 └── pipeline.py               # 历史 CLI 的薄兼容启动器（不受 cron 调用）
 ```
 
+## 个人同业选股工具边界
+
+`docs/plans/2026-09-22-personal-stock-selection-roadmap.md` 与 `docs/specs/2026-09-22-peer-screen-spec.md` 是本项目正式文档。工具实现在仓库旁的 `a-stock-screen/` 目录，通过显式只读连接消费旧库；它不属于本仓库业务包，不新增本仓库模块、数据库 schema、入口或定时任务。
+
 ## 依赖方向
 
 - 活动链只由 `scripts/` 编排 `data/` 的采集、readiness 和原子物化；`data/` 不依赖历史评分、通知或展示层。

@@ -2,7 +2,7 @@
 
 ## 目标
 
-本项目已于 2026-09-21 以 `CLOSED_UNPROVEN` 结案。当前只维护通用 TuShare 数据采集、历史数据完整性和安全修复；不再验证或恢复 Framework A/L3 投资链路。
+Framework A 已于 2026-09-21 以 `CLOSED_UNPROVEN` 结案。仓库内代码当前只维护通用 TuShare 数据采集、历史数据完整性和安全修复；不再验证或恢复 Framework A/L3 投资链路。2026-09-22 获准的个人同业选股工具由本项目正式文档定义，但实现在相邻 `a-stock-screen/` 目录。
 
 ## 当前生产边界
 
@@ -27,7 +27,7 @@
 - 不新增手工备用入口；
 - 不增加治理、reviewer、seal、authorization 或 migration；
 - 不在测试中真实访问网络；
-- 新工作仅限通用数据可靠性、安全性和历史审计维护；新的投资研究必须另立项目。
+- 本仓库代码变更仅限通用数据可靠性、安全性和历史审计维护；个人同业选股工具按 `docs/plans/2026-09-22-personal-stock-selection-roadmap.md` 与 `docs/specs/2026-09-22-peer-screen-spec.md` 在相邻目录实现。超出该范围的新投资研究必须另立项目。
 
 ## 验证
 

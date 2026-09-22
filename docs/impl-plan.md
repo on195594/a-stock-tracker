@@ -6,7 +6,7 @@ Design ref: `docs/design.md`
 Status: **历史实施计划，已归档（当前执行基线见 `docs/evolution-roadmap.md`）**
 
 > 归档说明：本文档记录 Phase 1 至 Phase 3.6 的早期建设步骤，文中的接口、
-> 数据源、命令和测试数量均为历史信息，不再作为当前实现或计划来源。项目已于
+> 数据源、命令和测试数量均为历史信息，不再作为当前实现或计划来源。Framework A 已于
 > 2026-09-21 以 `CLOSED_UNPROVEN` 结案；当前状态以 `README.md` 和
 > `docs/project-status.md` 为准，不得按本文恢复 Framework A 或旧目录。
 
