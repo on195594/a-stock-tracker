@@ -21,7 +21,7 @@ Framework A 评分、30/60/90 日策略报告和 Telegram 观察名单的定时�
 
 ## 当前个人工具方向
 
-2026-09-22 起，本项目正式维护个人同业选股工具的[路线图](docs/plans/2026-09-22-personal-stock-selection-roadmap.md)与[实施 Spec](docs/specs/2026-09-22-peer-screen-spec.md)。该工具用于当前资料下的同业发现与研究排序，不恢复 Framework A，也不证明收益有效性。实现按文档放在相邻 `a-stock-screen/` 目录；当前尚未实施。
+2026-09-22 起，本项目正式维护个人同业选股工具的[路线图](docs/plans/2026-09-22-personal-stock-selection-roadmap.md)与[实施 Spec](docs/specs/2026-09-22-peer-screen-spec.md)。该工具用于当前资料下的同业发现与研究排序，不恢复 Framework A，也不证明收益有效性。第一次同业发现交付已在相邻 `a-stock-screen/` 目录实现，并以长江电力为参照完成真实池外数据验证；前三名候选审查说明也已生成，等待本人作出一次实际研究判断后验收。`a-stock-screen/` 是[独立公开仓库](https://github.com/on195594/a-stock-screen)；变化跟踪尚未启动。
 
 ## 常用命令
 

@@ -27,7 +27,7 @@ a-stock-tracker/
 
 ## 个人同业选股工具边界
 
-`docs/plans/2026-09-22-personal-stock-selection-roadmap.md` 与 `docs/specs/2026-09-22-peer-screen-spec.md` 是本项目正式文档。工具实现在仓库旁的 `a-stock-screen/` 目录，通过显式只读连接消费旧库；它不属于本仓库业务包，不新增本仓库模块、数据库 schema、入口或定时任务。
+`docs/plans/2026-09-22-personal-stock-selection-roadmap.md` 与 `docs/specs/2026-09-22-peer-screen-spec.md` 是本项目正式文档。工具实现在仓库旁的独立公开 Git 仓库 [`a-stock-screen`](https://github.com/on195594/a-stock-screen)，通过显式只读连接消费旧库；它不属于本仓库业务包，不新增本仓库模块、数据库 schema、入口或定时任务。
 
 ## 依赖方向
 

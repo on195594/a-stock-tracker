@@ -9,7 +9,7 @@
 - provider fail-closed、来源审计、缓存完整性与故障恢复；
 - 项目结构与数据源 registry。
 
-Framework A 评分/prediction、L3、qualitative 选择、策略报告和 Telegram 观察名单已经退出活动产品，因此不再由默认测试维护。对应生产实现、manifest、历史数据库行和审计材料仅为结案证据保留。个人同业选股工具按正式 Spec 在相邻 `a-stock-screen/` 目录维护自己的小型测试；其他新研究必须另立项目和测试合同。
+Framework A 评分/prediction、L3、qualitative 选择、策略报告和 Telegram 观察名单已经退出活动产品，因此不再由默认测试维护。对应生产实现、manifest、历史数据库行和审计材料仅为结案证据保留。个人同业选股工具按正式 Spec 在相邻独立 Git 仓库 `a-stock-screen/` 维护自己的小型测试；其他新研究必须另立项目和测试合同。
 
 ## 网络边界
 

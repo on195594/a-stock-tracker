@@ -5,8 +5,8 @@ Framework A 已于 2026-09-21 以 **`CLOSED_UNPROVEN`** 结案；不再等待 30
 ## 当前正式方向
 
 1. 个人同业选股工具以 `docs/plans/2026-09-22-personal-stock-selection-roadmap.md` 和 `docs/specs/2026-09-22-peer-screen-spec.md` 为正式文档。
-2. 下一项实现是在相邻 `a-stock-screen/` 目录完成第一次同业发现交付；不向本仓库增加选股入口，不恢复 Framework A。
-3. 实际 TuShare 权限和池外数据可达性尚未验证；拿不到合格数据时报告缺口，不放宽规则凑候选。
+2. 第一次同业发现交付已完成，第二次候选审查说明已生成，`a-stock-screen/` 已初始化为独立公开 Git 仓库；下一步阅读真实报告并在已有笔记中作出一次“继续研究／暂不研究”判断。完成该验收前不实现第三次变化跟踪。
+3. 2026-09-22 已验证当前账号可取得本次所需的 `stock_basic`、`daily_basic` 和逐股 `fina_indicator`；这不保证未来权限，失败时仍报告缺口，不放宽规则凑候选。
 
 ## 本仓库保留维护
 

@@ -2,7 +2,7 @@
 
 ## 目标
 
-Framework A 已于 2026-09-21 以 `CLOSED_UNPROVEN` 结案。仓库内代码当前只维护通用 TuShare 数据采集、历史数据完整性和安全修复；不再验证或恢复 Framework A/L3 投资链路。2026-09-22 获准的个人同业选股工具由本项目正式文档定义，但实现在相邻 `a-stock-screen/` 目录。
+Framework A 已于 2026-09-21 以 `CLOSED_UNPROVEN` 结案。仓库内代码当前只维护通用 TuShare 数据采集、历史数据完整性和安全修复；不再验证或恢复 Framework A/L3 投资链路。2026-09-22 获准的个人同业选股工具由本项目正式文档定义，但实现在相邻独立 Git 仓库 `a-stock-screen/`。
 
 ## 当前生产边界
 
