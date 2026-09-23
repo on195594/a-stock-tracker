@@ -9,18 +9,15 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Callable, NamedTuple
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from a_stock_lib.providers.tushare_quotes import (  # noqa: E402
+from a_stock_lib.providers.tushare_quotes import (
     TUSHARE_VOLUME_UNIT,
     TushareMarketDataProvider,
     to_tushare_index_code,
     to_tushare_stock_code,
 )
-from a_stock_tracker.data.cache import DB_PATH  # noqa: E402
+from a_stock_tracker.data.cache import DB_PATH
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SAMPLES = ["600036", "000786", "002594"]
 INDEX_SAMPLE = "000300"
 REFERENCE_SOURCE = "tushare.pro_bar.qfq"

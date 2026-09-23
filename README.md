@@ -21,13 +21,13 @@ Framework A 评分、30/60/90 日策略报告和 Telegram 观察名单的定时�
 
 ## 当前个人工具方向
 
-2026-09-22 起，本项目正式维护个人同业选股工具的[路线图](docs/plans/2026-09-22-personal-stock-selection-roadmap.md)与[实施 Spec](docs/specs/2026-09-22-peer-screen-spec.md)。该工具用于当前资料下的同业发现与研究排序，不恢复 Framework A，也不证明收益有效性。相邻独立公开仓库 [`a-stock-screen/`](https://github.com/on195594/a-stock-screen) 已完成真实池外同业发现、前三名候选审查和显式指定旧快照的变化跟踪；同日真实对照未发现变化。候选研究因监管门与部分股息输入不完整而保持 fail-closed；本人已确认“国投电力继续研究，甘肃能源、湖北能源暂不研究”的研究优先级，但这不构成买入结论。
+2026-09-22 起，本项目正式维护个人同业选股工具的[路线图](docs/plans/2026-09-22-personal-stock-selection-roadmap.md)与[实施 Spec](docs/specs/2026-09-22-peer-screen-spec.md)。该工具用于当前资料下的同业发现与研究排序，不恢复 Framework A，也不证明收益有效性。相邻独立公开仓库 [`a-stock-screen/`](https://github.com/on195594/a-stock-screen) 已完成真实池外同业发现、前三名候选审查和显式指定旧快照的变化跟踪；同日真实对照未发现变化。本人已确认“国投电力继续研究，甘肃能源、湖北能源暂不研究”的研究优先级。2026-09-23 补证确认国投电力 2025 年报为标准无保留意见、分红预案为每股 0.5081 元；因尚无权益分派实施公告及可被 runtime 接受的完整 P0 证据，正式评分和动作仍为 `not_formed`，不构成买入结论。
 
 ## 常用命令
 
 ```bash
-python3 scripts/fetch_qfq_daily_bars_tushare.py
-python3 scripts/check_market_data_readiness.py --scope cron
+python3 -m scripts.fetch_qfq_daily_bars_tushare
+python3 -m scripts.check_market_data_readiness --scope cron
 python3 -m scripts.run_tushare_primary_production_cycle daily
 python3 -m scripts.run_tushare_primary_production_cycle weekly
 ```

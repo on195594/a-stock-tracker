@@ -19,7 +19,7 @@ a-stock-tracker/
 │   └── trading_calendar.json # 有来源的本地日历种子与 fail-closed 回退
 ├── scripts/                  # 通用数据运维、采集和诊断入口
 ├── tests/                    # 活动数据链与安全边界测试
-├── docs/                     # 当前文档、归档设计与历史审查
+├── docs/                     # 当前文档、运行手册与历史审查
 ├── data/                     # 忽略的运行态日历、数据库与缓存
 ├── artifacts/                # 运行产物（忽略，不提交）
 └── pipeline.py               # 历史 CLI 的薄兼容启动器（不受 cron 调用）

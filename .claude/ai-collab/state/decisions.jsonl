@@ -1,1 +1,0 @@
-{"date": "2026-07-05", "question": "如何将 a-stock-tracker 从评分追踪管道改造为股票推荐系统：A(仅改push格式) vs B(tiered推荐+始终有内容) vs C(系统级重构recommender.py)", "candidates": ["A-push格式增强", "B-tiered推荐始终有内容", "C-系统级重构"], "verdict": "B-tiered推荐始终有内容：agy和codex独立评估均收敛；L3降级为推荐优先级维度不再作为推送门槛；分三级primary/backup/radar；工程改动范围可控(pipeline.py+telegram_push.py)", "escalated_to_user": false}

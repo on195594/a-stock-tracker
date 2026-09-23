@@ -18,7 +18,6 @@ ALLOWED_TOP_LEVEL_FILES = {
     "CLAUDE.md",
     "README.md",
     "TODOS.md",
-    "agent.md",
     "cron-alert-wrap.sh",
     "cron-setup.sh",
     "pipeline.py",
@@ -26,12 +25,10 @@ ALLOWED_TOP_LEVEL_FILES = {
     "requirements.txt",
 }
 ALLOWED_TOP_LEVEL_DIRECTORIES = {
-    ".claude",
     ".github",
     "a_stock_tracker",
     "config",
     "docs",
-    "reviews",
     "scripts",
     "tests",
 }
@@ -75,7 +72,7 @@ def _repository_files() -> set[Path]:
 
 
 def _production_modules() -> list[Path]:
-    return sorted(PACKAGE_ROOT.rglob("*.py"))
+    return sorted([*PACKAGE_ROOT.rglob("*.py"), *(PROJECT_ROOT / "scripts").glob("*.py")])
 
 
 def test_top_level_entries_are_explicitly_allowed() -> None:

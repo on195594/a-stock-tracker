@@ -25,16 +25,16 @@ Framework A daily、自动策略报告和 Telegram 观察名单已永久退出�
 ## 通用数据恢复前置条件
 
 1. 环境中存在有效的 `TUSHARE_TOKEN`。
-2. `python3 scripts/probe_tushare_market_data.py` 能生成当日分层诊断报告。
-3. `python3 scripts/check_market_data_readiness.py --scope cron` 的结果仅用于定位 provider、缓存和日期问题；不得据此恢复 Framework A。
+2. `python3 -m scripts.probe_tushare_market_data` 能生成当日分层诊断报告。
+3. `python3 -m scripts.check_market_data_readiness --scope cron` 的结果仅用于定位 provider、缓存和日期问题；不得据此恢复 Framework A。
 4. QFQ、交易日历和 TuShare primary 三域分别满足各自来源、日期、覆盖率及原子物化合同。
 
 ## 恢复步骤
 
 ```bash
 source .venv/bin/activate
-python3 scripts/probe_tushare_market_data.py
-python3 scripts/check_market_data_readiness.py --scope cron
+python3 -m scripts.probe_tushare_market_data
+python3 -m scripts.check_market_data_readiness --scope cron
 sqlite3 tracker.db "SELECT error_code, COUNT(*) FROM market_data_audit WHERE error_code='SOURCE_DISABLED' GROUP BY error_code;"
 bash cron-setup.sh
 crontab -l

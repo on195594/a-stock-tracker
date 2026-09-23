@@ -8,7 +8,7 @@
 - 当前状态以 `README.md`、`docs/project-status.md` 和 `TODOS.md` 为准；目录与依赖边界以
   `docs/architecture.md` 为准。个人同业选股工具以 `docs/plans/2026-09-22-personal-stock-selection-roadmap.md`
   和 `docs/specs/2026-09-22-peer-screen-spec.md` 为正式依据。
-- `docs/design.md`、`docs/impl-plan.md` 及状态文档中标为“历史”的章节只供追溯，不能据此恢复旧入口、旧目录、旧定时任务或已取消阶段。
+- 历史结论以 `docs/evolution-roadmap.md`、`CHANGELOG.md` 和 `docs/reviews/` 为追溯入口；已删除的旧设计、计划和 Spec 只在 Git 历史中保留，不能据此恢复旧入口、旧目录、旧定时任务或已取消阶段。
 - 文档冲突时优先采用更新且明确标注为当前状态的文档；不要用历史计划覆盖当前结案决定。
 - Framework A 已于 2026-09-21 以 `CLOSED_UNPROVEN` 结案。仓库内活动代码范围仍仅包括通用 TuShare 数据采集、历史数据完整性和安全修复；2026-09-22 获准的个人同业选股工具只在上述正式文档规定的相邻独立 Git 仓库 `a-stock-screen/` 实现。
 

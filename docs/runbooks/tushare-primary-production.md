@@ -197,7 +197,7 @@ LIMIT 20;
 
 ## 回滚
 
-回滚前先停止或避开正在运行的 weekly/daily/outcome writer，并保存当前失败证据。不得删除 shadow DB 或 artifact。顺序必须是：先停止后续 production cycle，再恢复 DB/依赖，最后复验；只关闭环境开关不足以停止 scheduled cycle。
+回滚前先停止或避开正在运行的 weekly、daily 和 QFQ writer，并保存当前失败证据。不得删除 shadow DB 或 artifact。顺序必须是：先停止后续 production cycle，再恢复 DB/依赖，最后复验；只关闭环境开关不足以停止 scheduled cycle。
 
 ### 恢复 crontab
 
@@ -215,11 +215,11 @@ backups/crontab/crontab-YYYYMMDD-HHMMSS.txt
 
 ### 恢复运行依赖
 
-仅使用事先备份并校验过的本地 wheel，禁止临时从不受控索引下载：
+仅恢复切换前已备份并校验过的本地 wheel，禁止临时从不受控索引下载；具体版本以该次切换记录为准：
 
 ```bash
-.venv/bin/python -m pip install --no-index --no-deps \
-  /absolute/path/to/a_stock_lib-0.5.2-py3-none-any.whl
+PREVIOUS_WHEEL=/absolute/path/to/validated-a-stock-lib-wheel.whl
+.venv/bin/python -m pip install --no-index --no-deps "$PREVIOUS_WHEEL"
 .venv/bin/python -m pip check
 ```
 
