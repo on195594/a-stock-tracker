@@ -15,3 +15,10 @@ credentials/
 .claude/
 /data/
 artifacts/
+
+.worker.env
+.local/
+output/
+.playwright-mcp/
+
+.web.env

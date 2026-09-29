@@ -1,32 +1,48 @@
-[tool.ruff]
-line-length = 120
-target-version = "py313"
-exclude = [
-    ".git",
-    ".venv",
-    "__pycache__",
+[project]
+name = "a-stock-tracker"
+version = "1.0.0"
+description = "Personal A-share research: discover, follow and review changes"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "flet[web]==1.0.1",
+    "uvicorn>=0.30.0",
+    "pandas>=2.2.0",
+    "requests>=2.31.0",
+    "tushare==1.4.29",
 ]
 
-[tool.ruff.lint]
-select = [
-    "E9",
-    "F63",
-    "F7",
-    "F82",
-    "F401",
-    "F841",
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.5.0",
+    "mypy>=1.10.0",
+    "playwright>=1.45.0",
 ]
 
 [tool.pytest.ini_options]
+testpaths = ["tests"]
 pythonpath = ["."]
+norecursedirs = ["data", ".local", "output", ".venv"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "I",
+]
+ignore = [
+    "E501",
+]
 
 [tool.mypy]
 python_version = "3.13"
-files = [
-    "a_stock_tracker",
-    "tests",
-    "scripts/fetch_qfq_daily_bars_tushare.py",
-]
-ignore_missing_imports = true
-follow_imports = "skip"
-warn_unused_configs = true
+strict = false
+warn_unused_ignores = true
+
+files = ["a_stock_tracker"]
