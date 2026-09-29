@@ -64,15 +64,15 @@ def _bars(days: int = 120) -> pd.DataFrame:
     )
 
 
-def test_daily_bars_upsert_and_load_are_stable(tmp_db) -> None:
+def test_daily_bars_upsert_is_stable(tmp_db) -> None:
     inserted = cache_mod.upsert_daily_bars(tmp_db, "600036", _bars(2), "source", volume_unit="share")
     cache_mod.upsert_daily_bars(tmp_db, "600036", _bars(2), "source", volume_unit="share")
-    rows = cache_mod.load_daily_bars(tmp_db, "600036", date.today().isoformat(), 120)
+    rows = tmp_db.execute(
+        "SELECT adjusted, volume_unit FROM daily_bars WHERE code=? ORDER BY trade_date", ("600036",)
+    ).fetchall()
 
     assert inserted == 2
-    assert len(rows) == 2
-    assert rows[0]["adjusted"] == "none"
-    assert rows[0]["volume_unit"] == "share"
+    assert rows == [("none", "share"), ("none", "share")]
     assert tmp_db.execute("SELECT COUNT(*) FROM daily_bars").fetchone()[0] == 2
 
 

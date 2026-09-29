@@ -9,9 +9,9 @@ Framework A 已于 **2026-09-21 `CLOSED_UNPROVEN`** 结案：未在可接受的�
 - 本仓：数据可靠性、完整性、安全修复。
 - `a-stock-lib`：共享确定性计算与 Provider。
 - `a-stock-agent-skills`：首次研究、持仓监控及文本 QA；独立状态与授权。
-- `a-stock-screen`：同业发现、个人研究记录与事实变化。当前产品合同及待办只在其 `docs/FLET_DESIGN.md` 维护；本仓保留的 [原路线图](docs/plans/2026-09-22-personal-stock-selection-roadmap.md) 与 [peer-screen-v1 Spec](docs/specs/2026-09-22-peer-screen-spec.md) 是原规则边界依据，不是第二份开发计划。
+- `a-stock-screen`：同业发现、个人研究记录与事实变化。当前产品合同及待办只在其 `docs/FLET_DESIGN.md` 维护；本仓仅保留 [peer-screen-v1 Spec](docs/specs/2026-09-22-peer-screen-spec.md) 的原规则合同，不再维护第二份路线图。
 
-历史 `cli.py`、`scoring.py`、`signals/`、`reporting/`、`qualitative/`、`pipeline.py`、manifest、数据库行、报告与审计证据原位保留；不回填或重算，不恢复 Framework A daily、策略报告或 Telegram 观察名单。历史收益未计费用、滑点、成交限制、仓位及退出，不能称为可执行回测。超出已批准个人同业工具范围的新投资研究仍须另立明确假设、可达样本、硬截止日和样本外验证的项目。
+退休的 `cli.py`、`scoring.py`、`signals/`、`reporting/`、`qualitative/`、`pipeline.py` 及旧 QFQ 文件缓存由 Git 保留，活动目录不留备用执行链。manifest、权重、数据库行、报告与原始审计证据保持不动；不回填或重算，不恢复 Framework A daily、策略报告或 Telegram 观察名单。历史收益未计费用、滑点、成交限制、仓位及退出，不能称为可执行回测。超出已批准个人同业工具范围的新投资研究仍须另立明确假设、可达样本、硬截止日和样本外验证的项目。
 
 ## 活动数据链
 
@@ -42,4 +42,4 @@ python3 -m scripts.run_tushare_primary_production_cycle weekly
 git diff --check
 ```
 
-纯文档修改至少 `git diff --check`。历史结案与变更分别查 [evolution-roadmap](docs/evolution-roadmap.md)、[CHANGELOG](CHANGELOG.md) 和 `docs/reviews/`；不要把历史计划恢复为当前任务。
+纯文档修改至少 `git diff --check`。结案依据见 [evolution-roadmap](docs/evolution-roadmap.md)，原始变更/审查记录见 [CHANGELOG](CHANGELOG.md) 和 `docs/reviews/`。退休源码、旧路线图和重复状态页通过 `git show 7468568:<原路径>` 恢复，不再作为当前开发入口。

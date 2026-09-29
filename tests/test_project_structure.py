@@ -17,10 +17,8 @@ ALLOWED_TOP_LEVEL_FILES = {
     "CHANGELOG.md",
     "CLAUDE.md",
     "README.md",
-    "TODOS.md",
     "cron-alert-wrap.sh",
     "cron-setup.sh",
-    "pipeline.py",
     "pyproject.toml",
     "requirements.txt",
 }
@@ -32,8 +30,9 @@ ALLOWED_TOP_LEVEL_DIRECTORIES = {
     "scripts",
     "tests",
 }
-ALLOWED_PACKAGE_FILES = {"__init__.py", "cli.py", "config.py", "paths.py", "scoring.py"}
-ALLOWED_PACKAGE_DIRECTORIES = {"data", "qualitative", "reporting", "signals"}
+ALLOWED_PACKAGE_FILES = {"__init__.py", "config.py", "paths.py"}
+ALLOWED_PACKAGE_DIRECTORIES = {"data"}
+RETIRED_MODULES = {"cli", "scoring", "qualitative", "reporting", "signals", "data.l3_v2_qfq_cache"}
 LEGACY_IMPORT_ROOTS = {
     "config",
     "gemini_scorer",
@@ -98,7 +97,7 @@ def test_legacy_layout_is_not_reintroduced() -> None:
     assert not (PACKAGE_ROOT / "data" / "akshare_provider.py").exists()
     assert list(PROJECT_ROOT.glob("qualitative_v2_*.py")) == []
     assert list(PROJECT_ROOT.glob("*.json")) == []
-    assert {path.name for path in PROJECT_ROOT.glob("*.py")} == {"pipeline.py"}
+    assert list(PROJECT_ROOT.glob("*.py")) == []
 
 
 def test_legacy_fetcher_is_not_referenced_by_production_code() -> None:
@@ -157,21 +156,23 @@ def test_production_modules_use_package_imports_without_path_injection() -> None
             if isinstance(node, ast.Import):
                 imported_names = [alias.name for alias in node.names]
             elif isinstance(node, ast.ImportFrom) and node.module:
-                imported_names = [node.module]
+                imported_names = [node.module, *(f"{node.module}.{alias.name}" for alias in node.names)]
             for name in imported_names:
                 root = name.split(".", 1)[0]
                 if root in LEGACY_IMPORT_ROOTS or root.startswith("qualitative_v2_"):
                     violations.append(f"{path.relative_to(PROJECT_ROOT)}: legacy import {name}")
-                if name == "a_stock_tracker.cli":
-                    violations.append(f"{path.relative_to(PROJECT_ROOT)}: reverse dependency on cli")
+                if any(
+                    name == f"a_stock_tracker.{module}" or name.startswith(f"a_stock_tracker.{module}.")
+                    for module in RETIRED_MODULES
+                ):
+                    violations.append(f"{path.relative_to(PROJECT_ROOT)}: retired dependency {name}")
 
     assert violations == []
 
 
-def test_root_pipeline_remains_a_thin_compatibility_launcher() -> None:
-    launcher = PROJECT_ROOT / "pipeline.py"
-    source = launcher.read_text(encoding="utf-8")
-
-    assert len(source.splitlines()) <= 20
-    assert "from a_stock_tracker import cli as _cli" in source
-    assert "_cli.run()" in source
+def test_retired_investment_entrypoints_cannot_be_run() -> None:
+    assert not (PROJECT_ROOT / "pipeline.py").exists()
+    for module in RETIRED_MODULES:
+        relative = module.replace(".", "/")
+        assert not (PACKAGE_ROOT / f"{relative}.py").exists()
+        assert not (PACKAGE_ROOT / relative).exists()

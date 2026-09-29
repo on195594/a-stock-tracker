@@ -24,7 +24,6 @@ pythonpath = ["."]
 python_version = "3.13"
 files = [
     "a_stock_tracker",
-    "pipeline.py",
     "tests",
     "scripts/fetch_qfq_daily_bars_tushare.py",
 ]

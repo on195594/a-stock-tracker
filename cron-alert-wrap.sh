@@ -1,12 +1,10 @@
 #!/bin/bash
 # 包裹 a-stock-tracker 的 cron 命令：原样执行，非0退出码时发 Telegram 告警，再透传原退出码。
-# 目的：堵住"cron 调用层失败（venv损坏/python缺失/cd失败）"这层盲区——
-# 这层失败发生在 pipeline.py 自身的异常处理之前，_alert_crash() 不会触发，
-# 否则又是 2026-04 那次 claude command not found 静默两个月的同类风险。
+# 捕获数据任务启动前的失败（venv损坏/python缺失/cd失败），不依赖任务内部异常处理。
 #
 # 用法：cron-alert-wrap.sh "<完整shell命令>" [<告警文本里用的标签>] [--alert-exit-2]
 # 默认保留 exit 2 不重复告警的历史行为；需要把 exit 2 作为业务告警信号的任务必须显式传入
-# --alert-exit-2（例如 qualitative-v2 production acceptance 的 ROLLBACK）。
+# --alert-exit-2。
 
 set -uo pipefail
 

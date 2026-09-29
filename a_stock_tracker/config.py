@@ -1,8 +1,6 @@
 import os
 
-from a_stock_tracker.paths import ACCURACY_REPORT_PATH as _ACCURACY_REPORT_PATH
-from a_stock_tracker.paths import LOG_DIR as _LOG_DIR
-from a_stock_tracker.paths import PROJECT_ROOT, WEIGHTS_PATH as _WEIGHTS_PATH
+from a_stock_tracker.paths import PROJECT_ROOT
 
 WATCHLIST: list[dict] = [
     # ── 银行与金融蓝筹 ──────────────────────────────────────
@@ -66,8 +64,3 @@ def get_materialization_feature_flag(name: str) -> bool:
     if value not in {"off", "on"}:
         raise ValueError(f"Invalid feature flag value {value!r} for {name}")
     return value == "on"
-
-
-LOG_DIR = str(_LOG_DIR)
-WEIGHTS_PATH = str(_WEIGHTS_PATH)
-ACCURACY_REPORT_PATH = str(_ACCURACY_REPORT_PATH)

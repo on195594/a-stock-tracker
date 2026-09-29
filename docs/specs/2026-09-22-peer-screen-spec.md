@@ -1,6 +1,6 @@
 # 个人同业选股工具：实施 Spec
 
-> 正式 Spec｜2026-09-22｜仅供个人研究。对齐[个人选股能力推进路线图](../plans/2026-09-22-personal-stock-selection-roadmap.md)。
+> 正式 Spec｜2026-09-22｜仅供个人研究。原路线图已完成并归档：`git show 7468568:docs/plans/2026-09-22-personal-stock-selection-roadmap.md`。本文件仅保留原 peer-screen-v1 规则；当前工作台设计与待办归相邻 `a-stock-screen/docs/FLET_DESIGN.md`。
 > 本文与路线图共同构成本项目当前的正式选股工具文档。同业发现、候选审查和显式快照对比均已于2026-09-22实现；本人已确认第二次交付判断，监管门和部分股息输入不完整时仍保持 fail-closed。实现完成不代表投资效果已验证，也不授权恢复 Framework A。
 
 ## 1. 本轮做什么，做到哪里就能用
