@@ -431,14 +431,11 @@ def main(*, reliability: bool = False) -> int:
                     notes_btn = page.get_by_role(
                         "button", name=re.compile("^(展开|收起)可选笔记与状态$")
                     )
-                    notes_btn.scroll_into_view_if_needed()
                     reason = page.locator("textarea[aria-label*='理由']").first
                     if notes_btn.inner_text().startswith("展开"):
-                        notes_btn.click()
+                        click_settled(page, notes_btn)
                     expect(notes_btn).to_have_text("收起可选笔记与状态")
-                    reason.scroll_into_view_if_needed()
                     reason.wait_for(state="visible", timeout=10000)
-                    time.sleep(0.5)  # Flutter scroll animation must finish before pointer input.
 
                 # First review has current facts, not empty old-value arrows or expanded metadata.
                 expect(
@@ -467,19 +464,18 @@ def main(*, reliability: bool = False) -> int:
                 # 4. Fill in optional personal notes
                 test_reason = "移动端自动化测试理由"
                 reason_input = page.locator("textarea[aria-label*='理由']").first
-                reason_input.click()
+                click_settled(page, reason_input)
+                expect(reason_input).to_have_value("")
                 reason_input.press_sequentially(test_reason)
+                expect(reason_input).to_have_value(test_reason)
                 next_step = "核查经营现金流与利润差异"
                 next_input = page.get_by_role(
                     "textbox", name="下一步与反证（事件或日期）", exact=False
                 )
-                next_input.scroll_into_view_if_needed()
-                time.sleep(0.5)  # Wait for Flutter scrolling before hitting the input.
-                next_input.click()
-                time.sleep(0.5)  # Allow Flutter's single-line editor focus to synchronize.
-                next_input.press_sequentially(next_step, delay=40)
+                click_settled(page, next_input)
+                expect(next_input).to_have_value("")
+                next_input.press_sequentially(next_step)
                 expect(next_input).to_have_value(next_step)
-                time.sleep(1)
 
                 # Dirty browser Back must show a real modal, not silently lose the edit.
                 company_url = page.url
@@ -489,19 +485,17 @@ def main(*, reliability: bool = False) -> int:
                 page.get_by_role("button", name="继续编辑", exact=True).click()
                 unsaved_prompt.wait_for(state="hidden", timeout=10000)
                 expect(page).to_have_url(company_url)
-                reason_input.click()  # Flet publishes the editing value when focused.
+                click_settled(page, reason_input)
                 expect(reason_input).to_have_value(test_reason)
                 assert reason_input.is_visible(), "Cancel did not keep the editor visible"
-                next_input.click()
+                click_settled(page, next_input)
                 expect(next_input).to_have_value(next_step)
 
                 # 5. Verify Save button accessibility and interactive state via semantic locator
                 save_btn = page.get_by_role("button", name="保存笔记与状态", exact=True)
-                save_btn.scroll_into_view_if_needed()
                 assert save_btn.is_visible(), "Save button is not visible in accessibility tree"
                 assert save_btn.is_enabled(), "Save button is not enabled"
-
-                save_btn.click()
+                click_settled(page, save_btn)
 
                 # UI success is mandatory; persisted data must NEVER bypass this assertion.
                 page.get_by_text("保存成功", exact=False).wait_for(state="visible", timeout=10000)
@@ -676,11 +670,8 @@ def main(*, reliability: bool = False) -> int:
                 time.sleep(1)
                 open_notes()
                 detail_reason = page.locator("textarea[aria-label*='理由']").first
-                detail_reason.click()
-                time.sleep(0.5)
-                val = detail_reason.input_value()
-                print(f"Detail reason input_value: '{val}'")
-                assert val == test_reason, f"Expected reason '{test_reason}', got '{val}'"
+                click_settled(page, detail_reason)
+                expect(detail_reason).to_have_value(test_reason)
 
                 # Later partial synthetic observation must explain its gaps, not replace the old top.
                 partial = json.loads((FIXTURES_DIR / "peer_second_change.json").read_text())
@@ -742,7 +733,7 @@ def main(*, reliability: bool = False) -> int:
                         != first_ack
                     )
                 removal_reason = page.locator("textarea[aria-label*='理由']").first
-                removal_reason.click()  # Flutter syncs the editing value when focused.
+                click_settled(page, removal_reason)
                 expect(removal_reason).to_have_value(test_reason)
                 removal_reason.press("End")
                 removal_reason.press_sequentially("（未保存）")
@@ -750,7 +741,7 @@ def main(*, reliability: bool = False) -> int:
                 delete_button.scroll_into_view_if_needed()
                 delete_button.click()
                 page.get_by_role("button", name="取消", exact=True).click()
-                removal_reason.click()
+                click_settled(page, removal_reason)
                 expect(removal_reason).to_have_value(test_reason + "（未保存）")
                 page.get_by_role("button", name="删除个人研究记录", exact=True).click()
                 page.get_by_role("button", name="确认操作", exact=True).click()
@@ -773,7 +764,7 @@ def main(*, reliability: bool = False) -> int:
                 expect(page.get_by_role("button", name="已关注", exact=True)).to_be_disabled()
                 open_notes()
                 fresh_reason = page.locator("textarea[aria-label*='理由']").first
-                fresh_reason.click()
+                click_settled(page, fresh_reason)
                 expect(fresh_reason).to_have_value("")
                 with sqlite3.connect(state_dir / "workspace.sqlite3") as conn:
                     assert conn.execute(
