@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from a_stock_tracker.paths import workspace_path
-from a_stock_tracker.research import RULE, ScreenError, build_live_snapshot
+from a_stock_tracker.research import RULE, ScreenError, build_live_snapshot, is_financial_industry
 from a_stock_tracker.watch import build_watch_snapshot, validate_watch_snapshot
 from a_stock_tracker.workspace import (
     Mode,
@@ -53,7 +53,14 @@ def _payload(job: dict[str, Any]) -> dict[str, Any]:
                 isinstance(c, str) and re.fullmatch(r"\d{6}\.(?:SH|SZ|BJ)", c) for c in codes
             )
             or codes != sorted(set(codes))
-            or payload.get("intent") != {"kind": "watch"}
+            or (
+                payload.get("intent") != {"kind": "watch"}
+                and not (
+                    len(codes) == 1
+                    and payload.get("intent") == {"kind": "watch", "code": codes[0]}
+                    and re.fullmatch(r"(?:60[0135]\d{3}\.SH|00[0-3]\d{3}\.SZ)", codes[0])
+                )
+            )
             or payload.get("anchor") is not None
             or payload.get("rule_id") is not None
             or payload.get("intent_hash") != digest
@@ -314,6 +321,18 @@ def _process(state_dir: Path, mode: Mode, job: dict[str, Any]) -> None:
             snap = build_watch_snapshot(
                 payload["codes"], payload["target_date"], mode, lambda: STOP
             )
+            if payload["intent"].get("code") and mode == "production":
+                row = snap["rows"][0]
+                if is_financial_industry(str(row.get("industry") or "")):
+                    raise ScreenError("金融行业不适用 peer-screen-v1: 公司研究")
+                if (
+                    row.get("market") != "主板"
+                    or row.get("list_status") != "L"
+                    or row.get("exchange") not in {"SSE", "SZSE"}
+                ):
+                    raise ScreenError("参照公司不是当前沪深主板上市公司")
+                if not row.get("industry"):
+                    raise ScreenError("参照公司行业不明")
         elif mode == "demo":
             fixture = (
                 Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "peer_complete_v1.json"

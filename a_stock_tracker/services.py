@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import sqlite3
 import urllib.parse
 import uuid
@@ -16,12 +17,20 @@ from typing import Any
 from a_stock_tracker.auth import Actor, check_actor
 from a_stock_tracker.calendar import latest_completed_day
 from a_stock_tracker.config import read_anchors
+from a_stock_tracker.evidence import (
+    REPORT_FIELDS,
+    report_facts,
+    report_for_display,
+    report_regressed,
+    research_prompt,
+)
 from a_stock_tracker.paths import DATA_DIR
 from a_stock_tracker.research import (
     ScreenError,
     annual_entries,
     candidate_review_sections,
     fmt_number,
+    normalize_code,
     normalize_flag,
 )
 from a_stock_tracker.workspace import (
@@ -291,6 +300,13 @@ def _company_comparison(
                 "本次范围成员": tuple(sorted(members)) if members is not None else None,
             }
         )
+        report = report_facts(row)
+        if report:
+            fields["最新财报报告期"] = report["period"]
+            fields["最新财报公告日"] = report["ann_date"]
+            fields["最新财报来源"] = report["source"]
+            for key, (label, unit) in REPORT_FIELDS.items():
+                fields[f"{label}（{unit}）"] = report["metrics"][key]
         return fields
 
     blocked = {"can_ack": False, "items": []}
@@ -307,6 +323,13 @@ def _company_comparison(
             return {**blocked, "summary": "已阅基准异常或规则未知，无法对照；不自动改用其他基准"}
     else:
         previous = {}
+    if (
+        current.get("最新财报报告期")
+        and previous.get("最新财报报告期")
+        and (current["最新财报报告期"], current["最新财报公告日"])
+        < (previous["最新财报报告期"], previous["最新财报公告日"])
+    ):
+        return {**blocked, "summary": "最新财报日期倒退异常，不能确认已阅"}
     items = [
         {
             "label": key,
@@ -400,7 +423,6 @@ def get_home(actor: Actor, state_dir: Path, mode: Mode) -> dict[str, Any]:
             return snapshots[run_id]
 
         overview_items = []
-        needs_review_count = 0
 
         for it in items:
             code = it["code"]
@@ -414,6 +436,7 @@ def get_home(actor: Actor, state_dir: Path, mode: Mode) -> dict[str, Any]:
             latest_index = None
             usable_run = None
             usable_row = None
+            report_regression = False
             for index, r in enumerate(runs):
                 if r.get("health") == "unverified":
                     continue
@@ -436,6 +459,7 @@ def get_home(actor: Actor, state_dir: Path, mode: Mode) -> dict[str, Any]:
                     and is_row_usable(row)
                     and r["health"] in ("complete", "partial")
                 ):
+                    report_regression |= report_regressed(latest_row or {}, row)
                     if usable_run is None or (r["valuation_date"] or "") > (
                         usable_run["valuation_date"] or ""
                     ):
@@ -480,6 +504,10 @@ def get_home(actor: Actor, state_dir: Path, mode: Mode) -> dict[str, Any]:
                     if usable_run
                     else "最近固定关注更新未完成，暂无可用事实；请查看最近更新"
                 )
+            elif report_regression:
+                has_change = True
+                change_tier = "anomaly"
+                change_summary = "最新财报日期倒退异常，请核查接口与公告"
             elif regression:
                 has_change = True
                 change_tier = "anomaly"
@@ -573,6 +601,10 @@ def get_home(actor: Actor, state_dir: Path, mode: Mode) -> dict[str, Any]:
                         has_change = True
                         change_tier = "fact_change"
                         change_summary = "采用的年报数据有变化"
+                    elif report_facts(latest_row) != report_facts(ack_row):
+                        has_change = True
+                        change_tier = "fact_change"
+                        change_summary = "最新财报证据有变化，请对照原研究理由"
                     elif latest_row.get("pb") != ack_row.get("pb"):
                         has_change = True
                         change_tier = "fact_change"
@@ -592,9 +624,6 @@ def get_home(actor: Actor, state_dir: Path, mode: Mode) -> dict[str, Any]:
                     change_tier = "no_change"
                     change_summary = "本工具覆盖的字段暂无未阅变化"
 
-            if has_change and it["status"] != "paused":
-                needs_review_count += 1
-
             overview_items.append(
                 {
                     "code": it["code"],
@@ -608,13 +637,14 @@ def get_home(actor: Actor, state_dir: Path, mode: Mode) -> dict[str, Any]:
                     "revision": it["revision"],
                     "updated_at": it["updated_at"],
                     "valuation_date": item_date,
-                    "fact_summary": (
-                        f"PB {fmt_number(usable_row.get('pb'))} 倍 · "
-                        f"ROE三年均值 {fmt_number(usable_row.get('roe_mean'))}%"
-                        if usable_row
-                        else "暂无可用事实"
+                    "research_prompt": research_prompt(
+                        {"research_report": {"status": "failed", "error": change_summary}}
+                        if change_tier == "anomaly"
+                        else latest_row or usable_row or {}
                     ),
-                    "roe_trend": roe_trend(usable_row or {}),
+                    "needs_attention": has_change
+                    and change_tier != "date_change"
+                    and not change_summary.startswith(("PB变动", "来源、范围或资料口径")),
                 }
             )
 
@@ -625,7 +655,9 @@ def get_home(actor: Actor, state_dir: Path, mode: Mode) -> dict[str, Any]:
             else "各公司数据日不同"
             if dates
             else "暂无",
-            "needs_review_count": needs_review_count,
+            "important_review_count": sum(
+                it["needs_attention"] and it["status"] != "paused" for it in overview_items
+            ),
             "total_watch_count": len(items),
             "watch_items": overview_items,
         }
@@ -693,14 +725,20 @@ def get_company_context(
                 latest_attempt_row = row
                 if row is None:
                     latest_attempt_error = "最新运行覆盖该标的但缺少事实数据（数据缺口）"
+            if row is not None and report_regressed(latest_attempt_row or {}, row):
+                latest_attempt_error = latest_attempt_error or "最新财报日期倒退异常"
             if (
                 row is not None
                 and is_row_usable(row)
                 and r.get("health") in ("complete", "partial")
                 and (
                     not usable_fact_run
-                    or (r.get("valuation_date") or "")
-                    > (usable_fact_run.get("valuation_date") or "")
+                    or report_regressed(usable_fact_row or {}, row)
+                    or (
+                        not report_regressed(row, usable_fact_row or {})
+                        and (r.get("valuation_date") or "")
+                        > (usable_fact_run.get("valuation_date") or "")
+                    )
                 )
             ):
                 usable_fact_run = r
@@ -804,13 +842,33 @@ def get_company_context(
             ),
             "has_usable_facts": usable_fact_data is not None,
             "peer_rank": last_peer_rank,
+            "research_prompt": research_prompt(latest_attempt_row or usable_fact_row or {}),
+            "research_report": report_for_display(latest_attempt_row or {}),
+            "industry": (latest_attempt_row or usable_fact_row or {}).get("industry"),
         }
+        context["entry_reason"] = "直接指定公司研究；尚未建立同业比较。"
+        if watch_item:
+            origin = get_run(conn, watch_item["added_run_id"])
+            if origin and origin["kind"] == "peer":
+                try:
+                    original = read_verified_snapshot(
+                        state_dir, origin["snapshot_path"], origin["snapshot_sha256"]
+                    )
+                    rank = next((r for r in safe_ranking(original) if r.get("code") == code), {})
+                    context["entry_reason"] = (
+                        f"加入时来自 {origin['valuation_date']} 的同业扫描，参照 {origin['anchor_code']}，研究次序 {rank.get('position', '未排名')}；这是历史入选线索。"
+                    )
+                except ServiceError:
+                    context["entry_reason"] = "原始入选资料无法核验；保留个人判断，请核对来源。"
 
         failed_job = latest_watch_failure(
             conn, code, latest_attempt_run["captured_at"] if latest_attempt_run else None
         )
         if failed_job:
+            failed_report = {"status": "failed", "error": "本次更新未完成，请重试或核对公告"}
             context.update(
+                research_report=failed_report,
+                research_prompt=research_prompt({"research_report": failed_report}),
                 latest_attempt_job_id=failed_job["job_id"],
                 latest_attempt_run_id=None,
                 latest_attempt_date=json.loads(failed_job["payload_json"])["target_date"],
@@ -1294,7 +1352,14 @@ def peer_anchors(actor: Actor, mode: Mode) -> list[dict[str, str]]:
     except ScreenError as exc:
         raise ServiceError(str(exc)) from exc
     check_actor(actor)
-    return [{"code": item["ts_code"], "name": item["name"]} for item in references]
+    return [
+        {
+            "code": item["ts_code"],
+            "name": item["name"],
+            "discovery_unavailable": item.get("discovery_unavailable", ""),
+        }
+        for item in references
+    ]
 
 
 def _peer_target_date(data_dir: Path | None, mode: Mode) -> str:
@@ -1314,6 +1379,7 @@ def _job_summary(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
         "anchor": payload.get("anchor"),
         "target_date": payload.get("target_date"),
         "codes": payload.get("codes", []),
+        "company_code": payload.get("intent", {}).get("code"),
         "status": row["status"],
         "phase": row["phase"],
         "requested_at": row["requested_at"],
@@ -1350,6 +1416,30 @@ def request_watch_update(
     return _request_update(actor, None, request_id, state_dir, mode, data_dir)
 
 
+def request_company_update(
+    actor: Actor,
+    code: str,
+    request_id: str,
+    state_dir: Path,
+    mode: Mode,
+    data_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Explicit single-company retrieval, including companies not yet followed."""
+    check_actor(actor)
+    try:
+        code = normalize_code(code)
+    except (ScreenError, AttributeError) as exc:
+        raise ServiceError("请输入六位股票代码，例如 600900 或 000786") from exc
+    if not re.fullmatch(r"(?:60[0135]\d{3}\.SH|00[0-3]\d{3}\.SZ)", code):
+        raise ServiceError("当前研究范围为沪深主板非金融公司")
+    if any(
+        item["code"] == code and item.get("discovery_unavailable")
+        for item in peer_anchors(actor, mode)
+    ):
+        raise ServiceError("该公司不适用当前非金融研究口径")
+    return _request_update(actor, None, request_id, state_dir, mode, data_dir, company_code=code)
+
+
 def _request_update(
     actor: Actor,
     anchor: str | None,
@@ -1357,6 +1447,8 @@ def _request_update(
     state_dir: Path,
     mode: Mode,
     data_dir: Path | None,
+    *,
+    company_code: str | None = None,
 ) -> dict[str, Any]:
     check_actor(actor)
     if (
@@ -1367,6 +1459,8 @@ def _request_update(
         raise ServiceError("无效请求编号")
     kind = "watch" if anchor is None else "peer"
     intent = {"kind": kind} if kind == "watch" else {"kind": kind, "anchor": anchor}
+    if company_code:
+        intent["code"] = company_code
     try:
         conn = connect_workspace(state_dir, mode)
         try:
@@ -1384,12 +1478,16 @@ def _request_update(
                 return _job_summary(existing)
 
             if kind == "watch":
-                codes = [
-                    row[0]
-                    for row in conn.execute(
-                        "SELECT code FROM watch_items WHERE status != 'paused' ORDER BY code"
-                    )
-                ]
+                codes = (
+                    [company_code]
+                    if company_code
+                    else [
+                        row[0]
+                        for row in conn.execute(
+                            "SELECT code FROM watch_items WHERE status != 'paused' ORDER BY code"
+                        )
+                    ]
+                )
                 if not codes:
                     raise ServiceError("没有未暂停的关注公司，请先关注或恢复公司")
                 if len(codes) > 50:
@@ -1399,7 +1497,16 @@ def _request_update(
                 watchlist = peer_anchors(actor, mode)
                 if anchor not in {item["code"] for item in watchlist}:
                     raise ServiceError("参照公司不在允许范围内")
-                scope = {"watchlist": watchlist}
+                if any(
+                    item["code"] == anchor and item.get("discovery_unavailable")
+                    for item in watchlist
+                ):
+                    raise ServiceError("金融行业不适用于同业筛选，请改选非金融参照公司")
+                scope = {
+                    "watchlist": [
+                        {"code": item["code"], "name": item["name"]} for item in watchlist
+                    ]
+                }
             target_date = _peer_target_date(data_dir, mode)
             payload: dict[str, Any] = {
                 "intent": intent,

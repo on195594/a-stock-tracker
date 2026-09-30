@@ -283,6 +283,10 @@ def app_controls(control):
         yield from app_controls(child)
 
 
+def research_form(control):
+    return next(c for c in app_controls(control) if c.key == "research-form")
+
+
 class AppMockPage:
     def __init__(self, auth=None):
         self.title = ""
@@ -326,6 +330,61 @@ class AppMockPage:
         self.logged_out = True
 
 
+def test_completed_update_preserves_home_input_until_result_is_clicked(tmp_path, monkeypatch):
+    initialize(tmp_path, "demo", journal_mode="DELETE")
+    monkeypatch.setattr(app, "APP_MODE", "demo")
+    monkeypatch.setattr(app, "STATE_DIR", tmp_path)
+    actor = app.create_demo_actor()
+    monkeypatch.setattr(app, "create_demo_actor", lambda: actor)
+    job = app.request_company_update(actor, "600002", "poll-test", tmp_path, "demo")
+    monkeypatch.setattr(app, "get_update_job", lambda *args: {**job, "status": "succeeded"})
+
+    async def check():
+        tick, completed = asyncio.Event(), asyncio.Event()
+        real_sleep = asyncio.sleep
+
+        async def sleep(delay):
+            if delay == 2:
+                await tick.wait()
+            else:
+                await real_sleep(delay)
+
+        monkeypatch.setattr(app.asyncio, "sleep", sleep)
+
+        class Page(AppMockPage):
+            def update(self):
+                super().update()
+                if any(
+                    isinstance(c, ft.Button) and c.content == "查看更新结果" and c.visible
+                    for root in self.controls
+                    for c in app_controls(root)
+                ):
+                    completed.set()
+
+        page = Page()
+        await app.build_app()(page)
+        code = next(
+            c
+            for c in app_controls(page.controls[0])
+            if isinstance(c, ft.TextField) and c.label == "指定公司代码"
+        )
+        code.value = "600003"
+        tick.set()
+        await asyncio.wait_for(completed.wait(), timeout=3)
+        assert page.route == "/" and code.value == "600003"
+        assert code in list(app_controls(page.controls[0]))
+        result = next(
+            c
+            for c in app_controls(page.controls[0])
+            if isinstance(c, ft.Button) and c.content == "查看更新结果"
+        )
+        await result.on_click(None)
+        assert page.route == "/company/600002.SH"
+        await page.on_close(None)
+
+    asyncio.run(check())
+
+
 @pytest.mark.parametrize("invalidate", ["navigation", "disconnect", "revocation"])
 def test_empty_home_entry_expires_with_page(tmp_path, monkeypatch, invalidate):
     initialize(tmp_path, "demo", journal_mode="DELETE")
@@ -339,7 +398,7 @@ def test_empty_home_entry_expires_with_page(tmp_path, monkeypatch, invalidate):
         await app.build_app()(page)
         controls = list(app_controls(page.controls[0]))
         entry = next(
-            c for c in controls if isinstance(c, ft.Button) and c.content == "前往同业发现"
+            c for c in controls if isinstance(c, ft.Button) and c.content == "前往发现候选"
         )
         if invalidate == "navigation":
             await page.on_route_change(SimpleNamespace(route="/settings"))
@@ -410,12 +469,10 @@ def test_update_submit_lifecycle_and_uncertain_receipt(tmp_path, monkeypatch, in
                 if isinstance(c, ft.Text)
             )
             await button.on_click(None)
-            assert calls[0] == calls[1] and page.route.startswith("/jobs/")
+            assert calls[0] == calls[1]
+            assert page.route.startswith("/discover") if kind == "peer" else page.route == "/"
             texts = [c.value for c in app_controls(page.controls[0]) if isinstance(c, ft.Text)]
-            assert any(
-                ("固定关注范围（1家）：600001.SH" if kind == "watch" else "600001.SH") in t
-                for t in texts
-            )
+            assert any(("更新 1 家" if kind == "watch" else "最近更新：") in t for t in texts)
         elif invalidate == "blocked":
             assert not button.disabled and len(calls) == 1
             texts = [c.value for c in app_controls(page.controls[0]) if isinstance(c, ft.Text)]
@@ -456,7 +513,7 @@ def test_home_pause_fold_resume_and_stale_callback(tmp_path, monkeypatch):
 
         pause = button("暂停关注")
         await pause.on_click(SimpleNamespace(control=pause))
-        assert any("需要复看：0 家" in str(c.value) for c in controls() if isinstance(c, ft.Text))
+        assert any("待处理：0 家" in str(c.value) for c in controls() if isinstance(c, ft.Text))
         folded = next(
             c
             for c in controls()
@@ -466,9 +523,9 @@ def test_home_pause_fold_resume_and_stale_callback(tmp_path, monkeypatch):
         toggle = button("显示已暂停 (1)")
         await toggle.on_click(None)
         assert folded.visible
-        resume = button("恢复为观察")
+        resume = button("恢复为等待证据")
         await resume.on_click(SimpleNamespace(control=resume))
-        assert any("需要复看：1 家" in str(c.value) for c in controls() if isinstance(c, ft.Text))
+        assert any("待处理：1 家" in str(c.value) for c in controls() if isinstance(c, ft.Text))
         pause.disabled = False
         await pause.on_click(SimpleNamespace(control=pause))  # Detached event must not re-pause.
         with connect_workspace(tmp_path, "demo") as conn:
@@ -489,7 +546,7 @@ def test_home_cards_show_each_company_date(tmp_path, monkeypatch):
         "get_home",
         lambda *args: {
             "valuation_date": "各公司数据日不同",
-            "needs_review_count": 0,
+            "important_review_count": 0,
             "total_watch_count": 2,
             "watch_items": [
                 {
@@ -498,6 +555,7 @@ def test_home_cards_show_each_company_date(tmp_path, monkeypatch):
                     "status": "observe",
                     "reason": "测试",
                     "has_change": False,
+                    "needs_attention": False,
                     "change_summary": "",
                     "valuation_date": day,
                 }
@@ -512,7 +570,7 @@ def test_home_cards_show_each_company_date(tmp_path, monkeypatch):
         assert page.updated_count == 2  # Shell first, then data after async load.
         home = page.controls[0].controls[0].controls[0].content.controls[1].content
         assert "各公司数据日不同" in home.controls[0].content.controls[0].controls[1].value
-        cards = [c for c in home.controls if isinstance(c, ft.Card)]
+        cards = [c for c in app_controls(home) if isinstance(c, ft.Card)]
         assert len(cards) == 2
         for card, day in zip(cards, ("2026-09-20", "2026-09-21")):
             texts = [c.value for c in app_controls(card) if isinstance(c, ft.Text)]
@@ -534,7 +592,7 @@ def test_home_shell_renders_before_slow_data_read(tmp_path, monkeypatch):
         assert release.wait(timeout=5)
         return {
             "valuation_date": "暂无",
-            "needs_review_count": 0,
+            "important_review_count": 0,
             "total_watch_count": 0,
             "watch_items": [],
         }
@@ -706,9 +764,9 @@ def test_real_disconnect_and_reconnect_lifecycle(tmp_path, monkeypatch):
         await card.content.on_click(None)
 
         # Find reason_field in personal research form card and type unsaved draft
-        form_card = content_container.content.controls[2]
-        reason_field = form_card.content.content.controls[2]
-        assert "一句理由" in getattr(reason_field, "label", "")
+        form_card = research_form(content_container)
+        reason_field = form_card.controls[2]
+        assert "研究理由" in getattr(reason_field, "label", "")
         assert reason_field.value == ""
         reason_field.value = "未保存的草稿理由"
         reason_field.on_change(None)
@@ -716,14 +774,14 @@ def test_real_disconnect_and_reconnect_lifecycle(tmp_path, monkeypatch):
         # 1. Brief disconnect and fast reconnect keeps authorization and preserves unsaved draft!
         await page.on_disconnect(None)
         await page.on_connect(None)
-        reconnected_form_card = content_container.content.controls[2]
-        reconnected_reason_field = reconnected_form_card.content.content.controls[2]
+        reconnected_form_card = research_form(content_container)
+        reconnected_reason_field = reconnected_form_card.controls[2]
         assert reconnected_reason_field.value == "未保存的草稿理由"
 
         # Save the form and confirm draft is cleared from page_state
-        save_btn = reconnected_form_card.content.content.controls[5].controls[0]
+        save_btn = reconnected_form_card.controls[5].controls[0]
         await save_btn.on_click(None)
-        feedback_text = reconnected_form_card.content.content.controls[6]
+        feedback_text = reconnected_form_card.controls[6]
         assert "保存成功" in feedback_text.value
 
         # Strictly prove draft was cleared: update record directly in SQLite from another tab/process
@@ -746,8 +804,8 @@ def test_real_disconnect_and_reconnect_lifecycle(tmp_path, monkeypatch):
         # Reconnect: verifies fresh data is loaded from SQLite without resurrecting old in-memory values
         await page.on_disconnect(None)
         await page.on_connect(None)
-        saved_form_card = content_container.content.controls[2]
-        saved_reason_field = saved_form_card.content.content.controls[2]
+        saved_form_card = research_form(content_container)
+        saved_reason_field = saved_form_card.controls[2]
         assert saved_reason_field.value == "由另一会话在数据库中更新的最新理由"
 
         # 2. When actor expires during disconnect, reconnect redirects to login view
@@ -940,10 +998,8 @@ def test_company_latest_snapshot_error_disables_ack(tmp_path, monkeypatch, damag
         home_card = next(c for c in content.content.controls if isinstance(c, ft.Card))
         await home_card.content.on_click(None)
         company = content.content
-        assert (
-            company.controls[1].content.value
-            == "⚠️ 注意：最新已核验运行快照文件损坏或无法读取；当前展示的是上一次可用事实"
-        )
+        assert "快照文件损坏或无法读取" in company.controls[1].content.value
+        assert "旧可用事实" in company.controls[1].content.value
         ack = next(c for c in app_controls(company) if c.key == "mark-reviewed")
         assert ack.disabled is True
         await ack.on_click(None)
@@ -983,7 +1039,7 @@ def test_company_callbacks_show_safe_feedback_on_unexpected_error(tmp_path, monk
         card = next(c for c in content.content.controls if isinstance(c, ft.Card))
         await card.content.on_click(None)
         company = content.content
-        form = company.controls[2].content.content.controls
+        form = research_form(company).controls
         buttons = form[5]
         feedback = form[6]
         await buttons.controls[0].on_click(None)
@@ -1081,8 +1137,8 @@ def test_disconnect_draft_version_conflict_prevents_overwrite(tmp_path, monkeypa
         await card.content.on_click(None)
 
         # Type draft reason while revision is 1
-        form_card = content_container.content.controls[2]
-        reason_field = form_card.content.content.controls[2]
+        form_card = research_form(content_container)
+        reason_field = form_card.controls[2]
         reason_field.value = "用户编写中的草稿"
         reason_field.on_change(None)
 
@@ -1106,8 +1162,8 @@ def test_disconnect_draft_version_conflict_prevents_overwrite(tmp_path, monkeypa
         # Reconnect
         await page.on_connect(None)
 
-        reconnected_card = content_container.content.controls[2]
-        ctrls = reconnected_card.content.content.controls
+        reconnected_card = research_form(content_container)
+        ctrls = reconnected_card.controls
         # Conflict banner inserted at index 1
         assert "版本冲突" in getattr(ctrls[1].content.controls[0], "value", "")
         # Reason field preserved at index 3
@@ -1134,8 +1190,8 @@ def test_disconnect_draft_version_conflict_prevents_overwrite(tmp_path, monkeypa
         # Second reconnect
         await page.on_connect(None)
 
-        reconnected_card2 = content_container.content.controls[2]
-        ctrls2 = reconnected_card2.content.content.controls
+        reconnected_card2 = research_form(content_container)
+        ctrls2 = reconnected_card2.controls
         # Conflict banner MUST STILL be present
         assert "版本冲突" in getattr(ctrls2[1].content.controls[0], "value", "")
         # Reason field preserved with latest typed edits
@@ -1156,8 +1212,8 @@ def test_disconnect_draft_version_conflict_prevents_overwrite(tmp_path, monkeypa
         await discard_btn.on_click(None)
 
         # Reloads fresh DB revision 2
-        fresh_card = content_container.content.controls[2]
-        fresh_ctrls = fresh_card.content.content.controls
+        fresh_card = research_form(content_container)
+        fresh_ctrls = fresh_card.controls
         fresh_reason = fresh_ctrls[2]
         assert fresh_reason.value == "并发会话已提交更新"
         fresh_save_btn = fresh_ctrls[5].controls[0]
@@ -1233,9 +1289,9 @@ def test_discover_join_context_navigation_and_unsaved_guard(tmp_path, monkeypatc
         def button(label):
             return next(c for c in controls() if isinstance(c, ft.Button) and c.content == label)
 
-        entry = button("前往同业发现")
+        entry = button("前往发现候选")
         assert (
-            sum(isinstance(c, ft.Button) and c.content == "前往同业发现" for c in controls()) == 1
+            sum(isinstance(c, ft.Button) and c.content == "前往发现候选" for c in controls()) == 1
         )
         assert not any(isinstance(c, ft.Button) and c.content == "开始同业研究" for c in controls())
         await entry.on_click(None)
@@ -1602,7 +1658,7 @@ def test_home_tiered_grouping_and_styling(tmp_path, monkeypatch):
         "get_home",
         lambda *args: {
             "valuation_date": "2026-09-21",
-            "needs_review_count": 5,
+            "important_review_count": 2,
             "total_watch_count": 6,
             "watch_items": [
                 {
@@ -1610,6 +1666,7 @@ def test_home_tiered_grouping_and_styling(tmp_path, monkeypatch):
                     "name": "标的己",
                     "status": "observe",
                     "has_change": True,
+                    "needs_attention": True,
                     "change_tier": "risk_change",
                     "reason": "",
                     "change_summary": "公司上市状态变化，请核查",
@@ -1621,6 +1678,7 @@ def test_home_tiered_grouping_and_styling(tmp_path, monkeypatch):
                     "status": "observe",
                     "reason": "",
                     "has_change": False,
+                    "needs_attention": False,
                     "change_tier": "no_change",
                     "change_summary": "本工具覆盖的字段暂无未阅变化",
                     "valuation_date": "2026-09-20",
@@ -1631,6 +1689,7 @@ def test_home_tiered_grouping_and_styling(tmp_path, monkeypatch):
                     "status": "research",
                     "reason": "",
                     "has_change": True,
+                    "needs_attention": False,
                     "change_tier": "fact_change",
                     "change_summary": "PB变动: 1.85 → 1.8",
                     "valuation_date": "2026-09-21",
@@ -1641,6 +1700,7 @@ def test_home_tiered_grouping_and_styling(tmp_path, monkeypatch):
                     "status": "observe",
                     "reason": "",
                     "has_change": True,
+                    "needs_attention": True,
                     "change_tier": "anomaly",
                     "change_summary": "最新运行估值日倒退异常，仍展示上次可用资料",
                     "valuation_date": "2026-09-20",
@@ -1651,6 +1711,7 @@ def test_home_tiered_grouping_and_styling(tmp_path, monkeypatch):
                     "status": "observe",
                     "reason": "",
                     "has_change": True,
+                    "needs_attention": False,
                     "change_tier": "date_change",
                     "change_summary": "估值日期变动: 2026-09-20 → 2026-09-21",
                     "valuation_date": "2026-09-21",
@@ -1661,6 +1722,7 @@ def test_home_tiered_grouping_and_styling(tmp_path, monkeypatch):
                     "status": "paused",
                     "reason": "",
                     "has_change": True,
+                    "needs_attention": False,
                     "change_tier": "fact_change",
                     "change_summary": "PB变动",
                     "valuation_date": "2026-09-21",
@@ -1696,23 +1758,25 @@ def test_home_tiered_grouping_and_styling(tmp_path, monkeypatch):
         assert header_texts == [
             "数据异常与缺口",
             "公司状态变化（请核查）",
-            "指标与资料变化",
-            "仅数据日更新",
-            "暂无未阅变化",
         ]
 
         cards = [c for c in home.controls if isinstance(c, ft.Card)]
-        assert len(cards) == 5  # Paused company remains outside the active groups.
+        assert len(cards) == 2  # Routine changes and paused companies are folded.
         card_titles = []
         for card in cards:
             for text_c in app_controls(card):
                 if isinstance(text_c, ft.Text) and ("标的" in (text_c.value or "")):
                     card_titles.append(text_c.value.split()[0])
                     break
-        assert card_titles == ["标的甲", "标的己", "标的乙", "标的丙", "标的丁"]
+        assert card_titles == ["标的甲", "标的己"]
+        assert any(
+            c.content == "查看其余研究（含估值与日期变化）"
+            for c in app_controls(home)
+            if isinstance(c, ft.Button)
+        )
 
-        # Check styling of change descriptions
-        for card in cards:
+        # Folded cards retain their fact/date-specific styling.
+        for card in (c for c in app_controls(home) if isinstance(c, ft.Card)):
             for text_c in app_controls(card):
                 if isinstance(text_c, ft.Text):
                     if "估值日倒退" in (text_c.value or "") or "上市状态变化" in (
@@ -1753,7 +1817,7 @@ def test_stale_editor_cannot_replace_reconnected_draft(tmp_path, monkeypatch):
             return next(
                 c
                 for c in app_controls(page.controls[0])
-                if isinstance(c, ft.TextField) and c.label.startswith("一句理由")
+                if isinstance(c, ft.TextField) and c.label.startswith("研究理由")
             )
 
         old_editor = reason_field()
@@ -1839,7 +1903,7 @@ def test_inflight_receipt_survives_return_without_new_request(tmp_path, monkeypa
         )
         await submit_button().on_click(None)
         assert len(calls) == 2 and calls[0] == calls[1]
-        assert page.route.startswith("/jobs/")
+        assert page.route.startswith("/discover") if kind == "peer" else page.route == "/"
         with connect_workspace(tmp_path, "demo") as conn:
             assert conn.execute("SELECT count(*) FROM update_jobs").fetchone()[0] == 1
         await page.on_close(None)

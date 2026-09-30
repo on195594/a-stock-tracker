@@ -285,7 +285,7 @@ def test_watch_failed_job_without_snapshot_is_a_gap_until_success(tmp_path, monk
     assert ctx["latest_attempt_job_id"] == job["job_id"] and ctx["displayed_run_id"] == first
     assert ctx["has_latest_attempt_gap"] and not ctx["comparison"]["can_ack"]
     assert "旧可用资料" in ctx["latest_attempt_error"]
-    assert services.get_home(actor, tmp_path, "demo")["needs_review_count"] == 2
+    assert services.get_home(actor, tmp_path, "demo")["important_review_count"] == 2
     with pytest.raises(ServiceError):
         mark_seen(actor, "600001.SH", first, baseline["revision"], tmp_path, "demo")
     services.dismiss_update_job(actor, job["job_id"], tmp_path, "demo")
@@ -341,6 +341,7 @@ def test_watch_validation_respects_shanghai_announcement_date_across_utc_boundar
     snap["screened_at"] = "2026-09-27T18:00:01+00:00"
     for r in snap["rows"]:
         r["financial_checked_at"] = "2026-09-27T18:00:00.500000+00:00"
+        r["research_report"]["acquired_at"] = r["financial_checked_at"]
     snap["rows"][0]["annual_roes"][-1]["ann_date"] = "2026-09-28"
     worker._validate_snapshot(snap, job, "demo")
     snap["rows"][0]["annual_roes"][-1]["ann_date"] = "2026-09-29"
@@ -470,6 +471,11 @@ def test_watch_provider_fetches_fixed_code_despite_nonpositive_and_st(tmp_path, 
                         end_date=f"{year}1231",
                         update_flag="0",
                         roe_waa=-float(year - 2020),
+                        or_yoy=2.0,
+                        netprofit_yoy=-4.0,
+                        dt_netprofit_yoy=-3.0,
+                        debt_to_assets=40.0,
+                        ocfps=0.5,
                     )
                     for year in (2023, 2024, 2025)
                 ]

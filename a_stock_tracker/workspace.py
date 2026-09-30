@@ -13,6 +13,8 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, Literal, TypeGuard
 
+from a_stock_tracker.evidence import report_regressed, report_usable
+
 Mode = Literal["demo", "production"]
 SCHEMA_VERSION = 1
 WORKSPACE_FILE = "workspace.sqlite3"
@@ -317,6 +319,8 @@ def _parse_report_date(val: Any) -> date | None:
 
 def is_row_usable(row: dict[str, Any]) -> bool:
     """Determine whether a snapshot row contains usable facts for personal review."""
+    if "research_report" in row and not report_usable(row["research_report"]):
+        return False
     pb_val = row.get("pb")
     pb_ok = _is_finite_number(pb_val)
     roes = row.get("annual_roes")
@@ -440,6 +444,10 @@ def import_snapshot(
                 any(
                     row.get(key) == "fixture"
                     for key in ("valuation_source", "financial_source", "risk_source")
+                )
+                or (
+                    isinstance(row.get("research_report"), dict)
+                    and row["research_report"].get("source") == "fixture"
                 )
                 or (
                     isinstance(row.get("annual_roes"), list)
@@ -1294,17 +1302,21 @@ def mark_watch_ack(
         ORDER BY captured_at DESC, run_id DESC""",
         (run["captured_at"], run["captured_at"], run["run_id"]),
     ):
-        if (
+        valuation_regressed = (
             older["valuation_date"]
             and run["valuation_date"]
             and (older["valuation_date"] > run["valuation_date"])
-        ):
+        )
+        if valuation_regressed or matched_row.get("research_report"):
             try:
                 older_row, _ = row_in_run(older)
             except WorkspaceError:
                 continue
             if older_row and is_row_usable(older_row):
-                raise WorkspaceError("cannot acknowledge a regressed valuation date")
+                if valuation_regressed:
+                    raise WorkspaceError("cannot acknowledge a regressed valuation date")
+                if report_regressed(matched_row, older_row):
+                    raise WorkspaceError("cannot acknowledge a regressed report date")
 
     for newer in conn.execute(
         """SELECT * FROM screen_runs
@@ -1331,6 +1343,7 @@ def mark_watch_ack(
         if covered and (
             not newer_row
             or not is_row_usable(newer_row)
+            or report_regressed(newer_row, matched_row)
             or (
                 newer["valuation_date"]
                 and run["valuation_date"]

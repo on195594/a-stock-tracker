@@ -358,7 +358,7 @@ def test_pause_resume_preserves_notes_facts_and_ack(tmp_path: Path) -> None:
     )
     baseline = mark_seen(actor, "600001.SH", first, saved["revision"], tmp_path, "demo")
     import_snapshot(tmp_path, FIXTURES_DIR / "peer_second_change.json", "demo")
-    assert get_home(actor, tmp_path, "demo")["needs_review_count"] == 1
+    assert get_home(actor, tmp_path, "demo")["important_review_count"] == 1
     board = get_peer_discover(actor, "600001.SH", tmp_path, "demo")["results"]
     protected = (
         "reason",
@@ -387,7 +387,7 @@ def test_pause_resume_preserves_notes_facts_and_ack(tmp_path: Path) -> None:
         assert current["revision"] == previous["revision"] + 1
         assert all(current[key] == baseline[key] for key in protected)
         home = get_home(actor, tmp_path, "demo")
-        assert home["needs_review_count"] == count and home["total_watch_count"] == 1
+        assert home["important_review_count"] == count and home["total_watch_count"] == 1
         assert home["watch_items"][0]["has_change"]  # Pause hides reminders, not facts.
         assert get_peer_discover(actor, "600001.SH", tmp_path, "demo")["results"] == board
         with pytest.raises(ServiceError, match="记录已变化"):
@@ -556,7 +556,7 @@ def test_service_workflows(tmp_path: Path) -> None:
     # 1. Home is initially empty
     home = get_home(actor, ws_dir, mode="demo")
     assert home["total_watch_count"] == 0
-    assert home["needs_review_count"] == 0
+    assert home["important_review_count"] == 0
 
     # 2. Add watch item for 600001.SH
     saved = save_watch(
@@ -600,7 +600,7 @@ def test_service_workflows(tmp_path: Path) -> None:
     # 5. Home now shows 1 item needing review (首次待阅)
     home2 = get_home(actor, ws_dir, mode="demo")
     assert home2["total_watch_count"] == 1
-    assert home2["needs_review_count"] == 1
+    assert home2["important_review_count"] == 1
     assert home2["watch_items"][0]["change_summary"] == "首次待阅"
 
     # 6. Company context with and without personal notes
@@ -1200,7 +1200,7 @@ def test_home_unusable_partial_row_does_not_report_fact_changes(tmp_path: Path) 
         home = get_home(actor, ws_dir, "demo")
         assert home["watch_items"][0]["has_change"] is True
         assert home["watch_items"][0]["change_summary"] == summary
-        assert home["needs_review_count"] == 1
+        assert home["important_review_count"] == 1
         ctx = get_company_context(actor, "600001.SH", ws_dir, "demo")
         assert ctx["has_latest_attempt_gap"] is True
         assert ctx["latest_attempt_run_id"] == f"first_gap_{hour}"
@@ -1221,7 +1221,7 @@ def test_home_unusable_partial_row_does_not_report_fact_changes(tmp_path: Path) 
     add_partial("gap_pb", 10, missing_pb)
     home = get_home(actor, ws_dir, "demo")
     assert home["watch_items"][0]["change_summary"] == "首次待阅（本次数据缺口）"
-    assert home["needs_review_count"] == 1
+    assert home["important_review_count"] == 1
 
     missing_roes = {**original, "pb": 1.95, "annual_roes": [], "facts_usable": False}
     add_partial("gap_roes", 11, missing_roes)
@@ -1338,7 +1338,7 @@ def test_home_reports_newer_relevant_damaged_snapshot(
     path.write_bytes(b"corrupt")
 
     home = get_home(actor, tmp_path, "demo")
-    assert home["needs_review_count"] == 1
+    assert home["important_review_count"] == 1
     assert home["watch_items"][0]["has_change"] is True
     assert home["watch_items"][0]["change_summary"] == (
         "最新快照文件损坏或无法读取，仍展示上次可用资料"
@@ -1378,7 +1378,7 @@ def test_home_damaged_snapshot_after_unusable_row_keeps_older_usable_fact(tmp_pa
             )
     damaged_path.unlink()
     home = get_home(actor, tmp_path, "demo")
-    assert home["needs_review_count"] == 1
+    assert home["important_review_count"] == 1
     assert home["watch_items"][0]["change_summary"] == (
         "最新快照文件损坏或无法读取，仍展示上次可用资料"
     )
@@ -1394,7 +1394,7 @@ def test_home_damaged_snapshot_without_usable_row(tmp_path: Path) -> None:
     path.unlink()
 
     home = get_home(actor, tmp_path, "demo")
-    assert home["needs_review_count"] == 1
+    assert home["important_review_count"] == 1
     assert home["watch_items"][0]["has_change"] is True
     assert home["watch_items"][0]["change_summary"] == "最新快照文件损坏或无法读取"
 
@@ -1423,7 +1423,7 @@ def test_home_ignores_unrelated_damaged_snapshot(tmp_path: Path) -> None:
         )
     path.unlink()
     home = get_home(actor, tmp_path, "demo")
-    assert home["needs_review_count"] == 0
+    assert home["important_review_count"] == 0
     assert home["watch_items"][0]["has_change"] is False
 
 
@@ -1452,7 +1452,7 @@ def test_regressed_valuation_date_keeps_older_usable_facts(tmp_path: Path) -> No
     assert ctx["displayed_run_id"] == first
     assert ctx["usable_valuation_date"] == "2026-09-20"
     home = get_home(actor, tmp_path, "demo")
-    assert home["needs_review_count"] == 1
+    assert home["important_review_count"] == 1
     assert home["watch_items"][0]["has_change"] is True
     assert home["watch_items"][0]["change_summary"] == "最新运行估值日倒退异常，仍展示上次可用资料"
     assert home["watch_items"][0]["valuation_date"] == "2026-09-20"
@@ -1519,8 +1519,10 @@ def test_home_reports_valuation_date_change_with_same_pb(tmp_path: Path) -> None
     with connect_workspace(tmp_path, "demo") as conn:
         assert present(get_run(conn, second))["health"] == "complete"
     home = get_home(actor, tmp_path, "demo")
-    assert home["needs_review_count"] == 1
+    assert home["important_review_count"] == 0
     assert home["watch_items"][0]["has_change"] is True
+    assert home["watch_items"][0]["change_tier"] == "date_change"
+    assert not home["watch_items"][0]["needs_attention"]
     assert home["watch_items"][0]["change_summary"] == "估值日期变动: 2026-09-20 → 2026-09-21"
 
 
@@ -1543,7 +1545,7 @@ def test_home_reports_missing_ack_baseline(tmp_path: Path, damage: str) -> None:
         path.write_text("corrupt", encoding="utf-8")
 
     home = get_home(actor, tmp_path, "demo")
-    assert home["needs_review_count"] == 1
+    assert home["important_review_count"] == 1
     assert home["watch_items"][0]["has_change"] is True
     assert home["watch_items"][0]["change_summary"] == "已阅基准文件异常，无法比对变化"
 
@@ -1893,7 +1895,7 @@ def test_home_ignores_equivalent_annual_report_formats(tmp_path: Path) -> None:
         conn.close()
 
     home = get_home(actor, ws_dir, "demo")
-    assert home["needs_review_count"] == 0
+    assert home["important_review_count"] == 0
     assert home["watch_items"][0]["has_change"] is False
     assert home["watch_items"][0]["change_summary"] == "本工具覆盖的字段暂无未阅变化"
 
@@ -2068,7 +2070,7 @@ def test_covered_missing_row_after_ack_is_reported_and_cannot_be_acknowledged(
             )
 
     home = get_home(actor, tmp_path, "demo")
-    assert home["needs_review_count"] == 1
+    assert home["important_review_count"] == 1
     assert home["watch_items"][0]["has_change"] is True
     assert "数据缺口" in home["watch_items"][0]["change_summary"]
     assert "上次可用资料" in home["watch_items"][0]["change_summary"]
@@ -2483,25 +2485,6 @@ def test_normal_risk_and_listing_introduction_does_not_trigger_risk_change(tmp_p
     home = get_home(actor, tmp_path, "demo")["watch_items"][0]
     # Should NOT be classified as risk_change
     assert home["change_tier"] != "risk_change"
-
-
-def test_home_date_only_refresh_is_neutral(tmp_path):
-    initialize(tmp_path, "demo", journal_mode="DELETE")
-    actor = create_demo_actor()
-    fixture = FIXTURES_DIR / "peer_complete_v1.json"
-    first = import_snapshot(tmp_path, fixture, "demo")
-    saved = save_watch(actor, "600001.SH", first, {}, 0, tmp_path, "demo")
-    mark_seen(actor, "600001.SH", first, saved["revision"], tmp_path, "demo")
-    snap = json.loads(fixture.read_text())
-    snap["data_date"] = "2026-09-21"
-    snap["screened_at"] = "2026-09-21T16:00:00+08:00"
-    snap["generated_at"] = snap["screened_at"]
-    for row in snap["rows"]:
-        row["valuation_date"] = "2026-09-21"
-    path = tmp_path / "date_only.json"
-    path.write_text(json.dumps(snap))
-    import_snapshot(tmp_path, path, "demo")
-    assert get_home(actor, tmp_path, "demo")["watch_items"][0]["change_tier"] == "date_change"
 
 
 def test_home_change_tier_classification(tmp_path: Path) -> None:

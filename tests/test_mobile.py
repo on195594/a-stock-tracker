@@ -45,7 +45,14 @@ def wait_for_server(url: str, timeout_sec: int = 15) -> bool:
 
 def click_settled(page, control):
     """Wait for Flutter's semantic scroll geometry; never force a hidden hit target."""
-    control.scroll_into_view_if_needed()
+    control.wait_for(state="visible")
+    # DOM scrolling can move Flutter's invisible semantics without moving the painted
+    # control. Use a real wheel event so the hit target and canvas stay together.
+    box = control.bounding_box()
+    footer = page.get_by_role("tablist").bounding_box()
+    assert box and footer
+    page.mouse.move(page.viewport_size["width"] / 2, footer["y"] / 2)
+    page.mouse.wheel(0, box["y"] + box["height"] / 2 - footer["y"] / 2)
     handle = control.element_handle()
     page.wait_for_function(
         """el => {
@@ -75,7 +82,22 @@ def click_settled(page, control):
             arg=handle,
             timeout=5000,
         )
+    is_input = control.evaluate("el => el.matches('input, textarea')")
     control.click()
+    if is_input:
+        page.wait_for_function(
+            """el => {
+                const r = el.getBoundingClientRect();
+                const state = [document.activeElement === el, r.x, r.y, r.width, r.height].join(',');
+                if (el._focusState !== state) {
+                    el._focusState = state;
+                    el._focusSince = performance.now();
+                }
+                return document.activeElement === el && performance.now() - el._focusSince >= 350;
+            }""",
+            arg=control.element_handle(),
+            timeout=5000,
+        )
 
 
 def check_reliability(page, base_url, state_dir, enable_accessibility):
@@ -108,8 +130,8 @@ def check_reliability(page, base_url, state_dir, enable_accessibility):
             notes = page.get_by_role("button", name=re.compile("^(展开|收起)可选笔记"))
             if notes.inner_text().startswith("展开"):
                 notes.click()
-            reason = page.get_by_role("textbox", name=re.compile("一句理由"))
-            next_check = page.get_by_role("textbox", name="下一步核查提示", exact=False)
+            reason = page.get_by_role("textbox", name=re.compile("研究理由"))
+            next_check = page.get_by_role("textbox", name="下一步与反证（事件或日期）", exact=False)
             reason_value, next_value = f"合成理由{width}-{attempt}", f"核查原文{width}-{attempt}"
             for field, value, old_value in (
                 (reason, reason_value, previous[0]),
@@ -154,7 +176,7 @@ def check_reliability(page, base_url, state_dir, enable_accessibility):
             expect(reason).to_have_value(reason_value)
             click_settled(page, next_check)
             expect(next_check).to_have_value(next_value)
-            page.get_by_role("tab", name="我的关注", exact=False).click()
+            page.get_by_role("tab", name="我的研究", exact=False).click()
             expect(page).to_have_url(f"{base_url}/")
             expect(
                 page.get_by_text(next_value, exact=False)
@@ -329,7 +351,7 @@ def main(*, reliability: bool = False) -> int:
                 page.wait_for_selector("text=估值基准日", timeout=10000)
 
                 # U01: no snapshots or notes; no README/CLI import needed.
-                entry = page.get_by_role("button", name="前往同业发现", exact=True)
+                entry = page.get_by_role("button", name="前往发现候选", exact=True)
                 expect(entry).to_have_count(1)
                 expect(page.get_by_role("button", name="开始同业研究", exact=True)).to_have_count(0)
                 for width in (360, 390, 430):
@@ -347,10 +369,15 @@ def main(*, reliability: bool = False) -> int:
                 entry.click()
                 page.wait_for_selector("text=暂无参照公司", timeout=10000)
                 assert click_semantics_button("查找同业"), "Could not submit peer update"
-                page.wait_for_selector("text=更新任务", timeout=10000)
-                page.wait_for_selector("text=状态：完成", timeout=20000)
-                page.get_by_role("button", name="查看本次结果/诊断", exact=True).click()
-                page.wait_for_selector("text=当前完整榜", timeout=10000)
+                expect(page).not_to_have_url(re.compile(r"/jobs/"))
+                result = page.get_by_role("button", name="查看更新结果", exact=True)
+                expect(result).to_be_visible(timeout=20000)
+                click_settled(page, result)
+                page.wait_for_selector("text=当前完整榜", timeout=20000)
+                for detail in page.get_by_text("支持事实与下一步", exact=True).all():
+                    click_settled(page, detail)
+                boundary = page.get_by_role("button", name="适用范围与研究边界", exact=True)
+                click_settled(page, boundary)
                 result_url = page.url
                 assert "job=" in result_url
 
@@ -396,8 +423,8 @@ def main(*, reliability: bool = False) -> int:
                     assert conn.execute(
                         "SELECT ack_run_id FROM watch_items WHERE code='600001.SH'"
                     ).fetchone() == (None,)
-                page.get_by_role("button", name="查看关注", exact=True).first.click()
-                page.wait_for_selector("text=公司筛选事实", timeout=10000)
+                click_settled(page, page.get_by_role("button", name="查看关注", exact=True).first)
+                page.wait_for_selector("text=本次变化与原判断", timeout=10000)
                 time.sleep(1)
 
                 def open_notes():
@@ -443,7 +470,9 @@ def main(*, reliability: bool = False) -> int:
                 reason_input.click()
                 reason_input.press_sequentially(test_reason)
                 next_step = "核查经营现金流与利润差异"
-                next_input = page.get_by_role("textbox", name="下一步核查提示", exact=False)
+                next_input = page.get_by_role(
+                    "textbox", name="下一步与反证（事件或日期）", exact=False
+                )
                 next_input.scroll_into_view_if_needed()
                 time.sleep(0.5)  # Wait for Flutter scrolling before hitting the input.
                 next_input.click()
@@ -504,20 +533,27 @@ def main(*, reliability: bool = False) -> int:
                 page.go_back()
                 page.wait_for_selector("text=当前完整榜", timeout=10000)
                 assert page.url == result_url
-                page.get_by_role("button", name="查看关注", exact=True).first.click()
-                page.wait_for_selector("text=公司筛选事实", timeout=10000)
+                click_settled(page, page.get_by_role("button", name="查看关注", exact=True).first)
+                page.wait_for_selector("text=本次变化与原判断", timeout=10000)
 
                 # 7. Navigate back to Home and verify persisted item on home list
-                home_nav = page.locator("[aria-label='我的关注']").first
+                home_nav = page.locator("[aria-label='我的研究']").first
                 if home_nav.is_visible():
                     home_nav.click()
                 else:
-                    assert click_semantics_button("我的关注"), "Could not click 我的关注 tab"
+                    assert click_semantics_button("我的研究"), "Could not click 我的研究 tab"
                 page.wait_for_function(
                     '() => document.body.innerText.includes("关注清单 (1)")', timeout=10000
                 )
-                page.wait_for_function(
-                    '() => document.body.innerText.includes("查看详情")', timeout=10000
+                if page.get_by_role("button", name="查看详情", exact=True).count() == 0:
+                    click_settled(
+                        page,
+                        page.get_by_role(
+                            "button", name="查看其余研究（含估值与日期变化）", exact=True
+                        ),
+                    )
+                page.get_by_role("button", name="查看详情", exact=True).first.wait_for(
+                    state="visible"
                 )
 
                 # 8. Reload returns to safe home; never replays a write/update.
@@ -527,8 +563,15 @@ def main(*, reliability: bool = False) -> int:
                 page.wait_for_function(
                     '() => document.body.innerText.includes("关注清单 (1)")', timeout=10000
                 )
-                page.wait_for_function(
-                    '() => document.body.innerText.includes("查看详情")', timeout=10000
+                if page.get_by_role("button", name="查看详情", exact=True).count() == 0:
+                    click_settled(
+                        page,
+                        page.get_by_role(
+                            "button", name="查看其余研究（含估值与日期变化）", exact=True
+                        ),
+                    )
+                page.get_by_role("button", name="查看详情", exact=True).first.wait_for(
+                    state="visible"
                 )
                 time.sleep(1)
 
@@ -550,7 +593,7 @@ def main(*, reliability: bool = False) -> int:
                 enable_accessibility()
                 expect(page.get_by_role("button", name="查看详情", exact=True)).to_have_count(0)
                 page.get_by_role("button", name="显示已暂停 (1)", exact=True).click()
-                resume = page.get_by_role("button", name="恢复为观察", exact=True)
+                resume = page.get_by_role("button", name="恢复为等待证据", exact=True)
                 for width in (360, 390, 430):
                     page.set_viewport_size({"width": width, "height": 844})
                     resume.scroll_into_view_if_needed()
@@ -561,7 +604,7 @@ def main(*, reliability: bool = False) -> int:
                     )
                 page.set_viewport_size({"width": 390, "height": 844})
                 resume.click()
-                page.get_by_text("已恢复为观察，笔记和已阅基准保留。", exact=True).wait_for(
+                page.get_by_text("已恢复为等待证据，笔记和已阅基准保留。", exact=True).wait_for(
                     state="visible"
                 )
                 with sqlite3.connect(db_path) as conn:
@@ -587,17 +630,19 @@ def main(*, reliability: bool = False) -> int:
                     )
                 page.set_viewport_size({"width": 390, "height": 844})
                 update.click()
-                page.get_by_text("固定关注范围（1家）：600001.SH", exact=True).wait_for(
-                    state="visible"
-                )
-                page.get_by_role("button", name="查看关注最新资料", exact=True).wait_for(
+                expect(page).to_have_url(f"{base_url}/")
+                page.get_by_text("最近更新：完成 · 关注更新", exact=False).wait_for(
                     state="visible", timeout=15000
                 )
                 with sqlite3.connect(db_path) as conn:
                     status, phase, result_run = conn.execute(
                         "SELECT status,phase,result_run_id FROM update_jobs WHERE kind='watch'"
                     ).fetchone()
-                    assert (status, phase) == ("succeeded", "complete") and result_run
+                    assert (status, phase) == ("succeeded", "complete") and result_run, (
+                        status,
+                        phase,
+                        result_run,
+                    )
                     assert (
                         conn.execute(
                             "SELECT reason,next_check,note_url,added_run_id,ack_run_id,ack_at FROM watch_items WHERE code='600001.SH'"
@@ -613,16 +658,17 @@ def main(*, reliability: bool = False) -> int:
                 page.reload()
                 page.wait_for_load_state("domcontentloaded")
                 enable_accessibility()
-                page.get_by_role("button", name="查看关注最新资料", exact=True).click()
+                expect(page).to_have_url(f"{base_url}/")
 
                 # 9. Wait for the asynchronous home render, then inspect persisted notes.
                 detail_btn = page.get_by_role("button", name="查看详情", exact=True).first
                 detail_btn.wait_for(state="visible", timeout=10000)
                 detail_btn.click()
-                page.wait_for_selector("text=公司资料事实", timeout=10000)
+                page.wait_for_selector("text=本次变化与原判断", timeout=10000)
+                click_settled(page, page.get_by_text("PB、历史ROE与入选依据", exact=True))
                 expect(
                     page.get_by_text(
-                        "本次为固定关注事实更新，不重新选择同业、不生成新名次；PB中位数不适用。",
+                        "固定关注更新不重新排名；行业标签不能证明业务可比。",
                         exact=True,
                     )
                 ).to_be_visible()
@@ -643,7 +689,7 @@ def main(*, reliability: bool = False) -> int:
                 partial_path = state_dir / "synthetic_partial.json"
                 partial_path.write_text(json.dumps(partial))
                 import_snapshot(state_dir, partial_path, "demo")
-                page.locator("[aria-label='同业发现']").first.click()
+                page.locator("[aria-label='发现候选']").first.click()
                 page.wait_for_selector("text=本次尝试：部分完成", timeout=10000)
                 page.wait_for_selector("text=当前展示上次完整榜", timeout=10000)
                 assert page.get_by_text("PB 1.85 倍", exact=False).count() == 1
@@ -660,10 +706,10 @@ def main(*, reliability: bool = False) -> int:
                 with sqlite3.connect(state_dir / "workspace.sqlite3") as conn:
                     assert conn.execute("SELECT count(*) FROM update_jobs").fetchone()[0] == 2
                 # Real confirmation/cancellation and visible deletion feedback, not DB fallbacks.
-                page.locator("[aria-label='我的关注']").first.click()
+                page.locator("[aria-label='我的研究']").first.click()
                 expect(page.get_by_text("指标与资料变化", exact=True)).to_be_visible()
                 page.get_by_role("button", name="查看详情", exact=True).first.click()
-                page.wait_for_selector("text=公司筛选事实", timeout=10000)
+                page.wait_for_selector("text=本次变化与原判断", timeout=10000)
                 # S2: the comparison is visible before confirmation; opening it is read-only.
                 for width in (360, 390, 430):
                     page.set_viewport_size({"width": width, "height": 844})
@@ -719,7 +765,7 @@ def main(*, reliability: bool = False) -> int:
                 page.goto(company_url)
                 page.wait_for_load_state("domcontentloaded")
                 enable_accessibility()
-                page.wait_for_selector("text=公司筛选事实", timeout=10000)
+                page.wait_for_selector("text=本次变化与原判断", timeout=10000)
                 # This session remembers the previously opened section; following still needs no form.
                 page.get_by_role("button", name="收起可选笔记与状态", exact=True).click()
                 expect(page.locator("textarea[aria-label*='理由']").first).not_to_be_visible()
@@ -743,9 +789,10 @@ def main(*, reliability: bool = False) -> int:
                             "SELECT payload_json FROM update_jobs WHERE job_id='synthetic-failure'"
                         ).fetchone()[0]
                     )["target_date"]
-                page.locator("[aria-label='我的关注']").first.click()
+                page.locator("[aria-label='我的研究']").first.click()
                 failed_label = f"600001.SH · {target_date} · 失败"
-                page.get_by_role("button", name=failed_label, exact=True).click()
+                click_settled(page, page.get_by_text("更新记录", exact=True))
+                click_settled(page, page.get_by_role("button", name=failed_label, exact=True))
                 page.get_by_role("button", name="清理失败任务", exact=True).click()
                 page.get_by_role("button", name="取消", exact=True).click()
                 page.get_by_role("button", name="清理失败任务", exact=True).click()
@@ -793,10 +840,159 @@ def main(*, reliability: bool = False) -> int:
                     )
                 page.get_by_role("button", name="查看本次结果/诊断", exact=True).click()
                 page.get_by_text("PB 1.85 倍", exact=False).first.wait_for(state="visible")
+                # Direct company research works without a previous peer scan or automatic follow.
+                page.get_by_role("tab", name="我的研究", exact=False).click()
+                code_field = page.get_by_role("textbox", name="指定公司代码", exact=False)
+                click_settled(page, code_field)
+                expect(code_field).to_be_focused()
+                expect(code_field).to_have_value("")
+                for index, char in enumerate("600003", start=1):
+                    code_field.press_sequentially(char)
+                    expect(code_field).to_have_value("600003"[:index])
+                # Pasting a complete code must also survive the Flutter input bridge.
+                page.keyboard.press("ControlOrMeta+A")
+                page.wait_for_function(
+                    "el => el.selectionStart === 0 && el.selectionEnd === el.value.length",
+                    arg=code_field.element_handle(),
+                )
+                page.keyboard.insert_text("600003")
+                expect(code_field).to_have_value("600003")
+                with sqlite3.connect(db_path) as conn:
+                    direct_before = conn.execute("SELECT count(*) FROM update_jobs").fetchone()[0]
+                    assert (
+                        conn.execute(
+                            "SELECT count(*) FROM watch_items WHERE code='600003.SH'"
+                        ).fetchone()[0]
+                        == 0
+                    )
+                direct = page.get_by_role("button", name="获取公司资料", exact=True)
+                old_code_field = code_field.element_handle()
+                click_settled(page, direct)
+                page.wait_for_function("el => !el.isConnected", arg=old_code_field)
+                code_field = page.get_by_role("textbox", name="指定公司代码")
+                click_settled(page, code_field)
+                page.keyboard.insert_text("600004")
+                result = page.get_by_role("button", name="查看更新结果", exact=True)
+                expect(result).to_be_visible(timeout=20000)
+                expect(page).to_have_url(f"{base_url}/")
+                expect(code_field).to_have_value("600004")
+                click_settled(page, result)
+                expect(page).to_have_url(f"{base_url}/company/600003.SH", timeout=20000)
+                expect(page.get_by_role("button", name="关注", exact=True)).to_be_enabled()
+                expect(
+                    page.get_by_role("button", name="标记本次变化已阅", exact=True)
+                ).to_be_disabled()
+                with sqlite3.connect(db_path) as conn:
+                    assert (
+                        conn.execute("SELECT count(*) FROM update_jobs").fetchone()[0]
+                        == direct_before + 1
+                    )
+                    payload = json.loads(
+                        conn.execute(
+                            "SELECT payload_json FROM update_jobs ORDER BY requested_at DESC LIMIT 1"
+                        ).fetchone()[0]
+                    )
+                    assert (
+                        payload["codes"] == ["600003.SH"]
+                        and payload["intent"]["code"] == "600003.SH"
+                    )
+                    assert (
+                        conn.execute(
+                            "SELECT count(*) FROM watch_items WHERE code='600003.SH'"
+                        ).fetchone()[0]
+                        == 0
+                    )
+                click_settled(page, page.get_by_text("最新财报证据与原文", exact=True))
+                expect(
+                    page.get_by_text("本次接口最新报告期：2026-06-30", exact=False)
+                ).to_be_visible()
+                expect(page.get_by_text("每股经营现金流：0.85 元/股", exact=True)).to_be_visible()
+                for width in (360, 390, 430):
+                    page.set_viewport_size({"width": width, "height": 844})
+                    action = page.get_by_role("button", name="更新这家公司", exact=True)
+                    click_target = action.element_handle()
+                    bounds = action.bounding_box()
+                    assert bounds
+                    page.mouse.move(width / 2, 380)
+                    page.mouse.wheel(0, bounds["y"] + bounds["height"] / 2 - 380)
+                    page.wait_for_function(
+                        "el => el.getBoundingClientRect().height >= 44", arg=click_target
+                    )
+                    bounds = action.bounding_box()
+                    assert (
+                        bounds and bounds["x"] >= 0 and bounds["x"] + bounds["width"] <= width + 1
+                    )
+                page.set_viewport_size({"width": 390, "height": 844})
+                click_settled(page, page.get_by_role("button", name="关注", exact=True))
+                expect(page.get_by_role("button", name="已关注", exact=True)).to_be_disabled()
+                open_notes()
+                reason = page.get_by_role("textbox", name=re.compile("研究理由"))
+                click_settled(page, reason)
+                expect(reason).to_be_focused()
+                expect(reason).to_have_value("")
+                page.keyboard.type("支持：盈利增长；反对证据：业务可比性尚未核实")
+                expect(reason).to_have_value("支持：盈利增长；反对证据：业务可比性尚未核实")
+                note = page.get_by_role("textbox", name="外部笔记链接 (https://)", exact=False)
+                click_settled(page, note)
+                expect(note).to_be_focused()
+                expect(note).to_have_value("")
+                page.keyboard.type("https://example.com/research")
+                expect(note).to_have_value("https://example.com/research")
+                click_settled(page, page.get_by_role("button", name="保存笔记与状态", exact=True))
+                expect(page.get_by_text("保存成功", exact=False)).to_be_visible()
+                expect(page.get_by_role("button", name="打开研究笔记", exact=True)).to_have_count(1)
+                with sqlite3.connect(db_path) as conn:
+                    saved = conn.execute(
+                        "SELECT reason,note_url,ack_run_id FROM watch_items WHERE code='600003.SH'"
+                    ).fetchone()
+                    assert saved == (
+                        "支持：盈利增长；反对证据：业务可比性尚未核实",
+                        "https://example.com/research",
+                        None,
+                    )
+                # The detail-page action freezes this company alone and retains the judgment.
+                action = page.get_by_role("button", name="更新这家公司", exact=True)
+                click_settled(page, action)
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    with sqlite3.connect(db_path) as conn:
+                        if (
+                            conn.execute("SELECT count(*) FROM update_jobs").fetchone()[0]
+                            == direct_before + 2
+                        ):
+                            break
+                    page.wait_for_timeout(
+                        50
+                    )  # Wait for the observed submission, not an arbitrary layout delay.
+                expect(action).to_be_enabled()
+                with sqlite3.connect(db_path) as conn:
+                    assert (
+                        conn.execute("SELECT count(*) FROM update_jobs").fetchone()[0]
+                        == direct_before + 2
+                    )
+                    update_id, raw = conn.execute(
+                        "SELECT job_id,payload_json FROM update_jobs ORDER BY requested_at DESC LIMIT 1"
+                    ).fetchone()
+                    assert json.loads(raw)["codes"] == ["600003.SH"]
+                click_settled(page, page.get_by_role("button", name="更新详情", exact=True))
+                expect(page).to_have_url(f"{base_url}/jobs/{update_id}")
+                expect(page.get_by_text("状态：完成", exact=False)).to_be_visible(timeout=20000)
+                click_settled(page, page.get_by_role("button", name="查看公司资料", exact=True))
+                expect(page).to_have_url(f"{base_url}/company/600003.SH")
+                reason = page.get_by_role("textbox", name=re.compile("研究理由"))
+                click_settled(page, reason)
+                expect(reason).to_have_value("支持：盈利增长；反对证据：业务可比性尚未核实")
+                with sqlite3.connect(db_path) as conn:
+                    assert (
+                        conn.execute(
+                            "SELECT ack_run_id FROM watch_items WHERE code='600003.SH'"
+                        ).fetchone()[0]
+                        is None
+                    )
                 # Flet may attempt optional CDN resources; every external request was aborted.
                 print(f"External requests blocked (none allowed): {sorted(set(blocked_requests))}")
                 print(
-                    "Mobile browser test passed (360/390/430px, synthetic, not a real device): empty -> submit -> worker -> comparison -> add -> dirty Back/cancel -> visible save feedback -> back -> reload -> pause/reload/resume -> fixed watch submit/worker/reload -> partial/old board -> acknowledged/current comparison -> explicit ack -> delete/cancel/re-add -> dismiss failure/reload -> rescan cancel/confirm/worker/result."
+                    "Mobile browser test passed (360/390/430px, synthetic, not a real device): empty -> submit -> worker -> comparison -> add -> dirty Back/cancel -> visible save feedback -> back -> reload -> pause/reload/resume -> fixed watch submit/worker/reload -> partial/old board -> acknowledged/current comparison -> explicit ack -> delete/cancel/re-add -> dismiss failure/reload -> rescan -> direct company/input/paste -> latest financial evidence -> follow/save/note link -> single-company update/result/judgment preserved."
                 )
                 return 0
             except Exception as exc:

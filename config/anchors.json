@@ -1,31 +1,38 @@
 [
   {
     "code": "601288",
-    "name": "农业银行"
+    "name": "农业银行",
+    "discovery_unavailable": "金融行业需独立研究口径，当前不支持"
   },
   {
     "code": "601939",
-    "name": "建设银行"
+    "name": "建设银行",
+    "discovery_unavailable": "金融行业需独立研究口径，当前不支持"
   },
   {
     "code": "601988",
-    "name": "中国银行"
+    "name": "中国银行",
+    "discovery_unavailable": "金融行业需独立研究口径，当前不支持"
   },
   {
     "code": "601398",
-    "name": "工商银行"
+    "name": "工商银行",
+    "discovery_unavailable": "金融行业需独立研究口径，当前不支持"
   },
   {
     "code": "600036",
-    "name": "招商银行"
+    "name": "招商银行",
+    "discovery_unavailable": "金融行业需独立研究口径，当前不支持"
   },
   {
     "code": "002736",
-    "name": "国信证券"
+    "name": "国信证券",
+    "discovery_unavailable": "金融行业需独立研究口径，当前不支持"
   },
   {
     "code": "600999",
-    "name": "招商证券"
+    "name": "招商证券",
+    "discovery_unavailable": "金融行业需独立研究口径，当前不支持"
   },
   {
     "code": "601225",

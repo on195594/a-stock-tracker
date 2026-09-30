@@ -11,11 +11,6 @@ import pytest
 from a_stock_tracker import calendar as script
 
 
-@pytest.fixture
-def stub_calendar_refresh():
-    return script.refresh_calendar
-
-
 def _calendar_response(start: date, end: date) -> pd.DataFrame:
     rows = []
     previous_open = None
@@ -36,9 +31,7 @@ def _calendar_response(start: date, end: date) -> pd.DataFrame:
     return pd.DataFrame(reversed(rows))
 
 
-def test_calendar_refresh_writes_auditable_runtime_evidence(
-    tmp_path, stub_calendar_refresh
-) -> None:
+def test_calendar_refresh_writes_auditable_runtime_evidence(tmp_path) -> None:
     tracked = tmp_path / "config" / "trading_calendar.json"
     runtime = tmp_path / "data" / "trading_calendar.json"
     sources = tmp_path / "data" / "trading-calendar-sources"
@@ -58,7 +51,7 @@ def test_calendar_refresh_writes_auditable_runtime_evidence(
     api = Mock()
     api.trade_cal.return_value = _calendar_response(date(2026, 9, 18), date(2026, 9, 20))
 
-    result = stub_calendar_refresh(
+    result = script.refresh_calendar(
         api,
         date(2026, 9, 20),
         tracked_path=tracked,
@@ -93,9 +86,7 @@ def test_calendar_refresh_writes_auditable_runtime_evidence(
     )
 
 
-def test_calendar_refresh_failure_preserves_previous_runtime_file(
-    tmp_path, stub_calendar_refresh
-) -> None:
+def test_calendar_refresh_failure_preserves_previous_runtime_file(tmp_path) -> None:
     tracked = tmp_path / "tracked.json"
     runtime = tmp_path / "runtime.json"
     tracked.write_text(
@@ -116,7 +107,7 @@ def test_calendar_refresh_failure_preserves_previous_runtime_file(
     api.trade_cal.return_value = incomplete[incomplete["cal_date"] != "20260919"]
 
     with pytest.raises(RuntimeError, match="does not cover every natural date"):
-        stub_calendar_refresh(
+        script.refresh_calendar(
             api,
             date(2026, 9, 20),
             tracked_path=tracked,
@@ -152,9 +143,7 @@ def test_atomic_write_restores_previous_file_after_post_replace_failure(
     assert not list(tmp_path.glob(".*.rollback"))
 
 
-def test_calendar_refresh_rejects_official_closure_marked_open(
-    tmp_path, stub_calendar_refresh
-) -> None:
+def test_calendar_refresh_rejects_official_closure_marked_open(tmp_path) -> None:
     tracked = tmp_path / "tracked.json"
     tracked.write_text(
         json.dumps(
@@ -172,7 +161,7 @@ def test_calendar_refresh_rejects_official_closure_marked_open(
     api.trade_cal.return_value = _calendar_response(date(2026, 2, 15), date(2026, 2, 16))
 
     with pytest.raises(RuntimeError, match="春节:2026-02-16:marked_open"):
-        stub_calendar_refresh(
+        script.refresh_calendar(
             api,
             date(2026, 2, 16),
             tracked_path=tracked,

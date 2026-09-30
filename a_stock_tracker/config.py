@@ -25,7 +25,17 @@ def read_anchors(path: Path | None = None) -> list[dict[str, str]]:
             if code in seen:
                 raise ValueError("duplicate reference")
             seen.add(code)
-            result.append({"code": base_code(code), "ts_code": code, "name": item["name"].strip()})
+            reason = item.get("discovery_unavailable", "")
+            if not isinstance(reason, str):
+                raise ValueError("invalid discovery availability")
+            result.append(
+                {
+                    "code": base_code(code),
+                    "ts_code": code,
+                    "name": item["name"].strip(),
+                    **({"discovery_unavailable": reason} if reason else {}),
+                }
+            )
         return result
     except (OSError, ValueError, TypeError, ScreenError) as exc:
         raise ScreenError("参照清单不可用，请检查 config/anchors.json") from exc

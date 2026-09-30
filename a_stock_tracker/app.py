@@ -17,6 +17,7 @@ from a_stock_tracker.auth import (
     create_demo_actor,
     create_owner_actor,
 )
+from a_stock_tracker.evidence import REPORT_FIELDS, research_prompt
 from a_stock_tracker.paths import DATA_DIR, workspace_path
 from a_stock_tracker.research import fmt_number
 from a_stock_tracker.services import (
@@ -31,6 +32,7 @@ from a_stock_tracker.services import (
     list_update_jobs,
     mark_seen,
     peer_anchors,
+    request_company_update,
     request_peer_update,
     request_watch_update,
     save_watch,
@@ -78,7 +80,13 @@ def build_app():
         page.title = "投研工作台"
         page.theme_mode = ft.ThemeMode.LIGHT
         page.fonts = {"NotoSansSC": "fonts/NotoSansSC-Regular.otf"}
-        page.theme = ft.Theme(font_family="NotoSansSC", color_scheme_seed=ft.Colors.TEAL_700)
+        page.theme = ft.Theme(
+            font_family="NotoSansSC",
+            color_scheme_seed=ft.Colors.TEAL_700,
+            button_theme=ft.ButtonTheme(
+                style=ft.ButtonStyle(padding=ft.Padding.symmetric(horizontal=16, vertical=12))
+            ),
+        )
         page.bgcolor = ft.Colors.GREY_50
         page.padding = 16
         page.scroll = ft.ScrollMode.AUTO
@@ -185,7 +193,7 @@ def build_app():
                 )
                 return
             poll = page_state.get("job_poll_task")
-            if poll is not None:
+            if poll is not None and poll is not asyncio.current_task():
                 poll.cancel()
                 page_state["job_poll_task"] = None
             # Freeze the destination offset before late scroll events from the old page arrive.
@@ -400,6 +408,8 @@ def build_app():
             feedback: ft.Text,
             gen: int,
             actor: Actor,
+            *,
+            company_code: str | None = None,
         ) -> dict[str, Any] | None:
             def live() -> bool:
                 return (
@@ -413,9 +423,22 @@ def build_app():
             feedback.color = ft.Colors.BLUE_GREY_700
             page.update()
             pending = page_state["pending_updates"]
-            request_id = pending.setdefault(anchor, uuid.uuid4().hex)
+            pending_key = (
+                ("company", company_code.strip().upper()) if company_code is not None else anchor
+            )
+            request_id = pending.setdefault(pending_key, uuid.uuid4().hex)
             try:
-                if anchor is None:
+                if company_code is not None:
+                    job = await asyncio.to_thread(
+                        request_company_update,
+                        actor,
+                        company_code,
+                        request_id,
+                        STATE_DIR,
+                        APP_MODE,
+                        RESEARCH_DATA_DIR,
+                    )
+                elif anchor is None:
                     job = await asyncio.to_thread(
                         request_watch_update,
                         actor,
@@ -445,9 +468,9 @@ def build_app():
                 message = "提交结果未确认，可能已受理。可查看最近任务，或重试确认（复用原请求编号），不会自动重放。"
             else:
                 if live():
-                    if pending.get(anchor) == request_id:
-                        pending.pop(anchor)
-                    feedback.value = "请求已受理，正在打开任务。"
+                    if pending.get(pending_key) == request_id:
+                        pending.pop(pending_key)
+                    feedback.value = "已受理，可留在此页查看进度，也可稍后回来。"
                     return job
                 # Keep the ID for a returning page to resolve, never silently start anew.
                 return None
@@ -457,6 +480,128 @@ def build_app():
                 button.disabled = False
                 page.update()
             return None
+
+        def update_progress(jobs: list[dict[str, Any]], gen: int, actor: Actor) -> ft.Control:
+            """Read-only progress in the originating view; never resubmit on reconnect."""
+            if not jobs:
+                return ft.Container()
+            job = jobs[0]
+            active = job["status"] in ("queued", "running")
+            scope_label = (
+                f"公司 {job['company_code']}"
+                if job.get("company_code")
+                else f"关注更新（{len(job.get('codes', []))}家）"
+                if job["kind"] == "watch"
+                else f"同业扫描 {job['anchor']}"
+            )
+            status = ft.Text(
+                f"最近更新：{job_status_label(job)} · {scope_label} · 数据日 {job['target_date']}",
+                size=13,
+            )
+
+            async def open_details(e):
+                if gen == page_state["generation"] and actor.is_valid and page_state["connected"]:
+                    await navigate(f"/jobs/{job['job_id']}")
+
+            async def show_result(e):
+                if (
+                    gen != page_state["generation"]
+                    or not actor.is_valid
+                    or not page_state["connected"]
+                ):
+                    return
+                if job.get("company_code"):
+                    await navigate(f"/company/{job['company_code']}")
+                elif job["kind"] == "peer":
+                    await navigate(
+                        "/discover?" + urlencode({"anchor": job["anchor"], "job": job["job_id"]})
+                    )
+                else:
+                    await navigate(page_state["route"])
+
+            result = ft.Button(
+                "查看更新结果",
+                on_click=show_result,
+                visible=not active and job["status"] == "succeeded",
+            )
+
+            async def poll():
+                try:
+                    while active:
+                        await asyncio.sleep(2)
+                        if (
+                            gen != page_state["generation"]
+                            or not actor.is_valid
+                            or not page_state["connected"]
+                        ):
+                            return
+                        latest = await asyncio.to_thread(
+                            get_update_job, actor, job["job_id"], STATE_DIR, APP_MODE
+                        )
+                        if (
+                            gen != page_state["generation"]
+                            or not actor.is_valid
+                            or not page_state["connected"]
+                        ):
+                            return
+                        status.value = f"最近更新：{job_status_label(latest)} · {scope_label} · 数据日 {latest['target_date']}"
+                        if latest.get("error_summary"):
+                            status.value += f" · {latest['error_summary']}"
+                        if latest["status"] not in ("queued", "running"):
+                            result.visible = latest["status"] == "succeeded"
+                            page.update()
+                            return
+                        page.update()
+                except asyncio.CancelledError:
+                    return
+                except (ServiceError, WorkspaceError, AuthError):
+                    if (
+                        gen == page_state["generation"]
+                        and actor.is_valid
+                        and page_state["connected"]
+                    ):
+                        status.value = "进度暂不可读取；可查看更新详情，不会重复提交。"
+                        page.update()
+
+            if active:
+                page_state["job_poll_task"] = asyncio.create_task(poll())
+            return ft.Column(
+                [
+                    status,
+                    ft.Text(job.get("error_summary") or "", color=ft.Colors.RED_700),
+                    ft.Row([result, ft.TextButton("更新详情", on_click=open_details)], wrap=True),
+                ],
+                spacing=4,
+            )
+
+        def company_entry(gen: int, actor: Actor) -> ft.Control:
+            code = ft.TextField(
+                label="指定公司代码",
+                hint_text="演示代码 600002" if APP_MODE == "demo" else "例如 600900 或 000786",
+                value="",
+                max_length=9,
+            )
+            feedback = ft.Text("", size=13)
+            button = ft.Button("获取公司资料", height=48)
+
+            async def submit(e):
+                job = await submit_update(
+                    None, button, feedback, gen, actor, company_code=code.value or ""
+                )
+                if job:
+                    await navigate("/")
+
+            button.on_click = submit
+            code.on_submit = submit
+            return ft.Column(
+                [
+                    code,
+                    button,
+                    feedback,
+                    ft.Text("沪深主板非金融；点击后核验资料，再决定是否加入研究。", size=12),
+                ],
+                spacing=6,
+            )
 
         async def render_home(gen: int):
             actor: Actor | None = page_state.get("actor")
@@ -471,17 +616,18 @@ def build_app():
                 return await render_login()
             items_controls: list[ft.Control] = []
             paused_controls: list[ft.Control] = []
+            routine_controls: list[ft.Control] = []
             status_feedback = ft.Text(
                 pending_message if None in page_state["pending_updates"] else "",
                 color=ft.Colors.RED_700,
             )
             active_count = sum(item["status"] != "paused" for item in data["watch_items"])
-            update_button = ft.Button("更新资料", disabled=not 0 < active_count <= 50)
+            update_button = ft.Button("更新资料", height=48, disabled=not 0 < active_count <= 50)
 
             async def submit_watch(e):
                 job = await submit_update(None, update_button, status_feedback, gen, actor)
                 if job:
-                    await navigate(f"/jobs/{job['job_id']}")
+                    await navigate("/")
 
             update_button.on_click = submit_watch
             last_group = None
@@ -518,9 +664,9 @@ def build_app():
                 )
                 status_chip = ft.Container(
                     content=ft.Text(
-                        "研究中"
+                        "继续研究"
                         if it["status"] == "research"
-                        else ("观察" if it["status"] == "observe" else "暂停"),
+                        else ("等待证据" if it["status"] == "observe" else "暂不研究"),
                         size=12,
                         color=ft.Colors.WHITE,
                     ),
@@ -565,7 +711,7 @@ def build_app():
                             and page_state["connected"]
                         ):
                             page_state["notice"] = (
-                                "已恢复为观察，笔记和已阅基准保留。"
+                                "已恢复为等待证据，笔记和已阅基准保留。"
                                 if target == "observe"
                                 else "已暂停关注，不再计入需要复看；笔记和已阅基准保留。"
                             )
@@ -586,7 +732,7 @@ def build_app():
                 if it["status"] == "paused":
                     destination = paused_controls
                 else:
-                    destination = items_controls
+                    destination = items_controls if it["needs_attention"] else routine_controls
                     group = tier_titles.get(tier, "暂无未阅变化")
                     if group != last_group:
                         if tier in ("anomaly", "risk_change"):
@@ -626,7 +772,7 @@ def build_app():
                                 size=16,
                                 weight=ft.FontWeight.BOLD,
                             )
-                        items_controls.append(header)
+                        destination.append(header)
                         last_group = group
                 change_desc = it["change_summary"] if it["has_change"] else "覆盖字段暂无未阅变化"
                 desc_color = (
@@ -671,8 +817,15 @@ def build_app():
                                         color=desc_color,
                                         weight=desc_weight,
                                     ),
-                                    ft.Text(it.get("fact_summary", "暂无可用事实"), size=14),
-                                    ft.Text(it.get("roe_trend", ""), size=13),
+                                    ft.Text(
+                                        it.get("reason")
+                                        or it.get("research_prompt", {}).get(
+                                            "action", "先核查业务与盈利质量"
+                                        ),
+                                        size=14,
+                                        max_lines=2,
+                                        overflow=ft.TextOverflow.ELLIPSIS,
+                                    ),
                                     *(
                                         [
                                             ft.Text(
@@ -694,7 +847,7 @@ def build_app():
                                         controls=[
                                             ft.Button("查看详情", on_click=on_card_click),
                                             ft.Button(
-                                                "恢复为观察"
+                                                "恢复为等待证据"
                                                 if it["status"] == "paused"
                                                 else "暂停关注",
                                                 on_click=change_status,
@@ -709,8 +862,8 @@ def build_app():
                     )
                 )
 
-            if paused_controls and not items_controls:
-                items_controls.append(ft.Text("当前关注均已暂停；展开下方列表可恢复为观察。"))
+            if paused_controls and not items_controls and not routine_controls:
+                items_controls.append(ft.Text("当前关注均已暂停；展开下方列表可恢复为等待证据。"))
 
             if not data["watch_items"]:
 
@@ -736,11 +889,11 @@ def build_app():
                                         weight=ft.FontWeight.BOLD,
                                     ),
                                     ft.Text(
-                                        "在『同业发现』查找行业参照公司并点击关注，关注无须填写理由或笔记。",
+                                        "输入公司代码，或在『发现候选』选择参照；取得资料后可一键关注。",
                                         size=13,
                                         color=ft.Colors.GREY_700,
                                     ),
-                                    ft.Button("前往同业发现", on_click=go_to_discover),
+                                    ft.Button("前往发现候选", on_click=go_to_discover),
                                 ],
                                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                                 spacing=8,
@@ -772,6 +925,19 @@ def build_app():
                 page.update()
 
             paused_button.on_click = toggle_paused
+
+            routine_key = ("/", "routine_watch")
+            routine_body = ft.Column(
+                routine_controls, visible=page_state["expanded_sections"].get(routine_key, False)
+            )
+
+            async def toggle_routine(e):
+                if gen == page_state["generation"] and actor.is_valid and page_state["connected"]:
+                    routine_body.visible = not routine_body.visible
+                    page_state["expanded_sections"][routine_key] = routine_body.visible
+                    page.update()
+
+            routine_button = ft.Button("查看其余研究（含估值与日期变化）", on_click=toggle_routine)
             job_controls: list[ft.Control] = []
             for job in jobs:
 
@@ -795,9 +961,9 @@ def build_app():
                             controls=[
                                 ft.Column(
                                     [
-                                        ft.Text("我的关注", size=18, weight=ft.FontWeight.BOLD),
+                                        ft.Text("我的研究", size=18, weight=ft.FontWeight.BOLD),
                                         ft.Text(
-                                            f"估值基准日：{data['valuation_date']} | 需要复看：{data['needs_review_count']} 家",
+                                            f"估值基准日：{data['valuation_date']} | 待处理：{data['important_review_count']} 家",
                                             size=13,
                                         ),
                                     ],
@@ -810,9 +976,13 @@ def build_app():
                     ),
                     ft.Text(page_state.pop("notice", ""), color=ft.Colors.GREEN_700),
                     ft.Text(
-                        f"提交时冻结未暂停的关注公司（当前{active_count}家，最多50家）；只更新事实，不重新排名。空清单或超过50家时不可提交。",
+                        f"更新 {active_count} 家未暂停公司；最多50家。"
+                        if active_count
+                        else "从熟悉的公司开始，或发现同业候选。",
                         size=13,
                     ),
+                    company_entry(gen, actor),
+                    update_progress(jobs, gen, actor),
                     *(
                         [ft.Button("前往同业扫描", on_click=go_discover)]
                         if data["total_watch_count"]
@@ -826,9 +996,16 @@ def build_app():
                     ),
                     status_feedback,
                     *items_controls,
-                    *([paused_button, paused_body] if paused_controls else []),
                     *(
-                        [ft.Text("最近更新", weight=ft.FontWeight.BOLD)] + job_controls
+                        [ft.Text("暂无重要待处理事项；估值和日期变化仍可查看。")]
+                        if data["watch_items"] and not items_controls
+                        else []
+                    ),
+                    *([routine_button, routine_body] if routine_controls else []),
+                    *([paused_button, paused_body] if paused_controls else []),
+                    ft.Divider(),
+                    *(
+                        [ft.ExpansionTile(title="更新记录", controls=job_controls)]
                         if job_controls
                         else []
                     ),
@@ -849,12 +1026,17 @@ def build_app():
             if gen != page_state["generation"] or not actor.is_valid:
                 return await render_login()
             codes = {entry["code"] for entry in allowed}
+            available_codes = {
+                entry["code"] for entry in allowed if not entry.get("discovery_unavailable")
+            }
             params = parse_qs(urlparse(page_state["route"]).query)
             anchor = params.get("anchor", [page_state["selected_anchor"]])[0]
             job_id = params.get("job", [None])[0]
             run_id = page_state.get("discover_boards", {}).get(page_state["route"])
-            if anchor not in codes and not params.get("anchor"):
-                anchor = allowed[0]["code"] if allowed else ""
+            if anchor not in codes:
+                anchor = next(
+                    (entry["code"] for entry in allowed if entry["code"] in available_codes), ""
+                )
                 page_state["selected_anchor"] = anchor
             page_state["selected_anchor"] = anchor
             try:
@@ -894,7 +1076,12 @@ def build_app():
                 label="参照公司",
                 value=anchor if anchor in codes else None,
                 options=[
-                    ft.dropdown.Option(entry["code"], f"{entry['name']} ({entry['code']})")
+                    ft.dropdown.Option(
+                        entry["code"],
+                        f"{entry['name']} ({entry['code']})"
+                        + (" · 暂不适用" if entry.get("discovery_unavailable") else ""),
+                        disabled=bool(entry.get("discovery_unavailable")),
+                    )
                     for entry in allowed
                 ],
                 on_select=on_anchor_select,
@@ -904,12 +1091,14 @@ def build_app():
                 pending_message if anchor in page_state["pending_updates"] else "",
                 color=ft.Colors.RED_700,
             )
-            submit_button = ft.Button("查找同业", disabled=anchor not in codes)
+            submit_button = ft.Button("查找同业", height=48, disabled=anchor not in available_codes)
 
             async def on_submit(e):
                 job = await submit_update(anchor, submit_button, update_feedback, gen, actor)
                 if job:
-                    await navigate(f"/jobs/{job['job_id']}")
+                    await navigate(
+                        "/discover?" + urlencode({"anchor": anchor, "job": job["job_id"]})
+                    )
 
             submit_button.on_click = on_submit
 
@@ -960,11 +1149,13 @@ def build_app():
                     else {}
                 )
                 status = disc_data.get("watch_statuses", {}).get(code)
-                status_text = {"observe": "观察", "research": "研究中", "paused": "已暂停"}.get(
-                    status, "未加入"
-                )
+                status_text = {
+                    "observe": "等待证据",
+                    "research": "继续研究",
+                    "paused": "暂不研究",
+                }.get(status, "未加入")
                 feedback = ft.Text("", size=13)
-                add_button = ft.Button("关注", disabled=not row.get("code"))
+                add_button = ft.Button("关注", height=48, disabled=not row.get("code"))
 
                 async def open_comp(e):
                     if gen == page_state["generation"] and actor.is_valid:
@@ -1009,6 +1200,7 @@ def build_app():
                 add_button.on_click = add_observation
                 annual = row.get("annual_roes") or []
                 insights = row.get("fact_insights") or {}
+                prompt = research_prompt(row)
                 reasons = row.get("exclusions") or row.get("eligibility_reasons") or []
                 return ft.Container(
                     padding=12,
@@ -1036,29 +1228,12 @@ def build_app():
                                 weight=ft.FontWeight.W_600,
                             ),
                             ft.Text(
-                                f"估值日：{row.get('valuation_date') or result.get('valuation_date') or '未记录'}",
-                                size=12,
+                                f"入选线索：PB 第 {fmt_number(rank.get('pb_rank'), 1)} 名，历史 ROE 第 {fmt_number(rank.get('roe_rank'), 1)} 名。"
+                                if rank
+                                else "资料尚不足以形成同业排名。",
+                                size=13,
                             ),
-                            *[
-                                ft.Text(
-                                    f"{str(a.get('period') or '')[:4] or '年度未知'}年 ROE {fmt_number(a.get('roe_waa'))}%",
-                                    size=14,
-                                )
-                                for a in annual
-                            ],
-                            *([ft.Text("逐年ROE缺失，不补零")] if not annual else []),
-                            ft.Text(insights.get("pb_comparison", "PB中位数暂不比较：缺少事实")),
-                            ft.Text(insights.get("roe_trend", "ROE趋势：资料有缺口，暂不判断")),
-                            *(
-                                [
-                                    ft.Text(
-                                        "排除/缺口：" + exclusion_text(row),
-                                        color=ft.Colors.AMBER_900,
-                                    )
-                                ]
-                                if not rank and reasons and reasons != ["qualified"]
-                                else []
-                            ),
+                            ft.Text(f"待核查：{prompt['action']}", size=13),
                             ft.Row(
                                 [
                                     ft.Button("查看关注" if status else "查看", on_click=open_comp),
@@ -1067,6 +1242,41 @@ def build_app():
                                 wrap=True,
                             ),
                             feedback,
+                            ft.ExpansionTile(
+                                title="支持事实与下一步",
+                                controls=[
+                                    ft.Text(
+                                        f"估值日：{row.get('valuation_date') or result.get('valuation_date') or '未记录'}",
+                                        size=12,
+                                    ),
+                                    *[
+                                        ft.Text(
+                                            f"{str(a.get('period') or '')[:4] or '年度未知'}年 ROE {fmt_number(a.get('roe_waa'))}%",
+                                            size=14,
+                                        )
+                                        for a in annual
+                                    ],
+                                    *([ft.Text("逐年ROE缺失，不补零")] if not annual else []),
+                                    ft.Text(
+                                        insights.get("pb_comparison", "PB中位数暂不比较：缺少事实")
+                                    ),
+                                    ft.Text(
+                                        insights.get("roe_trend", "ROE趋势：资料有缺口，暂不判断")
+                                    ),
+                                    ft.Text(prompt["why"], size=13),
+                                    ft.Text("下一步：" + prompt["next"], size=13),
+                                    *(
+                                        [
+                                            ft.Text(
+                                                "排除/缺口：" + exclusion_text(row),
+                                                color=ft.Colors.AMBER_900,
+                                            )
+                                        ]
+                                        if not rank and reasons and reasons != ["qualified"]
+                                        else []
+                                    ),
+                                ],
+                            ),
                         ],
                         spacing=6,
                     ),
@@ -1148,7 +1358,10 @@ def build_app():
 
             rows_controls: list[ft.Control] = []
             attempt = disc_data.get("attempt")
-            if attempt:
+            if attempt and (
+                attempt.get("error_summary")
+                or (attempt.get("result") or {}).get("health") not in (None, "complete")
+            ):
                 rows_controls.append(
                     ft.Text(
                         f"本次尝试：{attempt['label']} · 目标数据日 {attempt.get('target_date') or '未知'}",
@@ -1185,7 +1398,7 @@ def build_app():
                             if disc_data.get("showing_previous")
                             else "当前完整榜"
                         )
-                        + f" · 估值日 {disc_data['valuation_date']} · 扫描 {disc_data['captured_at']}",
+                        + f" · 估值日 {disc_data['valuation_date']} · 扫描 {disc_data['captured_at'][:10]}",
                         size=13,
                     )
                 )
@@ -1239,41 +1452,46 @@ def build_app():
             else:
                 rows_controls.append(ft.Text(disc_data.get("message") or "当前无可用完整榜。"))
 
+            recent_jobs = await asyncio.to_thread(list_update_jobs, actor, STATE_DIR, APP_MODE)
+            if gen != page_state["generation"] or not actor.is_valid:
+                return await render_login()
+            relevant_jobs = [
+                j
+                for j in recent_jobs
+                if j["kind"] == "peer"
+                and j["anchor"] == anchor
+                and (not job_id or j["job_id"] == job_id)
+            ]
             return ft.Column(
                 controls=[
                     ft.Row(
                         controls=[
-                            ft.Text("同业发现", size=18, weight=ft.FontWeight.BOLD),
+                            ft.Text("发现候选", size=18, weight=ft.FontWeight.BOLD),
                             submit_button,
                         ],
                         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                     ),
                     anchor_field,
-                    ft.Text(FACT_LIMITS, size=13),
                     ft.Text(
-                        "仅支持项目参照清单；金融或行业未知不适用。",
-                        size=12,
-                    ),
-                    ft.Text(
-                        "研究次序不是买入分数。PB是市价与每股净资产之比；ROE是历史净资产收益率，三年均值不是每年都盈利。",
+                        "选择熟悉的公司，发现值得进一步核查的同业。研究次序不等于买入建议。",
                         size=13,
                     ),
                     *(
-                        [ft.Text("正在查看指定任务的结果/诊断，并非后来最新资料。", size=12)]
-                        if job_id
+                        [
+                            ft.Text(
+                                "金融行业需独立研究口径，当前参照不适用。",
+                                color=ft.Colors.AMBER_900,
+                            )
+                        ]
+                        if anchor not in available_codes
                         else []
+                    ),
+                    update_progress(
+                        [j for j in relevant_jobs if j["status"] != "succeeded"], gen, actor
                     ),
                     ft.Text(anchor_error, color=ft.Colors.RED_700)
                     if anchor_error
                     else ft.Container(),
-                    ft.Text(
-                        f"参照标的：{anchor or '暂无'} (估值日: {disc_data.get('valuation_date', '无')})",
-                        size=13,
-                    ),
-                    ft.Text(
-                        "提交将按本次参照范围、已证明的上一交易日扫描；历史任务不变。",
-                        size=12,
-                    ),
                     update_feedback,
                     ft.Divider(height=16),
                     *(
@@ -1295,6 +1513,20 @@ def build_app():
                         else []
                     ),
                     ft.Column(controls=rows_controls, spacing=8),
+                    section(
+                        "适用范围与研究边界",
+                        [
+                            ft.Text(FACT_LIMITS),
+                            ft.Text(
+                                "仅支持项目参照清单；金融或行业未知不适用。PB 是市价与每股净资产之比；ROE 是历史净资产收益率。提交取数后使用已证明的上一交易日，财务按本次实际取得的披露资料核查。"
+                            ),
+                            *(
+                                [ft.Text("正在查看指定任务的结果/诊断，并非后来最新资料。")]
+                                if job_id
+                                else []
+                            ),
+                        ],
+                    ),
                     ft.Button("查看最新资料（不联网更新）", on_click=refresh_result),
                 ],
                 spacing=8,
@@ -1319,6 +1551,9 @@ def build_app():
                     or not actor.is_valid
                     or not page_state["connected"]
                 ):
+                    return
+                if job.get("company_code"):
+                    await navigate(f"/company/{job['company_code']}")
                     return
                 if job["kind"] == "watch":
                     await navigate("/")
@@ -1405,7 +1640,12 @@ def build_app():
             )
             is_watch = job["kind"] == "watch"
             result_button = ft.Button(
-                "查看关注最新资料" if is_watch else "查看本次结果/诊断", on_click=open_result
+                "查看公司资料"
+                if job.get("company_code")
+                else "查看关注最新资料"
+                if is_watch
+                else "查看本次结果/诊断",
+                on_click=open_result,
             )
             retry_button = ft.Button(
                 "回首页重新确认更新" if is_watch else "重新扫描", on_click=retry
@@ -1475,7 +1715,7 @@ def build_app():
                         size=12,
                     ),
                     ft.Button(
-                        "返回我的关注" if is_watch else "返回同业发现", on_click=return_to_discover
+                        "返回我的研究" if is_watch else "返回发现候选", on_click=return_to_discover
                     ),
                 ]
             )
@@ -1521,21 +1761,24 @@ def build_app():
             status_dd = ft.Dropdown(
                 label="关注状态（可选）",
                 options=[
-                    ft.dropdown.Option("research", "研究中"),
-                    ft.dropdown.Option("observe", "观察"),
-                    ft.dropdown.Option("paused", "暂停"),
+                    ft.dropdown.Option("research", "继续研究"),
+                    ft.dropdown.Option("observe", "等待证据"),
+                    ft.dropdown.Option("paused", "暂不研究（暂停更新）"),
                 ],
                 value=status_val,
                 width=150,
             )
             reason_field = ft.TextField(
-                label="一句理由 (<=1000字)",
+                label="研究理由（支持与反对证据，≤1000字）",
+                hint_text="业务与估值假设：…\n支持证据及出处：…\n反对证据或关键未知：…",
                 value=reason_val,
                 multiline=True,
                 max_length=1000,
             )
             next_check_field = ft.TextField(
-                label="下一步核查提示",
+                label="下一步与反证（事件或日期）",
+                hint_text="下一次查什么、何时查、什么证据会改变判断",
+                multiline=True,
                 value=next_check_val,
                 max_length=1000,
             )
@@ -1597,7 +1840,9 @@ def build_app():
                         save_watch,
                         actor=actor,
                         code=code,
-                        source_run_id=ctx.get("displayed_run_id") or "run_initial",
+                        source_run_id=ctx.get("displayed_run_id")
+                        or ctx.get("latest_attempt_run_id")
+                        or "run_initial",
                         fields=fields,
                         expected_revision=ctx["revision"],
                         expected_updated_at=ctx.get("updated_at"),
@@ -1617,11 +1862,25 @@ def build_app():
                     delete_btn.visible = True
                     follow_btn.content = "已关注"
                     follow_btn.disabled = True
+                    ack_btn.disabled = bool(
+                        already_acknowledged
+                        or comparison_pending
+                        or ctx.get("has_latest_attempt_gap")
+                    )
                     page_state["current_company_revision"] = updated["revision"]
                     page_state["current_form_baseline"] = get_current_form()
                     page_state.setdefault("drafts", {}).pop(code, None)
-                    feedback_text.value = f"保存成功 (版本: {updated['revision']})"
+                    feedback_text.value = "保存成功"
                     feedback_text.color = ft.Colors.GREEN_700
+                    ctx["reason"], ctx["next_check"], ctx["note_url"] = (
+                        fields["reason"],
+                        fields["next_check"],
+                        fields["note_url"],
+                    )
+                    judgment_summary.value = "我的判断：" + labels[fields["status"]]
+                    reason_display.value = fields["reason"] or "尚未记录支持理由与反对证据。"
+                    next_display.value = "下一步：" + (fields["next_check"] or prompt["next"])
+                    note_link.visible = bool(fields["note_url"])
                 except (ServiceError, WorkspaceError) as exc:
                     feedback_text.value = f"保存失败: {exc}"
                     feedback_text.color = ft.Colors.RED_700
@@ -1665,8 +1924,10 @@ def build_app():
                 return str(value)
 
             comparison_rows: list[ft.Control] = []
+            comparison_metadata: list[ft.Control] = []
             fact_groups: dict[str, list[ft.Control]] = {
                 "指标与公司状态": [],
+                "最新财报指标": [],
                 "逐年财务资料": [],
                 "数据来源与范围": [],
             }
@@ -1680,8 +1941,22 @@ def build_app():
                     else after
                 )
                 line = f"{'【变化】' if is_changed else ''}{item['label']}：{values}"
+                label = item["label"]
+                is_annual = len(label) > 4 and label[:4].isdigit() and label[4] == "年"
+                group = (
+                    "逐年财务资料"
+                    if is_annual
+                    else "指标与公司状态"
+                    if label
+                    in ("估值日", "PB（倍）", "ROE三年均值（%）", "名称风险标记", "上市状态")
+                    else "最新财报指标"
+                    if label.startswith("最新财报")
+                    or label in {f"{name}（{unit}）" for name, unit in REPORT_FIELDS.values()}
+                    else "数据来源与范围"
+                )
                 if is_changed:
-                    comparison_rows.append(
+                    changes = comparison_metadata if group == "数据来源与范围" else comparison_rows
+                    changes.append(
                         ft.Container(
                             content=ft.Text(
                                 line, size=13, weight=ft.FontWeight.W_600, color=ft.Colors.AMBER_900
@@ -1691,16 +1966,6 @@ def build_app():
                             border_radius=4,
                         )
                     )
-                label = item["label"]
-                is_annual = len(label) > 4 and label[:4].isdigit() and label[4] == "年"
-                group = (
-                    "逐年财务资料"
-                    if is_annual
-                    else "指标与公司状态"
-                    if label
-                    in ("估值日", "PB（倍）", "ROE三年均值（%）", "名称风险标记", "上市状态")
-                    else "数据来源与范围"
-                )
                 status = "变化" if is_changed else "未变" if ctx.get("ack_run_id") else "首次待阅"
                 field_controls: list[ft.Control] = [
                     ft.Text(f"{label} · {status}", size=13, weight=ft.FontWeight.W_600),
@@ -1737,6 +2002,10 @@ def build_app():
                 else:
                     fact_groups[group].append(field)
 
+            if comparison_metadata:
+                comparison_rows.append(
+                    ft.ExpansionTile(title="来源与范围变化", controls=comparison_metadata)
+                )
             full_comparison: list[ft.Control] = []
             for title, fields in fact_groups.items():
                 if fields:
@@ -1874,12 +2143,16 @@ def build_app():
             already_acknowledged = bool(
                 ctx.get("ack_run_id") and ctx["ack_run_id"] == ctx.get("displayed_run_id")
             )
-            save_btn = ft.Button("保存笔记与状态", on_click=on_save, disabled=conflict_detected)
+            save_btn = ft.Button(
+                "保存笔记与状态", height=48, on_click=on_save, disabled=conflict_detected
+            )
             ack_btn = ft.Button(
                 "已标记本次已阅" if already_acknowledged else "标记本次变化已阅",
                 key="mark-reviewed",
+                height=48,
                 on_click=on_ack,
                 disabled=already_acknowledged
+                or not ctx["is_watched"]
                 or comparison_pending
                 or conflict_detected
                 or ctx.get("has_latest_attempt_gap", False),
@@ -1970,7 +2243,7 @@ def build_app():
 
             follow_feedback = ft.Text("关注不要求写笔记，也不自动标记已阅。", size=12)
             follow_btn = ft.Button(
-                "已关注" if ctx["is_watched"] else "关注", disabled=ctx["is_watched"]
+                "已关注" if ctx["is_watched"] else "关注", height=48, disabled=ctx["is_watched"]
             )
 
             async def follow(e):
@@ -1987,7 +2260,9 @@ def build_app():
                         save_watch,
                         actor,
                         code,
-                        ctx.get("displayed_run_id") or "run_initial",
+                        ctx.get("displayed_run_id")
+                        or ctx.get("latest_attempt_run_id")
+                        or "run_initial",
                         {"status": "observe"},
                         0,
                         STATE_DIR,
@@ -2019,32 +2294,131 @@ def build_app():
             )
             if ctx.get("latest_risk_status") == "known_warning":
                 identity_notice += " 名称含ST风险警示，仍可查看可得事实，不代表风险已解除。"
+            prompt = ctx.get("research_prompt") or research_prompt(usable)
+            labels = {
+                "research": "继续研究",
+                "observe": "等待证据",
+                "paused": "暂不研究（暂停更新）",
+            }
+            judgment_summary = ft.Text(
+                "我的判断：" + labels.get(ctx.get("watch_status") or "", "尚未记录"),
+                size=16,
+                weight=ft.FontWeight.BOLD,
+            )
+            reason_display = ft.Text(
+                ctx.get("reason") or "尚未记录支持理由与反对证据。", size=14, selectable=True
+            )
+            next_display = ft.Text(
+                "下一步：" + (ctx.get("next_check") or prompt["next"]), size=14, selectable=True
+            )
+            company_feedback = ft.Text("", size=13)
+            company_update = ft.Button("更新这家公司", height=48)
+
+            async def update_company(e):
+                job = await submit_update(
+                    None, company_update, company_feedback, gen, actor, company_code=code
+                )
+                if job:
+                    remember_draft()
+                    await navigate(page_state["route"])
+
+            company_update.on_click = update_company
+
+            async def open_url(url: str):
+                parsed = urlparse(url)
+                if (
+                    gen == page_state["generation"]
+                    and actor.is_valid
+                    and page_state["connected"]
+                    and parsed.scheme == "https"
+                    and parsed.netloc
+                    and not parsed.username
+                    and not parsed.password
+                ):
+                    await ft.UrlLauncher().launch_url(url, web_only_window_name="_blank")
+
+            async def open_disclosures(e):
+                await open_url(
+                    "https://www.cninfo.com.cn/new/fulltextSearch?"
+                    + urlencode({"keyWord": code.split(".")[0]})
+                )
+
+            async def open_note(e):
+                await open_url(ctx.get("note_url") or "")
+
+            note_link = ft.Button(
+                "打开研究笔记", on_click=open_note, visible=bool(ctx.get("note_url"))
+            )
+            report = ctx.get("research_report") or {}
+            report_controls: list[ft.Control] = []
+            if report.get("period"):
+                report_controls.append(
+                    ft.Text(
+                        f"本次接口最新报告期：{report['period']} · 公告：{report.get('ann_date') or '未知'}",
+                        weight=ft.FontWeight.BOLD,
+                    )
+                )
+            for key, (label, unit) in REPORT_FIELDS.items():
+                value = (report.get("metrics") or {}).get(key)
+                report_controls.append(
+                    ft.Text(
+                        f"{label}：{fmt_number(value)} {unit}"
+                        if value is not None
+                        else f"{label}：尚未取得"
+                    )
+                )
+            report_controls.extend(
+                [
+                    ft.Text(
+                        report.get("error")
+                        or (
+                            "最新财报字段有缺口，不能用旧值补齐。"
+                            if report.get("status") == "partial"
+                            else "当前快照未含最新财报证据，可主动更新这家公司。"
+                            if not report
+                            else "以上为接口事实，尚需与公告原文核对。"
+                        ),
+                        size=13,
+                    ),
+                    ft.Text(
+                        f"来源：{report.get('source') or '未取得'} · 取得：{report.get('acquired_at') or '未取得'}",
+                        size=12,
+                    ),
+                    ft.Text(
+                        "同比为报告期累计口径；每股经营现金流也是累计值，不直接与全年值比较。资产负债率不等于有息负债率。",
+                        size=12,
+                    ),
+                    ft.Button("查公司公告与财报原文", on_click=open_disclosures),
+                    ft.Text(
+                        "公告入口为按代码检索，须核对证券身份、报告期及具体原文；不表示系统已阅读公告。",
+                        size=12,
+                    ),
+                ]
+            )
+            recent_jobs = await asyncio.to_thread(list_update_jobs, actor, STATE_DIR, APP_MODE)
+            if gen != page_state["generation"] or not actor.is_valid:
+                return await render_login()
+            relevant_jobs = [
+                j for j in recent_jobs if j["kind"] == "watch" and code in j.get("codes", [])
+            ]
             return ft.Column(
-                controls=[
+                [
                     ft.Row(
-                        controls=[
+                        [
                             ft.IconButton(ft.Icons.ARROW_BACK, tooltip="返回", on_click=go_back),
                             ft.Text(
-                                f"{ctx['name']} ({code})",
+                                f"{ctx['name'] or code} ({code})",
                                 size=18,
                                 weight=ft.FontWeight.BOLD,
                                 expand=True,
                             ),
-                        ],
-                        alignment=ft.MainAxisAlignment.START,
+                        ]
                     ),
                     *(
                         [
                             ft.Container(
                                 content=ft.Text(
-                                    (
-                                        "⚠️ 注意：最新已核验运行快照文件损坏或无法读取；当前展示的是上一次可用事实"
-                                        if ctx.get("latest_attempt_error")
-                                        == "最新快照文件损坏或无法读取"
-                                        else f"⚠️ {ctx.get('latest_attempt_error') or '本次尝试失败/数据缺口'}（{ctx.get('latest_attempt_date') or '日期未知'}），"
-                                        f"当前仅展示旧可用事实（{ctx.get('usable_valuation_date') or '无'}），不可标记本次变化已阅。"
-                                    ),
-                                    weight=ft.FontWeight.BOLD,
+                                    f"{ctx.get('latest_attempt_error') or '本次尝试失败/数据缺口'}（{ctx.get('latest_attempt_date') or '日期未知'}）；当前仅展示旧可用事实（{ctx.get('usable_valuation_date') or '暂无'}），不可标记本次变化已阅。",
                                     color=ft.Colors.RED_900,
                                 ),
                                 bgcolor=ft.Colors.RED_50,
@@ -2054,109 +2428,122 @@ def build_app():
                         if ctx.get("has_latest_attempt_gap")
                         else []
                     ),
+                    *(
+                        [ft.Text(identity_notice, color=ft.Colors.RED_900)]
+                        if identity_notice
+                        else []
+                    ),
                     ft.Card(
                         semantic_container=False,
                         content=ft.Container(
-                            padding=12,
+                            padding=16,
                             content=ft.Column(
-                                controls=[
+                                [
+                                    judgment_summary,
+                                    reason_display,
                                     ft.Text(
-                                        "公司资料事实"
-                                        if ctx.get("displayed_kind") == "watch"
-                                        else "公司筛选事实",
-                                        size=15,
-                                        weight=ft.FontWeight.BOLD,
+                                        "研究提示：" + prompt["action"], weight=ft.FontWeight.BOLD
                                     ),
-                                    *(
-                                        [ft.Text(identity_notice, color=ft.Colors.RED_900)]
-                                        if identity_notice
-                                        else []
-                                    ),
-                                    ft.Text(
-                                        f"PB: {usable.get('pb') if usable.get('pb') is not None else '暂无可用数据'} (估值日: {ctx.get('usable_valuation_date') or '暂无可用日期'})",
-                                        size=14,
-                                    ),
-                                    ft.Text(
-                                        f"ROE三年均值: {usable['roe_mean']}%"
-                                        if usable.get("roe_mean") is not None
-                                        else "ROE三年均值：暂无可用数据",
-                                        size=14,
-                                    ),
-                                    *roe_rows,
-                                    ft.Text(
-                                        insights.get(
-                                            "pb_comparison", "PB中位数暂不比较：暂无可用事实"
-                                        )
-                                    ),
-                                    ft.Text(
-                                        insights.get("roe_trend", "ROE趋势：资料有缺口，暂不判断")
-                                    ),
-                                    ft.Text(
-                                        "本次为固定关注事实更新，不重新选择同业、不生成新名次；PB中位数不适用。"
-                                        if ctx.get("displayed_kind") == "watch"
-                                        else "统计范围：本次沪深主板非金融、TuShare同行业合格样本，最多50家，偏向大市值；行业标签不证明业务可比。",
-                                        size=12,
-                                    ),
-                                    ft.Text(
-                                        f"最近同业名次：{peer_rank['position']}（参照{peer_rank['anchor']}，估值日{peer_rank['valuation_date']}）；固定关注更新不改变此历史名次。"
-                                        if peer_rank
-                                        else "暂无可用同业名次；固定关注更新不生成名次。",
-                                        size=12,
-                                    ),
-                                    ft.Container(
-                                        content=ft.Text(
-                                            FACT_LIMITS, size=13, color=ft.Colors.GREY_800
-                                        ),
-                                        bgcolor=ft.Colors.GREY_100,
-                                        padding=8,
-                                        border_radius=6,
-                                    ),
-                                    follow_btn,
+                                    ft.Text(prompt["why"], size=14),
+                                    next_display,
+                                    ft.Row([follow_btn, company_update], wrap=True),
                                     follow_feedback,
-                                    *(
-                                        [
-                                            ft.Text(
-                                                f"上次下一步：{ctx['next_check']}",
-                                                size=14,
-                                                weight=ft.FontWeight.BOLD,
-                                            )
-                                        ]
-                                        if ctx.get("next_check")
-                                        else []
-                                    ),
-                                    ft.Text(
-                                        "上次已阅 → 当前资料"
-                                        if ctx.get("ack_run_id")
-                                        else "当前资料（首次待阅，无已阅基准）",
-                                        size=15,
-                                        weight=ft.FontWeight.BOLD,
-                                    ),
-                                    comparison_summary,
-                                    *comparison_rows,
-                                    ack_btn,
-                                    ack_feedback,
-                                    ft.Button("查看全部字段与来源", on_click=toggle_comparison),
-                                    comparison_body,
-                                    ft.Text(
-                                        f"核查状态：{financial_status}；核查时间：{usable.get('financial_checked_at') or '资料未记录'}",
-                                        size=12,
-                                        color=ft.Colors.GREY_700,
-                                    ),
+                                    company_feedback,
+                                    update_progress(relevant_jobs, gen, actor),
+                                    ft.Column(form_controls, key="research-form", spacing=10),
+                                    note_link,
                                 ],
-                                spacing=4,
+                                spacing=10,
                             ),
                         ),
                     ),
                     ft.Card(
                         semantic_container=False,
                         content=ft.Container(
-                            padding=12,
+                            padding=16,
                             content=ft.Column(
-                                controls=form_controls,
+                                [
+                                    ft.Text("本次变化与原判断", size=16, weight=ft.FontWeight.BOLD),
+                                    ft.Text(
+                                        "上次已阅 → 当前资料"
+                                        if ctx.get("ack_run_id")
+                                        else "当前资料（首次待阅，无已阅基准）"
+                                    ),
+                                    comparison_summary,
+                                    *comparison_rows,
+                                    ft.Text(
+                                        "请对照上方原研究理由：支持是否增强，反对证据是否出现，还是仅估值或资料口径变化？",
+                                        size=13,
+                                    ),
+                                    ack_btn,
+                                    ack_feedback,
+                                    ft.Text(
+                                        "已阅只确认看过有效资料，不代表认可投资价值；保存判断不会自动已阅。",
+                                        size=12,
+                                    ),
+                                ],
                                 spacing=8,
                             ),
                         ),
                     ),
+                    ft.ExpansionTile(title="最新财报证据与原文", controls=report_controls),
+                    ft.ExpansionTile(
+                        title="业务、风险与估值：五个核查问题",
+                        controls=[
+                            ft.Text(
+                                "1. 靠什么赚钱？查年报主营业务、收入构成与经营讨论，确认同业业务可比。"
+                            ),
+                            ft.Text(
+                                "2. 利润是否可靠？查最新中期财报、扣非利润与现金流量表，核对利润和现金差异。"
+                            ),
+                            ft.Text(
+                                "3. 财务是否脆弱？查债务期限、受限资金、应收与存货减值、审计意见。"
+                            ),
+                            ft.Text(
+                                "4. 价格要求什么条件？写明适用估值方法、盈利或现金流假设及悲观情景；PB排名不能替代估值。"
+                            ),
+                            ft.Text(
+                                "5. 什么会推翻判断？在下一步记录一条可核查事件或日期，以及需要改变判断的证据。"
+                            ),
+                            ft.Text(
+                                "业务、审计和估值假设由你核实并记录；本工具不自动生成目标价、买卖时点或仓位。",
+                                size=13,
+                            ),
+                        ],
+                    ),
+                    ft.ExpansionTile(
+                        title="PB、历史ROE与入选依据",
+                        controls=[
+                            ft.Text(
+                                "公司资料事实"
+                                if ctx.get("displayed_kind") == "watch"
+                                else "公司筛选事实",
+                                weight=ft.FontWeight.BOLD,
+                            ),
+                            ft.Text(
+                                f"PB: {fmt_number(usable.get('pb'))} (估值日: {ctx.get('usable_valuation_date') or '暂无可用日期'})"
+                            ),
+                            ft.Text(f"ROE三年均值: {fmt_number(usable.get('roe_mean'))}%"),
+                            *roe_rows,
+                            ft.Text(insights.get("pb_comparison", "暂无同口径同业比较")),
+                            ft.Text(insights.get("roe_trend", "ROE趋势：资料有缺口，暂不判断")),
+                            ft.Text(ctx.get("entry_reason") or "尚未记录入选来源", size=13),
+                            ft.Text(
+                                f"最近同业名次：{peer_rank['position']}（参照{peer_rank['anchor']}，估值日{peer_rank['valuation_date']}）；固定关注更新不改变此历史名次。"
+                                if peer_rank
+                                else "暂无可用同业名次；固定关注更新不生成名次。",
+                                size=12,
+                            ),
+                            ft.Text("固定关注更新不重新排名；行业标签不能证明业务可比。", size=12),
+                            ft.Text(FACT_LIMITS, size=13),
+                            ft.Text(
+                                f"核查状态：{financial_status}；核查时间：{usable.get('financial_checked_at') or '资料未记录'}",
+                                size=12,
+                            ),
+                        ],
+                    ),
+                    ft.Button("查看全部字段与来源", on_click=toggle_comparison),
+                    comparison_body,
                 ],
                 spacing=12,
             )
@@ -2236,7 +2623,7 @@ def build_app():
                     [
                         ft.Text("暂时无法读取资料；已保存内容不会因此删除。"),
                         ft.Text(
-                            "可重新读取或返回我的关注查看最近任务；只读取资料，不会提交或重放更新。"
+                            "可重新读取或返回我的研究查看最近任务；只读取资料，不会提交或重放更新。"
                         ),
                         ft.Button("重新读取", on_click=retry_read),
                     ]
@@ -2256,8 +2643,8 @@ def build_app():
 
         nav_bar = ft.NavigationBar(
             destinations=[
-                ft.NavigationBarDestination(icon=ft.Icons.LIST, label="我的关注"),
-                ft.NavigationBarDestination(icon=ft.Icons.SEARCH, label="同业发现"),
+                ft.NavigationBarDestination(icon=ft.Icons.LIST, label="我的研究"),
+                ft.NavigationBarDestination(icon=ft.Icons.SEARCH, label="发现候选"),
             ],
             selected_index=0,
             on_change=on_nav_change,
@@ -2267,7 +2654,7 @@ def build_app():
             padding=ft.Padding.symmetric(horizontal=8, vertical=4),
             content=ft.Row(
                 controls=[
-                    ft.Text("投资研究工作台", size=16, weight=ft.FontWeight.BOLD),
+                    ft.Text("基本面研究助手", size=16, weight=ft.FontWeight.BOLD),
                     ft.Container(
                         content=ft.Text(
                             "DEMO" if APP_MODE == "demo" else "PROD", size=11, color=ft.Colors.WHITE

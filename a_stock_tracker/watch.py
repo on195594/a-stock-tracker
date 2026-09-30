@@ -12,12 +12,14 @@ from pathlib import Path
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
+from a_stock_tracker.evidence import REPORT_FIELDS, report_valid, select_latest_report
 from a_stock_tracker.research import (
     ScreenError,
     call_api,
     fetch_financials,
     finite_number,
     frame_records,
+    is_financial_industry,
     now_iso,
     risk_status,
     select_annual_roes,
@@ -106,7 +108,10 @@ def _fetch_row(client: Any, token: str, code: str, target: str) -> dict[str, Any
         row["exclusions"].append("VALUATION_REQUEST_FAILED")
     # No PB, ST, market, industry or old-pool eligibility gate on financial retrieval.
     try:
-        records = fetch_financials(client, token, code, target, shanghai_now)
+        records = fetch_financials(
+            client, token, code, target, shanghai_now, extra_fields=tuple(REPORT_FIELDS)
+        )
+        row["research_report"] = select_latest_report(records, target, shanghai_now)
         if any(isinstance(report.get("roe_waa"), bool) for report in records):
             raise ScreenError("invalid boolean ROE")
         financial = select_annual_roes(records, target, shanghai_now)
@@ -121,6 +126,7 @@ def _fetch_row(client: Any, token: str, code: str, target: str) -> dict[str, Any
             row["financial_checked_at"] = utc_now()
     except ScreenError:
         row["financial_status"] = "failed"
+        row["research_report"] = {"status": "failed", "error": "最新财报核查失败，请重试或核对公告"}
         row["exclusions"].append("FINANCIAL_REQUEST_FAILED")
     if row["pb"] is None:
         row["exclusions"].append("MISSING_PB")
@@ -160,6 +166,23 @@ def build_watch_snapshot(
                 )
             )
             row["valuation_date"] = target
+            if code in available:
+                row["research_report"] = {
+                    "status": "ok",
+                    "period": "2026-06-30",
+                    "ann_date": "2026-08-20",
+                    "source": "fixture",
+                    "acquired_at": utc_now(),
+                    "selection_basis": "single_original_update_flag_0",
+                    "missing": [],
+                    "metrics": {
+                        "or_yoy": 8.5,
+                        "netprofit_yoy": 6.0,
+                        "dt_netprofit_yoy": 4.0,
+                        "debt_to_assets": 42.0,
+                        "ocfps": 0.85,
+                    },
+                }
             row["facts_usable"] = is_row_usable(row)
             if row["facts_usable"]:
                 row["financial_checked_at"] = utc_now()
@@ -230,11 +253,39 @@ def validate_watch_snapshot(
         raise WorkspaceError("watch snapshot observation time outside job lifetime")
     usable_count = 0
     for row in rows:
+        report = row.get("research_report")
+        if "research_report" in row:
+            if not report_valid(report):
+                raise WorkspaceError("invalid research report facts")
+            if report.get("metrics"):
+                if (
+                    report.get("source")
+                    != ("fixture" if mode == "demo" else "tushare.fina_indicator")
+                    or not requested[:19]
+                    <= parse_iso_utc(str(report.get("acquired_at")))[:19]
+                    <= captured[:19]
+                    or str(report.get("period")) > payload["target_date"]
+                    or str(report.get("ann_date")) > captured_shanghai_date.isoformat()
+                ):
+                    raise WorkspaceError("research report source/date mismatch")
+        if (
+            payload["intent"].get("code")
+            and mode == "production"
+            and (
+                row.get("market") != "主板"
+                or row.get("exchange") not in {"SSE", "SZSE"}
+                or row.get("list_status") != "L"
+                or not row.get("industry")
+                or is_financial_industry(row["industry"])
+            )
+        ):
+            raise WorkspaceError("company outside supported research scope")
         if mode == "production" and (
             any(
                 row.get(k) == "fixture"
                 for k in ("valuation_source", "financial_source", "risk_source")
             )
+            or (isinstance(report, dict) and report.get("source") == "fixture")
             or any(
                 isinstance(a, dict) and a.get("source") == "fixture"
                 for a in (row.get("annual_roes") or [])

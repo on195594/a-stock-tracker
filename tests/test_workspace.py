@@ -324,7 +324,7 @@ def test_production_rejects_fixture_snapshot(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     "source_key",
-    ("valuation_source", "financial_source", "risk_source", "annual_roes"),
+    ("valuation_source", "financial_source", "risk_source", "annual_roes", "research_report"),
 )
 def test_production_rejects_row_fixture_source(tmp_path: Path, source_key: str) -> None:
     ws_dir = tmp_path / "prod_row_ws"
@@ -332,6 +332,8 @@ def test_production_rejects_row_fixture_source(tmp_path: Path, source_key: str) 
     snapshot = _make_valid_test_snapshot()
     if source_key == "annual_roes":
         snapshot["rows"][0]["annual_roes"][0]["source"] = "fixture"
+    elif source_key == "research_report":
+        snapshot["rows"][0]["research_report"] = {"source": "fixture"}
     else:
         snapshot["rows"][0][source_key] = "fixture"
     path = tmp_path / "row_fixture.json"

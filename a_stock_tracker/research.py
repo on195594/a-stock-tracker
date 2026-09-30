@@ -317,7 +317,13 @@ def select_annual_roes(
 
 
 def fetch_financials(
-    client: Any, token: str, code: str, data_date: str, screened_at: str
+    client: Any,
+    token: str,
+    code: str,
+    data_date: str,
+    screened_at: str,
+    *,
+    extra_fields: tuple[str, ...] = (),
 ) -> list[dict[str, Any]]:
     end = parse_date(screened_at[:10])
     start = date(max(1990, parse_date(data_date).year - 6), 1, 1)
@@ -328,7 +334,9 @@ def fetch_financials(
         ts_code=normalize_code(code),
         start_date=start.strftime("%Y%m%d"),
         end_date=end.strftime("%Y%m%d"),
-        fields="ts_code,ann_date,end_date,update_flag,roe_waa",
+        fields=",".join(
+            ("ts_code", "ann_date", "end_date", "update_flag", "roe_waa", *extra_fields)
+        ),
     )
     records = frame_records(
         frame,
