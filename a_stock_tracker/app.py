@@ -76,18 +76,49 @@ elif APP_MODE == "demo":
 def build_app():
     import flet as ft
 
+    # Design System Tokens (Impeccable Operate Mode)
+    COLOR_PRIMARY = "#0F766E"  # Slate teal / authoritative financial accent
+    COLOR_PRIMARY_CONTAINER = "#F0FDFA"  # Teal 50
+    COLOR_BG = "#F8FAFC"  # Slate 50
+    COLOR_SURFACE = "#FFFFFF"
+    COLOR_BORDER = "#E2E8F0"  # Slate 200
+    COLOR_TEXT_PRIMARY = "#0F172A"  # Slate 900
+    COLOR_TEXT_SECONDARY = "#475569"  # Slate 600
+    COLOR_TEXT_MUTED = (
+        "#64748B"  # Slate 500 (meets WCAG AA >= 4.5:1 contrast on white and Slate 50)
+    )
+
     async def main(page: ft.Page):
         page.title = "投研工作台"
         page.theme_mode = ft.ThemeMode.LIGHT
         page.fonts = {"NotoSansSC": "fonts/NotoSansSC-Regular.otf"}
         page.theme = ft.Theme(
             font_family="NotoSansSC",
-            color_scheme_seed=ft.Colors.TEAL_700,
+            color_scheme_seed=COLOR_PRIMARY,
+            card_theme=ft.CardTheme(
+                elevation=0,
+                color=COLOR_SURFACE,
+                shadow_color=ft.Colors.TRANSPARENT,
+                margin=ft.Margin.all(0),
+            ),
+            navigation_bar_theme=ft.NavigationBarTheme(
+                bgcolor=COLOR_SURFACE,
+                indicator_color="#CCFBF1",
+                elevation=1,
+            ),
+            divider_theme=ft.DividerTheme(
+                color=COLOR_BORDER,
+                thickness=1,
+                space=16,
+            ),
             button_theme=ft.ButtonTheme(
-                style=ft.ButtonStyle(padding=ft.Padding.symmetric(horizontal=16, vertical=12))
+                style=ft.ButtonStyle(
+                    padding=ft.Padding.symmetric(horizontal=16, vertical=12),
+                    shape=ft.RoundedRectangleBorder(radius=8),
+                )
             ),
         )
-        page.bgcolor = ft.Colors.GREY_50
+        page.bgcolor = COLOR_BG
         page.padding = 16
         page.scroll = ft.ScrollMode.AUTO
 
@@ -386,9 +417,14 @@ def build_app():
 
             return ft.Column(
                 controls=[
-                    ft.Text("欢迎使用个人投研工作台", size=20, weight=ft.FontWeight.BOLD),
                     ft.Text(
-                        "生产模式需要所有者登录以访问私人数据", size=14, color=ft.Colors.GREY_700
+                        "欢迎使用个人投研工作台",
+                        size=20,
+                        weight=ft.FontWeight.BOLD,
+                        color=COLOR_TEXT_PRIMARY,
+                    ),
+                    ft.Text(
+                        "生产模式需要所有者登录以访问私人数据", size=14, color=COLOR_TEXT_SECONDARY
                     ),
                     ft.Button(
                         "使用 GitHub 登录",
@@ -656,11 +692,19 @@ def build_app():
             ):
                 code = it["code"]
                 status_color = (
-                    ft.Colors.BLUE_700
+                    "#1D4ED8"
                     if it["status"] == "research"
-                    else (
-                        ft.Colors.BLUE_GREY_700 if it["status"] == "observe" else ft.Colors.GREY_700
-                    )
+                    else ("#475569" if it["status"] == "observe" else "#64748B")
+                )
+                status_bg = (
+                    "#EFF6FF"
+                    if it["status"] == "research"
+                    else ("#F1F5F9" if it["status"] == "observe" else "#F8FAFC")
+                )
+                status_border = (
+                    "#BFDBFE"
+                    if it["status"] == "research"
+                    else ("#CBD5E1" if it["status"] == "observe" else "#E2E8F0")
                 )
                 status_chip = ft.Container(
                     content=ft.Text(
@@ -668,11 +712,13 @@ def build_app():
                         if it["status"] == "research"
                         else ("等待证据" if it["status"] == "observe" else "暂不研究"),
                         size=12,
-                        color=ft.Colors.WHITE,
+                        weight=ft.FontWeight.W_500,
+                        color=status_color,
                     ),
-                    bgcolor=status_color,
-                    padding=ft.Padding.symmetric(horizontal=8, vertical=2),
-                    border_radius=4,
+                    bgcolor=status_bg,
+                    border=ft.Border.all(1, status_border),
+                    padding=ft.Padding.symmetric(horizontal=8, vertical=3),
+                    border_radius=12,
                 )
 
                 async def on_card_click(e, c=code):
@@ -795,7 +841,10 @@ def build_app():
                     ft.Card(
                         semantic_container=False,
                         content=ft.Container(
-                            padding=12,
+                            padding=14,
+                            bgcolor=COLOR_SURFACE,
+                            border=ft.Border.all(1, COLOR_BORDER),
+                            border_radius=8,
                             on_click=on_card_click,
                             content=ft.Column(
                                 controls=[
@@ -806,6 +855,7 @@ def build_app():
                                                 expand=True,
                                                 size=16,
                                                 weight=ft.FontWeight.BOLD,
+                                                color=COLOR_TEXT_PRIMARY,
                                             ),
                                             status_chip,
                                         ],
@@ -823,6 +873,7 @@ def build_app():
                                             "action", "先核查业务与盈利质量"
                                         ),
                                         size=14,
+                                        color="#334155",
                                         max_lines=2,
                                         overflow=ft.TextOverflow.ELLIPSIS,
                                     ),
@@ -831,6 +882,7 @@ def build_app():
                                             ft.Text(
                                                 f"上次下一步：{it['next_check']}",
                                                 size=13,
+                                                color=COLOR_TEXT_SECONDARY,
                                                 max_lines=2,
                                                 overflow=ft.TextOverflow.ELLIPSIS,
                                             )
@@ -840,8 +892,8 @@ def build_app():
                                     ),
                                     ft.Text(
                                         f"数据日：{it.get('valuation_date', '暂无')}",
-                                        size=13,
-                                        color=ft.Colors.BLACK_87,
+                                        size=12,
+                                        color=COLOR_TEXT_MUTED,
                                     ),
                                     ft.Row(
                                         controls=[
@@ -854,9 +906,10 @@ def build_app():
                                             ),
                                         ],
                                         wrap=True,
+                                        spacing=8,
                                     ),
                                 ],
-                                spacing=4,
+                                spacing=6,
                             ),
                         ),
                     )
@@ -880,18 +933,23 @@ def build_app():
                     ft.Card(
                         semantic_container=False,
                         content=ft.Container(
-                            padding=20,
+                            padding=24,
+                            bgcolor=COLOR_SURFACE,
+                            border=ft.Border.all(1, COLOR_BORDER),
+                            border_radius=10,
                             content=ft.Column(
                                 controls=[
                                     ft.Text(
                                         "暂无关注的公司",
                                         size=16,
                                         weight=ft.FontWeight.BOLD,
+                                        color=COLOR_TEXT_PRIMARY,
                                     ),
                                     ft.Text(
                                         "输入公司代码，或在『发现候选』选择参照；取得资料后可一键关注。",
                                         size=13,
-                                        color=ft.Colors.GREY_700,
+                                        color=COLOR_TEXT_SECONDARY,
+                                        text_align=ft.TextAlign.CENTER,
                                     ),
                                     ft.Button("前往发现候选", on_click=go_to_discover),
                                 ],
@@ -954,20 +1012,28 @@ def build_app():
             return ft.Column(
                 controls=[
                     ft.Container(
-                        padding=12,
-                        bgcolor=ft.Colors.BLUE_50,
-                        border_radius=8,
+                        padding=16,
+                        bgcolor=COLOR_PRIMARY_CONTAINER,
+                        border=ft.Border.all(1, "#CCFBF1"),
+                        border_radius=10,
                         content=ft.Row(
                             controls=[
                                 ft.Column(
                                     [
-                                        ft.Text("我的研究", size=18, weight=ft.FontWeight.BOLD),
+                                        ft.Text(
+                                            "我的研究",
+                                            size=18,
+                                            weight=ft.FontWeight.BOLD,
+                                            color="#134E4A",
+                                        ),
                                         ft.Text(
                                             f"估值基准日：{data['valuation_date']} | 待处理：{data['important_review_count']} 家",
                                             size=13,
+                                            color=COLOR_PRIMARY,
                                         ),
                                     ],
                                     expand=True,
+                                    spacing=4,
                                 ),
                                 update_button,
                             ],
@@ -1203,10 +1269,10 @@ def build_app():
                 prompt = research_prompt(row)
                 reasons = row.get("exclusions") or row.get("eligibility_reasons") or []
                 return ft.Container(
-                    padding=12,
-                    bgcolor=ft.Colors.AMBER_50 if code == anchor else ft.Colors.WHITE,
-                    border=ft.Border.all(1, ft.Colors.GREY_300),
-                    border_radius=6,
+                    padding=14,
+                    bgcolor="#FFFDF5" if code == anchor else COLOR_SURFACE,
+                    border=ft.Border.all(1, "#F59E0B" if code == anchor else COLOR_BORDER),
+                    border_radius=8,
                     content=ft.Column(
                         [
                             ft.Text(
@@ -1214,6 +1280,7 @@ def build_app():
                                 + (" · 参照公司" if code == anchor else ""),
                                 size=16,
                                 weight=ft.FontWeight.BOLD,
+                                color=COLOR_TEXT_PRIMARY,
                             ),
                             ft.Text(
                                 (
@@ -1221,25 +1288,30 @@ def build_app():
                                     if rank.get("position")
                                     else "未进入正式排名"
                                 )
-                                + f" · {status_text}"
+                                + f" · {status_text}",
+                                size=13,
+                                color=COLOR_TEXT_SECONDARY,
                             ),
                             ft.Text(
                                 f"PB {fmt_number(row.get('pb'))} 倍 · ROE三年均值 {fmt_number(row.get('roe_mean'))}%",
                                 weight=ft.FontWeight.W_600,
+                                color=COLOR_TEXT_PRIMARY,
                             ),
                             ft.Text(
                                 f"入选线索：PB 第 {fmt_number(rank.get('pb_rank'), 1)} 名，历史 ROE 第 {fmt_number(rank.get('roe_rank'), 1)} 名。"
                                 if rank
                                 else "资料尚不足以形成同业排名。",
                                 size=13,
+                                color=COLOR_TEXT_SECONDARY,
                             ),
-                            ft.Text(f"待核查：{prompt['action']}", size=13),
+                            ft.Text(f"待核查：{prompt['action']}", size=13, color="#334155"),
                             ft.Row(
                                 [
                                     ft.Button("查看关注" if status else "查看", on_click=open_comp),
                                     *([] if status else [add_button]),
                                 ],
                                 wrap=True,
+                                spacing=8,
                             ),
                             feedback,
                             ft.ExpansionTile(
@@ -2201,9 +2273,9 @@ def build_app():
                         ],
                         spacing=6,
                     ),
-                    bgcolor=ft.Colors.RED_50,
-                    border=ft.Border.all(1, ft.Colors.RED_400),
-                    border_radius=6,
+                    bgcolor="#FEF2F2",
+                    border=ft.Border.all(1, "#FECACA"),
+                    border_radius=8,
                     padding=12,
                 )
                 form_controls.append(conflict_banner)
@@ -2421,7 +2493,9 @@ def build_app():
                                     f"{ctx.get('latest_attempt_error') or '本次尝试失败/数据缺口'}（{ctx.get('latest_attempt_date') or '日期未知'}）；当前仅展示旧可用事实（{ctx.get('usable_valuation_date') or '暂无'}），不可标记本次变化已阅。",
                                     color=ft.Colors.RED_900,
                                 ),
-                                bgcolor=ft.Colors.RED_50,
+                                bgcolor="#FEF2F2",
+                                border=ft.Border.all(1, "#FECACA"),
+                                border_radius=8,
                                 padding=12,
                             )
                         ]
@@ -2437,6 +2511,9 @@ def build_app():
                         semantic_container=False,
                         content=ft.Container(
                             padding=16,
+                            bgcolor=COLOR_SURFACE,
+                            border=ft.Border.all(1, COLOR_BORDER),
+                            border_radius=8,
                             content=ft.Column(
                                 [
                                     judgment_summary,
@@ -2444,9 +2521,9 @@ def build_app():
                                     ft.Text(
                                         "研究提示：" + prompt["action"], weight=ft.FontWeight.BOLD
                                     ),
-                                    ft.Text(prompt["why"], size=14),
+                                    ft.Text(prompt["why"], size=14, color="#334155"),
                                     next_display,
-                                    ft.Row([follow_btn, company_update], wrap=True),
+                                    ft.Row([follow_btn, company_update], wrap=True, spacing=8),
                                     follow_feedback,
                                     company_feedback,
                                     update_progress(relevant_jobs, gen, actor),
@@ -2461,28 +2538,40 @@ def build_app():
                         semantic_container=False,
                         content=ft.Container(
                             padding=16,
+                            bgcolor=COLOR_SURFACE,
+                            border=ft.Border.all(1, COLOR_BORDER),
+                            border_radius=8,
                             content=ft.Column(
                                 [
-                                    ft.Text("本次变化与原判断", size=16, weight=ft.FontWeight.BOLD),
+                                    ft.Text(
+                                        "本次变化与原判断",
+                                        size=16,
+                                        weight=ft.FontWeight.BOLD,
+                                        color=COLOR_TEXT_PRIMARY,
+                                    ),
                                     ft.Text(
                                         "上次已阅 → 当前资料"
                                         if ctx.get("ack_run_id")
-                                        else "当前资料（首次待阅，无已阅基准）"
+                                        else "当前资料（首次待阅，无已阅基准）",
+                                        size=13,
+                                        color=COLOR_TEXT_SECONDARY,
                                     ),
                                     comparison_summary,
                                     *comparison_rows,
                                     ft.Text(
                                         "请对照上方原研究理由：支持是否增强，反对证据是否出现，还是仅估值或资料口径变化？",
                                         size=13,
+                                        color="#334155",
                                     ),
                                     ack_btn,
                                     ack_feedback,
                                     ft.Text(
                                         "已阅只确认看过有效资料，不代表认可投资价值；保存判断不会自动已阅。",
                                         size=12,
+                                        color=COLOR_TEXT_MUTED,
                                     ),
                                 ],
-                                spacing=8,
+                                spacing=10,
                             ),
                         ),
                     ),
@@ -2555,12 +2644,21 @@ def build_app():
                     ft.Row(
                         controls=[
                             ft.IconButton(ft.Icons.ARROW_BACK, tooltip="返回", on_click=go_home),
-                            ft.Text("账户与运行信息", size=18, weight=ft.FontWeight.BOLD),
+                            ft.Text(
+                                "账户与运行信息",
+                                size=18,
+                                weight=ft.FontWeight.BOLD,
+                                color=COLOR_TEXT_PRIMARY,
+                            ),
                         ]
                     ),
-                    ft.Text(f"当前模式: {APP_MODE}", size=14),
-                    ft.Text(f"数据目录: {STATE_DIR}", size=14),
-                    ft.Text(f"用户身份: {actor.user_id if actor else '未登录'}", size=14),
+                    ft.Text(f"当前模式: {APP_MODE}", size=14, color=COLOR_TEXT_SECONDARY),
+                    ft.Text(f"数据目录: {STATE_DIR}", size=14, color=COLOR_TEXT_SECONDARY),
+                    ft.Text(
+                        f"用户身份: {actor.user_id if actor else '未登录'}",
+                        size=14,
+                        color=COLOR_TEXT_SECONDARY,
+                    ),
                     ft.Button("退出登录", icon=ft.Icons.LOGOUT, on_click=on_logout)
                     if actor
                     else ft.Container(),
@@ -2651,17 +2749,27 @@ def build_app():
         )
 
         header = ft.Container(
-            padding=ft.Padding.symmetric(horizontal=8, vertical=4),
+            padding=ft.Padding.only(left=8, right=8, top=4, bottom=8),
+            border=ft.Border(bottom=ft.BorderSide(1, COLOR_BORDER)),
             content=ft.Row(
                 controls=[
-                    ft.Text("基本面研究助手", size=16, weight=ft.FontWeight.BOLD),
+                    ft.Text(
+                        "基本面研究助手",
+                        size=16,
+                        weight=ft.FontWeight.BOLD,
+                        color=COLOR_TEXT_PRIMARY,
+                    ),
                     ft.Container(
                         content=ft.Text(
-                            "DEMO" if APP_MODE == "demo" else "PROD", size=11, color=ft.Colors.WHITE
+                            "DEMO" if APP_MODE == "demo" else "PROD",
+                            size=11,
+                            weight=ft.FontWeight.W_600,
+                            color="#C2410C" if APP_MODE == "demo" else "#15803D",
                         ),
-                        bgcolor=ft.Colors.ORANGE_800 if APP_MODE == "demo" else ft.Colors.GREEN_700,
-                        padding=ft.Padding.symmetric(horizontal=6, vertical=2),
-                        border_radius=4,
+                        bgcolor="#FFF7ED" if APP_MODE == "demo" else "#F0FDF4",
+                        border=ft.Border.all(1, "#FDBA74" if APP_MODE == "demo" else "#86EFAC"),
+                        padding=ft.Padding.symmetric(horizontal=8, vertical=2),
+                        border_radius=12,
                     ),
                     ft.IconButton(
                         ft.Icons.SETTINGS, tooltip="账户与运行信息", on_click=go_settings
