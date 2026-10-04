@@ -156,18 +156,25 @@ def research_prompt(row: dict[str, Any]) -> dict[str, str]:
         finite_number(metrics.get("dt_netprofit_yoy")),
         finite_number(metrics.get("ocfps")),
     )
+    prompt = {}
     if profit is not None and profit < 0:
-        return {
+        prompt = {
             "action": "复核盈利下滑是否影响原判断",
             "why": f"本次报告扣非归母净利润同比 {fmt_number(profit)}%；尚未核实原因。",
             "next": "查管理层经营讨论和非经常性损益说明，核对需求、毛利与费用变化。",
         }
     if cash is not None and cash < 0:
-        return {
+        cash_prompt = {
             "action": "先核查经营现金流",
             "why": f"本次报告每股经营现金流 {fmt_number(cash)} 元/股；不能仅据此认定经营恶化。",
             "next": "查现金流量表及应收、存货附注，核对季节性和营运资金占用。",
         }
+        if not prompt:
+            return cash_prompt
+        prompt["why"] += " " + cash_prompt["why"]
+        prompt["next"] += " " + cash_prompt["next"]
+    if prompt:
+        return prompt
     annual = sorted(
         annual_entries(row),
         key=lambda r: str(r.get("period") or r.get("end_date") or r.get("year") or "").replace(

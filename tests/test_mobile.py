@@ -374,6 +374,17 @@ def main(*, reliability: bool = False) -> int:
                 expect(result).to_be_visible(timeout=20000)
                 click_settled(page, result)
                 page.wait_for_selector("text=当前完整榜", timeout=20000)
+                expect(
+                    page.get_by_text("ROE趋势（2023—2025）：连续上升", exact=True).first
+                ).to_be_visible()
+                expect(page.get_by_text("待核查：复核历史盈利能力下降", exact=True)).to_have_count(
+                    0
+                )
+                expect(
+                    page.get_by_text(
+                        "系统未核查业务可比性，行业标签不能证明业务相似。", exact=True
+                    ).first
+                ).to_be_visible()
                 for detail in page.get_by_text("支持事实与下一步", exact=True).all():
                     click_settled(page, detail)
                 boundary = page.get_by_role("button", name="适用范围与研究边界", exact=True)
@@ -515,6 +526,12 @@ def main(*, reliability: bool = False) -> int:
                 assert row["revision"] >= 1, "Revision should be >= 1"
                 assert row["ack_run_id"] is None, "Saving notes must not acknowledge facts"
                 page.get_by_text("首次待阅：无已阅基准", exact=False).wait_for(state="visible")
+                expect(
+                    page.get_by_text(
+                        "已阅确认界面所示事实并更新对照基准，不代表已核验公告原文或作出投资判断；保存笔记不会自动已阅。",
+                        exact=True,
+                    )
+                ).to_be_visible()
                 page.get_by_role("button", name="标记本次变化已阅", exact=True).click()
                 page.get_by_text("已标记已阅", exact=False).wait_for(state="visible")
                 with sqlite3.connect(db_path) as conn:
@@ -1020,6 +1037,14 @@ def main(*, reliability: bool = False) -> int:
                     assert click_semantics_button("查看其余研究"), "Could not click routine button"
                     time.sleep(0.5)
                     ack = page.get_by_role("button", name="标记本次已阅", exact=True)
+                    expect(
+                        page.get_by_role(
+                            "group",
+                            name=re.compile(
+                                r"^示例公司丁 .*已阅确认界面所示事实并更新对照基准，不代表已核验公告原文或作出投资判断。"
+                            ),
+                        )
+                    ).to_be_visible()
                     click_settled(page, ack)
                     expect(page).to_have_url(f"{base_url}/")
                     expect(
@@ -1038,6 +1063,54 @@ def main(*, reliability: bool = False) -> int:
                             == jobs_before_ack
                         )
 
+                # A positive mean must not hide a negative latest ROE on the default board.
+                from a_stock_tracker.research import rank_peers
+                from a_stock_tracker.services import get_peer_discover
+
+                snapshot = json.loads((FIXTURES_DIR / "peer_complete_v1.json").read_text())
+                snapshot["data_date"] = "2026-09-29"
+                for fact in snapshot["rows"]:
+                    fact["valuation_date"] = snapshot["data_date"]
+                for fact, values in zip(
+                    snapshot["rows"], ([30, 20, -5], [10, 20, 15], [10, -5, 15])
+                ):
+                    for annual, value in zip(fact["annual_roes"], values):
+                        annual["roe"] = value
+                    fact["roe_mean"] = sum(values) / 3
+                snapshot["results"] = rank_peers(snapshot["rows"], snapshot["anchor"], ["600001"])
+                now_ts = datetime.now(UTC).isoformat()
+                snapshot["screened_at"] = snapshot["generated_at"] = now_ts
+                caution_path = state_dir / "cautions.json"
+                caution_path.write_text(json.dumps(snapshot))
+                caution_run = import_snapshot(state_dir, caution_path, "demo")
+                board = get_peer_discover(actor, "600001.SH", state_dir, "demo")
+                assert board["run_id"] == caution_run
+                assert board["results"]["ranking"] == snapshot["results"]["ranking"]
+                assert board["results"]["top"] == snapshot["results"]["top"]
+                # A fresh tab must not inherit the previous page's pinned discovery board.
+                page.close()
+                page = context.new_page()
+                page.goto(f"{base_url}/discover?anchor=600001.SH")
+                enable_accessibility()
+                page.wait_for_selector("text=当前完整榜", timeout=10000)
+                for width in (360, 390, 430):
+                    page.set_viewport_size({"width": width, "height": 844})
+                    for text in (
+                        "ROE趋势（2023—2025）：连续下降；最新年度ROE为负，均值不能掩盖这一点",
+                        "ROE趋势（2023—2025）：非单调变化",
+                        "ROE趋势（2023—2025）：非单调变化；历史年度ROE出现负值，均值不能掩盖这一点",
+                        "待核查：复核历史盈利能力下降",
+                        "系统未核查业务可比性，行业标签不能证明业务相似。",
+                    ):
+                        caution = page.get_by_text(text, exact=True).first
+                        caution.scroll_into_view_if_needed()
+                        expect(caution).to_be_visible()
+                        bounds = caution.bounding_box()
+                        assert (
+                            bounds
+                            and bounds["x"] >= 0
+                            and bounds["x"] + bounds["width"] <= width + 1
+                        )
                 # Flet may attempt optional CDN resources; every external request was aborted.
                 print(f"External requests blocked (none allowed): {sorted(set(blocked_requests))}")
                 print(

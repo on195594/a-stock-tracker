@@ -991,6 +991,17 @@ def build_app():
                                         wrap=True,
                                         spacing=8,
                                     ),
+                                    *(
+                                        [
+                                            ft.Text(
+                                                "已阅确认界面所示事实并更新对照基准，不代表已核验公告原文或作出投资判断。",
+                                                size=12,
+                                                color=COLOR_TEXT_MUTED,
+                                            )
+                                        ]
+                                        if tier == "date_change" and it.get("usable_run_id")
+                                        else []
+                                    ),
                                 ],
                                 spacing=6,
                             ),
@@ -1388,6 +1399,16 @@ def build_app():
                                 color=COLOR_TEXT_SECONDARY,
                             ),
                             ft.Text(f"待核查：{prompt['action']}", size=13, color="#334155"),
+                            ft.Text(
+                                insights.get("roe_trend", "ROE趋势：资料有缺口，暂不判断"),
+                                size=13,
+                                color=COLOR_TEXT_SECONDARY,
+                            ),
+                            ft.Text(
+                                "系统未核查业务可比性，行业标签不能证明业务相似。",
+                                size=13,
+                                color=COLOR_TEXT_SECONDARY,
+                            ),
                             ft.Row(
                                 [
                                     ft.Button("查看关注" if status else "查看", on_click=open_comp),
@@ -1414,9 +1435,6 @@ def build_app():
                                     *([ft.Text("逐年ROE缺失，不补零")] if not annual else []),
                                     ft.Text(
                                         insights.get("pb_comparison", "PB中位数暂不比较：缺少事实")
-                                    ),
-                                    ft.Text(
-                                        insights.get("roe_trend", "ROE趋势：资料有缺口，暂不判断")
                                     ),
                                     ft.Text(prompt["why"], size=13),
                                     ft.Text("下一步：" + prompt["next"], size=13),
@@ -1932,7 +1950,7 @@ def build_app():
             )
             next_check_field = ft.TextField(
                 label="下一步与反证（事件或日期）",
-                hint_text="下一次查什么、何时查、什么证据会改变判断",
+                hint_text="可选。触发：下次财报/某事件；核查：哪项证据；反证：若出现X，重新考虑原判断。",
                 multiline=True,
                 value=next_check_val,
                 max_length=1000,
@@ -2649,7 +2667,7 @@ def build_app():
                                     ack_btn,
                                     ack_feedback,
                                     ft.Text(
-                                        "已阅只确认看过有效资料，不代表认可投资价值；保存判断不会自动已阅。",
+                                        "已阅确认界面所示事实并更新对照基准，不代表已核验公告原文或作出投资判断；保存笔记不会自动已阅。",
                                         size=12,
                                         color=COLOR_TEXT_MUTED,
                                     ),

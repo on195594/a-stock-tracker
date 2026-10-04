@@ -1271,6 +1271,63 @@ def test_discover_damaged_snapshot_shows_fallback_then_error(tmp_path, monkeypat
     asyncio.run(check())
 
 
+@pytest.mark.parametrize(
+    "values",
+    [[30, 20, -5], [10, 20, 15], [12, 13, 14], [8, 8, 8], [10, -2, -1], [10, -5, 15]],
+)
+def test_discover_cautions_are_outside_collapsed_details_without_changing_ranks(
+    tmp_path, monkeypatch, values
+):
+    from a_stock_tracker.research import rank_peers
+    from a_stock_tracker.services import get_peer_discover, roe_trend
+
+    initialize(tmp_path, "demo", journal_mode="DELETE")
+    monkeypatch.setattr(app, "APP_MODE", "demo")
+    monkeypatch.setattr(app, "STATE_DIR", tmp_path)
+    snapshot = json.loads((Path(__file__).parent / "fixtures/peer_complete_v1.json").read_text())
+    row = snapshot["rows"][0]
+    for annual, value in zip(row["annual_roes"], values):
+        annual["roe"] = value
+    row["roe_mean"] = sum(values) / 3
+    snapshot["results"] = rank_peers(snapshot["rows"], snapshot["anchor"], ["600001"])
+    path = tmp_path / "cautions.json"
+    path.write_text(json.dumps(snapshot))
+    import_snapshot(tmp_path, path, "demo")
+
+    async def check():
+        page = AppMockPage()
+        await app.build_app()(page)
+        await page.on_route_change(SimpleNamespace(route="/discover?anchor=600001.SH"))
+        card = next(
+            c
+            for c in app_controls(page.controls[0])
+            if isinstance(c, ft.Column)
+            and c.controls
+            and isinstance(c.controls[0], ft.Text)
+            and "(600001.SH)" in str(c.controls[0].value)
+        )
+        texts = [c.value for c in card.controls if isinstance(c, ft.Text)]
+        assert roe_trend(row) in texts
+        assert "系统未核查业务可比性，行业标签不能证明业务相似。" in texts
+        assert ("待核查：复核历史盈利能力下降" in texts) == (values[-1] < values[-2])
+        assert ("最新年度ROE为负" in " ".join(texts)) == (values[-1] < 0)
+        assert ("历史年度ROE出现负值" in " ".join(texts)) == (
+            values[-1] >= 0 and any(value < 0 for value in values[:-1])
+        )
+        detail = next(c for c in card.controls if isinstance(c, ft.ExpansionTile))
+        assert not detail.expanded
+        assert not any(
+            isinstance(c, ft.Text) and c.value == roe_trend(row) for c in detail.controls
+        )
+        board = get_peer_discover(app.create_demo_actor(), "600001.SH", tmp_path, "demo")
+        for key in ("ranking", "top", "qualified_codes"):
+            assert board["results"][key] == snapshot["results"][key]
+        assert json.loads(path.read_text()) == snapshot
+        await page.on_close(None)
+
+    asyncio.run(check())
+
+
 def test_discover_join_context_navigation_and_unsaved_guard(tmp_path, monkeypatch):
     initialize(tmp_path, "demo", journal_mode="DELETE")
     monkeypatch.setattr(app, "APP_MODE", "demo")
@@ -2074,6 +2131,20 @@ def test_review_is_visible_without_opening_or_saving_notes(tmp_path, monkeypatch
         controls = list(app_controls(page.controls[0]))
         ack = next(c for c in controls if c.key == "mark-reviewed")
         assert ack.visible and not ack.disabled
+        assert any(
+            isinstance(c, ft.Text)
+            and "已阅确认界面所示事实并更新对照基准" in c.value
+            and "不代表已核验公告原文或作出投资判断" in c.value
+            for c in controls
+        )
+        next_check = next(
+            c for c in controls if isinstance(c, ft.TextField) and "下一步" in c.label
+        )
+        assert next_check.value == ""
+        assert (
+            next_check.hint_text
+            == "可选。触发：下次财报/某事件；核查：哪项证据；反证：若出现X，重新考虑原判断。"
+        )
         notes = next(
             c for c in controls if isinstance(c, ft.Button) and c.content == "展开可选笔记与状态"
         )
@@ -2118,6 +2189,12 @@ def test_home_inline_ack_revalidates_and_ignores_late_results(tmp_path, monkeypa
         controls = list(app_controls(page.controls[0]))
         buttons = [c for c in controls if isinstance(c, ft.Button) and c.content == "标记本次已阅"]
         assert len(buttons) == 1
+        assert any(
+            isinstance(c, ft.Text)
+            and c.value
+            == "已阅确认界面所示事实并更新对照基准，不代表已核验公告原文或作出投资判断。"
+            for c in controls
+        )
         button = buttons[0]
         assert any(
             "PB：1.85倍 | 3年ROE：" in str(c.value) for c in controls if isinstance(c, ft.Text)

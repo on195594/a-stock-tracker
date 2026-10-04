@@ -162,7 +162,11 @@ def roe_trend(row: dict[str, Any]) -> str:
         trend = "三年相同"
     else:
         trend = "非单调变化"
-    warning = "；最新年度ROE为负，均值不能掩盖这一点" if values[-1] < 0 else ""
+    warning = ""
+    if values[-1] < 0:
+        warning = "；最新年度ROE为负，均值不能掩盖这一点"
+    elif any(value < 0 for value in values[:-1]):
+        warning = "；历史年度ROE出现负值，均值不能掩盖这一点"
     return (
         f"ROE趋势（{annual[0]['period_end'][:4]}—{annual[-1]['period_end'][:4]}）：{trend}{warning}"
     )

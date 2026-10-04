@@ -77,6 +77,56 @@ def test_report_versions_dates_and_evidence_bound_prompt():
     )
 
 
+@pytest.mark.parametrize("profit", [-2, 0, 2])
+@pytest.mark.parametrize("cash", [-2, 0, 2])
+def test_profit_and_cash_prompts_keep_both_facts_and_single_risk_behavior(profit, cash):
+    report = select_latest_report(
+        [report_row(dt_netprofit_yoy=profit, ocfps=cash)], "2026-09-20", "2026-09-21"
+    )
+    prompt = research_prompt({"research_report": report})
+    assert prompt["action"] == (
+        "复核盈利下滑是否影响原判断"
+        if profit < 0
+        else "先核查经营现金流"
+        if cash < 0
+        else "先核查业务可比性与盈利质量"
+    )
+    if profit < 0 or cash < 0:
+        why, next_step = [], []
+        if profit < 0:
+            why.append("本次报告扣非归母净利润同比 -2.00%；尚未核实原因。")
+            next_step.append("查管理层经营讨论和非经常性损益说明，核对需求、毛利与费用变化。")
+        if cash < 0:
+            why.append("本次报告每股经营现金流 -2.00 元/股；不能仅据此认定经营恶化。")
+            next_step.append("查现金流量表及应收、存货附注，核对季节性和营运资金占用。")
+        assert prompt["why"] == " ".join(why)
+        assert prompt["next"] == " ".join(next_step)
+
+
+@pytest.mark.parametrize("status", ["ok", "failed", "missing", "conflict", "partial"])
+@pytest.mark.parametrize(
+    "risk", [{}, {"risk_status": "known_warning"}, {"list_status": "D"}, {"list_status": "P"}]
+)
+def test_risk_and_evidence_gaps_take_precedence_over_both_negative_metrics(status, risk):
+    report = select_latest_report(
+        [report_row(dt_netprofit_yoy=-2, ocfps=-2)], "2026-09-20", "2026-09-21"
+    )
+    if status == "partial":
+        report.update(status=status, missing=["debt_to_assets"])
+        report["metrics"]["debt_to_assets"] = None
+    elif status != "ok":
+        report = {"status": status}
+    row = {"research_report": report, **risk}
+    prompt = research_prompt(row)
+    if risk or status != "ok":
+        assert prompt["action"] == ("先核查公司风险状态" if risk else "先补齐最新财报证据")
+        assert "每股经营现金流" not in prompt["why"]
+        assert "盈利下滑" not in prompt["action"]
+    else:
+        assert prompt["action"] == "复核盈利下滑是否影响原判断"
+        assert "每股经营现金流" in prompt["why"]
+
+
 def test_direct_company_is_frozen_idempotent_and_does_not_auto_follow(tmp_path):
     initialize(tmp_path, "demo", journal_mode="DELETE")
     actor = create_demo_actor()
