@@ -774,6 +774,46 @@ def build_app():
                             e.control.disabled = False
                             page.update()
 
+                async def mark_card_seen(e, item=it):
+                    if (
+                        gen != page_state["generation"]
+                        or not actor.is_valid
+                        or not page_state["connected"]
+                        or e.control.disabled
+                    ):
+                        return
+                    e.control.disabled = True
+                    page.update()
+                    try:
+                        await asyncio.to_thread(
+                            mark_seen,
+                            actor=actor,
+                            code=item["code"],
+                            displayed_run_id=item["usable_run_id"],
+                            expected_revision=item["revision"],
+                            expected_updated_at=item["updated_at"],
+                            state_dir=STATE_DIR,
+                            mode=APP_MODE,
+                        )
+                        if (
+                            gen == page_state["generation"]
+                            and actor.is_valid
+                            and page_state["connected"]
+                        ):
+                            page_state["notice"] = f"{item['name']}：已标记本次已阅。"
+                            await navigate("/")
+                    except Exception:
+                        if (
+                            gen == page_state["generation"]
+                            and actor.is_valid
+                            and page_state["connected"]
+                        ):
+                            status_feedback.value = (
+                                "标记已阅未确认，资料或记录可能已变化；请重新打开首页核对。"
+                            )
+                            e.control.disabled = False
+                            page.update()
+
                 tier = it.get("change_tier", "no_change")
                 if it["status"] == "paused":
                     destination = paused_controls
@@ -868,6 +908,44 @@ def build_app():
                                         weight=desc_weight,
                                     ),
                                     ft.Text(
+                                        (
+                                            "上次可用资料 · "
+                                            if tier == "anomaly" and it.get("usable_run_id")
+                                            else ""
+                                        )
+                                        + f"PB：{fmt_number(it.get('pb'))}倍 | 3年ROE：{fmt_number(it.get('roe_mean'))}%",
+                                        size=13,
+                                        color=COLOR_TEXT_SECONDARY,
+                                        semantics_label=(
+                                            (
+                                                "上次可用资料 · "
+                                                if tier == "anomaly" and it.get("usable_run_id")
+                                                else ""
+                                            )
+                                            + f"PB：{fmt_number(it.get('pb'))}倍 | 3年ROE：{fmt_number(it.get('roe_mean'))}%"
+                                        ),
+                                    ),
+                                    ft.Text(
+                                        (
+                                            f"{'该次财报' if tier == 'anomaly' else '最新财报'}：{it['latest_report_period']} | "
+                                            f"扣非同比：{fmt_number(it.get('dt_netprofit_yoy'))}% | "
+                                            f"经营现金流：{fmt_number(it.get('ocfps'))}元/股（累计）"
+                                        )
+                                        if it.get("latest_report_period")
+                                        else "最新财报：尚未取得，可主动更新",
+                                        size=13,
+                                        color=COLOR_TEXT_SECONDARY,
+                                        semantics_label=(
+                                            (
+                                                f"{'该次财报' if tier == 'anomaly' else '最新财报'}：{it['latest_report_period']} | "
+                                                f"扣非同比：{fmt_number(it.get('dt_netprofit_yoy'))}% | "
+                                                f"经营现金流：{fmt_number(it.get('ocfps'))}元/股（累计）"
+                                            )
+                                            if it.get("latest_report_period")
+                                            else "最新财报：尚未取得，可主动更新"
+                                        ),
+                                    ),
+                                    ft.Text(
                                         it.get("reason")
                                         or it.get("research_prompt", {}).get(
                                             "action", "先核查业务与盈利质量"
@@ -898,6 +976,11 @@ def build_app():
                                     ft.Row(
                                         controls=[
                                             ft.Button("查看详情", on_click=on_card_click),
+                                            *(
+                                                [ft.Button("标记本次已阅", on_click=mark_card_seen)]
+                                                if tier == "date_change" and it.get("usable_run_id")
+                                                else []
+                                            ),
                                             ft.Button(
                                                 "恢复为等待证据"
                                                 if it["status"] == "paused"

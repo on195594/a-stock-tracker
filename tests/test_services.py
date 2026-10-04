@@ -1524,6 +1524,22 @@ def test_home_reports_valuation_date_change_with_same_pb(tmp_path: Path) -> None
     assert home["watch_items"][0]["change_tier"] == "date_change"
     assert not home["watch_items"][0]["needs_attention"]
     assert home["watch_items"][0]["change_summary"] == "估值日期变动: 2026-09-20 → 2026-09-21"
+    item = home["watch_items"][0]
+    assert item["usable_run_id"] == second
+    assert item["pb"] == 1.85
+    assert item["roe_mean"] == newer["rows"][0]["roe_mean"]
+    assert item["latest_report_period"] is None
+    assert item["dt_netprofit_yoy"] is None and item["ocfps"] is None
+    mark_seen(
+        actor,
+        item["code"],
+        item["usable_run_id"],
+        item["revision"],
+        tmp_path,
+        "demo",
+        expected_updated_at=item["updated_at"],
+    )
+    assert get_home(actor, tmp_path, "demo")["watch_items"][0]["change_tier"] == "no_change"
 
 
 @pytest.mark.parametrize("damage", ["missing", "corrupt"])

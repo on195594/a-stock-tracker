@@ -624,6 +624,9 @@ def get_home(actor: Actor, state_dir: Path, mode: Mode) -> dict[str, Any]:
                     change_tier = "no_change"
                     change_summary = "本工具覆盖的字段暂无未阅变化"
 
+            financials = usable_row or {}
+            report = report_for_display(financials)
+            metrics = report.get("metrics") or {}
             overview_items.append(
                 {
                     "code": it["code"],
@@ -637,6 +640,12 @@ def get_home(actor: Actor, state_dir: Path, mode: Mode) -> dict[str, Any]:
                     "revision": it["revision"],
                     "updated_at": it["updated_at"],
                     "valuation_date": item_date,
+                    "usable_run_id": usable_run["run_id"] if usable_run else None,
+                    "pb": financials.get("pb"),
+                    "roe_mean": financials.get("roe_mean"),
+                    "latest_report_period": report.get("period"),
+                    "dt_netprofit_yoy": metrics.get("dt_netprofit_yoy"),
+                    "ocfps": metrics.get("ocfps"),
                     "research_prompt": research_prompt(
                         {"research_report": {"status": "failed", "error": change_summary}}
                         if change_tier == "anomaly"

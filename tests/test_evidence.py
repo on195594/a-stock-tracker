@@ -147,6 +147,11 @@ def test_rechecking_same_report_is_not_a_financial_change(tmp_path):
     assert services.get_home(actor, tmp_path, "demo")["important_review_count"] == 0
     ctx = services.get_company_context(actor, "600002.SH", tmp_path, "demo")
     assert ctx["comparison"]["can_ack"]
+    overview = services.get_home(actor, tmp_path, "demo")["watch_items"][0]
+    assert overview["usable_run_id"] == ctx["displayed_run_id"]
+    assert overview["latest_report_period"] == ctx["research_report"]["period"]
+    for field in ("dt_netprofit_yoy", "ocfps"):
+        assert overview[field] == ctx["research_report"]["metrics"][field]
     assert not any(f["changed"] for f in ctx["comparison"]["items"])
     assert ctx["research_report"]["acquired_at"] <= utc_now()
 
@@ -173,6 +178,13 @@ def test_failed_update_does_not_present_previous_report_as_current(tmp_path, mon
     assert "补齐" in ctx["research_prompt"]["action"]
     home = services.get_home(actor, tmp_path, "demo")
     assert "补齐" in home["watch_items"][0]["research_prompt"]["action"]
+    overview = home["watch_items"][0]
+    old_report = ctx["usable_fact"]["research_report"]
+    assert overview["change_tier"] == "anomaly"
+    assert overview["usable_run_id"] == run
+    assert overview["latest_report_period"] == old_report["period"]
+    assert overview["dt_netprofit_yoy"] == old_report["metrics"]["dt_netprofit_yoy"]
+    assert overview["ocfps"] == old_report["metrics"]["ocfps"]
 
 
 @pytest.mark.parametrize(
@@ -206,6 +218,16 @@ def test_imported_malformed_report_keeps_pages_readable_and_blocks_ack(tmp_path)
     assert "metrics" not in ctx["research_report"]
     assert not ctx["comparison"]["can_ack"]
     assert services.get_home(actor, tmp_path, "demo")["important_review_count"] == 1
+    overview = services.get_home(actor, tmp_path, "demo")["watch_items"][0]
+    for field in (
+        "usable_run_id",
+        "pb",
+        "roe_mean",
+        "latest_report_period",
+        "dt_netprofit_yoy",
+        "ocfps",
+    ):
+        assert overview[field] is None
     with pytest.raises(services.ServiceError, match="usable facts"):
         services.mark_seen(actor, "600002.SH", run, item["revision"], tmp_path, "demo")
 

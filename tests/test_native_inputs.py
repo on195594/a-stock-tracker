@@ -1,11 +1,27 @@
 import json
 from datetime import date
+from pathlib import Path
 
 import pytest
 
 from a_stock_tracker.calendar import latest_completed_day
 from a_stock_tracker.config import read_anchors
 from a_stock_tracker.research import ScreenError
+
+
+def test_reference_list_includes_new_main_board_industries():
+    anchors = read_anchors(Path(__file__).parents[1] / "config/anchors.json")
+    by_code = {item["code"]: item for item in anchors}
+    for code, name in {
+        "600519": "贵州茅台",
+        "000333": "美的集团",
+        "600660": "福耀玻璃",
+        "600585": "海螺水泥",
+        "600276": "恒瑞医药",
+    }.items():
+        assert by_code[code]["name"] == name
+        assert "discovery_unavailable" not in by_code[code]
+    assert by_code["601288"]["discovery_unavailable"]
 
 
 def test_native_reference_list_never_executes_python_or_accepts_duplicates(tmp_path):

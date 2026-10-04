@@ -698,7 +698,7 @@ def main(*, reliability: bool = False) -> int:
                     assert conn.execute("SELECT count(*) FROM update_jobs").fetchone()[0] == 2
                 # Real confirmation/cancellation and visible deletion feedback, not DB fallbacks.
                 page.locator("[aria-label='我的研究']").first.click()
-                expect(page.get_by_text("指标与资料变化", exact=True)).to_be_visible()
+                expect(page.get_by_text("指标与资料变化", exact=True)).to_be_visible(timeout=10000)
                 page.get_by_role("button", name="查看详情", exact=True).first.click()
                 page.wait_for_selector("text=本次变化与原判断", timeout=10000)
                 # S2: the comparison is visible before confirmation; opening it is read-only.
@@ -980,6 +980,64 @@ def main(*, reliability: bool = False) -> int:
                         ).fetchone()[0]
                         is None
                     )
+                # Date-only updates can be reviewed on the home card at every mobile width.
+                from a_stock_tracker.auth import create_demo_actor
+                from a_stock_tracker.services import get_company_context, mark_seen, save_watch
+
+                actor = create_demo_actor()
+                snapshot = json.loads((FIXTURES_DIR / "peer_complete_v1.json").read_text())
+                report = get_company_context(actor, "600003.SH", state_dir, "demo")[
+                    "research_report"
+                ]
+                next(r for r in snapshot["rows"] if r["code"] == "600004.SH")["research_report"] = (
+                    report
+                )
+                date_path = state_dir / "date-only.json"
+
+                def import_date(day):
+                    snapshot["data_date"] = day
+                    time.sleep(0.01)
+                    now_ts = datetime.now(UTC).isoformat()
+                    snapshot["screened_at"] = snapshot["generated_at"] = now_ts
+                    for fact in snapshot["rows"]:
+                        fact["valuation_date"] = day
+                    date_path.write_text(json.dumps(snapshot))
+                    return import_snapshot(state_dir, date_path, "demo")
+
+                baseline = import_date("2026-09-25")
+                item = save_watch(actor, "600004.SH", baseline, {}, 0, state_dir, "demo")
+                mark_seen(actor, "600004.SH", baseline, item["revision"], state_dir, "demo")
+                with sqlite3.connect(db_path) as conn:
+                    jobs_before_ack = conn.execute("SELECT count(*) FROM update_jobs").fetchone()[0]
+                for width, day in ((360, "2026-09-26"), (390, "2026-09-27"), (430, "2026-09-28")):
+                    current = import_date(day)
+                    page.set_viewport_size({"width": width, "height": 844})
+                    page.goto(f"{base_url}/")
+                    page.wait_for_load_state("domcontentloaded")
+                    enable_accessibility()
+                    page.get_by_text("关注清单", exact=False).wait_for(state="visible")
+                    time.sleep(0.5)
+                    assert click_semantics_button("查看其余研究"), "Could not click routine button"
+                    time.sleep(0.5)
+                    ack = page.get_by_role("button", name="标记本次已阅", exact=True)
+                    click_settled(page, ack)
+                    expect(page).to_have_url(f"{base_url}/")
+                    expect(
+                        page.get_by_text("示例公司丁：已标记本次已阅。", exact=True)
+                    ).to_be_visible()
+                    expect(ack).to_have_count(0)
+                    with sqlite3.connect(db_path) as conn:
+                        assert (
+                            conn.execute(
+                                "SELECT ack_run_id FROM watch_items WHERE code='600004.SH'"
+                            ).fetchone()[0]
+                            == current
+                        )
+                        assert (
+                            conn.execute("SELECT count(*) FROM update_jobs").fetchone()[0]
+                            == jobs_before_ack
+                        )
+
                 # Flet may attempt optional CDN resources; every external request was aborted.
                 print(f"External requests blocked (none allowed): {sorted(set(blocked_requests))}")
                 print(

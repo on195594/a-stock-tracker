@@ -1704,6 +1704,12 @@ def test_home_tiered_grouping_and_styling(tmp_path, monkeypatch):
                     "change_tier": "anomaly",
                     "change_summary": "最新运行估值日倒退异常，仍展示上次可用资料",
                     "valuation_date": "2026-09-20",
+                    "usable_run_id": "previous-run",
+                    "pb": 0,
+                    "roe_mean": -1.5,
+                    "latest_report_period": "2026-06-30",
+                    "dt_netprofit_yoy": 0,
+                    "ocfps": -2,
                 },
                 {
                     "code": "600003.SH",
@@ -1769,6 +1775,12 @@ def test_home_tiered_grouping_and_styling(tmp_path, monkeypatch):
                     card_titles.append(text_c.value.split()[0])
                     break
         assert card_titles == ["标的甲", "标的己"]
+        texts = [c.value for c in app_controls(home) if isinstance(c, ft.Text)]
+        assert "上次可用资料 · PB：0.00倍 | 3年ROE：-1.50%" in texts
+        assert "该次财报：2026-06-30 | 扣非同比：0.00% | 经营现金流：-2.00元/股（累计）" in texts
+        assert not any(
+            isinstance(c, ft.Button) and c.content == "标记本次已阅" for c in app_controls(home)
+        )  # Anomalies and date changes without a usable run have no shortcut.
         assert any(
             c.content == "查看其余研究（含估值与日期变化）"
             for c in app_controls(home)
@@ -2070,6 +2082,127 @@ def test_review_is_visible_without_opening_or_saving_notes(tmp_path, monkeypatch
         with connect_workspace(tmp_path, "demo") as conn:
             item = get_watch_item(conn, "600001.SH")
             assert item["ack_run_id"] == run and item["reason"] == "" and item["next_check"] == ""
+        await page.on_close(None)
+
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize("outcome", ["success", "conflict", "gap", "navigation", "disconnect"])
+def test_home_inline_ack_revalidates_and_ignores_late_results(tmp_path, monkeypatch, outcome):
+    from a_stock_tracker.auth import create_demo_actor
+    from a_stock_tracker.services import mark_seen, save_watch
+
+    initialize(tmp_path, "demo", journal_mode="DELETE")
+    monkeypatch.setattr(app, "APP_MODE", "demo")
+    monkeypatch.setattr(app, "STATE_DIR", tmp_path)
+    fixture = Path(__file__).parent / "fixtures/peer_complete_v1.json"
+    first = import_snapshot(tmp_path, fixture, "demo")
+    actor = create_demo_actor()
+    item = save_watch(actor, "600001.SH", first, {}, 0, tmp_path, "demo")
+    mark_seen(actor, "600001.SH", first, item["revision"], tmp_path, "demo")
+    snapshot = json.loads(fixture.read_text())
+    snapshot["screened_at"] = snapshot["generated_at"] = "2026-09-21T16:00:00+08:00"
+    snapshot["data_date"] = "2026-09-21"
+    for row in snapshot["rows"]:
+        row["valuation_date"] = "2026-09-21"
+    path = tmp_path / "date-only.json"
+    path.write_text(json.dumps(snapshot))
+    second = import_snapshot(tmp_path, path, "demo")
+    # A second card catches accidentally binding the callback to the last loop item.
+    save_watch(actor, "600002.SH", second, {}, 0, tmp_path, "demo")
+    to_thread = asyncio.to_thread
+
+    async def check():
+        page = AppMockPage()
+        await app.build_app()(page)
+        controls = list(app_controls(page.controls[0]))
+        buttons = [c for c in controls if isinstance(c, ft.Button) and c.content == "标记本次已阅"]
+        assert len(buttons) == 1
+        button = buttons[0]
+        assert any(
+            "PB：1.85倍 | 3年ROE：" in str(c.value) for c in controls if isinstance(c, ft.Text)
+        )
+        assert any(
+            c.value == "最新财报：尚未取得，可主动更新" for c in controls if isinstance(c, ft.Text)
+        )
+        if outcome == "conflict":
+            with connect_workspace(tmp_path, "demo") as conn:
+                current = get_watch_item(conn, "600001.SH")
+            save_watch(
+                actor,
+                "600001.SH",
+                second,
+                {"reason": "另一页面保存"},
+                current["revision"],
+                tmp_path,
+                "demo",
+            )
+        elif outcome == "gap":
+            raw = json.dumps({"anchor": "600001.SH", "rows": []}).encode()
+            gap_path = "snapshots/new-gap.json"
+            (tmp_path / gap_path).write_bytes(raw)
+            with connect_workspace(tmp_path, "demo") as conn:
+                register_run(
+                    conn,
+                    run_id="new-gap",
+                    kind="peer",
+                    anchor_code="600001.SH",
+                    rule_id="peer-screen-v1",
+                    captured_at="2026-09-22T16:00:00+08:00",
+                    valuation_date="2026-09-22",
+                    health="partial",
+                    snapshot_path=gap_path,
+                    snapshot_bytes=raw,
+                )
+                conn.commit()
+        started, release = asyncio.Event(), asyncio.Event()
+        calls = []
+
+        async def delayed(func, *args, **kwargs):
+            if func is app.mark_seen:
+                calls.append(kwargs)
+                started.set()
+                await release.wait()
+            return await to_thread(func, *args, **kwargs)
+
+        monkeypatch.setattr(asyncio, "to_thread", delayed)
+        event = SimpleNamespace(control=button)
+        pending = asyncio.create_task(button.on_click(event))
+        try:
+            await asyncio.wait_for(started.wait(), timeout=5)
+            await button.on_click(event)
+            assert len(calls) == 1
+            assert calls[0]["code"] == "600001.SH"
+            assert calls[0]["displayed_run_id"] == second
+            assert calls[0]["expected_updated_at"]
+            if outcome == "navigation":
+                page.route = "/settings"  # The browser updates the route before this event.
+                await page.on_route_change(SimpleNamespace(route="/settings"))
+            elif outcome == "disconnect":
+                await page.on_disconnect(None)
+        finally:
+            release.set()
+        await pending
+        texts = [str(c.value) for c in app_controls(page.controls[0]) if isinstance(c, ft.Text)]
+        if outcome == "success":
+            assert any("已标记本次已阅" in t for t in texts)
+            assert not any(
+                isinstance(c, ft.Button) and c.content == "标记本次已阅"
+                for c in app_controls(page.controls[0])
+            )
+        elif outcome in ("conflict", "gap"):
+            assert any("标记已阅未确认" in t for t in texts)
+            assert not button.disabled
+        else:
+            assert not any("已标记本次已阅" in t for t in texts)
+            if outcome == "navigation":
+                assert page.route == "/settings"
+        with connect_workspace(tmp_path, "demo") as conn:
+            assert get_watch_item(conn, "600001.SH")["ack_run_id"] == (
+                first if outcome in ("conflict", "gap") else second
+            )
+            assert get_watch_item(conn, "600002.SH")["ack_run_id"] is None
+            assert conn.execute("SELECT count(*) FROM update_jobs").fetchone()[0] == 0
         await page.on_close(None)
 
     asyncio.run(check())
