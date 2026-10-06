@@ -5,6 +5,35 @@ import pytest
 from a_stock_tracker import research as screen
 
 
+@pytest.mark.parametrize(
+    "value",
+    ["202681", 202681, "2026-8-01", "20-2608-01", "２０２６０８０１", "20260230", None, True],
+)
+def test_date_boundary_rejects_malformed_values(value) -> None:
+    with pytest.raises(screen.ScreenError):
+        screen.parse_date(value)
+
+
+def test_date_and_annual_selection_boundary() -> None:
+    assert screen.iso_date(20260801) == screen.iso_date("2026-08-01") == "2026-08-01"
+    rows = [
+        {
+            "end_date": f"{year}1231",
+            "ann_date": f"{year + 1}0420",
+            "roe_waa": 10,
+            "update_flag": "0",
+        }
+        for year in (2023, 2024, 2025)
+    ]
+    assert screen.select_annual_roes(rows, "2026-09-30", "2026-10-06")["error"] is None
+    for invalid in ("202681", "20250101"):
+        damaged = [*rows[:-1], {**rows[-1], "ann_date": invalid}]
+        assert (
+            screen.select_annual_roes(damaged, "2026-09-30", "2026-10-06")["error"]
+            == "INVALID_REPORT_DATE"
+        )
+
+
 def test_fetch_universe_rejects_duplicate_valuations() -> None:
     import pandas as pd
 

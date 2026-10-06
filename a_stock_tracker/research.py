@@ -33,14 +33,20 @@ class ScreenError(RuntimeError):
     pass
 
 
+class BudgetStop(RuntimeError):
+    """Acquisition was interrupted, not a failed observation."""
+
+
 def now_iso() -> str:
     return datetime.now(SHANGHAI).isoformat(timespec="seconds")
 
 
 def parse_date(value: Any) -> date:
-    text = str(value or "").strip().replace("-", "")
+    text = str(value or "").strip()
+    if not re.fullmatch(r"(?:[0-9]{8}|[0-9]{4}-[0-9]{2}-[0-9]{2})", text):
+        raise ScreenError(f"无效日期: {value!r}")
     try:
-        return datetime.strptime(text, "%Y%m%d").date()
+        return datetime.strptime(text.replace("-", ""), "%Y%m%d").date()
     except ValueError as exc:
         raise ScreenError(f"无效日期: {value!r}") from exc
 
@@ -91,6 +97,8 @@ def frame_records(frame: Any, required: set[str], endpoint: str) -> list[dict[st
 def call_api(client: Any, endpoint: str, token: str, **params: Any) -> Any:
     try:
         return getattr(client, endpoint)(**params)
+    except BudgetStop:
+        raise
     except Exception as exc:
         message = str(exc).replace(token, "[REDACTED]")
         raise ScreenError(f"{endpoint} 请求失败: {message}") from exc
@@ -235,7 +243,9 @@ def select_annual_roes(
             period = iso_date(raw.get("end_date"))
             announced = iso_date(raw.get("ann_date"))
         except ScreenError:
-            continue
+            return {"annual_roes": [], "roe_mean": None, "error": "INVALID_REPORT_DATE"}
+        if announced < period:
+            return {"annual_roes": [], "roe_mean": None, "error": "INVALID_REPORT_DATE"}
         if (
             not period.endswith("-12-31")
             or parse_date(period) > data_day
