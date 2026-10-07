@@ -89,20 +89,28 @@ def locked_root(root: Path):
         raise ScreenError("Symlink automation root refused")
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     marker = root / "automation.json"
+    lock = root / ".lock"
+    if lock.is_symlink() or (lock.exists() and not lock.is_file()):
+        raise ScreenError("Automation lock must be a regular file")
     # Never initialize inside an existing workspace, cache, backup, or unrelated directory.
-    if not marker.exists() and any(root.iterdir()):
+    if not marker.exists() and any(p != lock for p in root.iterdir()):
         raise ScreenError("Automation root is not empty and has no owner marker")
     if marker.exists() and read_result(marker) != MARKER:
         raise ScreenError("Automation root owner mismatch")
     if root.stat().st_mode & 0o077:
         raise ScreenError("Automation root must be private (0700)")
-    with (root / ".lock").open("a") as handle:
+    with lock.open("a") as handle:
         try:
             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             raise ScreenError("Automation already running") from exc
         if not marker.exists():
+            # A failed first marker write may leave only the regular lock file.
+            if any(p != lock for p in root.iterdir()):
+                raise ScreenError("Automation root changed before initialization")
             save(marker, MARKER, immutable=True)
+        elif read_result(marker) != MARKER:
+            raise ScreenError("Automation root owner mismatch")
         yield root
 
 
@@ -494,10 +502,14 @@ def main() -> int:
             ]
         )[:5]
         save_state(directory / "state.json", state)
-        if args.max_research:
-            from a_stock_tracker.disclosures import research_batch
+        from a_stock_tracker.disclosures import research_batch
 
-            research_batch(directory, frozen, summary, state, previous, budget, args.max_research)
+        research_batch(directory, frozen, summary, state, previous, budget, args.max_research)
+        reports = [
+            read_state(directory / f"report-{code}.json")["result"] for code in state["research"]
+        ]
+        report_counts = dict(Counter(r["status"] for r in reports))
+        failed_reports = sum(r.get("evidence_review") != "passed" for r in reports)
         save(
             directory / "invocation.json",
             {
@@ -507,6 +519,8 @@ def main() -> int:
                 "coverage": summary["status"],
                 "cursor": state["cursor"],
                 "candidates": len(state["queue"]),
+                "report_counts": report_counts,
+                "failed_reports": failed_reports,
                 "notification": "not_enabled",
             },
         )
@@ -516,7 +530,9 @@ def main() -> int:
                     "run": str(directory),
                     "coverage": summary["status"],
                     "counts": summary["counts"],
-                    "reports": len(state["research"]),
+                    "reports": len(reports),
+                    "report_counts": report_counts,
+                    "failed_reports": failed_reports,
                     "pending_candidates": len(state["queue"]) - state["cursor"],
                     "requests": budget.used,
                 },
@@ -524,7 +540,11 @@ def main() -> int:
             )
         )
         return (
-            0 if summary["status"] == "complete" and state["cursor"] == len(state["queue"]) else 2
+            0
+            if summary["status"] == "complete"
+            and state["cursor"] == len(state["queue"])
+            and not failed_reports
+            else 2
         )
 
 

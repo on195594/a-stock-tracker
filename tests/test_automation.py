@@ -161,6 +161,37 @@ def test_root_is_explicit_private_and_separate(tmp_path):
                 pass
 
 
+def test_root_can_retry_after_marker_write_failure(tmp_path, monkeypatch):
+    root = tmp_path / "automation"
+    with monkeypatch.context() as patch:
+        patch.setattr(a, "save", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk")))
+        with pytest.raises(OSError, match="disk"):
+            with a.locked_root(root):
+                pass
+    assert {p.name for p in root.iterdir()} == {".lock"}
+    with a.locked_root(root):
+        assert a.read_result(root / "automation.json") == a.MARKER
+
+
+@pytest.mark.parametrize("entry", ["unrelated", "symlink", "directory"])
+def test_root_does_not_adopt_unsafe_initialization_remnants(tmp_path, entry):
+    root = tmp_path / "automation"
+    root.mkdir(mode=0o700)
+    lock = root / ".lock"
+    if entry == "unrelated":
+        lock.touch()
+        (root / "workspace.db").write_bytes(b"private")
+    elif entry == "symlink":
+        lock.symlink_to(tmp_path / "missing")
+    else:
+        lock.mkdir()
+    with pytest.raises(ScreenError):
+        with a.locked_root(root):
+            pass
+    assert not (root / "automation.json").exists()
+    assert not (tmp_path / "missing").exists()
+
+
 def packet_and_report():
     quotes = [
         "本公司主要从事电力生产和销售业务，主要客户为电网公司。",
@@ -426,6 +457,72 @@ def test_cli_resume_fills_new_industries_and_finishes_bounded_queue(tmp_path, mo
     state = a.read_state(directory / "state.json")
     assert len(state["queue"]) == state["cursor"] == 5
     assert len({r["industry"] for r in frozen["rows"] if r["code"] in state["queue"]}) == 2
+
+
+@pytest.mark.parametrize("outcome", ["passed", "review_failed", "source_failed", "scan_only"])
+def test_cli_reports_actual_research_outcome(tmp_path, monkeypatch, capsys, outcome):
+    import sys
+
+    import tushare
+
+    frozen, _, _, packet, report, review = research_case(tmp_path)
+    frozen["created_at"] = "2026-10-06T10:00:00+08:00"
+    calls = []
+
+    def announcements(*_):
+        calls.append("announcements")
+        if outcome == "source_failed":
+            raise ScreenError("synthetic source failure")
+        return []
+
+    def model(directory, label, *args):
+        calls.append(label)
+        return review if label.endswith("verify") else report
+
+    if outcome == "review_failed":
+        review["analysis_supported"] = False
+        review["issues"] = ["合成复核失败"]
+    monkeypatch.setattr(tushare, "pro_api", lambda *_, **__: Client())
+    monkeypatch.setattr(a, "freeze", lambda *_: frozen)
+    monkeypatch.setattr(a, "now_iso", lambda: frozen["created_at"])
+    monkeypatch.setattr(a.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(a.signal, "signal", lambda *_: None)
+    monkeypatch.setattr(a.signal, "alarm", lambda *_: None)
+    monkeypatch.setenv("TUSHARE_TOKEN", "not-a-secret")
+    monkeypatch.setattr(d.OfficialSource, "announcements", announcements)
+    monkeypatch.setattr(d, "select_documents", lambda *_: [])
+    monkeypatch.setattr(d, "evidence_packet", lambda *_: packet)
+    monkeypatch.setattr(d, "model_call", model)
+    root = tmp_path / "batch"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "automation",
+            "--root",
+            str(root),
+            "--max-research",
+            "0" if outcome == "scan_only" else "5",
+        ],
+    )
+    assert a.main() == (0 if outcome == "passed" else 2)
+    output = json.loads(capsys.readouterr().out)
+    directory = next(root.glob("run-*"))
+    assert (directory / "summary.md").exists()
+    expected_failed = int(outcome in {"review_failed", "source_failed"})
+    assert output["failed_reports"] == expected_failed
+    assert a.read_result(directory / "invocation.json")["failed_reports"] == expected_failed
+    expected_counts = (
+        {}
+        if outcome == "scan_only"
+        else {"incomplete" if expected_failed else "scoped_complete": 1}
+    )
+    assert output["report_counts"] == expected_counts
+    if outcome == "scan_only":
+        assert calls == [] and output["pending_candidates"] == 1
+        assert "待研究 1 家" in (directory / "summary.md").read_text()
+    elif expected_failed:
+        assert "report" not in a.read_state(directory / "report-600001.SH.json")["result"]
 
 
 def test_unchanged_reports_remain_readable_and_reusable(tmp_path, monkeypatch):
