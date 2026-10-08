@@ -1200,6 +1200,36 @@ def latest_watch_failure(
     return dict(row) if row else None
 
 
+def read_verified_snapshot(
+    state_dir: Path, snapshot_rel_path: str, expected_sha256: str | None = None
+) -> dict[str, Any]:
+    """Read a snapshot JSON from state_dir, validating path boundaries and optional SHA-256."""
+    state_dir = state_dir.expanduser().resolve()
+    full_path = (state_dir / snapshot_rel_path).resolve()
+
+    try:
+        full_path.relative_to(state_dir)
+    except ValueError as exc:
+        raise WorkspaceError(f"snapshot path traversal detected: {snapshot_rel_path}") from exc
+
+    if not full_path.is_file():
+        raise WorkspaceError(f"snapshot file missing: {snapshot_rel_path}")
+
+    try:
+        raw_bytes = full_path.read_bytes()
+    except OSError as exc:
+        raise WorkspaceError(f"failed to read snapshot file: {exc}") from exc
+    if expected_sha256 is not None:
+        computed_sha = hashlib.sha256(raw_bytes).hexdigest()
+        if computed_sha != expected_sha256:
+            raise WorkspaceError(f"snapshot hash mismatch for {snapshot_rel_path}")
+
+    try:
+        return json.loads(raw_bytes.decode("utf-8"))
+    except Exception as exc:
+        raise WorkspaceError("failed to load snapshot JSON") from exc
+
+
 def mark_watch_ack(
     conn: sqlite3.Connection,
     *,
@@ -1242,30 +1272,10 @@ def mark_watch_ack(
         ):
             raise WorkspaceError("cannot acknowledge a regressed valuation date")
 
-    state_dir = state_dir.expanduser().resolve()
-
     def row_in_run(candidate: sqlite3.Row) -> tuple[dict[str, Any] | None, bool]:
-        snap_path = (state_dir / candidate["snapshot_path"]).resolve()
-        try:
-            snap_path.relative_to(state_dir)
-        except ValueError as exc:
-            raise WorkspaceError(
-                f"snapshot path traversal detected: {candidate['snapshot_path']}"
-            ) from exc
-        if not snap_path.is_file():
-            raise WorkspaceError(f"snapshot file missing: {candidate['snapshot_path']}")
-        try:
-            snap_bytes = snap_path.read_bytes()
-        except OSError as exc:
-            raise WorkspaceError(
-                f"failed to read snapshot file {candidate['snapshot_path']}: {exc}"
-            ) from exc
-        if hashlib.sha256(snap_bytes).hexdigest() != candidate["snapshot_sha256"]:
-            raise WorkspaceError(f"snapshot hash mismatch: {candidate['snapshot_path']}")
-        try:
-            data = json.loads(snap_bytes.decode("utf-8"))
-        except Exception as exc:
-            raise WorkspaceError("failed to parse snapshot JSON") from exc
+        data = read_verified_snapshot(
+            state_dir, candidate["snapshot_path"], candidate["snapshot_sha256"]
+        )
         if not isinstance(data, dict) or not isinstance(data.get("rows"), list):
             raise WorkspaceError("invalid snapshot rows")
         matched = next(

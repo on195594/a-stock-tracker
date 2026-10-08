@@ -29,6 +29,7 @@ from a_stock_tracker.services import (
     set_watch_status,
 )
 from a_stock_tracker.workspace import (
+    WorkspaceError,
     add_watch_item,
     connect_workspace,
     get_run,
@@ -36,6 +37,9 @@ from a_stock_tracker.workspace import (
     import_snapshot,
     initialize,
     register_run,
+)
+from a_stock_tracker.workspace import (
+    read_verified_snapshot as read_workspace_snapshot,
 )
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -776,7 +780,11 @@ def test_generated_nonpositive_pb_facts_can_be_acknowledged(
     assert seen["ack_run_id"] == run_id
 
 
-def test_snapshot_verification_and_tampering(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "reader,error",
+    [(read_verified_snapshot, ServiceError), (read_workspace_snapshot, WorkspaceError)],
+)
+def test_snapshot_verification_and_tampering(tmp_path: Path, reader, error) -> None:
     ws_dir = tmp_path / "tamper_ws"
     initialize(ws_dir, mode="demo", journal_mode="DELETE")
 
@@ -793,16 +801,32 @@ def test_snapshot_verification_and_tampering(tmp_path: Path) -> None:
     assert snap_file.is_file()
 
     # Valid read succeeds
-    data = read_verified_snapshot(ws_dir, row[0], row[1])
+    data = reader(ws_dir, row[0], row[1])
     assert data["anchor"] == "600001.SH"
 
     # Tampered file raises hash mismatch error
-    with pytest.raises(ServiceError, match="snapshot hash mismatch"):
-        read_verified_snapshot(ws_dir, row[0], "0" * 64)
+    with pytest.raises(error, match="snapshot hash mismatch"):
+        reader(ws_dir, row[0], "0" * 64)
 
     # Path traversal rejected
-    with pytest.raises(ServiceError, match="traversal"):
-        read_verified_snapshot(ws_dir, "../../../etc/passwd")
+    with pytest.raises(error, match="traversal"):
+        reader(ws_dir, "../../../etc/passwd")
+
+    with pytest.raises(error, match="hash mismatch"):
+        reader(ws_dir, row[0], "")
+
+    outside = tmp_path / "outside.json"
+    outside.write_text("{}")
+    (ws_dir / "escape.json").symlink_to(outside)
+    with pytest.raises(error, match="traversal"):
+        reader(ws_dir, "escape.json")
+
+    with pytest.raises(error, match="missing"):
+        reader(ws_dir, "missing.json")
+
+    snap_file.write_bytes(b"not json")
+    with pytest.raises(error, match="failed to load snapshot JSON"):
+        reader(ws_dir, row[0])
 
 
 def test_unverified_run_excluded_from_facts(tmp_path: Path) -> None:

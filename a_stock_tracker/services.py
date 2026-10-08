@@ -50,6 +50,9 @@ from a_stock_tracker.workspace import (
     utc_now,
     watch_run_targets,
 )
+from a_stock_tracker.workspace import (
+    read_verified_snapshot as read_workspace_snapshot,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,31 +64,10 @@ class ServiceError(RuntimeError):
 def read_verified_snapshot(
     state_dir: Path, snapshot_rel_path: str, expected_sha256: str | None = None
 ) -> dict[str, Any]:
-    """Read a snapshot JSON from state_dir, validating path boundaries and optional SHA-256."""
-    state_dir = state_dir.expanduser().resolve()
-    full_path = (state_dir / snapshot_rel_path).resolve()
-
     try:
-        full_path.relative_to(state_dir)
-    except ValueError as exc:
-        raise ServiceError(f"snapshot path traversal detected: {snapshot_rel_path}") from exc
-
-    if not full_path.is_file():
-        raise ServiceError(f"snapshot file missing: {snapshot_rel_path}")
-
-    try:
-        raw_bytes = full_path.read_bytes()
-    except OSError as exc:
-        raise ServiceError(f"failed to read snapshot file: {exc}") from exc
-    if expected_sha256:
-        computed_sha = hashlib.sha256(raw_bytes).hexdigest()
-        if computed_sha != expected_sha256:
-            raise ServiceError(f"snapshot hash mismatch for {snapshot_rel_path}")
-
-    try:
-        return json.loads(raw_bytes.decode("utf-8"))
-    except Exception as exc:
-        raise ServiceError("failed to load snapshot JSON") from exc
+        return read_workspace_snapshot(state_dir, snapshot_rel_path, expected_sha256)
+    except WorkspaceError as exc:
+        raise ServiceError(str(exc)) from exc
 
 
 def safe_rows(snap: dict[str, Any] | None) -> list[dict[str, Any]]:
