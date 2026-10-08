@@ -368,7 +368,7 @@ def main(*, reliability: bool = False) -> int:
                 page.set_viewport_size({"width": 390, "height": 844})
                 entry.click()
                 page.wait_for_selector("text=暂无参照公司", timeout=10000)
-                assert click_semantics_button("查找同业"), "Could not submit peer update"
+                click_settled(page, page.get_by_role("button", name="查找同业", exact=True))
                 expect(page).not_to_have_url(re.compile(r"/jobs/"))
                 result = page.get_by_role("button", name="查看更新结果", exact=True)
                 expect(result).to_be_visible(timeout=20000)
@@ -469,9 +469,12 @@ def main(*, reliability: bool = False) -> int:
                 time.sleep(0.5)
                 fields.click()
                 expect(group).not_to_be_visible()
-                # Following is complete without a form; old notes are optional and preserved.
-                expect(page.locator("textarea[aria-label*='理由']").first).not_to_be_visible()
+                # The optional editor is visible for followed companies, without requiring input.
+                expect(page.locator("textarea[aria-label*='理由']").first).to_be_visible()
                 open_notes()
+                # Select a research state by its accessible name, then explicitly save it.
+                click_settled(page, page.get_by_role("button", name="关注状态", exact=True))
+                page.get_by_role("button", name="继续研究", exact=True).click()
                 # 4. Fill in optional personal notes
                 test_reason = "移动端自动化测试理由"
                 reason_input = page.locator("textarea[aria-label*='理由']").first
@@ -506,6 +509,37 @@ def main(*, reliability: bool = False) -> int:
                 save_btn = page.get_by_role("button", name="保存笔记与状态", exact=True)
                 assert save_btn.is_visible(), "Save button is not visible in accessibility tree"
                 assert save_btn.is_enabled(), "Save button is not enabled"
+                db_path = state_dir / "workspace.sqlite3"
+                blocker = sqlite3.connect(db_path)
+                try:
+                    blocker.execute("BEGIN IMMEDIATE")
+                    click_settled(page, save_btn)
+                    expect(page.get_by_role("button", name="保存中…", exact=True)).to_be_disabled(
+                        timeout=2000
+                    )
+                    click_settled(page, reason_input)
+                    reason_input.press("End")
+                    reason_input.press_sequentially("（保存期间补充反证）")
+                finally:
+                    blocker.rollback()
+                    blocker.close()
+                expect(
+                    page.get_by_text("已保存提交内容；新增修改尚未保存", exact=True)
+                ).to_be_visible()
+                with sqlite3.connect(db_path) as conn:
+                    assert (
+                        conn.execute(
+                            "SELECT reason FROM watch_items WHERE code='600001.SH'"
+                        ).fetchone()[0]
+                        == test_reason
+                    )
+                test_reason += "（保存期间补充反证）"
+                page.go_back()
+                unsaved_prompt.wait_for(state="visible")
+                page.get_by_role("button", name="继续编辑", exact=True).click()
+                unsaved_prompt.wait_for(state="hidden")
+                click_settled(page, reason_input)
+                expect(reason_input).to_have_value(test_reason)
                 click_settled(page, save_btn)
 
                 # UI success is mandatory; persisted data must NEVER bypass this assertion.
@@ -523,6 +557,8 @@ def main(*, reliability: bool = False) -> int:
                     f"Expected reason '{test_reason}', got '{row['reason']}'"
                 )
                 assert row["next_check"] == next_step, repr(row["next_check"])
+                assert row["status"] == "research"
+                expect(page.get_by_text("我的判断：继续研究", exact=True)).to_be_visible()
                 assert row["revision"] >= 1, "Revision should be >= 1"
                 assert row["ack_run_id"] is None, "Saving notes must not acknowledge facts"
                 page.get_by_text("首次待阅：无已阅基准", exact=False).wait_for(state="visible")
@@ -534,6 +570,11 @@ def main(*, reliability: bool = False) -> int:
                 ).to_be_visible()
                 page.get_by_role("button", name="标记本次变化已阅", exact=True).click()
                 page.get_by_text("已标记已阅", exact=False).wait_for(state="visible")
+                reviewed = page.get_by_role("button", name="已标记本次已阅", exact=True)
+                expect(reviewed).to_be_disabled()
+                click_settled(page, save_btn)
+                expect(page.get_by_text("保存成功", exact=True)).to_be_visible()
+                expect(reviewed).to_be_disabled()
                 with sqlite3.connect(db_path) as conn:
                     first_ack = conn.execute(
                         "SELECT ack_run_id FROM watch_items WHERE code='600001.SH'"
@@ -774,8 +815,10 @@ def main(*, reliability: bool = False) -> int:
                 page.wait_for_load_state("domcontentloaded")
                 enable_accessibility()
                 page.wait_for_selector("text=本次变化与原判断", timeout=10000)
-                # This session remembers the previously opened section; following still needs no form.
-                page.get_by_role("button", name="收起可选笔记与状态", exact=True).click()
+                # A fresh untracked company keeps the editor closed; following needs no form.
+                expect(
+                    page.get_by_role("button", name="展开可选笔记与状态", exact=True)
+                ).to_be_visible()
                 expect(page.locator("textarea[aria-label*='理由']").first).not_to_be_visible()
                 page.get_by_role("button", name="关注", exact=True).click()
                 expect(page.get_by_role("button", name="已关注", exact=True)).to_be_disabled()
@@ -910,7 +953,7 @@ def main(*, reliability: bool = False) -> int:
                         ).fetchone()[0]
                         == 0
                     )
-                click_settled(page, page.get_by_text("最新财报证据与原文", exact=True))
+                # Evidence is open before the optional editor and the review action.
                 expect(
                     page.get_by_text("本次接口最新报告期：2026-06-30", exact=False)
                 ).to_be_visible()

@@ -1981,6 +1981,7 @@ def build_app():
             note_url_field.on_change = update_draft
 
             feedback_text = ft.Text("", size=13)
+            saving = False
 
             async def on_discard_draft(e: Any = None):
                 page_state.setdefault("drafts", {}).pop(code, None)
@@ -1988,7 +1989,8 @@ def build_app():
                 page.update()
 
             async def on_save(e):
-                if gen != page_state["generation"] or not page_state["connected"]:
+                nonlocal saving
+                if saving or gen != page_state["generation"] or not page_state["connected"]:
                     return
                 if not actor.is_valid:
                     feedback_text.value = "授权已失效，请重新登录"
@@ -2002,12 +2004,17 @@ def build_app():
                     page.update()
                     return
 
+                submitted = get_current_form()
+                saving = True
+                save_btn.disabled = True
+                save_btn.content = "保存中…"
+                page.update()
                 try:
                     fields = {
-                        "status": status_dd.value,
-                        "reason": reason_field.value.strip(),
-                        "next_check": next_check_field.value.strip(),
-                        "note_url": note_url_field.value.strip() or None,
+                        "status": submitted["watch_status"],
+                        "reason": submitted["reason"].strip(),
+                        "next_check": submitted["next_check"].strip(),
+                        "note_url": submitted["note_url"].strip() or None,
                     }
                     updated = await asyncio.to_thread(
                         save_watch,
@@ -2036,14 +2043,19 @@ def build_app():
                     follow_btn.content = "已关注"
                     follow_btn.disabled = True
                     ack_btn.disabled = bool(
-                        already_acknowledged
+                        ctx.get("ack_run_id") == ctx.get("displayed_run_id")
                         or comparison_pending
                         or ctx.get("has_latest_attempt_gap")
                     )
                     page_state["current_company_revision"] = updated["revision"]
-                    page_state["current_form_baseline"] = get_current_form()
-                    page_state.setdefault("drafts", {}).pop(code, None)
-                    feedback_text.value = "保存成功"
+                    page_state["current_form_baseline"] = submitted
+                    page_state["drafts"].pop(code, None)
+                    remember_draft()
+                    feedback_text.value = (
+                        "已保存提交内容；新增修改尚未保存"
+                        if code in page_state["drafts"]
+                        else "保存成功"
+                    )
                     feedback_text.color = ft.Colors.GREEN_700
                     ctx["reason"], ctx["next_check"], ctx["note_url"] = (
                         fields["reason"],
@@ -2060,7 +2072,16 @@ def build_app():
                 except Exception:
                     feedback_text.value = "保存失败: 请稍后重试"
                     feedback_text.color = ft.Colors.RED_700
-                page.update()
+                finally:
+                    saving = False
+                    if (
+                        gen == page_state["generation"]
+                        and actor.is_valid
+                        and page_state["connected"]
+                    ):
+                        save_btn.disabled = conflict_detected
+                        save_btn.content = "保存笔记与状态"
+                        page.update()
 
             page_state["save_current_form"] = on_save
             comparison = ctx.get("comparison") or {
@@ -2277,6 +2298,8 @@ def build_app():
                         ack_feedback.value = f"已标记已阅 (版本: {updated['revision']})"
                         ack_feedback.color = ft.Colors.GREEN_700
                         comparison_summary.value = "本页所示资料已阅；下次打开将以此作为对照基准。"
+                        ctx["ack_run_id"] = disp_run
+                        ack_btn.content = "已标记本次已阅"
                         ack_btn.disabled = True
                 except (ServiceError, WorkspaceError) as exc:
                     ack_feedback.value = f"标记已阅失败: {exc}"
@@ -2332,7 +2355,9 @@ def build_app():
             )
 
             notes_key = (page_state["route"], "optional_notes")
-            notes_expanded = bool(draft) or page_state["expanded_sections"].get(notes_key, False)
+            notes_expanded = bool(draft) or page_state["expanded_sections"].get(
+                notes_key, ctx["is_watched"]
+            )
 
             async def toggle_notes(e):
                 nonlocal notes_expanded
@@ -2383,7 +2408,7 @@ def build_app():
 
             form_controls.extend(
                 [
-                    status_dd,
+                    ft.Semantics(label="关注状态", button=True, content=status_dd),
                     reason_field,
                     next_check_field,
                     note_url_field,
@@ -2628,13 +2653,47 @@ def build_app():
                                     follow_feedback,
                                     company_feedback,
                                     update_progress(relevant_jobs, gen, actor),
-                                    ft.Column(form_controls, key="research-form", spacing=10),
-                                    note_link,
                                 ],
                                 spacing=10,
                             ),
                         ),
                     ),
+                    ft.ExpansionTile(
+                        title="最新财报证据与原文",
+                        expanded=True,
+                        controls=report_controls,
+                    ),
+                    ft.ExpansionTile(
+                        title="业务、风险与估值：五个核查问题",
+                        controls=[
+                            ft.Text(
+                                "1. 靠什么赚钱？查年报主营业务、收入构成与经营讨论，确认同业业务可比。"
+                            ),
+                            ft.Text(
+                                "2. 利润是否可靠？查最新中期财报、扣非利润与现金流量表，核对利润和现金差异。"
+                            ),
+                            ft.Text(
+                                "3. 财务是否脆弱？查债务期限、受限资金、应收与存货减值、审计意见。"
+                            ),
+                            ft.Text(
+                                "4. 价格要求什么条件？写明适用估值方法、盈利或现金流假设及悲观情景；PB排名不能替代估值。"
+                            ),
+                            ft.Text(
+                                "5. 什么会推翻判断？在下一步记录一条可核查事件或日期，以及需要改变判断的证据。"
+                            ),
+                            ft.Text(
+                                "业务、审计和估值假设由你核实并记录；本工具不自动生成目标价、买卖时点或仓位。",
+                                size=13,
+                            ),
+                        ],
+                    ),
+                    ft.Text("研究判断与下一步（选填）", size=16, weight=ft.FontWeight.BOLD),
+                    ft.Text(
+                        "先核查上方事实与公告，再记录支持、反对证据和下一步；保存不会自动已阅。",
+                        size=13,
+                    ),
+                    ft.Column(form_controls, key="research-form", spacing=10),
+                    note_link,
                     ft.Card(
                         semantic_container=False,
                         content=ft.Container(
@@ -2675,31 +2734,6 @@ def build_app():
                                 spacing=10,
                             ),
                         ),
-                    ),
-                    ft.ExpansionTile(title="最新财报证据与原文", controls=report_controls),
-                    ft.ExpansionTile(
-                        title="业务、风险与估值：五个核查问题",
-                        controls=[
-                            ft.Text(
-                                "1. 靠什么赚钱？查年报主营业务、收入构成与经营讨论，确认同业业务可比。"
-                            ),
-                            ft.Text(
-                                "2. 利润是否可靠？查最新中期财报、扣非利润与现金流量表，核对利润和现金差异。"
-                            ),
-                            ft.Text(
-                                "3. 财务是否脆弱？查债务期限、受限资金、应收与存货减值、审计意见。"
-                            ),
-                            ft.Text(
-                                "4. 价格要求什么条件？写明适用估值方法、盈利或现金流假设及悲观情景；PB排名不能替代估值。"
-                            ),
-                            ft.Text(
-                                "5. 什么会推翻判断？在下一步记录一条可核查事件或日期，以及需要改变判断的证据。"
-                            ),
-                            ft.Text(
-                                "业务、审计和估值假设由你核实并记录；本工具不自动生成目标价、买卖时点或仓位。",
-                                size=13,
-                            ),
-                        ],
                     ),
                     ft.ExpansionTile(
                         title="PB、历史ROE与入选依据",

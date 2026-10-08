@@ -1394,9 +1394,7 @@ def test_discover_join_context_navigation_and_unsaved_guard(tmp_path, monkeypatc
         # Browser navigation uses the same context, without a new submission.
         await page.on_route_change(SimpleNamespace(route="/company/600002.SH"))
         reason = next(c for c in controls() if isinstance(c, ft.TextField) and "理由" in c.label)
-        assert not reason.visible  # Merely following does not open a manual form.
-        await button("展开可选笔记与状态").on_click(None)
-        assert reason.visible
+        assert reason.visible  # Followed companies expose the optional research editor.
         reason.value = "未保存草稿"
         await page.on_route_change(SimpleNamespace(route=discover_route))
         assert page.dialog is not None
@@ -1537,7 +1535,6 @@ def test_removal_dialog_cancel_conflict_navigation_and_readd(tmp_path, monkeypat
             )
 
         await page.on_route_change(SimpleNamespace(route="/company/600001.SH"))
-        await button("展开可选笔记与状态").on_click(None)
         delete = button("删除个人研究记录")
         await delete.on_click(None)
         cancelled_confirm = page.dialog.actions[1]
@@ -1871,6 +1868,60 @@ def test_home_tiered_grouping_and_styling(tmp_path, monkeypatch):
     asyncio.run(check())
 
 
+def test_edit_during_save_remains_unsaved_until_explicit_second_save(tmp_path, monkeypatch):
+    initialize(tmp_path, "demo", journal_mode="DELETE")
+    monkeypatch.setattr(app, "APP_MODE", "demo")
+    monkeypatch.setattr(app, "STATE_DIR", tmp_path)
+    run = import_snapshot(
+        tmp_path, Path(__file__).parent / "fixtures/peer_complete_v1.json", "demo"
+    )
+    app.save_watch(app.create_demo_actor(), "600001.SH", run, {}, 0, tmp_path, "demo")
+    to_thread = asyncio.to_thread
+
+    async def check():
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def delayed(func, *args, **kwargs):
+            if func is app.save_watch:
+                started.set()
+                await release.wait()
+            return await to_thread(func, *args, **kwargs)
+
+        monkeypatch.setattr(asyncio, "to_thread", delayed)
+        page = AppMockPage()
+        await app.build_app()(page)
+        await page.on_route_change(SimpleNamespace(route="/company/600001.SH"))
+        controls = list(app_controls(page.controls[0]))
+        reason = next(c for c in controls if isinstance(c, ft.TextField) and "理由" in c.label)
+        save = next(
+            c for c in controls if isinstance(c, ft.Button) and c.content == "保存笔记与状态"
+        )
+        reason.value = "本次提交的判断"
+        reason.on_change(None)
+        pending = asyncio.create_task(save.on_click(None))
+        await asyncio.wait_for(started.wait(), timeout=2)
+        assert save.disabled and save.content == "保存中…"
+        await save.on_click(None)  # A duplicate callback must not submit a second write.
+        reason.value = "等待保存时补充的反证"
+        reason.on_change(None)
+        release.set()
+        await pending
+        with connect_workspace(tmp_path, "demo") as conn:
+            assert get_watch_item(conn, "600001.SH")["reason"] == "本次提交的判断"
+        assert reason.value == "等待保存时补充的反证"
+        await page.on_route_change(SimpleNamespace(route="/"))
+        assert page.dialog is not None, "Later edits were incorrectly marked as saved"
+        await next(b for b in page.dialog.actions if b.content == "继续编辑").on_click(None)
+        await save.on_click(None)
+        with connect_workspace(tmp_path, "demo") as conn:
+            assert get_watch_item(conn, "600001.SH")["reason"] == "等待保存时补充的反证"
+        await page.on_route_change(SimpleNamespace(route="/"))
+        assert page.dialog is None
+        await page.on_close(None)
+
+    asyncio.run(check())
+
+
 def test_stale_editor_cannot_replace_reconnected_draft(tmp_path, monkeypatch):
     initialize(tmp_path, "demo", journal_mode="DELETE")
     monkeypatch.setattr(app, "APP_MODE", "demo")
@@ -2145,14 +2196,30 @@ def test_review_is_visible_without_opening_or_saving_notes(tmp_path, monkeypatch
             next_check.hint_text
             == "可选。触发：下次财报/某事件；核查：哪项证据；反证：若出现X，重新考虑原判断。"
         )
-        notes = next(
-            c for c in controls if isinstance(c, ft.Button) and c.content == "展开可选笔记与状态"
+        report = next(
+            c
+            for c in controls
+            if isinstance(c, ft.ExpansionTile) and c.title == "最新财报证据与原文"
         )
-        assert notes.visible
+        assert report.expanded and next_check.visible
+        assert controls.index(report) < controls.index(next_check) < controls.index(ack)
+        notes = next(
+            c for c in controls if isinstance(c, ft.Button) and c.content == "收起可选笔记与状态"
+        )
+        await notes.on_click(None)
+        assert not next_check.visible and ack.visible
         await ack.on_click(None)
         with connect_workspace(tmp_path, "demo") as conn:
             item = get_watch_item(conn, "600001.SH")
             assert item["ack_run_id"] == run and item["reason"] == "" and item["next_check"] == ""
+        await notes.on_click(None)
+        next_check.value = "已阅后补充下一步"
+        next_check.on_change(None)
+        save = next(
+            c for c in controls if isinstance(c, ft.Button) and c.content == "保存笔记与状态"
+        )
+        await save.on_click(None)
+        assert ack.disabled and ack.content == "已标记本次已阅"
         await page.on_close(None)
 
     asyncio.run(check())
