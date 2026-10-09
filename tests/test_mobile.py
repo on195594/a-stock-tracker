@@ -100,6 +100,17 @@ def click_settled(page, control):
         )
 
 
+def ensure_routine_expanded(page):
+    from playwright.sync_api import expect
+
+    expand = page.get_by_role("button", name="查看其余研究（含估值与日期变化）", exact=True)
+    collapse = page.get_by_role("button", name="收起其余研究（含估值与日期变化）", exact=True)
+    expect(expand.or_(collapse)).to_be_visible()
+    if expand.is_visible():
+        click_settled(page, expand)
+    expect(collapse).to_be_visible()
+
+
 def check_reliability(page, base_url, state_dir, enable_accessibility):
     """Small repeatable real-input loop, without the full task/snapshot scenario."""
     from playwright.sync_api import expect
@@ -597,13 +608,8 @@ def main(*, reliability: bool = False) -> int:
                 page.wait_for_function(
                     '() => document.body.innerText.includes("关注清单 (1)")', timeout=10000
                 )
-                if page.get_by_role("button", name="查看详情", exact=True).count() == 0:
-                    click_settled(
-                        page,
-                        page.get_by_role(
-                            "button", name="查看其余研究（含估值与日期变化）", exact=True
-                        ),
-                    )
+                ensure_routine_expanded(page)
+                ensure_routine_expanded(page)  # Already expanded must not toggle closed.
                 page.get_by_role("button", name="查看详情", exact=True).first.wait_for(
                     state="visible"
                 )
@@ -615,17 +621,10 @@ def main(*, reliability: bool = False) -> int:
                 page.wait_for_function(
                     '() => document.body.innerText.includes("关注清单 (1)")', timeout=10000
                 )
-                if page.get_by_role("button", name="查看详情", exact=True).count() == 0:
-                    click_settled(
-                        page,
-                        page.get_by_role(
-                            "button", name="查看其余研究（含估值与日期变化）", exact=True
-                        ),
-                    )
+                ensure_routine_expanded(page)
                 page.get_by_role("button", name="查看详情", exact=True).first.wait_for(
                     state="visible"
                 )
-                time.sleep(1)
 
                 expect(
                     page.get_by_role("group", name=f"上次下一步：{next_step}", exact=False)
@@ -1076,9 +1075,7 @@ def main(*, reliability: bool = False) -> int:
                     page.wait_for_load_state("domcontentloaded")
                     enable_accessibility()
                     page.get_by_text("关注清单", exact=False).wait_for(state="visible")
-                    time.sleep(0.5)
-                    assert click_semantics_button("查看其余研究"), "Could not click routine button"
-                    time.sleep(0.5)
+                    ensure_routine_expanded(page)
                     ack = page.get_by_role("button", name="标记本次已阅", exact=True)
                     expect(
                         page.get_by_role(

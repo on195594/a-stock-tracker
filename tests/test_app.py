@@ -1787,11 +1787,19 @@ def test_home_tiered_grouping_and_styling(tmp_path, monkeypatch):
         assert not any(
             isinstance(c, ft.Button) and c.content == "标记本次已阅" for c in app_controls(home)
         )  # Anomalies and date changes without a usable run have no shortcut.
-        assert any(
-            c.content == "查看其余研究（含估值与日期变化）"
+        routine = next(
+            c
             for c in app_controls(home)
-            if isinstance(c, ft.Button)
+            if isinstance(c, ft.Button) and c.content == "查看其余研究（含估值与日期变化）"
         )
+        routine_body = home.controls[home.controls.index(routine) + 1]
+        assert routine_body.visible is False
+        await routine.on_click(SimpleNamespace())
+        assert routine.content == "收起其余研究（含估值与日期变化）"
+        assert routine_body.visible is True
+        await routine.on_click(SimpleNamespace())
+        assert routine.content == "查看其余研究（含估值与日期变化）"
+        assert routine_body.visible is False
 
         # Folded cards retain their fact/date-specific styling.
         for card in (c for c in app_controls(home) if isinstance(c, ft.Card)):

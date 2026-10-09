@@ -1087,9 +1087,15 @@ def build_app():
                 if gen == page_state["generation"] and actor.is_valid and page_state["connected"]:
                     routine_body.visible = not routine_body.visible
                     page_state["expanded_sections"][routine_key] = routine_body.visible
+                    routine_button.content = (
+                        f"{'收起' if routine_body.visible else '查看'}其余研究（含估值与日期变化）"
+                    )
                     page.update()
 
-            routine_button = ft.Button("查看其余研究（含估值与日期变化）", on_click=toggle_routine)
+            routine_button = ft.Button(
+                f"{'收起' if routine_body.visible else '查看'}其余研究（含估值与日期变化）",
+                on_click=toggle_routine,
+            )
             job_controls: list[ft.Control] = []
             for job in jobs:
 
