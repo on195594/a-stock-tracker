@@ -691,6 +691,56 @@ def test_pdf_identity_checks_report_kind_not_only_year(tmp_path, monkeypatch, pe
             d.extract_document(source, document, tmp_path)
 
 
+@pytest.mark.parametrize(
+    "page,code_line,page_name,header,accepted",
+    [
+        (1, "600001", "", None, True),
+        (1, "16000010", "", None, False),
+        (1, "600 001", "", None, False),
+        (6, "600001", "", None, True),
+        (7, "股票代码:600001", "合成", None, True),
+        (12, "股票代码" + " " * 18 + "600001", "合成", None, True),
+        (16, "证券代码：600001", "合成", None, True),
+        (17, "股票代码600001", "合成", None, False),
+        (12, "600001", "合成", None, False),
+        (12, "股票代码16000010", "合成", None, False),
+        (12, "股票代码600002", "合成", None, False),
+        (12, "股票代码:参照公司600001", "合成", None, False),
+        (12, "股票代码" + " " * 64 + "600001", "合成", None, True),
+        (12, "股票代码" + " " * 65 + "600001", "合成", None, False),
+        (12, "股票代码600001", "其他", None, False),
+        (12, "股票代码600001", "合成", "其他2025年年度报告及完整财务正文", False),
+        (12, "股票代码600001", "合成", "合成2024年年度报告及完整财务正文", False),
+        (12, "股票代码600001", "合成", "合成2025年半年度报告及完整财务正文", False),
+    ],
+)
+def test_pdf_code_identity_is_exact_and_late_label_is_bounded(
+    tmp_path, monkeypatch, page, code_line, page_name, header, accepted
+):
+    pages = ["完整的独立正文和财务说明，不含证券简称或编号。"] * 17
+    pages[0] = header or "合成2025年年度报告及完整的合并财务正文。"
+    pages[page - 1] += f"\n{page_name}\n{code_line}"
+    monkeypatch.setattr(
+        d.subprocess,
+        "run",
+        lambda args, **kwargs: SimpleNamespace(
+            stdout="Pages: 17\n" if args[0] == "pdfinfo" else "\f".join(pages) + "\f"
+        ),
+    )
+    document = {
+        "url": "unused",
+        "code": "600001.SH",
+        "official_name": "合成",
+        "period": "2025-12-31",
+    }
+    source = SimpleNamespace(request=lambda *_: b"%PDF-offline")
+    if accepted:
+        assert d.extract_document(source, document, tmp_path)["page_count"] == 17
+    else:
+        with pytest.raises(ScreenError, match="identity"):
+            d.extract_document(source, document, tmp_path)
+
+
 def test_model_subprocess_success_and_response_resume(tmp_path, monkeypatch):
     runtime = tmp_path / "runtime"
     (runtime / ".venv/bin").mkdir(parents=True)

@@ -232,11 +232,20 @@ def extract_document(
     if len(pages) != int(match[1]) or any(len(compact(p)) < 15 for p in pages):
         raise ScreenError("Missing, blank or non-extractable PDF pages")
     identity = compact("".join(pages[:6]))
+    issuer = compact(document["official_name"])
+    code_token = rf"(?<![0-9]){re.escape(document['code'][:6])}(?![0-9])"
+    code_established = any(re.search(code_token, page) for page in pages[:6])
+    if not code_established:
+        code_established = any(
+            issuer in compact(page)
+            and re.search(rf"(?:股票代码|证券代码)[\s:：]{{0,64}}{code_token}", page)
+            for page in pages[6:16]
+        )
     title = next((t for t, end in REPORT_PERIODS.items() if document["period"][5:] == end), None)
     if (
-        document["code"][:6] not in identity
-        or not compact(document["official_name"])
-        or compact(document["official_name"]) not in identity
+        not code_established
+        or not issuer
+        or issuer not in identity
         or title is None
         or not re.search(rf"{document['period'][:4]}年?{title}", identity)
     ):
