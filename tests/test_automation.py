@@ -718,7 +718,7 @@ def test_pdf_code_identity_is_exact_and_late_label_is_bounded(
     tmp_path, monkeypatch, page, code_line, page_name, header, accepted
 ):
     pages = ["完整的独立正文和财务说明，不含证券简称或编号。"] * 17
-    pages[0] = header or "合成股份有限公司2025年年度报告及完整的合并财务正文。"
+    pages[0] = header or "合成股份有限公司2025年年度报告，完整的合并财务正文。"
     pages[page - 1] += f"\n股票简称  {page_name}\n公司的中文名称  合成股份有限公司\n{code_line}"
     monkeypatch.setattr(
         d.subprocess,
@@ -753,6 +753,23 @@ _LONG_COMPANY_NAME = "合" + "成" * 80 + "股份有限公司"
     "table,cover,accepted",
     [
         (_LATE_ISSUER_TABLE, _LATE_COVER, True),
+        (_LATE_ISSUER_TABLE, "新" + _LATE_COVER, False),
+        (
+            _LATE_ISSUER_TABLE,
+            _LATE_COVER.replace("合成股份有限公司", "合成股份有限公司集团"),
+            False,
+        ),
+        (_LATE_ISSUER_TABLE, "相关公司：" + _LATE_COVER, False),
+        (
+            _LATE_ISSUER_TABLE,
+            "合成股份有限公司\n2025 年年度报告，完整的合并财务正文。",
+            True,
+        ),
+        (
+            _LATE_ISSUER_TABLE,
+            "其他股份有限公司2025年年度报告，完整正文。\n合成股份有限公司",
+            False,
+        ),
         (_LATE_ISSUER_TABLE.replace("股称", "股称制造"), _LATE_COVER, False),
         (_LATE_ISSUER_TABLE.replace("股票简称  ", ""), _LATE_COVER, False),
         (_LATE_ISSUER_TABLE.replace("股票代码", "发行编号"), _LATE_COVER, False),

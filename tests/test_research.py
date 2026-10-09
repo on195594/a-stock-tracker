@@ -81,47 +81,41 @@ def test_fetch_universe_rejects_duplicate_valuations() -> None:
         screen.fetch_universe(Client(), "synthetic", "2026-09-28")
 
 
-def test_fetch_financials_rejects_mismatched_code() -> None:
+@pytest.mark.parametrize(
+    "rows,error",
+    [
+        (
+            [{"ts_code": "600001.SH"}, {"ts_code": "600002.SH"}],
+            "fina_indicator 包含错配代码: 600002.SH",
+        ),
+        (
+            [
+                {
+                    "ts_code": "600001.SH",
+                    "ann_date": "20260415",
+                    "end_date": "20251231",
+                    "update_flag": "0",
+                    "roe_waa": 10.0,
+                }
+            ]
+            * 2,
+            "重复记录",
+        ),
+    ],
+    ids=["mismatched-security", "duplicate-response"],
+)
+def test_fetch_financials_rejects_invalid_response(rows, error) -> None:
     class Frame:
         columns = ["ts_code", "ann_date", "end_date", "update_flag", "roe_waa"]
 
         def to_json(self, **_kwargs: object) -> str:
-            return json.dumps(
-                [
-                    {"ts_code": "600001.SH"},
-                    {"ts_code": "600002.SH"},
-                ]
-            )
+            return json.dumps(rows)
 
     class Client:
         def fina_indicator(self, **_kwargs: object) -> Frame:
             return Frame()
 
-    with pytest.raises(screen.ScreenError, match="fina_indicator 包含错配代码: 600002.SH"):
-        screen.fetch_financials(
-            Client(), "unused", "600001.SH", "2026-09-20", "2026-09-20T16:00:00+08:00"
-        )
-
-
-def test_fetch_financials_rejects_duplicate_response_rows() -> None:
-    class Frame:
-        columns = ["ts_code", "ann_date", "end_date", "update_flag", "roe_waa"]
-
-        def to_json(self, **_kwargs: object) -> str:
-            row = {
-                "ts_code": "600001.SH",
-                "ann_date": "20260415",
-                "end_date": "20251231",
-                "update_flag": "0",
-                "roe_waa": 10.0,
-            }
-            return json.dumps([row, row])
-
-    class Client:
-        def fina_indicator(self, **_kwargs: object) -> Frame:
-            return Frame()
-
-    with pytest.raises(screen.ScreenError, match="重复记录"):
+    with pytest.raises(screen.ScreenError, match=error):
         screen.fetch_financials(
             Client(), "synthetic", "600001.SH", "2026-09-20", "2026-09-20T16:00:00+08:00"
         )

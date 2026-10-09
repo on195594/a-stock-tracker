@@ -118,10 +118,6 @@ def parse_iso_utc(ts: str) -> str:
     return dt_utc.isoformat(timespec="microseconds")
 
 
-def _sqlite_version_tuple() -> tuple[int, ...]:
-    return tuple(int(p) for p in sqlite3.sqlite_version.split("."))
-
-
 def _connect(db_path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path, timeout=5, isolation_level=None)
     conn.row_factory = sqlite3.Row
@@ -142,7 +138,7 @@ EXPECTED_INDEXES = {
 def check_wal_safety(journal_mode: str, mode: Mode | None = None) -> None:
     """Validate SQLite version safety for WAL mode across new and existing workspaces."""
     if journal_mode.upper() == "WAL":
-        ver = _sqlite_version_tuple()
+        ver = sqlite3.sqlite_version_info
         if ver < (3, 37, 0):
             raise WorkspaceError(
                 f"SQLite WAL mode requires sqlite >= 3.37.0 (contains WAL corruption fixes), current: {sqlite3.sqlite_version}"

@@ -237,7 +237,12 @@ def extract_document(
     issuer_established = issuer in identity and any(
         re.search(code_token, page) for page in pages[:6]
     )
-    if not issuer_established:
+    title = next((t for t, end in REPORT_PERIODS.items() if document["period"][5:] == end), None)
+    if not issuer_established and title is not None:
+        opening_titles = [
+            "\n".join(compact(line) for line in opening.splitlines() if compact(line))
+            for opening in pages[:6]
+        ]
         for page in pages[6:16]:
             code_label = r"(?m)(?:^|[ \t]{2,})(?:股票代码|证券代码)"
             name_label = r"(?m)(?:^|[ \t]{2,})(?:股票简称|证券简称)"
@@ -261,11 +266,17 @@ def extract_document(
                 if (
                     len(full_name) >= 4
                     and full_name.endswith(("有限公司", "股份公司"))
-                    and any(full_name in compact(opening) for opening in pages[:6])
+                    and any(
+                        re.search(
+                            rf"(?m)^{re.escape(full_name)}\n?{document['period'][:4]}年?{title}"
+                            rf"(?:全文)?(?=$|[0-9，。:：;；（(])",
+                            opening,
+                        )
+                        for opening in opening_titles
+                    )
                 ):
                     issuer_established = True
                     break
-    title = next((t for t, end in REPORT_PERIODS.items() if document["period"][5:] == end), None)
     if (
         not issuer_established
         or not issuer

@@ -115,62 +115,38 @@ def test_asgi_demo_origin_and_port_checks():
     assert s._validate_host("127.0.0.1:8550") is True
 
 
-def test_asgi_websocket_origin_check():
+@pytest.mark.parametrize(
+    "origin,allowed",
+    [
+        (None, False),
+        (b"http://127.0.0.1.evil.com:8550", False),
+        (b"http://127.0.0.1:8550", True),
+    ],
+)
+def test_asgi_websocket_origin_check(origin, allowed):
     async def _test():
         ws_called = False
+        sent = []
 
         async def dummy_app(scope, receive, send):
             nonlocal ws_called
             ws_called = True
 
+        async def mock_send(msg):
+            sent.append(msg)
+
         middleware = SecurityMiddleware(
             dummy_app, is_demo=True, public_base_url="http://127.0.0.1:8550"
         )
-
-        # 1. Null/empty origin rejected with websocket.close
-        sent_null = []
-        scope_null = {
-            "type": "websocket",
-            "path": "/ws",
-            "headers": [(b"host", b"127.0.0.1:8550")],
-        }
-
-        async def mock_send_null(msg):
-            sent_null.append(msg)
-
-        await middleware(scope_null, None, mock_send_null)
-        assert ws_called is False
-        assert sent_null[0]["type"] == "websocket.close"
-
-        # 2. Host bypass via suffix (e.g. 127.0.0.1.evil.com) rejected
-        sent_evil = []
-        scope_evil = {
-            "type": "websocket",
-            "path": "/ws",
-            "headers": [
-                (b"host", b"127.0.0.1:8550"),
-                (b"origin", b"http://127.0.0.1.evil.com:8550"),
-            ],
-        }
-
-        async def mock_send_evil(msg):
-            sent_evil.append(msg)
-
-        await middleware(scope_evil, None, mock_send_evil)
-        assert ws_called is False
-        assert sent_evil[0]["type"] == "websocket.close"
-
-        # 3. Loopback origin accepted
-        scope_loopback = {
-            "type": "websocket",
-            "path": "/ws",
-            "headers": [
-                (b"host", b"127.0.0.1:8550"),
-                (b"origin", b"http://127.0.0.1:8550"),
-            ],
-        }
-        await middleware(scope_loopback, None, None)
-        assert ws_called is True
+        headers = [(b"host", b"127.0.0.1:8550")]
+        if origin is not None:
+            headers.append((b"origin", origin))
+        await middleware({"type": "websocket", "path": "/ws", "headers": headers}, None, mock_send)
+        assert ws_called is allowed
+        if allowed:
+            assert sent == []
+        else:
+            assert sent[0]["type"] == "websocket.close"
 
     asyncio.run(_test())
 
