@@ -194,9 +194,7 @@ def initial_row(basic: dict[str, Any], valuation: dict[str, Any], target: str) -
     if not isinstance(code, str) or not re.fullmatch(r"[0-9]{6}\.(SH|SZ|BJ)", code):
         raise ScreenError("Malformed stock_basic identifier")
     if (
-        not basic.get("industry")
-        or not basic.get("name")
-        or basic.get("list_status") != "L"
+        basic.get("list_status") != "L"
         or basic.get("exchange") not in {"SSE", "SZSE", "BSE"}
         or not basic.get("market")
     ):
@@ -205,11 +203,11 @@ def initial_row(basic: dict[str, Any], valuation: dict[str, Any], target: str) -
         code.endswith(".SZ") != (basic["exchange"] == "SZSE")
     ):
         row.update(status="gap", reason="IDENTITY_CONFLICT")
-    elif (
-        basic["exchange"] not in {"SSE", "SZSE"}
-        or basic["market"] != "主板"
-        or is_financial_industry(basic["industry"])
-    ):
+    elif basic["exchange"] not in {"SSE", "SZSE"} or basic["market"] != "主板":
+        row.update(status="excluded", reason="OUTSIDE_SCOPE")
+    elif not basic.get("industry") or not basic.get("name"):
+        row.update(status="gap", reason="SCOPE_IDENTITY_UNKNOWN")
+    elif is_financial_industry(basic["industry"]):
         row.update(status="excluded", reason="OUTSIDE_SCOPE")
     elif risk_status(basic["name"]) == "known_warning":
         row.update(status="excluded", reason="KNOWN_ST_WARNING")

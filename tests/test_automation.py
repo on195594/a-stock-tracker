@@ -99,8 +99,38 @@ def test_invalid_numbers_are_gaps(value):
     assert a.initial_row(basic(), {"pb": value}, "2026-09-30")["status"] == "gap"
 
 
+@pytest.mark.parametrize("missing", ["industry", "name"])
+@pytest.mark.parametrize(
+    "code,exchange,market",
+    [
+        ("300001.SZ", "SZSE", "创业板"),
+        ("688001.SH", "SSE", "科创板"),
+        ("800001.BJ", "BSE", "北交所"),
+    ],
+)
+def test_proven_outside_scope_missing_fields_do_not_block_main_board_groups(
+    tmp_path, missing, code, exchange, market
+):
+    metadata = basic(ts_code=code, exchange=exchange, market=market)
+    assert a.initial_row(metadata, {"pb": 1}, "2026-09-30")["reason"] == "OUTSIDE_SCOPE"
+    metadata[missing] = None
+    excluded = a.initial_row(metadata, {"pb": 1}, "2026-09-30")
+    assert excluded["status"] == "excluded" and excluded["reason"] == "OUTSIDE_SCOPE"
+    frozen, state = fixture(1)
+    frozen["rows"].append(excluded)
+    state["freeze"] = a.digest(frozen)
+    report = a.coverage(
+        a.scan(tmp_path, frozen, state, Client(), "synthetic", a.Budget(10, 300)), frozen
+    )
+    assert report["counts"] == {"qualified": 1, "excluded": 1}
+    assert report["groups"][0]["top"] == ["600001.SH"]
+
+
 def test_scope_and_financial_fail_closed():
     assert a.initial_row(basic(industry=None), {"pb": 1}, "2026-09-30")["status"] == "gap"
+    assert a.initial_row(basic(name=None), {"pb": 1}, "2026-09-30")["status"] == "gap"
+    conflict = basic(ts_code="300001.SZ", market="创业板", exchange="SSE", industry=None)
+    assert a.initial_row(conflict, {"pb": 1}, "2026-09-30")["reason"] == "IDENTITY_CONFLICT"
     assert (
         a.initial_row(basic(industry="银行"), {"pb": 1}, "2026-09-30")["reason"] == "OUTSIDE_SCOPE"
     )
