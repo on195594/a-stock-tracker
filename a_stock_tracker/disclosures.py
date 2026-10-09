@@ -234,18 +234,41 @@ def extract_document(
     identity = compact("".join(pages[:6]))
     issuer = compact(document["official_name"])
     code_token = rf"(?<![0-9]){re.escape(document['code'][:6])}(?![0-9])"
-    code_established = any(re.search(code_token, page) for page in pages[:6])
-    if not code_established:
-        code_established = any(
-            issuer in compact(page)
-            and re.search(rf"(?:股票代码|证券代码)[\s:：]{{0,64}}{code_token}", page)
-            for page in pages[6:16]
-        )
+    issuer_established = issuer in identity and any(
+        re.search(code_token, page) for page in pages[:6]
+    )
+    if not issuer_established:
+        for page in pages[6:16]:
+            code_label = r"(?m)(?:^|[ \t]{2,})(?:股票代码|证券代码)"
+            name_label = r"(?m)(?:^|[ \t]{2,})(?:股票简称|证券简称)"
+            codes = re.findall(code_label + r"[ \t:：]{0,64}([0-9]{6})(?=[ \t]{2,}|[ \t]*$)", page)
+            names = re.findall(
+                name_label + r"[ \t:：]{0,64}(\S(?:[^\r\n]{0,62}?\S)?)(?=[ \t]{2,}|[ \t]*$)",
+                page,
+            )
+            full_label = r"(?m)^公司(?:的)?中文名称"
+            full_names = re.findall(full_label + r"[ \t:：]{0,64}(\S[^\r\n]{2,78}\S)[ \t]*$", page)
+            if (
+                len(re.findall(code_label, page))
+                == len(re.findall(name_label, page))
+                == len(re.findall(full_label, page))
+                == 1
+                and codes == [document["code"][:6]]
+                and [compact(name) for name in names] == [issuer]
+                and len(full_names) == 1
+            ):
+                full_name = compact(full_names[0])
+                if (
+                    len(full_name) >= 4
+                    and full_name.endswith(("有限公司", "股份公司"))
+                    and any(full_name in compact(opening) for opening in pages[:6])
+                ):
+                    issuer_established = True
+                    break
     title = next((t for t, end in REPORT_PERIODS.items() if document["period"][5:] == end), None)
     if (
-        not code_established
+        not issuer_established
         or not issuer
-        or issuer not in identity
         or title is None
         or not re.search(rf"{document['period'][:4]}年?{title}", identity)
     ):

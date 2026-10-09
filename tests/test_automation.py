@@ -718,8 +718,8 @@ def test_pdf_code_identity_is_exact_and_late_label_is_bounded(
     tmp_path, monkeypatch, page, code_line, page_name, header, accepted
 ):
     pages = ["完整的独立正文和财务说明，不含证券简称或编号。"] * 17
-    pages[0] = header or "合成2025年年度报告及完整的合并财务正文。"
-    pages[page - 1] += f"\n{page_name}\n{code_line}"
+    pages[0] = header or "合成股份有限公司2025年年度报告及完整的合并财务正文。"
+    pages[page - 1] += f"\n股票简称  {page_name}\n公司的中文名称  合成股份有限公司\n{code_line}"
     monkeypatch.setattr(
         d.subprocess,
         "run",
@@ -731,6 +731,73 @@ def test_pdf_code_identity_is_exact_and_late_label_is_bounded(
         "url": "unused",
         "code": "600001.SH",
         "official_name": "合成",
+        "period": "2025-12-31",
+    }
+    source = SimpleNamespace(request=lambda *_: b"%PDF-offline")
+    if accepted:
+        assert d.extract_document(source, document, tmp_path)["page_count"] == 17
+    else:
+        with pytest.raises(ScreenError, match="identity"):
+            d.extract_document(source, document, tmp_path)
+
+
+_LATE_ISSUER_TABLE = (
+    "股票简称  股称                  股票代码                  600001\n"
+    "公司的中文名称  合成股份有限公司\n"
+)
+_LATE_COVER = "合成股份有限公司2025年年度报告，合并财务报表和完整正文。"
+_LONG_COMPANY_NAME = "合" + "成" * 80 + "股份有限公司"
+
+
+@pytest.mark.parametrize(
+    "table,cover,accepted",
+    [
+        (_LATE_ISSUER_TABLE, _LATE_COVER, True),
+        (_LATE_ISSUER_TABLE.replace("股称", "股称制造"), _LATE_COVER, False),
+        (_LATE_ISSUER_TABLE.replace("股票简称  ", ""), _LATE_COVER, False),
+        (_LATE_ISSUER_TABLE.replace("股票代码", "发行编号"), _LATE_COVER, False),
+        (_LATE_ISSUER_TABLE + "股票代码  600002\n", _LATE_COVER, False),
+        (_LATE_ISSUER_TABLE + "股票简称  其他\n", _LATE_COVER, False),
+        (_LATE_ISSUER_TABLE + "公司的中文名称  \n", _LATE_COVER, False),
+        (_LATE_ISSUER_TABLE.replace("公司的中文名称", "普通提及"), _LATE_COVER, False),
+        (_LATE_ISSUER_TABLE.replace("合成股份有限公司", "公司"), _LATE_COVER, False),
+        (_LATE_ISSUER_TABLE.replace("合成股份有限公司", "合成股份\n有限公司"), _LATE_COVER, False),
+        (
+            _LATE_ISSUER_TABLE.replace("合成股份有限公司", "合成股份有限公司  附加说明"),
+            _LATE_COVER,
+            False,
+        ),
+        (_LATE_ISSUER_TABLE, _LATE_COVER.replace("合成股份有限公司", "其他股份有限公司"), False),
+        (
+            _LATE_ISSUER_TABLE,
+            "完整独立的财务正文和事项说明合成股份\f有限公司2025年年度报告和完整财务说明。",
+            False,
+        ),
+        (
+            _LATE_ISSUER_TABLE.replace("合成股份有限公司", _LONG_COMPANY_NAME),
+            _LATE_COVER.replace("合成股份有限公司", _LONG_COMPANY_NAME),
+            False,
+        ),
+    ],
+)
+def test_late_issuer_table_binds_all_complete_fields_to_one_cover_page(
+    tmp_path, monkeypatch, table, cover, accepted
+):
+    pages = ["完整独立的财务正文，不含对应证券简称或证券编号。"] * 17
+    opening = cover.split("\f")
+    pages[: len(opening)] = opening
+    pages[11] += "\n" + table
+    monkeypatch.setattr(
+        d.subprocess,
+        "run",
+        lambda args, **kwargs: SimpleNamespace(
+            stdout="Pages: 17\n" if args[0] == "pdfinfo" else "\f".join(pages) + "\f"
+        ),
+    )
+    document = {
+        "url": "unused",
+        "code": "600001.SH",
+        "official_name": "股称",
         "period": "2025-12-31",
     }
     source = SimpleNamespace(request=lambda *_: b"%PDF-offline")
