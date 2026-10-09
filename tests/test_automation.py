@@ -263,12 +263,17 @@ def test_citation_and_instruction_counterexamples(damage):
         d.validate_report(report, packet)
 
 
-def test_evidence_version_ignores_retrieval_but_detects_corrections():
+def test_evidence_version_ignores_retrieval_but_detects_corrections(monkeypatch):
     packet, _ = packet_and_report()
     model = {"model": "m1", "provider": "p1"}
     first = d.stable_evidence(packet, model)
     packet["retrieved_at"] = "later"
     assert d.stable_evidence(packet, model) == first
+    for name in ("GENERATE", "VERIFY"):
+        template = getattr(d, name)
+        monkeypatch.setattr(d, name, template + "合同更正")
+        assert d.stable_evidence(packet, model) != first
+        monkeypatch.setattr(d, name, template)
     packet["documents"][0]["pages"][0]["text"] += "同日更正"
     assert d.stable_evidence(packet, model) != first
 
@@ -595,6 +600,26 @@ def test_malformed_model_facts_fail_closed(malformed):
 def test_numeric_substrings_and_sign_changes_are_not_evidence(claim, sign):
     packet, report = packet_and_report()
     quote = f"合并口径本期营业收入1,234万元，同比增长{sign}10%。"
+    packet["documents"][0]["pages"][0]["text"] += quote
+    report["facts"][0].update(quote=quote, claim=quote)
+    d.validate_report(report, packet)
+    report["facts"][0]["claim"] = claim
+    with pytest.raises(ScreenError, match="Numeric"):
+        d.validate_report(report, packet)
+
+
+@pytest.mark.parametrize(
+    "quote,claim",
+    [
+        ("本期比上年同期增减(%)：-1.21，原文比较口径一致。", "本期较上年同期下降1.21%。"),
+        (
+            "2026年半年度报告，上年同期营业收入及本期比较数据。",
+            "2026年上半年较2025年上半年营业收入变化。",
+        ),
+    ],
+)
+def test_table_units_and_relative_periods_do_not_authorize_new_numeric_literals(quote, claim):
+    packet, report = packet_and_report()
     packet["documents"][0]["pages"][0]["text"] += quote
     report["facts"][0].update(quote=quote, claim=quote)
     d.validate_report(report, packet)
