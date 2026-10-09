@@ -23,65 +23,16 @@ from a_stock_tracker.workspace import (
 )
 
 
-def test_asgi_blocks_upload():
-    async def _test():
-        async def dummy_app(scope, receive, send):
-            pass
-
-        middleware = SecurityMiddleware(
-            dummy_app, is_demo=True, public_base_url="http://127.0.0.1:8550"
-        )
-
-        scope = {
-            "type": "http",
-            "path": "/upload/malicious_file",
-            "headers": [(b"host", b"127.0.0.1:8550")],
-        }
-        sent = []
-
-        async def mock_receive():
-            return {"type": "http.request"}
-
-        async def mock_send(msg):
-            sent.append(msg)
-
-        await middleware(scope, mock_receive, mock_send)
-        assert sent[0]["type"] == "http.response.start"
-        assert sent[0]["status"] == 404
-
-    asyncio.run(_test())
-
-
-def test_asgi_blocks_non_loopback_in_demo():
-    async def _test():
-        async def dummy_app(scope, receive, send):
-            await send({"type": "http.response.start", "status": 200})
-
-        middleware = SecurityMiddleware(
-            dummy_app, is_demo=True, public_base_url="http://127.0.0.1:8550"
-        )
-
-        scope = {
-            "type": "http",
-            "path": "/",
-            "headers": [(b"host", b"external.domain.com")],
-        }
-        sent = []
-
-        async def mock_receive():
-            return {"type": "http.request"}
-
-        async def mock_send(msg):
-            sent.append(msg)
-
-        await middleware(scope, mock_receive, mock_send)
-        assert sent[0]["type"] == "http.response.start"
-        assert sent[0]["status"] == 403
-
-    asyncio.run(_test())
-
-
-def test_asgi_allows_loopback_in_demo():
+@pytest.mark.parametrize(
+    "path,host,status",
+    [
+        ("/upload/malicious_file", b"127.0.0.1:8550", 404),
+        ("/", b"external.domain.com", 403),
+        ("/", b"127.0.0.1:8550", 200),
+    ],
+    ids=["blocks-upload", "blocks-external-host", "allows-loopback"],
+)
+def test_asgi_demo_request_boundary(path, host, status):
     async def _test():
         called = False
 
@@ -96,8 +47,8 @@ def test_asgi_allows_loopback_in_demo():
 
         scope = {
             "type": "http",
-            "path": "/",
-            "headers": [(b"host", b"127.0.0.1:8550")],
+            "path": path,
+            "headers": [(b"host", host)],
         }
         sent = []
 
@@ -108,8 +59,9 @@ def test_asgi_allows_loopback_in_demo():
             sent.append(msg)
 
         await middleware(scope, mock_receive, mock_send)
-        assert called is True
-        assert sent[0]["status"] == 200
+        assert called is (status == 200)
+        assert sent[0]["type"] == "http.response.start"
+        assert sent[0]["status"] == status
 
     asyncio.run(_test())
 

@@ -551,28 +551,12 @@ def annual_entries(row: dict[str, Any]) -> list[dict[str, Any]]:
     return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
 
 
-def indexed_rows(
-    snapshot: dict[str, Any],
-) -> tuple[dict[str, dict[str, Any]], list[str]]:
-    raw_rows = snapshot.get("rows")
-    if not isinstance(raw_rows, list):
-        return {}, ["rows 不是列表"]
-    rows: dict[str, dict[str, Any]] = {}
-    warnings: list[str] = []
-    for index, row in enumerate(raw_rows):
-        if not isinstance(row, dict) or not isinstance(row.get("code"), str):
-            warnings.append(f"rows[{index}] 缺少字符串 code")
-            continue
-        code = row["code"]
-        if code in rows:
-            warnings.append(f"rows 含重复代码 {code}")
-            continue
-        rows[code] = row
-    return rows, warnings
-
-
 def candidate_review_sections(snapshot: dict[str, Any]) -> list[str]:
-    rows, _ = indexed_rows(snapshot)
+    raw_rows = snapshot.get("rows")
+    rows: dict[str, dict[str, Any]] = {}
+    for row in raw_rows if isinstance(raw_rows, list) else []:
+        if isinstance(row, dict) and isinstance(row.get("code"), str):
+            rows.setdefault(row["code"], row)
     results = snapshot.get("results")
     results = results if isinstance(results, dict) else {}
     ranking = results.get("ranking")

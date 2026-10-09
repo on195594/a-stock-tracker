@@ -34,6 +34,23 @@ def test_date_and_annual_selection_boundary() -> None:
         )
 
 
+def test_candidate_review_ignores_malformed_rows_and_keeps_first_duplicate() -> None:
+    row = {"code": "600001.SH", "name": "合成公司"}
+    snapshot = {
+        "rows": [row],
+        "results": {"top": [row["code"]], "ranking": [{"code": row["code"]}]},
+    }
+    baseline = screen.candidate_review_sections(snapshot)
+    assert "### 合成公司 `600001.SH`" in baseline
+    snapshot["rows"] = [None, {}, {"code": 1}, row, {**row, "name": "重复公司"}]
+    assert screen.candidate_review_sections(snapshot) == baseline
+    for invalid in (None, {}, "not rows"):
+        snapshot["rows"] = invalid
+        assert any(
+            "缺少对应明细或排名" in line for line in screen.candidate_review_sections(snapshot)
+        )
+
+
 def test_fetch_universe_rejects_duplicate_valuations() -> None:
     import pandas as pd
 
