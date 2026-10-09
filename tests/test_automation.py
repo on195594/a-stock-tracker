@@ -608,6 +608,19 @@ def test_numeric_substrings_and_sign_changes_are_not_evidence(claim, sign):
         d.validate_report(report, packet)
 
 
+@pytest.mark.parametrize("length,accepted", [(14, False), (15, True), (1600, True), (1601, False)])
+def test_verbatim_citation_length_boundary_is_explicit(length, accepted):
+    packet, report = packet_and_report()
+    quote = "原" * length
+    packet["documents"][0]["pages"][0]["text"] += quote
+    report["facts"][0].update(quote=quote, claim=quote)
+    if accepted:
+        d.validate_report(report, packet)
+    else:
+        with pytest.raises(ScreenError, match="Citation length"):
+            d.validate_report(report, packet)
+
+
 @pytest.mark.parametrize(
     "quote,claim",
     [
