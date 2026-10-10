@@ -231,7 +231,7 @@ class AppMockPage:
         self.updated_count = 0
         self.logged_out = False
         self.views = [SimpleNamespace(on_scroll=None)]
-        self.route = "/"
+        self.route = "/research"
         self.scroll_offset = 0
         self.dialog = None
 
@@ -299,7 +299,7 @@ def test_completed_update_preserves_home_input_until_result_is_clicked(tmp_path,
         code.value = "600003"
         tick.set()
         await asyncio.wait_for(completed.wait(), timeout=3)
-        assert page.route == "/" and code.value == "600003"
+        assert page.route == "/research" and code.value == "600003"
         assert code in list(app_controls(page.controls[0]))
         result = next(
             c
@@ -398,7 +398,9 @@ def test_update_submit_lifecycle_and_uncertain_receipt(tmp_path, monkeypatch, in
             )
             await button.on_click(None)
             assert calls[0] == calls[1]
-            assert page.route.startswith("/discover") if kind == "peer" else page.route == "/"
+            assert (
+                page.route.startswith("/discover") if kind == "peer" else page.route == "/research"
+            )
             texts = [c.value for c in app_controls(page.controls[0]) if isinstance(c, ft.Text)]
             assert any(("更新 1 家" if kind == "watch" else "最近更新：") in t for t in texts)
         elif invalidate == "blocked":
@@ -574,8 +576,7 @@ def test_real_oauth_login_callback_flow(tmp_path, monkeypatch):
         await page.on_login(success_event)
         assert content_container.content is not None
         assert any(
-            isinstance(c, ft.Card) or "关注" in getattr(c, "value", "")
-            for c in content_container.content.controls
+            "波段机会" == getattr(c, "value", "") for c in content_container.content.controls
         )
 
         # 2. Provider error arriving while viewing private page must clear private view
@@ -597,8 +598,7 @@ def test_real_oauth_login_callback_flow(tmp_path, monkeypatch):
         # 3. Re-login successfully
         await page.on_login(success_event)
         assert any(
-            isinstance(c, ft.Card) or "关注" in getattr(c, "value", "")
-            for c in content_container.content.controls
+            "波段机会" == getattr(c, "value", "") for c in content_container.content.controls
         )
 
         # 4. Unauthorized user error arriving while viewing private page must clear private view
@@ -680,6 +680,7 @@ def test_real_disconnect_and_reconnect_lifecycle(tmp_path, monkeypatch):
             name="login", control=None, error=None, error_description=None
         )
         await page.on_login(success_event)
+        await page.on_route_change(SimpleNamespace(route="/research"))
         col = page.controls[0].controls[0].controls[0]
         content_container = col.content.controls[1]
         assert any(
@@ -752,6 +753,7 @@ def test_real_disconnect_and_reconnect_lifecycle(tmp_path, monkeypatch):
         # 3. Session close revokes actor
         monkeypatch.setattr(auth.time, "monotonic", orig_mono)
         await page.on_login(success_event)
+        await page.on_route_change(SimpleNamespace(route="/research"))
         assert any(
             isinstance(c, ft.Card) or "关注" in getattr(c, "value", "")
             for c in content_container.content.controls
@@ -1053,10 +1055,11 @@ def test_disconnect_draft_version_conflict_prevents_overwrite(tmp_path, monkeypa
         page = AppMockPage(auth=mock_auth)
         await main(page)
 
-        # Login
+        # Login, then explicitly open the preserved legacy workspace.
         await page.on_login(
             ft.LoginEvent(name="login", control=None, error=None, error_description=None)
         )
+        await page.on_route_change(SimpleNamespace(route="/research"))
         col = page.controls[0].controls[0].controls[0]
         content_container = col.content.controls[1]
 
@@ -1340,7 +1343,7 @@ def test_discover_join_context_navigation_and_unsaved_guard(tmp_path, monkeypatc
 
         def late_scroll_during_render():
             original_update()
-            if page.route == "/":
+            if page.route == "/research":
                 page.views[0].on_scroll(SimpleNamespace(pixels=2500))
 
         page.update = late_scroll_during_render
@@ -1354,10 +1357,10 @@ def test_discover_join_context_navigation_and_unsaved_guard(tmp_path, monkeypatc
         await page.on_route_change(SimpleNamespace(route="/company/600001.SH"))
         stale_follow = button("关注")
         stale_toggle = button("展开可选笔记与状态")
-        await page.on_route_change(SimpleNamespace(route="/"))
+        await page.on_route_change(SimpleNamespace(route="/research"))
         await stale_follow.on_click(None)
         await stale_toggle.on_click(None)
-        assert page.route == "/"
+        assert page.route == "/research"
         with connect_workspace(tmp_path, "demo") as conn:
             assert conn.execute("SELECT count(*) FROM watch_items").fetchone()[0] == 1
         await page.on_close(None)
@@ -1483,18 +1486,18 @@ def test_removal_dialog_cancel_conflict_navigation_and_readd(tmp_path, monkeypat
             if isinstance(c, ft.Text)
         )
         await page.dialog.actions[0].on_click(None)
-        await page.on_route_change(SimpleNamespace(route="/"))
+        await page.on_route_change(SimpleNamespace(route="/research"))
         await page.on_route_change(SimpleNamespace(route="/company/600001.SH"))
         await button("删除个人研究记录").on_click(None)
         stale_confirm = page.dialog.actions[1]
-        await page.on_route_change(SimpleNamespace(route="/"))
+        await page.on_route_change(SimpleNamespace(route="/research"))
         await stale_confirm.on_click(None)
         with connect_workspace(tmp_path, "demo") as conn:
             assert get_watch_item(conn, "600001.SH")["reason"] == "新判断"
         await page.on_route_change(SimpleNamespace(route="/company/600001.SH"))
         await button("删除个人研究记录").on_click(None)
         await page.dialog.actions[1].on_click(None)
-        assert page.route == "/" and page.dialog is None
+        assert page.route == "/research" and page.dialog is None
         assert any(
             "已删除个人研究记录" in str(c.value)
             for c in app_controls(page.controls[0])
@@ -1845,13 +1848,13 @@ def test_edit_during_save_remains_unsaved_until_explicit_second_save(tmp_path, m
         with connect_workspace(tmp_path, "demo") as conn:
             assert get_watch_item(conn, "600001.SH")["reason"] == "本次提交的判断"
         assert reason.value == "等待保存时补充的反证"
-        await page.on_route_change(SimpleNamespace(route="/"))
+        await page.on_route_change(SimpleNamespace(route="/research"))
         assert page.dialog is not None, "Later edits were incorrectly marked as saved"
         await next(b for b in page.dialog.actions if b.content == "继续编辑").on_click(None)
         await save.on_click(None)
         with connect_workspace(tmp_path, "demo") as conn:
             assert get_watch_item(conn, "600001.SH")["reason"] == "等待保存时补充的反证"
-        await page.on_route_change(SimpleNamespace(route="/"))
+        await page.on_route_change(SimpleNamespace(route="/research"))
         assert page.dialog is None
         await page.on_close(None)
 
@@ -1921,7 +1924,7 @@ def test_inflight_receipt_survives_return_without_new_request(tmp_path, monkeypa
         monkeypatch.setattr(asyncio, "to_thread", delayed)
         page = AppMockPage()
         await app.build_app()(page)
-        route = "/" if kind == "watch" else "/discover"
+        route = "/research" if kind == "watch" else "/discover"
         if kind == "peer":
             await page.on_route_change(SimpleNamespace(route=route))
 
@@ -1959,7 +1962,7 @@ def test_inflight_receipt_survives_return_without_new_request(tmp_path, monkeypa
         )
         await submit_button().on_click(None)
         assert len(calls) == 2 and calls[0] == calls[1]
-        assert page.route.startswith("/discover") if kind == "peer" else page.route == "/"
+        assert page.route.startswith("/discover") if kind == "peer" else page.route == "/research"
         with connect_workspace(tmp_path, "demo") as conn:
             assert conn.execute("SELECT count(*) FROM update_jobs").fetchone()[0] == 1
         await page.on_close(None)
@@ -1987,7 +1990,7 @@ def test_late_read_cannot_replace_new_view_or_its_scroll(tmp_path, monkeypatch):
         await app.build_app()(page)
         await page.on_route_change(SimpleNamespace(route="/settings"))
         page.views[0].on_scroll(SimpleNamespace(pixels=120))
-        await page.on_route_change(SimpleNamespace(route="/"))
+        await page.on_route_change(SimpleNamespace(route="/research"))
         old_read = asyncio.create_task(
             page.on_route_change(SimpleNamespace(route="/company/600001.SH"))
         )

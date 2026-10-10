@@ -18,6 +18,8 @@ from a_stock_tracker.auth import (
     create_owner_actor,
 )
 from a_stock_tracker.evidence import REPORT_FIELDS, research_prompt
+from a_stock_tracker.opportunities import load_board
+from a_stock_tracker.opportunity_view import opportunity_view
 from a_stock_tracker.paths import DATA_DIR, workspace_path
 from a_stock_tracker.research import fmt_number
 from a_stock_tracker.services import (
@@ -46,6 +48,7 @@ if RAW_MODE not in ("demo", "production"):
 APP_MODE: Literal["demo", "production"] = "production" if RAW_MODE == "production" else "demo"
 STATE_DIR = workspace_path(APP_MODE)
 RESEARCH_DATA_DIR = DATA_DIR
+OPPORTUNITY_ROOT = Path(os.environ["OPPORTUNITY_ROOT"]) if os.getenv("OPPORTUNITY_ROOT") else None
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://127.0.0.1:8550")
 HOST = os.getenv("HOST", "127.0.0.1")
 PORT = int(os.getenv("PORT", "8550"))
@@ -89,7 +92,7 @@ def build_app():
     )
 
     async def main(page: ft.Page):
-        page.title = "投研工作台"
+        page.title = "波段机会"
         page.theme_mode = ft.ThemeMode.LIGHT
         page.fonts = {"NotoSansSC": "fonts/NotoSansSC-Regular.otf"}
         page.theme = ft.Theme(
@@ -135,7 +138,7 @@ def build_app():
             "job_poll_task": None,
             "pending_updates": {},
             "connected": True,
-            "company_return": "/",
+            "company_return": "/research",
             "scroll_positions": {},
             "expanded_sections": {},
         }
@@ -266,9 +269,10 @@ def build_app():
             await navigate(page_state["company_return"])
 
         async def go_home(e):
-            await navigate("/")
+            await navigate("/research")
 
         async def go_settings(e):
+            page_state["settings_return"] = page_state["route"]
             await navigate("/settings")
 
         async def go_discover(e):
@@ -389,7 +393,7 @@ def build_app():
                         if code
                         else "已从列表清理失败任务，防重放记录保留。"
                     )
-                    await navigate("/")
+                    await navigate("/research")
 
                 page.show_dialog(
                     ft.AlertDialog(
@@ -625,7 +629,7 @@ def build_app():
                     None, button, feedback, gen, actor, company_code=code.value or ""
                 )
                 if job:
-                    await navigate("/")
+                    await navigate("/research")
 
             button.on_click = submit
             code.on_submit = submit
@@ -663,7 +667,7 @@ def build_app():
             async def submit_watch(e):
                 job = await submit_update(None, update_button, status_feedback, gen, actor)
                 if job:
-                    await navigate("/")
+                    await navigate("/research")
 
             update_button.on_click = submit_watch
             last_group = None
@@ -761,7 +765,7 @@ def build_app():
                                 if target == "observe"
                                 else "已暂停关注，不再计入需要复看；笔记和已阅基准保留。"
                             )
-                            await navigate("/")
+                            await navigate("/research")
                     except Exception:
                         if (
                             gen == page_state["generation"]
@@ -801,7 +805,7 @@ def build_app():
                             and page_state["connected"]
                         ):
                             page_state["notice"] = f"{item['name']}：已标记本次已阅。"
-                            await navigate("/")
+                            await navigate("/research")
                     except Exception:
                         if (
                             gen == page_state["generation"]
@@ -1054,7 +1058,7 @@ def build_app():
                     )
                 )
 
-            paused_key = ("/", "paused_watch")
+            paused_key = ("/research", "paused_watch")
             paused_body = ft.Column(
                 paused_controls, visible=page_state["expanded_sections"].get(paused_key, False)
             )
@@ -1078,7 +1082,7 @@ def build_app():
 
             paused_button.on_click = toggle_paused
 
-            routine_key = ("/", "routine_watch")
+            routine_key = ("/research", "routine_watch")
             routine_body = ft.Column(
                 routine_controls, visible=page_state["expanded_sections"].get(routine_key, False)
             )
@@ -1735,7 +1739,7 @@ def build_app():
                     await navigate(f"/company/{job['company_code']}")
                     return
                 if job["kind"] == "watch":
-                    await navigate("/")
+                    await navigate("/research")
                     return
                 route = "/discover?" + urlencode({"anchor": job["anchor"], "job": job_id})
                 page_state.setdefault("discover_boards", {}).pop(route, None)
@@ -1749,7 +1753,7 @@ def build_app():
                 ):
                     return
                 if job["kind"] == "watch":
-                    await navigate("/")
+                    await navigate("/research")
                     return
                 page_state["selected_anchor"] = job["anchor"]
                 await go_discover(e)
@@ -2780,11 +2784,24 @@ def build_app():
 
         async def render_settings():
             actor: Actor | None = page_state.get("actor")
+            gen = page_state["generation"]
+
+            async def return_to_origin(e):
+                if (
+                    actor
+                    and actor.is_valid
+                    and gen == page_state["generation"]
+                    and page_state["connected"]
+                ):
+                    await navigate(page_state.get("settings_return", "/"))
+
             return ft.Column(
                 controls=[
                     ft.Row(
                         controls=[
-                            ft.IconButton(ft.Icons.ARROW_BACK, tooltip="返回", on_click=go_home),
+                            ft.IconButton(
+                                ft.Icons.ARROW_BACK, tooltip="返回", on_click=return_to_origin
+                            ),
                             ft.Text(
                                 "账户与运行信息",
                                 size=18,
@@ -2805,6 +2822,34 @@ def build_app():
                     else ft.Container(),
                 ],
                 spacing=12,
+            )
+
+        async def render_opportunities(gen, code=None):
+            actor = page_state["actor"]
+            if APP_MODE == "demo":
+                from a_stock_tracker.opportunity_demo import demo_board
+
+                board = demo_board()
+            else:
+                board = await asyncio.to_thread(load_board, actor, OPPORTUNITY_ROOT)
+
+            def action(route):
+                async def handler(e):
+                    if (
+                        gen == page_state["generation"]
+                        and actor.is_valid
+                        and page_state["connected"]
+                    ):
+                        await navigate(route)
+
+                return handler
+
+            return opportunity_view(
+                board,
+                code,
+                lambda value: action("/opportunity/" + value),
+                action("/"),
+                action("/research"),
             )
 
         async def render_current_view():
@@ -2832,6 +2877,10 @@ def build_app():
                 if route == "/login":
                     content = await render_login()
                 elif route == "/":
+                    content = await render_opportunities(gen)
+                elif route.startswith("/opportunity/"):
+                    content = await render_opportunities(gen, route.rsplit("/", 1)[-1])
+                elif route == "/research":
                     content = await render_home(gen)
                 elif route == "/discover":
                     content = await render_discover(gen)
@@ -2867,8 +2916,15 @@ def build_app():
                         ft.Button("重新读取", on_click=retry_read),
                     ]
                 )
+                if route == "/" or route.startswith("/opportunity/"):
+                    content.controls.append(
+                        ft.TextButton("历史研究工作台（兼容入口）", on_click=go_home)
+                    )
 
             if gen == page_state["generation"] and page_state["connected"]:
+                nav_bar.visible = route not in ("/", "/login") and not route.startswith(
+                    "/opportunity/"
+                )
                 if route != "/login" and (not actor or not actor.is_valid):
                     page_state["route"] = "/login"
                     content = await render_login()
@@ -2876,14 +2932,17 @@ def build_app():
 
         async def on_nav_change(e):
             if e.control.selected_index == 0:
-                await navigate("/")
+                await navigate("/research")
             elif e.control.selected_index == 1:
                 await go_discover(e)
+            elif e.control.selected_index == 2:
+                await navigate("/")
 
         nav_bar = ft.NavigationBar(
             destinations=[
                 ft.NavigationBarDestination(icon=ft.Icons.LIST, label="我的研究"),
                 ft.NavigationBarDestination(icon=ft.Icons.SEARCH, label="发现候选"),
+                ft.NavigationBarDestination(icon=ft.Icons.INSIGHTS, label="波段机会"),
             ],
             selected_index=0,
             on_change=on_nav_change,
@@ -2895,7 +2954,7 @@ def build_app():
             content=ft.Row(
                 controls=[
                     ft.Text(
-                        "基本面研究助手",
+                        "波段机会 · 收盘后研究",
                         size=16,
                         weight=ft.FontWeight.BOLD,
                         color=COLOR_TEXT_PRIMARY,

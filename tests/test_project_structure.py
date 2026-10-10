@@ -1,4 +1,4 @@
-"""The workbench runs from one package without retired collectors or private artifacts."""
+"""The app runs from one package without retired collectors or private artifacts."""
 
 import ast
 import subprocess

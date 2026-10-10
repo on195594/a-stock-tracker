@@ -1,0 +1,12 @@
+# Optional, explicitly authorized read-only publication mount. Base compose stays unchanged.
+services:
+  web:
+    environment:
+      OPPORTUNITY_ROOT: /app/opportunities
+    volumes:
+      - type: bind
+        source: ${OPPORTUNITY_HOST_ROOT:?Set an existing private opportunity directory}
+        target: /app/opportunities
+        read_only: true
+        bind:
+          create_host_path: false

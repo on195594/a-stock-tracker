@@ -49,7 +49,8 @@ def click_settled(page, control):
     # DOM scrolling can move Flutter's invisible semantics without moving the painted
     # control. Use a real wheel event so the hit target and canvas stay together.
     box = control.bounding_box()
-    footer = page.get_by_role("tablist").bounding_box()
+    tabs = page.get_by_role("tablist")
+    footer = tabs.bounding_box() if tabs.count() else {"y": page.viewport_size["height"]}
     assert box and footer
     page.mouse.move(page.viewport_size["width"] / 2, footer["y"] / 2)
     page.mouse.wheel(0, box["y"] + box["height"] / 2 - footer["y"] / 2)
@@ -68,7 +69,7 @@ def click_settled(page, control):
         timeout=5000,
     )
     box = control.bounding_box()
-    footer = page.get_by_role("tablist").bounding_box()
+    footer = tabs.bounding_box() if tabs.count() else {"y": page.viewport_size["height"]}
     assert box and footer
     if box["y"] < 0 or box["y"] + box["height"] > footer["y"]:
         page.mouse.move(page.viewport_size["width"] / 2, footer["y"] / 2)
@@ -76,7 +77,7 @@ def click_settled(page, control):
         page.wait_for_function(
             """el => {
             const r = el.getBoundingClientRect();
-            const bottom = document.querySelector('[role=tablist]').getBoundingClientRect().top;
+            const bottom = document.querySelector('[role=tablist]')?.getBoundingClientRect().top ?? innerHeight;
             return r.top >= 0 && r.bottom <= bottom;
         }""",
             arg=handle,
@@ -127,7 +128,7 @@ def check_reliability(page, base_url, state_dir, enable_accessibility):
         sockets.append((ws, ws.connect_to_server()))
 
     page.route_web_socket("**/*", connect)
-    page.goto(f"{base_url}/")
+    page.goto(f"{base_url}/research")
     enable_accessibility()
     previous = ("", "")
     for width in (360, 390, 430):
@@ -188,7 +189,7 @@ def check_reliability(page, base_url, state_dir, enable_accessibility):
             click_settled(page, next_check)
             expect(next_check).to_have_value(next_value)
             page.get_by_role("tab", name="我的研究", exact=False).click()
-            expect(page).to_have_url(f"{base_url}/")
+            expect(page).to_have_url(f"{base_url}/research")
             expect(
                 page.get_by_text(next_value, exact=False)
                 .or_(page.get_by_role("group", name=re.compile(re.escape(next_value))))
@@ -350,8 +351,42 @@ def main(*, reliability: bool = False) -> int:
                         "Reliability browser checks passed: 360/390/430px × 10; synthetic, not a real device."
                     )
                     return 0
-                # 1. Open home page
-                page.goto(f"{base_url}/", timeout=15000)
+                # New default workflow: actual clicks at all supported phone widths.
+                for width in (360, 390, 430):
+                    page.set_viewport_size({"width": width, "height": 844})
+                    page.goto(f"{base_url}/", timeout=15000)
+                    page.wait_for_load_state("domcontentloaded")
+                    enable_accessibility()
+                    expect(
+                        page.get_by_text("合成演示 · 非真实股票、非AI研究结果", exact=True)
+                    ).to_be_visible()
+                    expect(
+                        page.get_by_text("等待条件核对 · 不是已触发信号", exact=True)
+                    ).to_be_visible()
+                    detail = page.get_by_role(
+                        "button", name="查看条件与反证 · 演示公司", exact=True
+                    )
+                    click_settled(page, detail)
+                    expect(page.get_by_text("什么条件才重新评估", exact=True)).to_be_visible()
+                    risk = page.get_by_text("最强反对理由", exact=True)
+                    risk.scroll_into_view_if_needed()
+                    expect(risk).to_be_visible()
+                    evidence = page.get_by_text("核查依据与AI引用", exact=True)
+                    click_settled(page, evidence)
+                    expect(
+                        page.get_by_text("为什么观察依据：trend、relative", exact=True)
+                    ).to_be_visible()
+                    back = page.get_by_role("button", name="返回波段机会", exact=True)
+                    click_settled(page, back)
+                    expect(page.get_by_text("波段机会", exact=True)).to_be_visible()
+                    legacy = page.get_by_role(
+                        "button", name="历史研究工作台（兼容入口）", exact=True
+                    )
+                    click_settled(page, legacy)
+                    expect(page.get_by_text("暂无关注的公司", exact=True)).to_be_visible()
+
+                # Preserve the old workspace's safety regressions at its explicit route.
+                page.goto(f"{base_url}/research", timeout=15000)
                 page.wait_for_load_state("domcontentloaded")
                 enable_accessibility()
 
@@ -681,7 +716,7 @@ def main(*, reliability: bool = False) -> int:
                     )
                 page.set_viewport_size({"width": 390, "height": 844})
                 update.click()
-                expect(page).to_have_url(f"{base_url}/")
+                expect(page).to_have_url(f"{base_url}/research")
                 page.get_by_text("最近更新：完成 · 关注更新", exact=False).wait_for(
                     state="visible", timeout=15000
                 )
@@ -709,7 +744,7 @@ def main(*, reliability: bool = False) -> int:
                 page.reload()
                 page.wait_for_load_state("domcontentloaded")
                 enable_accessibility()
-                expect(page).to_have_url(f"{base_url}/")
+                expect(page).to_have_url(f"{base_url}/research")
 
                 # 9. Wait for the asynchronous home render, then inspect persisted notes.
                 detail_btn = page.get_by_role("button", name="查看详情", exact=True).first
@@ -924,7 +959,7 @@ def main(*, reliability: bool = False) -> int:
                 page.keyboard.insert_text("600004")
                 result = page.get_by_role("button", name="查看更新结果", exact=True)
                 expect(result).to_be_visible(timeout=20000)
-                expect(page).to_have_url(f"{base_url}/")
+                expect(page).to_have_url(f"{base_url}/research")
                 expect(code_field).to_have_value("600004")
                 click_settled(page, result)
                 expect(page).to_have_url(f"{base_url}/company/600003.SH", timeout=20000)
@@ -1071,7 +1106,7 @@ def main(*, reliability: bool = False) -> int:
                 for width, day in ((360, "2026-09-26"), (390, "2026-09-27"), (430, "2026-09-28")):
                     current = import_date(day)
                     page.set_viewport_size({"width": width, "height": 844})
-                    page.goto(f"{base_url}/")
+                    page.goto(f"{base_url}/research")
                     page.wait_for_load_state("domcontentloaded")
                     enable_accessibility()
                     page.get_by_text("关注清单", exact=False).wait_for(state="visible")
@@ -1086,7 +1121,7 @@ def main(*, reliability: bool = False) -> int:
                         )
                     ).to_be_visible()
                     click_settled(page, ack)
-                    expect(page).to_have_url(f"{base_url}/")
+                    expect(page).to_have_url(f"{base_url}/research")
                     expect(
                         page.get_by_text("示例公司丁：已标记本次已阅。", exact=True)
                     ).to_be_visible()
@@ -1154,7 +1189,7 @@ def main(*, reliability: bool = False) -> int:
                 # Flet may attempt optional CDN resources; every external request was aborted.
                 print(f"External requests blocked (none allowed): {sorted(set(blocked_requests))}")
                 print(
-                    "Mobile browser test passed (360/390/430px, synthetic, not a real device): empty -> submit -> worker -> comparison -> add -> dirty Back/cancel -> visible save feedback -> back -> reload -> pause/reload/resume -> fixed watch submit/worker/reload -> partial/old board -> acknowledged/current comparison -> explicit ack -> delete/cancel/re-add -> dismiss failure/reload -> rescan -> direct company/input/paste -> latest financial evidence -> follow/save/note link -> single-company update/result/judgment preserved."
+                    "Mobile browser test passed (360/390/430px, synthetic, not a real device): opportunities -> conditions/countercase -> evidence -> back -> legacy workspace; empty -> submit -> worker -> comparison -> add -> dirty Back/cancel -> visible save feedback -> back -> reload -> pause/reload/resume -> fixed watch submit/worker/reload -> partial/old board -> acknowledged/current comparison -> explicit ack -> delete/cancel/re-add -> dismiss failure/reload -> rescan -> direct company/input/paste -> latest financial evidence -> follow/save/note link -> single-company update/result/judgment preserved."
                 )
                 return 0
             except Exception as exc:

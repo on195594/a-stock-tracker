@@ -1,7 +1,7 @@
 [project]
 name = "a-stock-tracker"
 version = "1.0.1"
-description = "Personal A-share research: discover, follow and review changes"
+description = "A-share swing opportunities: evidence, AI explanations and price conditions"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
