@@ -6,6 +6,14 @@ nginx_dir="${NGINX_DIR:-/home/lin/nginx}"
 site="$nginx_dir/sites-enabled/stock.conf"
 source_conf=docker/nginx-stock.conf
 compose=(docker compose -f docker-compose.yml)
+# Opt-in bridge; does not install/start the host research process or make a research request.
+if [[ "${RESEARCH_WEB_ENABLED:-0}" == "1" ]]; then
+    if [[ ! -f .research-web.env || ! -f docker-compose.research.yml ]]; then
+        echo 'Missing .research-web.env or docker-compose.research.yml bridge configuration.' >&2
+        exit 1
+    fi
+    compose=(docker compose --env-file .research-web.env -f docker-compose.yml -f docker-compose.research.yml)
+fi
 
 for file in .web.env docker-compose.yml "$source_conf" "$site"; do
     if [[ ! -f "$file" ]]; then

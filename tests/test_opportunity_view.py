@@ -129,3 +129,5 @@ def test_semantic_text_colors_meet_normal_text_contrast(foreground, background):
     theme = ui.window_theme()
     assert theme.font_family == "NotoSansSC"
     assert theme.color_scheme.primary == ui.ACCENT
+    assert theme.button_theme.style.bgcolor[ft.ControlState.DISABLED] == ui.BAND
+    assert theme.button_theme.style.color[ft.ControlState.DISABLED] == ui.MUTED

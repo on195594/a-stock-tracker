@@ -75,11 +75,14 @@ def test_unsafe_evidence_cannot_produce_levels(damage):
 
 
 @pytest.mark.parametrize(
-    "damage", [None, "calendar_gap", "calendar_duplicate", "identity", "price_identity"]
+    "damage",
+    [None, "calendar_gap", "calendar_duplicate", "identity", "price_identity", "latest_weekend"],
 )
-def test_collect_uses_explicit_pool_and_proven_calendar(damage):
+def test_collect_uses_explicit_pool_and_proven_calendar(damage, monkeypatch):
     import pandas as pd
 
+    if damage == "latest_weekend":
+        monkeypatch.setattr("a_stock_tracker.opportunity_demo.today", lambda: date(2026, 10, 10))
     packet = demo_packet()
     as_of = date.fromisoformat(packet["sessions"][-1])
     calls = []
@@ -87,14 +90,27 @@ def test_collect_uses_explicit_pool_and_proven_calendar(damage):
     class Client:
         def trade_cal(self, **kwargs):
             calls.append("trade_cal")
-            start = as_of - timedelta(days=240)
+            start = date.fromisoformat(
+                kwargs["start_date"][:4]
+                + "-"
+                + kwargs["start_date"][4:6]
+                + "-"
+                + kwargs["start_date"][6:]
+            )
+            end = date.fromisoformat(
+                kwargs["end_date"][:4]
+                + "-"
+                + kwargs["end_date"][4:6]
+                + "-"
+                + kwargs["end_date"][6:]
+            )
             rows = [
                 {
                     "exchange": "SSE",
                     "cal_date": (start + timedelta(days=i)).strftime("%Y%m%d"),
                     "is_open": int((start + timedelta(days=i)).weekday() < 5),
                 }
-                for i in range(271)
+                for i in range((end - start).days + 1)
             ]
             if damage == "calendar_gap":
                 rows.pop()
@@ -142,6 +158,11 @@ def test_collect_uses_explicit_pool_and_proven_calendar(damage):
     if damage == "identity":
         result = swing.collect(Client(), "mock", [packet["code"]], as_of)
         assert result == [{"code": packet["code"], "name": "", "collect_error": "ScreenError"}]
+    elif damage == "latest_weekend":
+        weekend = as_of + timedelta(days=2)
+        result = swing.collect(Client(), "mock", [packet["code"]], weekend, latest=True)
+        assert result[0]["sessions"][-1] == as_of.isoformat()
+        assert swing.evaluate(result[0])["status"] == "pending_review"
     elif damage:
         with pytest.raises(ScreenError):
             swing.collect(Client(), "mock", [packet["code"]], as_of)

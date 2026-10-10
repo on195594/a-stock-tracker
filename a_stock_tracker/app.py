@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
+import uuid
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from a_stock_tracker.auth import (
     Actor,
@@ -29,6 +31,13 @@ from a_stock_tracker.opportunity_view import (
     paragraph,
     window_theme,
 )
+from a_stock_tracker.research_client import (
+    DemoResearchClient,
+    ResearchUnavailable,
+    configured_client,
+)
+from a_stock_tracker.research_service import quote
+from a_stock_tracker.research_view import LABELS, result_view
 
 RAW_MODE = os.getenv("APP_MODE", "demo")
 if RAW_MODE not in ("demo", "production"):
@@ -57,6 +66,8 @@ elif HOST not in ("127.0.0.1", "localhost", "::1"):
 def build_app():
     import flet as ft
 
+    research = DemoResearchClient() if APP_MODE == "demo" else configured_client()
+
     async def main(page: ft.Page):
         page.title = "波段机会"
         page.theme_mode = ft.ThemeMode.LIGHT
@@ -72,6 +83,7 @@ def build_app():
             "connected": True,
             "closed": False,
             "settings_return": "/",
+            "poll": None,
         }
         login_message = ft.Text("", color=ERROR, size=16)
         content_container = ft.Container()
@@ -92,7 +104,13 @@ def build_app():
             state["actor"] = None
             state["generation"] += 1
 
+        def stop_poll():
+            if state["poll"] is not None:
+                state["poll"].cancel()
+                state["poll"] = None
+
         async def navigate(route: str, *, from_browser: bool = False):
+            stop_poll()
             state["generation"] += 1
             state["route"] = route
             if not from_browser:
@@ -168,6 +186,288 @@ def build_app():
             page.logout()
             await navigate("/login")
 
+        async def research_page(gen: int, actor: Actor, route: str):
+            back = open_route("/analysis", gen, actor)
+            if research is None:
+                return ft.Column(
+                    [
+                        heading("选股与研究", size=30, level=1),
+                        notice(
+                            "研究服务尚未连接",
+                            "管理员需一次配置独立研究服务。配置完成后在网页输入、确认、查看结果，用户无需终端命令。",
+                            caution=True,
+                        ),
+                        ft.TextButton(
+                            "返回机会列表", on_click=open_route("/", gen, actor), height=48
+                        ),
+                    ],
+                    spacing=24,
+                )
+            if route.startswith("/analysis/"):
+                parts = route.strip("/").split("/")
+                identifier = parts[1] if len(parts) >= 2 else ""
+                code = parts[2] if len(parts) == 3 else None
+                if (
+                    not re.fullmatch(r"[a-f0-9]{32}", identifier)
+                    or len(parts) > 3
+                    or (code and not re.fullmatch(r"(?:60\d{4}\.SH|00\d{4}\.SZ)", code))
+                ):
+                    return ft.Column(
+                        [
+                            heading("请求编号不正确", size=30, level=1),
+                            paragraph("请核对请求编号，或返回重新查看最近研究。"),
+                            ft.TextButton("返回选股与研究", on_click=back, height=48),
+                        ],
+                        spacing=24,
+                    )
+                try:
+                    run = await asyncio.to_thread(research.status, identifier)
+                except ResearchUnavailable as exc:
+                    return ft.Column(
+                        [
+                            heading("研究状态暂不可确认", level=1),
+                            paragraph(str(exc)),
+                            ft.Button(
+                                "重新查看原请求",
+                                on_click=open_route(state["route"], gen, actor),
+                                height=48,
+                            ),
+                            ft.TextButton("返回选股与研究", on_click=back, height=48),
+                        ],
+                        spacing=24,
+                    )
+
+                async def poll():
+                    consecutive_errors = 0
+                    try:
+                        while current(gen, actor):
+                            await asyncio.sleep(2)
+                            try:
+                                updated = await asyncio.to_thread(research.status, identifier)
+                                consecutive_errors = 0
+                            except ResearchUnavailable:
+                                consecutive_errors += 1
+                                if consecutive_errors < 3 and current(gen, actor):
+                                    continue
+                                raise
+                            if not current(gen, actor):
+                                return
+                            content_container.content = result_view(
+                                updated, lambda r: open_route(r, gen, actor), back, code
+                            )
+                            if state["connected"]:
+                                try:
+                                    page.update()
+                                except Exception:
+                                    pass
+                            if updated["status"] != "running":
+                                return
+                    except asyncio.CancelledError:
+                        pass
+                    except ResearchUnavailable:
+                        if current(gen, actor):
+                            content_container.content = ft.Column(
+                                [
+                                    heading("研究状态暂不可确认", level=1),
+                                    paragraph(
+                                        "任务可能仍在后台执行。重新查看原请求，不另起一轮收费。"
+                                    ),
+                                    ft.Button(
+                                        "重新查看原请求",
+                                        on_click=open_route(state["route"], gen, actor),
+                                        height=48,
+                                    ),
+                                    ft.TextButton("返回选股与研究", on_click=back, height=48),
+                                ]
+                            )
+                            if state["connected"]:
+                                try:
+                                    page.update()
+                                except Exception:
+                                    pass
+
+                if current(gen, actor) and run["status"] == "running":
+                    stop_poll()
+                    state["poll"] = asyncio.create_task(poll())
+                return result_view(run, lambda r: open_route(r, gen, actor), back, code)
+            try:
+                info = await asyncio.to_thread(research.info)
+                recent = await asyncio.to_thread(research.recent)
+            except ResearchUnavailable:
+                return ft.Column(
+                    [
+                        heading("选股与研究", size=30, level=1),
+                        notice(
+                            "研究服务暂时无法连接",
+                            "后台研究服务未运行或无法连接。请联系管理员核对宿主服务状态；已受理的后台研究继续受预算约束。",
+                            caution=True,
+                        ),
+                        ft.Button(
+                            "重新尝试连接",
+                            on_click=open_route(state["route"], gen, actor),
+                            height=48,
+                        ),
+                        ft.TextButton(
+                            "返回机会列表", on_click=open_route("/", gen, actor), height=48
+                        ),
+                    ],
+                    spacing=24,
+                )
+            query = parse_qs(urlparse(state["route"]).query)
+            initial = query.get("mode", ["screen"])[0]
+            if initial not in info["modes"]:
+                initial = "screen"
+            mode = ft.RadioGroup(
+                value=initial,
+                content=ft.Column(
+                    [
+                        ft.Radio(value=k, label=v["title"], height=48)
+                        for k, v in info["modes"].items()
+                    ],
+                    spacing=4,
+                ),
+            )
+            codes = ft.TextField(
+                label="股票代码",
+                value=query.get("code", [""])[0],
+                hint_text="600519 或 600519.SH；多只用逗号分隔",
+                max_length=80,
+                multiline=True,
+                min_lines=1,
+                max_lines=3,
+            )
+            budget = paragraph("")
+            confirmation = ft.Checkbox(label="已核对范围、预算与模型，确认启动", value=False)
+            feedback = paragraph("")
+            submit = ft.Button("确认启动研究", height=48, disabled=True)
+            request_id = uuid.uuid4().hex
+            pending = None
+
+            def refresh(e=None):
+                if not current(gen, actor):
+                    return
+                nonlocal pending, request_id
+                pending = None
+                request_id = uuid.uuid4().hex
+                submit.content = "确认启动研究"
+                selected = info["modes"][mode.value]
+                codes.visible = mode.value != "screen"
+                confirmation.value = False
+                submit.disabled = True
+                budget.value = (
+                    (
+                        "合成演示：不调用真实接口、不产生费用。\n"
+                        if info["demo"]
+                        else "确认后后台将请求行情；研究股票还会调用模型。\n"
+                    )
+                    + f"本次最多 {selected['requests']} 次数据请求、{selected['seconds'] // 60} 分钟；最多 {selected['reports']} 份财报报告。\n量价研究限五家，每家公司解释与复核各一次；不保证入选或通过。初筛只是财报资格，不是波段推荐。\n模型：{info['model']['provider']} / {info['model']['model']}"
+                )
+                if not selected["available"]:
+                    feedback.value = "本类型尚未配置，需管理员完成一次连接；不能假装已研究。"
+                else:
+                    feedback.value = ""
+                if e is not None:
+                    page.update()
+
+            def consent(e):
+                if current(gen, actor):
+                    submit.disabled = not (
+                        confirmation.value and info["modes"][mode.value]["available"]
+                    )
+                    page.update()
+
+            async def start(e):
+                nonlocal pending
+                if not current(gen, actor) or submit.disabled:
+                    return
+                if pending is None:
+                    raw = [
+                        c.strip().upper()
+                        for c in re.split(r"[,，\s]+", codes.value or "")
+                        if c.strip()
+                    ]
+                    normalized = [
+                        c + (".SH" if c.startswith("60") else ".SZ")
+                        if re.fullmatch(r"\d{6}", c)
+                        else c
+                        for c in raw
+                    ]
+                    pending = {
+                        "id": request_id,
+                        "mode": mode.value,
+                        "codes": [] if mode.value == "screen" else normalized,
+                        "confirmed": True,
+                        "quote": quote(info, mode.value),
+                    }
+                submit.disabled = True
+                mode.disabled = codes.disabled = confirmation.disabled = True
+                feedback.value = "正在核对受理状态，请勿重复启动。"
+                page.update()
+                try:
+                    accepted = await asyncio.to_thread(research.submit, pending)
+                except ValueError as exc:
+                    if current(gen, actor):
+                        pending = None
+                        mode.disabled = codes.disabled = confirmation.disabled = False
+                        submit.disabled = False
+                        feedback.value = str(exc)
+                        page.update()
+                except ResearchUnavailable as exc:
+                    if current(gen, actor):
+                        submit.content = "核对原请求受理状态"
+                        submit.disabled = False
+                        feedback.value = str(exc)
+                        page.update()
+                else:
+                    if current(gen, actor):
+                        await navigate("/analysis/" + accepted["id"])
+
+            mode.on_change = refresh
+            codes.on_change = refresh
+            confirmation.on_change = consent
+            submit.on_click = start
+            refresh()
+            controls = [
+                ft.TextButton("返回机会列表", on_click=open_route("/", gen, actor), height=48),
+                heading("选股与研究", size=30, level=1),
+                paragraph("选择目标 → 核对预算并启动 → 查看进度与结果。无需终端命令。"),
+                heading("这次想做什么", size=18),
+                mode,
+                codes,
+                notice(
+                    "边界与成本",
+                    "打开页面不产生研究费用；只有确认启动才会执行。尚未配置的类型不会启动。",
+                ),
+                budget,
+                confirmation,
+                submit,
+                feedback,
+                heading("最近研究"),
+            ]
+            if not recent:
+                controls.append(paragraph("还没有网页研究记录。从上面启动一次，结果会出现在这里。"))
+            for item in recent:
+                controls.extend(
+                    [
+                        heading(item["limits"]["title"], size=18),
+                        paragraph(
+                            ("、".join(item["request"]["codes"]) or "财报初筛")
+                            + "\n"
+                            + LABELS.get(item["status"], item["status"])
+                            + " · "
+                            + item["created_at"]
+                        ),
+                        ft.TextButton(
+                            ft.Text("查看进度与结果", semantics_label="查看研究 · " + item["id"]),
+                            on_click=open_route("/analysis/" + item["id"], gen, actor),
+                            height=48,
+                        ),
+                    ]
+                )
+            return ft.Column(
+                controls, spacing=20, horizontal_alignment=ft.CrossAxisAlignment.STRETCH
+            )
+
         async def render():
             if not state["connected"]:
                 return
@@ -194,7 +494,7 @@ def build_app():
                             if APP_MODE == "production"
                             else "仅本地合成演示",
                         ),
-                        paragraph("查看解释与反证，再核对价格条件；页面不会采集行情或调用模型。"),
+                        paragraph("登录后可在网页发起选股与研究；确认范围与成本后由独立后台执行。"),
                         ft.Button(
                             "使用 GitHub 登录" if APP_MODE == "production" else "进入演示",
                             on_click=login_current,
@@ -232,6 +532,21 @@ def build_app():
                         lambda company: open_route("/opportunity/" + company, gen, actor),
                         open_route("/", gen, actor),
                     )
+                    if route == "/":
+                        content = ft.Column(
+                            [
+                                ft.Button(
+                                    "开始选股与研究",
+                                    on_click=open_route("/analysis", gen, actor),
+                                    height=48,
+                                ),
+                                content,
+                            ],
+                            spacing=24,
+                            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+                        )
+                elif route == "/analysis" or route.startswith("/analysis/"):
+                    content = await research_page(gen, actor, route)
                 elif route == "/settings":
 
                     async def logout_current(e):
@@ -247,7 +562,9 @@ def build_app():
                             ),
                             heading("账户与运行信息", size=30, level=1),
                             notice("当前会话", f"当前模式: {APP_MODE}\n用户身份: {actor.user_id}"),
-                            paragraph("Web 只读已发布批次；退出后隐藏当前会话内容。"),
+                            paragraph(
+                                "网页提交本人确认的研究请求，独立后台执行；退出后隐藏会话内容，已受理研究继续受预算约束。"
+                            ),
                             ft.Button(
                                 "退出登录", icon=ft.Icons.LOGOUT, on_click=logout_current, height=48
                             ),
@@ -353,6 +670,7 @@ def build_app():
         async def on_disconnect(e):
             nonlocal watchdog_task
             state["connected"] = False
+            stop_poll()
             state["generation"] += 1
             watchdog_task.cancel()
 
@@ -373,6 +691,7 @@ def build_app():
 
         async def on_close(e):
             state["closed"] = True
+            stop_poll()
             state["connected"] = False
             revoke()
             watchdog_task.cancel()

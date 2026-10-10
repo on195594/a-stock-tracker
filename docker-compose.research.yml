@@ -1,0 +1,9 @@
+# Explicit opt-in bridge only. Market/model credentials and artifacts stay on host.
+services:
+  web:
+    environment:
+      RESEARCH_SERVICE_URL: http://research
+      RESEARCH_SERVICE_SOCKET: /research-bridge/service.sock
+      RESEARCH_SERVICE_TOKEN: ${RESEARCH_SERVICE_TOKEN:?Set the private bridge token}
+    volumes:
+      - ${RESEARCH_BRIDGE_DIR:?Set private socket-only directory}:/research-bridge:ro

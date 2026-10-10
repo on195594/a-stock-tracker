@@ -20,6 +20,10 @@ output/
 data/
 *.log
 
+.research.env*
+**/.research.env*
+.research-web.env*
+**/.research-web.env*
 .web.env*
 **/.web.env*
 tracker.db*

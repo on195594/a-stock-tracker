@@ -22,3 +22,5 @@ output/
 .playwright-mcp/
 
 .web.env
+.research.env
+.research-web.env

@@ -188,7 +188,9 @@ def explain(
     row.update(status="observation", explanation=report, review=review, model=model)
 
 
-def collect(client: Any, token: str, codes: list[str], as_of: date) -> list[dict[str, Any]]:
+def collect(
+    client: Any, token: str, codes: list[str], as_of: date, *, latest: bool = False
+) -> list[dict[str, Any]]:
     """Explicit bounded pool, no implicit all-market fetch or personal watchlist."""
     start, end = as_of - timedelta(days=240), as_of + timedelta(days=30)
 
@@ -214,6 +216,11 @@ def collect(client: Any, token: str, codes: list[str], as_of: date) -> list[dict
     if any(r["exchange"] != "SSE" or str(r["is_open"]) not in {"0", "1"} for r in calendar):
         raise ScreenError("Invalid calendar evidence")
     opened = sorted(d for d, r in zip(dates, calendar, strict=True) if str(r["is_open"]) == "1")
+    if latest:
+        completed = [d for d in opened if d <= as_of]
+        if not completed:
+            raise ScreenError("No proven completed trading day")
+        as_of = completed[-1]
     history = [d.isoformat() for d in opened if d <= as_of][-61:]
     future = [d.isoformat() for d in opened if d > as_of][:5]
     if len(history) != 61 or len(future) != 5 or history[-1] != as_of.isoformat():
@@ -364,8 +371,12 @@ def main() -> int:
     parser.add_argument(
         "--codes", required=True, help="1–5 exact main-board codes; explicit pool, not all-market"
     )
-    parser.add_argument(
-        "--as-of", required=True, type=date.fromisoformat, help="Completed trading day, YYYY-MM-DD"
+    dating = parser.add_mutually_exclusive_group(required=True)
+    dating.add_argument(
+        "--as-of", type=date.fromisoformat, help="Completed trading day, YYYY-MM-DD"
+    )
+    dating.add_argument(
+        "--latest", action="store_true", help="Resolve latest completed day from calendar"
     )
     parser.add_argument("--provider", required=True)
     parser.add_argument("--model", required=True)
@@ -380,6 +391,8 @@ def main() -> int:
         or any(not re.fullmatch(r"(?:60\d{4}\.SH|00\d{4}\.SZ)", c) for c in codes)
     ):
         parser.error("Require 1–5 unique main-board codes")
+    if args.latest:
+        args.as_of = now.date() if now.hour >= 18 else now.date() - timedelta(days=1)
     if (
         args.as_of > now.date()
         or (args.as_of == now.date() and now.hour < 18)
@@ -399,7 +412,11 @@ def main() -> int:
     signal.alarm(args.seconds)
     with locked_root(args.root) as root:
         packets = collect(
-            MarketClient(ts.pro_api(token, timeout=30), budget), token, codes, args.as_of
+            MarketClient(ts.pro_api(token, timeout=30), budget),
+            token,
+            codes,
+            args.as_of,
+            latest=args.latest,
         )
         directory = root / ("swing-" + uuid.uuid4().hex)
         directory.mkdir(mode=0o700)

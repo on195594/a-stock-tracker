@@ -82,7 +82,7 @@ def read_state(path: Path) -> dict[str, Any]:
 
 
 @contextmanager
-def locked_root(root: Path):
+def locked_root(root: Path, *, blocking: bool = False):
     if not root.is_absolute():
         raise ScreenError("Automation root must be explicit and absolute")
     if any(p.is_symlink() for p in (root, *root.parents)):
@@ -101,7 +101,7 @@ def locked_root(root: Path):
         raise ScreenError("Automation root must be private (0700)")
     with lock.open("a") as handle:
         try:
-            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(handle, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
         except BlockingIOError as exc:
             raise ScreenError("Automation already running") from exc
         if not marker.exists():

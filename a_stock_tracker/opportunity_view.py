@@ -44,8 +44,8 @@ def window_theme() -> ft.Theme:
         ),
         button_theme=ft.ButtonTheme(
             style=ft.ButtonStyle(
-                color=SURFACE,
-                bgcolor=ACCENT,
+                color={ft.ControlState.DEFAULT: SURFACE, ft.ControlState.DISABLED: MUTED},
+                bgcolor={ft.ControlState.DEFAULT: ACCENT, ft.ControlState.DISABLED: BAND},
                 padding=ft.Padding.symmetric(horizontal=16, vertical=12),
                 shape=ft.RoundedRectangleBorder(radius=6),
                 elevation=0,

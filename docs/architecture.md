@@ -16,7 +16,9 @@ market-research-v1 → 独立私有 root → 财报机器报告（不自动进�
 
 | 模块 | 职责 |
 |---|---|
-| `app.py` / `auth.py` | Flet 只读页面、OAuth、会话与 ASGI 安全边界 |
+| `app.py` / `auth.py` | Flet 研究确认与只读结果、OAuth、会话与 ASGI 安全边界 |
+| `research_client.py` / `research_view.py` | 无行情/模型凭据的研究 API 客户端、合成请求示例及网页进度/结果 |
+| `research_service.py` | 独立宿主接收器：验证确认报价、单次执行互斥、幂等编号、预算子进程与结果校验 |
 | `opportunities.py` | 有界波段采集、程序计算价格条件、AI解释/复核、批次发布与鉴权读取 |
 | `opportunity_view.py` / `opportunity_demo.py` | 机会列表/详情；仅 loopback demo 与离线测试使用合成示例 |
 | `automation.py` | 独立财报全市场冻结、覆盖/排名、文件锁、预算与恢复 |
@@ -25,7 +27,7 @@ market-research-v1 → 独立私有 root → 财报机器报告（不自动进�
 | `disclosures.py` / `scripts/automation_model.py` | 正式原文证据、无工具生成、逐字校验与另一次语义复核 |
 | `calendar.py` / `paths.py` | 独立日历维护、日历路径配置及原子文件发布；不解析私人工作区路径 |
 
-Web 不打开业务 SQLite、不接受更新任务、不持行情或模型凭据。旧 `config.py`、`services.py`、`watch.py`、`worker.py`、`workspace.py`、`manage.py`、`maintenance.py`、参照 JSON 与专用合成快照已移除，不留兼容启动器。
+Web 不打开业务 SQLite、不持行情或模型凭据。当前新增本人授权研究请求网关，只把显式确认的范围/预算/模型交给独立接收器；不恢复个人更新任务或旧工作台。旧 `config.py`、`services.py`、`watch.py`、`worker.py`、`workspace.py`、`manage.py`、`maintenance.py`、参照 JSON 与专用合成快照已移除，不留兼容启动器。
 
 ## 页面与安全边界
 
@@ -33,9 +35,17 @@ Web 不打开业务 SQLite、不接受更新任务、不持行情或模型凭据
 
 机会页回调检查 actor、页面 generation 和 connected，异步读取不得在切页、退出、断线或撤销/到期后泄露或覆盖内容。读取失败只提供重读与返回机会页，不引导到旧工作台。保留 OAuth state、数字 ID 白名单、actor 到期/撤销、Host/WS Origin 与 `/upload` 限制；demo 仅 loopback 与合成数据，生产缺配置拒绝启动。
 
+## 网页研究请求合同
+
+网页 `/analysis` 输入与确认，`/analysis/<32位随机编号>` 显示进度/结果。每次读取、操作和轮询都受 actor/generation/connection 检查；切页、退出、断线或撤权后的迟到回复不得覆盖当前界面。未确认不提交；受理未知时保留原请求编号和原始范围，核对同一请求而不静默新开收费。预算或模型报价变化须重新确认。
+
+接收器只通过私有 Unix socket（默认开发 loopback）接受强令牌认证请求，拒绝任意路径、CLI 参数、重复证券、额外键和超预算报价。目录有独立所有者标记，拒绝接入历史或混用批处理目录。短元数据锁串行落盘；独立执行锁一次只允许一项，传给预算子进程，接收器意外退出也不能并发第二笔支出。无自动队列/调度/恢复。子进程有现有硬时限和外层超时进程组清理。
+
+请求与结果用现有原子落盘/哈希封装；文件或目录同步失败不能确认发布成功。完成后每次读取重新验证原始产物，量价结果重算到期标记；失败、中断或校验错误不展示旧成功结果。日志、模型原文和根路径不进入 Web 响应。网页仅展示十条近期请求，不删除任何历史文件。
+
 ## 波段机会合同
 
-`swing-observation-v1` 的参数、工程阈值、价格公式和局限只在 [README](../README.md#波段观察批处理) 维护。先验证证券身份、日历覆盖、完整日线与未复权价格连续性，再由程序生成事实和条件；缺口不交给模型补全。模型只返回解释与事实引用，不产生价格；第二次调用复核，不通过不发布观察条件。
+`swing-observation-v1` 的参数、工程阈值、价格公式和局限只在 [README](../README.md#波段观察批处理维护与高级使用) 维护。先验证证券身份、日历覆盖、完整日线与未复权价格连续性，再由程序生成事实和条件；缺口不交给模型补全。模型只返回解释与事实引用，不产生价格；第二次调用复核，不通过不发布观察条件。
 
 每批最多5家公司，状态为 excluded / observation / gap，允许零观察。单股采集中的 `ScreenError` 保留为该股 gap，其余公司继续；共用日历/基准错误或采集阶段预算耗尽不发布新指针。模型失败或该阶段预算不足记为该股 gap，不保留可行动条件。
 
@@ -48,6 +58,8 @@ Web 只读 `OPPORTUNITY_ROOT`，读取前后检查 actor，限制大小、拒绝
 `market-research-v1` 的预算与退出语义见 [README](../README.md#自动选股与机器研究独立批处理)。它不依赖旧业务数据库，也不把财报排名转换为波段推荐。共用范围资格、年度选择与平均名次见 [peer-screen-v1](specs/2026-09-22-peer-screen-spec.md)；证券覆盖、原文引用、私有目录锁和恢复检查继续维护。批处理从当次行情日历确定并冻结估值日，不回退到本地日历维护文件。个人参照筛选、关注列表排名、本地日历自动选日及专用测试已移除；这些删除不改变批处理使用的证据校验与排序公式。
 
 ## 部署与历史隔离
+
+`docker-compose.research.yml` 仅为 Web 增加只读 socket-only 桥目录及接收器令牌，不挂载研究目录/模型运行时，不传行情或模型凭据。`.research.env` 属于宿主接收器，`.research-web.env` 只含桥配置；均 Git 忽略且 Docker 构建排除。宿主接收器配置/启动与 Web 覆盖部署须明确授权，不因改源码自动运行。默认 `deploy.sh` 不启用；`RESEARCH_WEB_ENABLED=1` 才加载桥配置，不启动接收器或研究。
 
 基础 compose 只有 Web，不挂载 `data/research` 或日历，不加载 `.worker.env`。可选覆盖文件将独立机会目录只读挂载；Web 启动无需旧工作区初始化。部署脚本在构建后用 `--remove-orphans` 移除旧 worker 容器，不带删除卷参数；该动作只在下一次明确授权部署时执行。源码删除不等于生产已停用，现存 cron/容器不在本次源码修改中更改。
 

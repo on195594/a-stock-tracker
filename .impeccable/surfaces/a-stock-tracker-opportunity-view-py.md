@@ -2,7 +2,7 @@
 version: 1
 slug: "a-stock-tracker-opportunity-view-py"
 primary_target: "a_stock_tracker/opportunity_view.py"
-related_targets: ["a_stock_tracker/app.py"]
+related_targets: ["a_stock_tracker/app.py","a_stock_tracker/research_view.py"]
 ---
 
 # 波段机会窗口
@@ -20,7 +20,7 @@ related_targets: ["a_stock_tracker/app.py"]
 ## Hierarchy
 
 1. 壳层显示品牌、明确 demo 身份及账户入口。
-2. 列表显示任务、股票池边界与批次来源；公司行显示状态、日期、完整解释和反证，再提供详情动作。
+2. 首页提供网页研究入口，列表显示任务、股票池边界与批次来源；公司行显示状态、日期、完整解释和反证，再提供详情动作。
 3. 详情按解释/反证/等待事项 → 程序价格条件与有效期 → 形成依据排序；依据可展开，风险不折叠。
 4. 登录、账户、空状态和读取失败沿用同一字体、颜色及动作规格，不显示未授权批次内容。
 
@@ -28,7 +28,7 @@ related_targets: ["a_stock_tracker/app.py"]
 
 分别表达加载、未配置批次、零有效观察、未入选、资料或解释失败、过期、未知公司、读取失败。每个状态有明确原因或合法返回路径；读取失败允许重试，但不恢复旧工作台入口。过期仍可读历史解释，主区域及展开依据都隐藏可行动条件。demo 仅使用现有合成数据。
 
-保留切页/退出/断线/撤权后迟到结果隔离；不增加价格计算、采集、模型调用、交易操作或个人状态。48px 动作目标、语义标题和可读的展开名称支持键盘与触控。长公司名、长来源和多行反证必须换行，不横向溢出。
+保留切页/退出/断线/撤权后迟到结果隔离；Web 不直接增加价格计算、采集、模型调用、交易操作或个人状态；新增网关只提交本人已确认的有界后台研究请求。48px 动作目标、语义标题和可读的展开名称支持键盘与触控。长公司名、长来源和多行反证必须换行，不横向溢出。
 
 ## Code-first Quality Bar
 
@@ -51,3 +51,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
 ## Direction Provenance
 
 本轮用户显式选择“窗口索引”；概念 seed 为 `8db48fc6`。跨域挑战带入：价格同尺度、完整解释不截断、固定状态颜色。采用这些纪律而不带入字体滑杆、媒体滚屏或不存在的核查地图。没有锁定 image-first comp；最终质量以代码、实际浏览器和当前安全测试为准。
+
+## Web research extension
+
+用户已明确要求纠正终端与网页割裂：首页增加“开始选股与研究”，原生选择类型/输入代码，预算与模型报价横带，复选框明确确认后才提交。网页展示进度、缺口与覆盖，候选可预填量价或财报研究，最近请求可重开。入口与结果使用同一窗口索引世界；无 CLI 用户步骤、无旧工作台、无自动调度。受理未知核对同一编号；预算变化重新确认。独立接收器保存凭据，Web 无行情/模型凭据。保留所有 actor/generation/connection 与到期隐藏反例。

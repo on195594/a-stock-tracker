@@ -224,6 +224,70 @@ def main() -> int:
                         expect(page.get_by_text("仅本地合成演示")).to_be_visible()
                         click_settled(page, page.get_by_role("button", name="进入演示", exact=True))
                         expect(page.get_by_text("波段机会", exact=True)).to_be_visible()
+                        click_settled(
+                            page, page.get_by_role("button", name="开始选股与研究", exact=True)
+                        )
+                        expect(
+                            page.get_by_role("heading", name="选股与研究", exact=True)
+                        ).to_be_visible()
+                        start = page.get_by_role("button", name="确认启动研究", exact=True)
+                        expect(start).to_be_disabled()
+                        click_settled(page, page.get_by_role("checkbox"))
+                        expect(start).to_be_enabled()
+                        click_settled(page, start)
+                        expect(
+                            page.get_by_role("heading", name="财报筛选与研究", exact=True)
+                        ).to_be_visible(timeout=10000)
+                        assert_layout(page, width)
+                        screen_url = page.url
+                        click_settled(
+                            page, page.get_by_role("button", name="核对量价条件", exact=True)
+                        )
+                        page.get_by_role("textbox", name="股票代码").focus()
+                        expect(page.get_by_role("textbox", name="股票代码")).to_have_value(
+                            "600001.SH"
+                        )
+                        start = page.get_by_role("button", name="确认启动研究", exact=True)
+                        expect(start).to_be_disabled()
+                        click_settled(page, page.get_by_role("checkbox"))
+                        click_settled(page, start)
+                        expect(
+                            page.get_by_role("heading", name="波段机会", exact=True)
+                        ).to_be_visible(timeout=10000)
+                        click_settled(
+                            page,
+                            page.get_by_role(
+                                "button", name="查看条件与反证 · 演示公司", exact=True
+                            ),
+                        )
+                        expect(
+                            page.get_by_role("heading", name="程序价格条件", exact=True)
+                        ).to_be_visible()
+                        assert_layout(page, width)
+                        click_settled(
+                            page, page.get_by_role("button", name="返回波段机会", exact=True)
+                        )
+                        expect(
+                            page.get_by_role("heading", name="波段机会", exact=True)
+                        ).to_be_visible()
+                        page.goto(screen_url)
+                        page.wait_for_selector("flt-semantics-placeholder")
+                        page.evaluate('document.querySelector("flt-semantics-placeholder").click()')
+                        click_settled(
+                            page, page.get_by_role("button", name="研究这家公司财报", exact=True)
+                        )
+                        page.get_by_role("textbox", name="股票代码").focus()
+                        expect(page.get_by_role("textbox", name="股票代码")).to_have_value(
+                            "600001.SH"
+                        )
+                        start = page.get_by_role("button", name="确认启动研究", exact=True)
+                        expect(start).to_be_disabled()
+                        click_settled(page, page.get_by_role("checkbox"))
+                        click_settled(page, start)
+                        expect(
+                            page.get_by_text(re.compile("合成财报报告 · 非真实研究结果"))
+                        ).to_be_visible(timeout=10000)
+                        assert_layout(page, width)
                     for case, label in (
                         ("long", "合成的超长公司名称"),
                         ("expired", "观察已过期"),
