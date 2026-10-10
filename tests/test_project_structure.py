@@ -10,7 +10,20 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_package_has_no_legacy_entrypoints_or_path_injection():
     package = ROOT / "a_stock_tracker"
     assert list(ROOT.glob("*.py")) == []
-    for retired in ("data", "scoring.py", "signals", "qualitative", "reporting"):
+    for retired in (
+        "data",
+        "scoring.py",
+        "signals",
+        "qualitative",
+        "reporting",
+        "config.py",
+        "services.py",
+        "watch.py",
+        "worker.py",
+        "workspace.py",
+        "manage.py",
+        "maintenance.py",
+    ):
         assert not (package / retired).exists()
     for path in package.rglob("*.py"):
         source = path.read_text()
@@ -27,6 +40,21 @@ def test_package_has_no_legacy_entrypoints_or_path_injection():
                 name.split(".")[0] in {"screen", "app", "workspace", "services", "scripts"}
                 for name in names
             )
+
+
+def test_web_has_no_private_workspace_dependency():
+    assert not (ROOT / "config/anchors.json").exists()
+    assert not (ROOT / ".worker.env.example").exists()
+    assert not list((ROOT / "tests/fixtures").glob("*.json"))
+    compose = (ROOT / "docker-compose.yml").read_text()
+    assert "worker:" not in compose and "data/research" not in compose
+    assert ".worker.env" not in compose and "STATE_DIR" not in compose
+    assert "manage" not in (ROOT / "docker/entrypoint.sh").read_text()
+    assert "worker" not in (ROOT / "Makefile").read_text()
+    assert "tests/fixtures" not in (ROOT / "Dockerfile").read_text()
+    tree = ast.parse((ROOT / "a_stock_tracker/app.py").read_text())
+    imports = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
+    assert not imports & {"sqlite3", "a_stock_tracker.workspace", "a_stock_tracker.services"}
 
 
 def test_private_runtime_files_and_keys_are_not_tracked():

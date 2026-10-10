@@ -22,35 +22,6 @@ RUNTIME_TRADING_CALENDAR_PATH = CALENDAR_PATH
 CALENDAR_SOURCE_DIR = CALENDAR_PATH.parent / "sources"
 
 
-def latest_completed_day(path: Path, *, today: date | None = None) -> str:
-    """Select a proved trading date before Shanghai today; never invent a holiday."""
-    today = today or datetime.now(ZoneInfo("Asia/Shanghai")).date()
-    proof = json.loads(path.read_text(encoding="utf-8"))
-    start, end, as_of = (
-        date.fromisoformat(proof[k]) for k in ("covered_from", "covered_to", "as_of")
-    )
-    yesterday = today - timedelta(days=1)
-    if not str(proof.get("source", "")).startswith("tushare.trade_cal:SSE;"):
-        raise ValueError("unverified calendar source")
-    if start > end or start > as_of or as_of > today or start > yesterday:
-        raise ValueError("invalid calendar coverage")
-    proved_end = min(end, as_of)
-    # A weekend gap requires no guess about exchange holidays; weekdays require evidence.
-    if any(
-        (proved_end + timedelta(days=i)).weekday() < 5
-        for i in range(1, (yesterday - proved_end).days + 1)
-    ):
-        raise ValueError("calendar coverage is stale")
-    days = [date.fromisoformat(day) for day in proof["dates"]]
-    if (
-        not days
-        or len(days) != len(set(days))
-        or any(day < start or day > proved_end or day.weekday() >= 5 for day in days)
-    ):
-        raise ValueError("invalid trading dates")
-    return max(day for day in days if day <= yesterday).isoformat()
-
-
 CALENDAR_SOURCE = "tushare.trade_cal"
 
 

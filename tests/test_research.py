@@ -34,23 +34,6 @@ def test_date_and_annual_selection_boundary() -> None:
         )
 
 
-def test_candidate_review_ignores_malformed_rows_and_keeps_first_duplicate() -> None:
-    row = {"code": "600001.SH", "name": "合成公司"}
-    snapshot = {
-        "rows": [row],
-        "results": {"top": [row["code"]], "ranking": [{"code": row["code"]}]},
-    }
-    baseline = screen.candidate_review_sections(snapshot)
-    assert "### 合成公司 `600001.SH`" in baseline
-    snapshot["rows"] = [None, {}, {"code": 1}, row, {**row, "name": "重复公司"}]
-    assert screen.candidate_review_sections(snapshot) == baseline
-    for invalid in (None, {}, "not rows"):
-        snapshot["rows"] = invalid
-        assert any(
-            "缺少对应明细或排名" in line for line in screen.candidate_review_sections(snapshot)
-        )
-
-
 def test_fetch_universe_rejects_duplicate_valuations() -> None:
     import pandas as pd
 
@@ -121,100 +104,21 @@ def test_fetch_financials_rejects_invalid_response(rows, error) -> None:
         )
 
 
-def test_scope_cap_and_average_tie_ranking() -> None:
-    stocks = [
-        {
-            "ts_code": "600900.SH",
-            "name": "参照",
-            "industry": "水力发电",
-            "market": "主板",
-            "exchange": "SSE",
-            "list_status": "L",
-        },
-        {
-            "ts_code": "600001.SH",
-            "name": "同业甲",
-            "industry": "水力发电",
-            "market": "主板",
-            "exchange": "SSE",
-            "list_status": "L",
-        },
-        {
-            "ts_code": "000001.SZ",
-            "name": "同业乙",
-            "industry": "水力发电",
-            "market": "主板",
-            "exchange": "SZSE",
-            "list_status": "L",
-        },
-        {
-            "ts_code": "600002.SH",
-            "name": "同业丙",
-            "industry": "水力发电",
-            "market": "主板",
-            "exchange": "SSE",
-            "list_status": "L",
-        },
-        {
-            "ts_code": "300001.SZ",
-            "name": "创业板",
-            "industry": "水力发电",
-            "market": "创业板",
-            "exchange": "SZSE",
-            "list_status": "L",
-        },
-        {
-            "ts_code": "920001.BJ",
-            "name": "北交所",
-            "industry": "水力发电",
-            "market": "北交所",
-            "exchange": "BSE",
-            "list_status": "L",
-        },
-    ]
-    valuations = [
-        {"ts_code": "600900.SH", "pb": 2, "total_mv": 50},
-        {"ts_code": "600001.SH", "pb": 1, "total_mv": 100},
-        {"ts_code": "000001.SZ", "pb": 2, "total_mv": 90},
-        {"ts_code": "600002.SH", "pb": 3, "total_mv": 80},
-    ]
-    selected, scope, _ = screen.load_peers(stocks, valuations, "600900.SH", ["600900"], cap=3)
-    assert [row["ts_code"] for row in selected] == [
-        "600900.SH",
-        "600001.SH",
-        "000001.SZ",
-    ]
-    assert scope["excluded_by_cap"] == ["600002.SH"]
-
+@pytest.mark.parametrize(
+    "reverse,expected",
+    [
+        (False, {"600001.SH": 1.5, "600002.SH": 1.5, "600003.SH": 3.0}),
+        (True, {"600001.SH": 2.5, "600002.SH": 2.5, "600003.SH": 1.0}),
+    ],
+)
+def test_average_ranks_preserves_ties(reverse, expected) -> None:
     rows = [
-        {
-            "code": "600900.SH",
-            "pb": 2.0,
-            "roe_mean": 10.0,
-            "annual_roes": [{}, {}, {}],
-            "exclusions": [],
-        },
-        {
-            "code": "600001.SH",
-            "pb": 1.0,
-            "roe_mean": 10.0,
-            "annual_roes": [{}, {}, {}],
-            "exclusions": [],
-        },
-        {
-            "code": "000001.SZ",
-            "pb": 3.0,
-            "roe_mean": -1.0,
-            "annual_roes": [{}, {}, {}],
-            "exclusions": ["NON_POSITIVE_ROE_MEAN"],
-        },
+        {"code": "600002.SH", "value": 10.0},
+        {"code": "600003.SH", "value": 20.0},
+        {"code": "600001.SH", "value": 10.0},
     ]
-    result = screen.rank_peers(rows, "600900.SH", ["600900"])
-    ranking = {item["code"]: item for item in result["ranking"]}
-    assert ranking["600001.SH"]["roe_rank"] == 1.5
-    assert ranking["600900.SH"]["roe_rank"] == 1.5
-    assert ranking["600001.SH"]["position"] == 1
-    assert ranking["600900.SH"]["position"] == 2
+    assert screen.average_ranks(rows, "value", reverse) == expected
+    assert screen.average_ranks([], "value", reverse) == {}
 
 
 def test_three_year_selection_prefers_unique_revision_and_rejects_gap() -> None:

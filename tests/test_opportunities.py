@@ -17,7 +17,7 @@ from a_stock_tracker.automation import Budget, digest, save_state
 from a_stock_tracker.opportunity_demo import demo_board, demo_packet
 from a_stock_tracker.opportunity_view import opportunity_view
 from a_stock_tracker.research import ScreenError
-from tests.test_app import AppMockPage
+from tests.test_app import AppMockPage, app_controls
 
 
 def test_conditions_are_computed_and_not_claimed_triggered():
@@ -250,16 +250,9 @@ def test_invalid_board_artifacts_refused(tmp_path, damage):
 def test_expired_detail_hides_actionable_levels():
     board = demo_board()
     board["rows"][0]["expired"] = True
-    view = opportunity_view(board, "600001.SH", lambda _: None, None, None)
-    visible = " ".join(c.value for c in view.controls if isinstance(c, ft.Text))
+    view = opportunity_view(board, "600001.SH", lambda _: None, None)
+    visible = " ".join(c.value or "" for c in app_controls(view) if isinstance(c, ft.Text))
     assert "观察已过期" in visible
-
-    def texts(control):
-        yield getattr(control, "value", "") or ""
-        for child in getattr(control, "controls", None) or []:
-            yield from texts(child)
-
-    visible = " ".join(texts(view))
     assert "11.23" not in visible and "11.00" not in visible
 
 
@@ -270,18 +263,16 @@ def test_default_page_is_opportunities_and_stale_click_is_inert(monkeypatch):
         page = AppMockPage()
         page.route = "/"
         await app.build_app()(page)
-        content = page.controls[0].controls[0].controls[0].content.controls[1]
         button = next(
             c
-            for c in content.content.controls
-            if isinstance(c, ft.Button) and str(c.content).startswith("查看条件")
+            for c in app_controls(page)
+            if isinstance(c, ft.Button)
+            and getattr(c.content, "value", c.content) == "查看条件与反证"
         )
-        assert not page.navigation_bar.visible
+        assert page.navigation_bar is None
         await button.on_click(None)
         assert page.route == "/opportunity/600001.SH"
-        assert any(
-            isinstance(c, ft.Text) and c.value == "什么时候放弃" for c in content.content.controls
-        )
+        assert any(isinstance(c, ft.Text) and c.value == "什么时候放弃" for c in app_controls(page))
         page.route = "/settings"  # Browser changes the URL before dispatching the event.
         await page.on_route_change(SimpleNamespace(route="/settings"))
         await button.on_click(None)
@@ -318,9 +309,8 @@ def test_late_private_board_cannot_overwrite_navigation(monkeypatch):
         finally:
             release.set()
             await pending
-        content = page.controls[0].controls[0].controls[0].content.controls[1]
         assert not any(
-            isinstance(c, ft.Text) and "演示公司" in c.value for c in content.content.controls
+            isinstance(c, ft.Text) and "演示公司" in (c.value or "") for c in app_controls(page)
         )
         assert page.route == "/settings"
         await page.on_close(None)
@@ -335,8 +325,12 @@ def test_disconnected_opportunity_callback_is_inert(monkeypatch):
         page = AppMockPage()
         page.route = "/"
         await app.build_app()(page)
-        content = page.controls[0].controls[0].controls[0].content.controls[1]
-        button = next(c for c in content.content.controls if isinstance(c, ft.Button))
+        button = next(
+            c
+            for c in app_controls(page)
+            if isinstance(c, ft.Button)
+            and getattr(c.content, "value", c.content) == "查看条件与反证"
+        )
         await page.on_disconnect(None)
         await button.on_click(None)
         assert page.route == "/"

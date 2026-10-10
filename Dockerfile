@@ -6,8 +6,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --frozen --no-dev --no-install-project
 COPY a_stock_tracker ./a_stock_tracker
-COPY config/anchors.json config/trading_calendar.json ./config/
-COPY tests/fixtures ./tests/fixtures
+COPY config/trading_calendar.json ./config/
 COPY assets ./assets
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

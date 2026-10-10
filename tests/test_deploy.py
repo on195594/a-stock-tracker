@@ -11,11 +11,6 @@ def test_deploy_success_and_config_rollback(tmp_path: Path) -> None:
     (root / "docker").mkdir(parents=True)
     shutil.copyfile(Path(__file__).resolve().parents[1] / "deploy.sh", root / "deploy.sh")
     (root / ".web.env").write_text("# isolated test\n")
-    (root / "data/research").mkdir(parents=True)
-    (root / "data/research/.workspace-mode").write_text("production\n")
-    (root / "data/calendar").mkdir(parents=True)
-    (root / "data/calendar/trading_calendar.json").write_text("{}\n")
-    (root / ".worker.env").write_text("# isolated test\n")
     (root / "docker-compose.yml").write_text("services: {}\n")
     candidate = root / "docker" / "nginx-stock.conf"
     candidate.write_text("new config\n")
@@ -70,11 +65,11 @@ def test_deploy_success_and_config_rollback(tmp_path: Path) -> None:
     build = next(i for i, line in enumerate(calls) if " build web" in line)
     up = next(i for i, line in enumerate(calls) if " up -d " in line and line.endswith(" web"))
     reload = next(i for i, line in enumerate(calls) if "nginx -s reload" in line)
-    worker_up = next(
-        i for i, line in enumerate(calls) if " up -d " in line and line.endswith(" worker")
-    )
     check = calls.index("make check")
-    assert check < build < up < reload < worker_up
+    assert check < build < up < reload
+    assert "--remove-orphans" in calls[up]
+    assert not any(line.endswith(" worker") for line in calls)
+    assert not any("down" in line or "-v" in line for line in calls)
     assert any(line.startswith("curl ") for line in calls[up:reload])
     assert any(line.startswith("curl ") for line in calls[reload:])
 

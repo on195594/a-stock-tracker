@@ -9,29 +9,9 @@ services:
     ports: ["127.0.0.1:8550:8550"]
     environment:
       APP_MODE: production
-      STATE_DIR: /app/data/research
       PUBLIC_BASE_URL: https://stock.keyi.win
       HOST: 0.0.0.0
       PORT: 8550
-    volumes:
-      - ./data/research:/app/data/research
-      - ./data/calendar:/app/data/calendar:ro
-  worker:
-    image: a-stock-tracker
-    container_name: a-stock-tracker-worker
-    restart: unless-stopped
-    stop_grace_period: 2m
-    env_file: .worker.env
-    command: ["python", "-m", "a_stock_tracker.worker", "--mode", "production", "--state-dir", "/app/data/research"]
-    volumes:
-      - ./data/research:/app/data/research
-  calendar:
-    image: a-stock-tracker
-    profiles: [maintenance]
-    env_file: .worker.env
-    command: ["python", "-m", "a_stock_tracker.calendar"]
-    volumes:
-      - ./data/calendar:/app/data/calendar
 networks:
   nginx-network:
     external: true

@@ -1,21 +1,14 @@
-#!/usr/bin/env python3
-"""Small, read-only peer screen for personal A-share research."""
+"""Shared A-share financial evidence validation, eligibility and ranking formulas."""
 
 from __future__ import annotations
 
 import json
 import math
-import os
 import re
-import time
 from datetime import date, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-RULE = "peer-screen-v1"
-SCHEMA_VERSION = 1
-CAP = 50
-TOP_N = 3
 MAX_REPORT_AGE_DAYS = 550
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 FINANCIAL_INDUSTRY_WORDS = (
@@ -80,10 +73,6 @@ def normalize_code(value: str) -> str:
     base, suffix = match.groups()
     suffix = suffix or ("SH" if base.startswith(("5", "6", "9")) else "SZ")
     return f"{base}.{suffix}"
-
-
-def base_code(value: str) -> str:
-    return normalize_code(value).split(".", 1)[0]
 
 
 def frame_records(frame: Any, required: set[str], endpoint: str) -> list[dict[str, Any]]:
@@ -165,71 +154,6 @@ def risk_status(name: Any) -> str:
 
 def is_financial_industry(industry: str) -> bool:
     return any(word in industry for word in FINANCIAL_INDUSTRY_WORDS)
-
-
-def load_peers(
-    stock_rows: list[dict[str, Any]],
-    valuation_rows: list[dict[str, Any]],
-    anchor: str,
-    watchlist_codes: list[str],
-    cap: int = CAP,
-) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, dict[str, Any]]]:
-    stocks = {normalize_code(str(row["ts_code"])): dict(row) for row in stock_rows}
-    anchor = normalize_code(anchor)
-    reference = stocks.get(anchor)
-    if reference is None:
-        raise ScreenError(f"stock_basic 中没有参照公司 {anchor}")
-    if (
-        reference.get("list_status") != "L"
-        or reference.get("exchange") not in {"SSE", "SZSE"}
-        or reference.get("market") != "主板"
-    ):
-        raise ScreenError("参照公司不是当前沪深主板上市公司")
-    industry = str(reference.get("industry") or "").strip()
-    if not industry:
-        raise ScreenError("参照公司行业不明")
-    if is_financial_industry(industry):
-        raise ScreenError(f"金融行业不适用 peer-screen-v1: {industry}")
-
-    valuations = {normalize_code(str(row["ts_code"])): dict(row) for row in valuation_rows}
-    peers = [
-        row
-        for code, row in stocks.items()
-        if str(row.get("industry") or "").strip() == industry
-        and row.get("list_status") == "L"
-        and row.get("exchange") in {"SSE", "SZSE"}
-        and row.get("market") == "主板"
-    ]
-    if reference not in peers:
-        raise ScreenError("参照公司未进入同业枚举")
-
-    eligible_others: list[tuple[float, str, dict[str, Any]]] = []
-    missing_valuation: list[str] = []
-    for row in peers:
-        code = normalize_code(str(row["ts_code"]))
-        if code == anchor:
-            continue
-        total_mv = finite_number(valuations.get(code, {}).get("total_mv"))
-        if total_mv is None or total_mv <= 0:
-            missing_valuation.append(code)
-        else:
-            eligible_others.append((total_mv, code, row))
-    eligible_others.sort(key=lambda item: (-item[0], item[1]))
-    selected = [reference, *(item[2] for item in eligible_others[: max(0, cap - 1)])]
-    selected_codes = [normalize_code(str(row["ts_code"])) for row in selected]
-    scope = {
-        "industry": industry,
-        "industry_source": "tushare.stock_basic",
-        "enumerated_count": len(peers),
-        "enumerated_codes": sorted(normalize_code(str(row["ts_code"])) for row in peers),
-        "selected_codes": selected_codes,
-        "excluded_missing_valuation": sorted(missing_valuation),
-        "excluded_by_cap": [item[1] for item in eligible_others[max(0, cap - 1) :]],
-        "cap": cap,
-        "market_bias": "同日总市值降序，偏向较大公司",
-        "watchlist_codes": sorted(watchlist_codes),
-    }
-    return selected, scope, valuations
 
 
 def select_annual_roes(
@@ -367,86 +291,6 @@ def fetch_financials(
     return records
 
 
-def load_inputs(
-    selected: list[dict[str, Any]],
-    valuations: dict[str, dict[str, Any]],
-    reference: dict[str, Any],
-    data_date: str,
-    client: Any,
-    token: str,
-    source_times: dict[str, str],
-) -> tuple[list[dict[str, Any]], str]:
-    rows: list[dict[str, Any]] = []
-    screened_at = now_iso()
-    watchlist_codes = set(reference["watchlist_codes"])
-    for index, basic in enumerate(selected):
-        code = normalize_code(str(basic["ts_code"]))
-        valuation = valuations.get(code, {})
-        pb = finite_number(valuation.get("pb"))
-        total_mv = finite_number(valuation.get("total_mv"))
-        status = risk_status(basic.get("name"))
-        exclusions: list[str] = []
-        if status == "known_warning":
-            exclusions.append("KNOWN_ST_WARNING")
-        if pb is None or pb <= 0:
-            exclusions.append("INVALID_PB")
-
-        financial: dict[str, Any] = {
-            "annual_roes": [],
-            "roe_mean": None,
-            "error": "NOT_FETCHED",
-        }
-        financial_source = "none"
-        financial_checked_at: str | None = None
-        if not exclusions or (pb is not None and pb <= 0):
-            if index:
-                time.sleep(0.35)
-            try:
-                records = fetch_financials(client, token, code, data_date, screened_at)
-                financial = select_annual_roes(records, data_date, screened_at)
-                financial_source = "tushare.fina_indicator"
-                if financial["error"] is None:
-                    financial_checked_at = now_iso()
-            except ScreenError:
-                financial = {
-                    "annual_roes": [],
-                    "roe_mean": None,
-                    "error": "FINANCIAL_REQUEST_FAILED",
-                }
-                financial_source = "tushare.fina_indicator:error"
-        if financial["error"]:
-            exclusions.append(str(financial["error"]))
-        roe_mean = finite_number(financial.get("roe_mean"))
-        if roe_mean is not None and roe_mean <= 0:
-            exclusions.append("NON_POSITIVE_ROE_MEAN")
-        rows.append(
-            {
-                "code": code,
-                "name": str(basic.get("name") or ""),
-                "industry": str(basic.get("industry") or ""),
-                "market": basic.get("market"),
-                "exchange": basic.get("exchange"),
-                "list_status": basic.get("list_status"),
-                "in_watchlist": base_code(code) in watchlist_codes,
-                "pb": pb,
-                "total_mv": total_mv,
-                "valuation_date": data_date,
-                "basic_source": "tushare.stock_basic",
-                "basic_acquired_at": source_times["stock_basic_acquired_at"],
-                "valuation_source": "tushare.daily_basic",
-                "valuation_acquired_at": source_times["daily_basic_acquired_at"],
-                "annual_roes": financial["annual_roes"],
-                "roe_mean": roe_mean,
-                "financial_source": financial_source,
-                "financial_checked_at": financial_checked_at,
-                "risk_status": status,
-                "risk_source": "tushare.stock_basic.name",
-                "exclusions": sorted(set(exclusions)),
-            }
-        )
-    return rows, screened_at
-
-
 def average_ranks(rows: list[dict[str, Any]], field: str, reverse: bool) -> dict[str, float]:
     ordered = sorted(rows, key=lambda row: float(row[field]), reverse=reverse)
     ranks: dict[str, float] = {}
@@ -460,176 +304,3 @@ def average_ranks(rows: list[dict[str, Any]], field: str, reverse: bool) -> dict
             ranks[row["code"]] = rank
         index = end
     return ranks
-
-
-def rank_peers(
-    rows: list[dict[str, Any]], anchor: str, watchlist_codes: list[str]
-) -> dict[str, Any]:
-    qualified = [
-        row
-        for row in rows
-        if not row.get("exclusions")
-        and finite_number(row.get("pb")) is not None
-        and finite_number(row.get("roe_mean")) is not None
-        and float(row["pb"]) > 0
-        and float(row["roe_mean"]) > 0
-        and len(row.get("annual_roes", [])) == 3
-    ]
-    roe_ranks = average_ranks(qualified, "roe_mean", reverse=True)
-    pb_ranks = average_ranks(qualified, "pb", reverse=False)
-    ranking = [
-        {
-            "code": row["code"],
-            "roe_rank": roe_ranks[row["code"]],
-            "pb_rank": pb_ranks[row["code"]],
-            "research_order": (roe_ranks[row["code"]] + pb_ranks[row["code"]]) / 2,
-        }
-        for row in qualified
-    ]
-    ranking.sort(key=lambda item: (item["research_order"], item["code"]))
-    for position, item in enumerate(ranking, 1):
-        item["position"] = position
-    anchor = normalize_code(anchor)
-    anchor_item = next((item for item in ranking if item["code"] == anchor), None)
-    watchlist = set(watchlist_codes)
-    outside_qualified = sum(base_code(item["code"]) not in watchlist for item in ranking)
-    return {
-        "qualified_codes": [item["code"] for item in ranking],
-        "ranking": ranking,
-        "top": [item["code"] for item in ranking[:TOP_N]],
-        "anchor_position": anchor_item["position"] if anchor_item else None,
-        "outside_watchlist_qualified_count": outside_qualified,
-        "discovery_complete": outside_qualified > 0,
-    }
-
-
-def build_live_snapshot(
-    anchor: str, data_date: str, references: list[dict[str, str]]
-) -> dict[str, Any]:
-    """Fetch one frozen research request; no filesystem, old DB, or hidden fallback."""
-    anchor = normalize_code(anchor)
-    codes = [base_code(item["code"]) for item in references]
-    if base_code(anchor) not in codes:
-        raise ScreenError("参照公司不在本次冻结范围内")
-    token = os.getenv("TUSHARE_TOKEN", "").strip()
-    if not token:
-        raise ScreenError("更新资料需要配置 TuShare Token")
-    import tushare as ts  # type: ignore[import-untyped]
-
-    client = ts.pro_api(token, timeout=30)
-    stock_rows, valuation_rows, source_times = fetch_universe(client, token, data_date)
-    selected, scope, valuations = load_peers(stock_rows, valuation_rows, anchor, codes)
-    rows, _ = load_inputs(
-        selected, valuations, {"watchlist_codes": codes}, data_date, client, token, source_times
-    )
-    captured_at = now_iso()
-    scope.update(source_times, valuation_date=data_date, source="tracker")
-    return {
-        "schema_version": SCHEMA_VERSION,
-        "rule": RULE,
-        "source": "tracker",
-        "limits": {"cap": CAP, "top_n": TOP_N, "max_report_age_days": MAX_REPORT_AGE_DAYS},
-        "formula": "research_order=(roe_rank_desc+pb_rank_asc)/2; average ties",
-        "screened_at": captured_at,
-        "generated_at": captured_at,
-        "data_date": data_date,
-        "anchor": anchor,
-        "watchlist_codes": codes,
-        "scope": scope,
-        "rows": rows,
-        "results": rank_peers(rows, anchor, codes),
-    }
-
-
-def fmt_number(value: Any, digits: int = 2) -> str:
-    number = finite_number(value)
-    return "—" if number is None else f"{number:.{digits}f}"
-
-
-def annual_entries(row: dict[str, Any]) -> list[dict[str, Any]]:
-    value = row.get("annual_roes")
-    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
-
-
-def candidate_review_sections(snapshot: dict[str, Any]) -> list[str]:
-    raw_rows = snapshot.get("rows")
-    rows: dict[str, dict[str, Any]] = {}
-    for row in raw_rows if isinstance(raw_rows, list) else []:
-        if isinstance(row, dict) and isinstance(row.get("code"), str):
-            rows.setdefault(row["code"], row)
-    results = snapshot.get("results")
-    results = results if isinstance(results, dict) else {}
-    ranking = results.get("ranking")
-    ranks = (
-        {
-            item["code"]: item
-            for item in ranking
-            if isinstance(item, dict) and isinstance(item.get("code"), str)
-        }
-        if isinstance(ranking, list)
-        else {}
-    )
-    anchor_code = snapshot.get("anchor")
-    anchor = rows.get(anchor_code) if isinstance(anchor_code, str) else None
-    anchor_rank = ranks.get(anchor_code) if isinstance(anchor_code, str) else None
-    top = results.get("top")
-    lines = ["", "## 候选审查", ""]
-    for code in top if isinstance(top, list) else []:
-        row = rows.get(code)
-        rank = ranks.get(code)
-        if row is None or rank is None:
-            lines.append(f"- 快照中的候选 `{code}` 缺少对应明细或排名，无法生成审查说明。")
-            continue
-        lines.append(f"### {row.get('name') or '—'} `{code}`")
-        lines.append("")
-        lines.append(
-            f"- 排序原因：三年 ROE 均值 {fmt_number(row.get('roe_mean'))}%（第 {fmt_number(rank.get('roe_rank'), 1)} 名），"
-            f"PB {fmt_number(row.get('pb'))}（第 {fmt_number(rank.get('pb_rank'), 1)} 名），综合研究次序第 {rank.get('position')}。"
-        )
-        row_roe = finite_number(row.get("roe_mean"))
-        row_pb = finite_number(row.get("pb"))
-        anchor_roe = finite_number(anchor.get("roe_mean")) if anchor else None
-        anchor_pb = finite_number(anchor.get("pb")) if anchor else None
-        if (
-            anchor is not None
-            and anchor_rank is not None
-            and row_roe is not None
-            and row_pb is not None
-            and anchor_roe is not None
-            and anchor_pb is not None
-        ):
-            row_years = [str(item.get("period") or "")[:4] for item in annual_entries(row)]
-            anchor_years = [str(item.get("period") or "")[:4] for item in annual_entries(anchor)]
-            comparison = (
-                f"相对参照公司，ROE 均值差 {row_roe - anchor_roe:+.2f} 个百分点，"
-                f"PB 差 {row_pb - anchor_pb:+.2f} 倍（候选减参照）"
-            )
-            if row_years != anchor_years:
-                comparison += f"；年报覆盖不同（候选 {row_years}，参照 {anchor_years}）"
-            lines.append(f"- 与参照比较：{comparison}。")
-        else:
-            lines.append("- 与参照比较：参照或候选数据不完整，不计算差值。")
-
-        annual = sorted(annual_entries(row), key=lambda item: str(item.get("period") or ""))
-        values = [finite_number(item.get("roe_waa")) for item in annual]
-        facts: list[str] = []
-        if len(annual) != 3 or any(value is None for value in values):
-            facts.append("逐年 ROE 数据不足，不能核验负值或最新年度下降")
-        else:
-            numeric = [float(value) for value in values if value is not None]
-            if any(value < 0 for value in numeric):
-                facts.append("三年中存在负 ROE")
-            if numeric[-1] < numeric[-2]:
-                facts.append(
-                    f"最新年度 ROE 从 {fmt_number(numeric[-2])}% 降至 {fmt_number(numeric[-1])}%"
-                )
-        lines.append(
-            "- 已知事实："
-            + ("；".join(facts) if facts else "本次指定字段未触发负 ROE 或最新年度下降提示")
-            + "。"
-        )
-        lines.append(
-            "- 待核查：主营业务可比吗？高 ROE 是否依赖杠杆或一次性收益？低 PB 是否反映资产质量问题？风险警示、停牌与可交易性如何？"
-        )
-        lines.append("")
-    return lines

@@ -7,7 +7,7 @@ site="$nginx_dir/sites-enabled/stock.conf"
 source_conf=docker/nginx-stock.conf
 compose=(docker compose -f docker-compose.yml)
 
-for file in .web.env .worker.env data/research/.workspace-mode data/calendar/trading_calendar.json docker-compose.yml "$source_conf" "$site"; do
+for file in .web.env docker-compose.yml "$source_conf" "$site"; do
     if [[ ! -f "$file" ]]; then
         echo "Missing required file: $file" >&2
         exit 1
@@ -29,7 +29,8 @@ make check
 # Build before changing the running site or its proxy configuration.
 "${compose[@]}" build web
 
-"${compose[@]}" up -d --no-deps --force-recreate web
+# Remove the retired worker container, never its host data or volumes.
+"${compose[@]}" up -d --no-deps --force-recreate --remove-orphans web
 ready=0
 for _ in {1..10}; do
     if curl --fail --silent --max-time 3 -o /dev/null \
@@ -77,10 +78,8 @@ if [[ "$ready" -ne 1 ]]; then
     echo 'HTTPS origin health check failed after reload; inspect Nginx and web logs.' >&2
     exit 1
 fi
-"${compose[@]}" up -d --no-deps --force-recreate worker
-sleep 2
-if [[ "$(docker inspect --format '{{.State.Running}} {{.RestartCount}}' a-stock-tracker-worker)" != 'true 0' ]]; then
-    echo 'Worker failed to start; web is live but updates will not run.' >&2
+if [[ "$(docker inspect --format '{{.State.Running}} {{.RestartCount}}' a-stock-tracker-web)" != 'true 0' ]]; then
+    echo 'Web failed to remain running after proxy reload.' >&2
     exit 1
 fi
-echo 'Deployed: web and worker running, Nginx reloaded, HTTPS origin healthy.'
+echo 'Deployed: read-only web running, retired worker removed, Nginx reloaded, HTTPS origin healthy.'

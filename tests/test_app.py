@@ -1,10 +1,6 @@
-"""Tests for ASGI application security middleware and lifespans."""
+"""Application authentication, lifecycle and ASGI security regressions."""
 
 import asyncio
-import inspect
-import json
-import threading
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -14,13 +10,6 @@ import pytest
 from a_stock_tracker import app
 from a_stock_tracker.app import SecurityMiddleware
 from a_stock_tracker.auth import AuthError, check_production_auth_config
-from a_stock_tracker.workspace import (
-    connect_workspace,
-    get_watch_item,
-    import_snapshot,
-    initialize,
-    register_run,
-)
 
 
 @pytest.mark.parametrize(
@@ -29,8 +18,11 @@ from a_stock_tracker.workspace import (
         ("/upload/malicious_file", b"127.0.0.1:8550", 404),
         ("/", b"external.domain.com", 403),
         ("/", b"127.0.0.1:8550", 200),
+        ("/research", b"127.0.0.1:8550", 404),
+        ("/discover", b"127.0.0.1:8550", 404),
+        ("/company/600001.SH", b"127.0.0.1:8550", 404),
+        ("/jobs/old", b"127.0.0.1:8550", 404),
     ],
-    ids=["blocks-upload", "blocks-external-host", "allows-loopback"],
 )
 def test_asgi_demo_request_boundary(path, host, status):
     async def _test():
@@ -201,20 +193,6 @@ def test_demo_origin_scheme_mismatch():
     assert s_lh._validate_origin("http://127.0.0.1:8550") is False
 
 
-def app_controls(control):
-    yield control
-    children = list(getattr(control, "controls", None) or [])
-    content = getattr(control, "content", None)
-    if isinstance(content, ft.Control):
-        children.append(content)
-    for child in children:
-        yield from app_controls(child)
-
-
-def research_form(control):
-    return next(c for c in app_controls(control) if c.key == "research-form")
-
-
 class AppMockPage:
     def __init__(self, auth=None):
         self.title = ""
@@ -230,16 +208,8 @@ class AppMockPage:
         self.navigation_bar = None
         self.updated_count = 0
         self.logged_out = False
-        self.views = [SimpleNamespace(on_scroll=None)]
-        self.route = "/research"
+        self.route = "/"
         self.scroll_offset = 0
-        self.dialog = None
-
-    def show_dialog(self, dialog):
-        self.dialog = dialog
-
-    def pop_dialog(self):
-        self.dialog = None
 
     async def push_route(self, route):
         self.route = route
@@ -258,2034 +228,249 @@ class AppMockPage:
         self.logged_out = True
 
 
-def test_completed_update_preserves_home_input_until_result_is_clicked(tmp_path, monkeypatch):
-    initialize(tmp_path, "demo", journal_mode="DELETE")
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-    monkeypatch.setattr(app, "STATE_DIR", tmp_path)
-    actor = app.create_demo_actor()
-    monkeypatch.setattr(app, "create_demo_actor", lambda: actor)
-    job = app.request_company_update(actor, "600002", "poll-test", tmp_path, "demo")
-    monkeypatch.setattr(app, "get_update_job", lambda *args: {**job, "status": "succeeded"})
+def app_controls(control):
+    yield control
+    for child in getattr(control, "controls", None) or []:
+        yield from app_controls(child)
+    content = getattr(control, "content", None)
+    if isinstance(content, ft.Control):
+        yield from app_controls(content)
 
-    async def check():
-        tick, completed = asyncio.Event(), asyncio.Event()
-        real_sleep = asyncio.sleep
 
-        async def sleep(delay):
-            if delay == 2:
-                await tick.wait()
-            else:
-                await real_sleep(delay)
+@pytest.mark.parametrize("user_id", ["12345678", 12345678, "other", "999", None, True])
+def test_owner_login_and_logout(monkeypatch, user_id):
+    monkeypatch.setattr(app, "APP_MODE", "production")
+    monkeypatch.setattr(app, "GITHUB_ALLOWED_USER_ID", "12345678")
+    actors = []
 
-        monkeypatch.setattr(app.asyncio, "sleep", sleep)
+    def read(actor, root):
+        actors.append(actor)
+        return None
 
-        class Page(AppMockPage):
-            def update(self):
-                super().update()
-                if any(
-                    isinstance(c, ft.Button) and c.content == "查看更新结果" and c.visible
-                    for root in self.controls
-                    for c in app_controls(root)
-                ):
-                    completed.set()
+    monkeypatch.setattr(app, "load_board", read)
 
-        page = Page()
+    async def run():
+        page = AppMockPage(auth=MagicMock(user={"id": user_id}))
         await app.build_app()(page)
-        code = next(
-            c
-            for c in app_controls(page.controls[0])
-            if isinstance(c, ft.TextField) and c.label == "指定公司代码"
-        )
-        code.value = "600003"
-        tick.set()
-        await asyncio.wait_for(completed.wait(), timeout=3)
-        assert page.route == "/research" and code.value == "600003"
-        assert code in list(app_controls(page.controls[0]))
-        result = next(
-            c
-            for c in app_controls(page.controls[0])
-            if isinstance(c, ft.Button) and c.content == "查看更新结果"
-        )
-        await result.on_click(None)
-        assert page.route == "/company/600002.SH"
-        await page.on_close(None)
-
-    asyncio.run(check())
-
-
-@pytest.mark.parametrize("invalidate", ["navigation", "disconnect", "revocation"])
-def test_empty_home_entry_expires_with_page(tmp_path, monkeypatch, invalidate):
-    initialize(tmp_path, "demo", journal_mode="DELETE")
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-    monkeypatch.setattr(app, "STATE_DIR", tmp_path)
-    actor = app.create_demo_actor()
-    monkeypatch.setattr(app, "create_demo_actor", lambda: actor)
-
-    async def check():
-        page = AppMockPage()
-        await app.build_app()(page)
-        controls = list(app_controls(page.controls[0]))
-        entry = next(
-            c for c in controls if isinstance(c, ft.Button) and c.content == "前往发现候选"
-        )
-        if invalidate == "navigation":
-            await page.on_route_change(SimpleNamespace(route="/settings"))
-        elif invalidate == "disconnect":
-            await page.on_disconnect(None)
-        else:
-            actor.revoke()
-        route, updates = page.route, page.updated_count
-        await entry.on_click(None)
-        assert page.route == route and page.updated_count == updates
-        await page.on_close(None)
-
-    asyncio.run(check())
-
-
-@pytest.mark.parametrize("kind", ["peer", "watch"])
-@pytest.mark.parametrize(
-    "invalidate", ["navigation", "disconnect", "revocation", "uncertain", "blocked"]
-)
-def test_update_submit_lifecycle_and_uncertain_receipt(tmp_path, monkeypatch, invalidate, kind):
-    initialize(tmp_path, "demo", journal_mode="DELETE")
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-    monkeypatch.setattr(app, "STATE_DIR", tmp_path)
-    actor = app.create_demo_actor()
-    monkeypatch.setattr(app, "create_demo_actor", lambda: actor)
-    run = import_snapshot(
-        tmp_path, Path(__file__).parent / "fixtures/peer_complete_v1.json", "demo"
-    )
-    app.save_watch(actor, "600001.SH", run, {}, 0, tmp_path, "demo")
-    service_name = f"request_{kind}_update"
-    real_submit = getattr(app, service_name)
-    calls = []
-
-    def uncertain(*args):
-        calls.append(args[1 if kind == "watch" else 2])
-        if invalidate == "blocked":
-            raise app.ServiceError("交易日历缺失或未覆盖昨日；旧资料仍可查看，本次不提交更新")
-        result = real_submit(*args)
-        if len(calls) == 1:
-            raise TimeoutError("synthetic receipt lost")
-        return result
-
-    monkeypatch.setattr(app, service_name, uncertain)
-
-    async def check():
-        page = AppMockPage()
-        await app.build_app()(page)
-        if kind == "peer":
-            await page.on_route_change(SimpleNamespace(route="/discover"))
-        button = next(
-            c
-            for c in app_controls(page.controls[0])
-            if isinstance(c, ft.Button)
-            and c.content == ("更新资料" if kind == "watch" else "查找同业")
-        )
-        if invalidate == "navigation":
-            await page.on_route_change(SimpleNamespace(route="/settings"))
-        elif invalidate == "disconnect":
-            await page.on_disconnect(None)
-        elif invalidate == "revocation":
-            actor.revoke()
-        await button.on_click(None)
-        if invalidate == "uncertain":
-            assert not button.disabled and len(calls) == 1
-            assert any(
-                "提交结果未确认" in str(c.value)
-                for c in app_controls(page.controls[0])
-                if isinstance(c, ft.Text)
-            )
-            await button.on_click(None)
-            assert calls[0] == calls[1]
-            assert (
-                page.route.startswith("/discover") if kind == "peer" else page.route == "/research"
-            )
-            texts = [c.value for c in app_controls(page.controls[0]) if isinstance(c, ft.Text)]
-            assert any(("更新 1 家" if kind == "watch" else "最近更新：") in t for t in texts)
-        elif invalidate == "blocked":
-            assert not button.disabled and len(calls) == 1
-            texts = [c.value for c in app_controls(page.controls[0]) if isinstance(c, ft.Text)]
-            assert any("本次不提交更新" in text and "复用原请求编号" in text for text in texts)
-        else:
-            assert not calls
-        with connect_workspace(tmp_path, "demo") as conn:
-            assert conn.execute("SELECT count(*) FROM update_jobs").fetchone()[0] == (
-                1 if invalidate == "uncertain" else 0
-            )
-        await page.on_close(None)
-
-    asyncio.run(check())
-
-
-def test_home_pause_fold_resume_and_stale_callback(tmp_path, monkeypatch):
-    from a_stock_tracker.services import save_watch
-
-    initialize(tmp_path, "demo", journal_mode="DELETE")
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-    monkeypatch.setattr(app, "STATE_DIR", tmp_path)
-    first = import_snapshot(
-        tmp_path, Path(__file__).parent / "fixtures/peer_complete_v1.json", "demo"
-    )
-    save_watch(
-        app.create_demo_actor(), "600001.SH", first, {"reason": "合成笔记"}, 0, tmp_path, "demo"
-    )
-
-    async def check():
-        page = AppMockPage()
-        await app.build_app()(page)
-
-        def controls():
-            return list(app_controls(page.controls[0]))
-
-        def button(label):
-            return next(c for c in controls() if isinstance(c, ft.Button) and c.content == label)
-
-        pause = button("暂停关注")
-        await pause.on_click(SimpleNamespace(control=pause))
-        assert any("待处理：0 家" in str(c.value) for c in controls() if isinstance(c, ft.Text))
-        folded = next(
-            c
-            for c in controls()
-            if isinstance(c, ft.Column) and c.controls and isinstance(c.controls[0], ft.Card)
-        )
-        assert not folded.visible
-        toggle = button("显示已暂停 (1)")
-        await toggle.on_click(None)
-        assert folded.visible
-        resume = button("恢复为等待证据")
-        await resume.on_click(SimpleNamespace(control=resume))
-        assert any("待处理：1 家" in str(c.value) for c in controls() if isinstance(c, ft.Text))
-        pause.disabled = False
-        await pause.on_click(SimpleNamespace(control=pause))  # Detached event must not re-pause.
-        with connect_workspace(tmp_path, "demo") as conn:
-            item = get_watch_item(conn, "600001.SH")
-            assert item["status"] == "observe" and item["reason"] == "合成笔记"
-            assert item["ack_run_id"] is None
-        await page.on_close(None)
-
-    asyncio.run(check())
-
-
-def test_home_cards_show_each_company_date(tmp_path, monkeypatch):
-    initialize(tmp_path, "demo", journal_mode="DELETE")
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-    monkeypatch.setattr(app, "STATE_DIR", tmp_path)
-    monkeypatch.setattr(
-        app,
-        "get_home",
-        lambda *args: {
-            "valuation_date": "各公司数据日不同",
-            "important_review_count": 0,
-            "total_watch_count": 2,
-            "watch_items": [
-                {
-                    "code": code,
-                    "name": code,
-                    "status": "observe",
-                    "reason": "测试",
-                    "has_change": False,
-                    "needs_attention": False,
-                    "change_summary": "",
-                    "valuation_date": day,
-                }
-                for code, day in (("600001.SH", "2026-09-20"), ("600002.SH", "2026-09-21"))
-            ],
-        },
-    )
-
-    async def _test():
-        page = AppMockPage()
-        await app.build_app()(page)
-        assert page.updated_count == 2  # Shell first, then data after async load.
-        home = page.controls[0].controls[0].controls[0].content.controls[1].content
-        assert "各公司数据日不同" in home.controls[0].content.controls[0].controls[1].value
-        cards = [c for c in app_controls(home) if isinstance(c, ft.Card)]
-        assert len(cards) == 2
-        for card, day in zip(cards, ("2026-09-20", "2026-09-21")):
-            texts = [c.value for c in app_controls(card) if isinstance(c, ft.Text)]
-            assert f"数据日：{day}" in texts
-            assert not any("理由" in str(t) for t in texts)
-
-    asyncio.run(_test())
-
-
-def test_home_shell_renders_before_slow_data_read(tmp_path, monkeypatch):
-    initialize(tmp_path, "demo", journal_mode="DELETE")
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-    monkeypatch.setattr(app, "STATE_DIR", tmp_path)
-    started = threading.Event()
-    release = threading.Event()
-
-    def slow_home(*args):
-        started.set()
-        assert release.wait(timeout=5)
-        return {
-            "valuation_date": "暂无",
-            "important_review_count": 0,
-            "total_watch_count": 0,
-            "watch_items": [],
-        }
-
-    monkeypatch.setattr(app, "get_home", slow_home)
-
-    async def check():
-        page = AppMockPage()
-        task = asyncio.create_task(app.build_app()(page))
+        event = ft.LoginEvent(name="login", control=None, error=None, error_description=None)
         try:
-            assert await asyncio.to_thread(started.wait, 3)
-            assert page.updated_count == 1
-            assert page.navigation_bar is not None
-            assert page.controls  # Header and loading feedback precede the SQLite read.
-            assert any(
-                "正在读取资料" in c.value
-                for c in app_controls(page.controls[0])
-                if isinstance(c, ft.Text)
-            )
-        finally:
-            release.set()
-        await asyncio.wait_for(task, timeout=5)
-        assert page.updated_count == 2
-
-    asyncio.run(check())
-
-
-def test_real_oauth_login_callback_flow(tmp_path, monkeypatch):
-    initialize(tmp_path, "production", journal_mode="DELETE")
-    monkeypatch.setattr(app, "APP_MODE", "production")
-    monkeypatch.setattr(app, "GITHUB_CLIENT_ID", "test_client_id")
-    monkeypatch.setattr(app, "GITHUB_CLIENT_SECRET", "test_client_secret")
-    monkeypatch.setattr(app, "GITHUB_ALLOWED_USER_ID", "12345678")
-    monkeypatch.setattr(app, "STATE_DIR", tmp_path)
-
-    async def _test():
-        main = app.build_app()
-        mock_auth = MagicMock()
-        mock_auth.user = {"id": "12345678"}
-        page = AppMockPage(auth=mock_auth)
-        await main(page)
-        assert callable(page.on_login)
-
-        col = page.controls[0].controls[0].controls[0]
-        content_container = col.content.controls[1]
-
-        # 1. Successful login from login page renders private home view
-        success_event = ft.LoginEvent(
-            name="login", control=None, error=None, error_description=None
-        )
-        await page.on_login(success_event)
-        assert content_container.content is not None
-        assert any(
-            "波段机会" == getattr(c, "value", "") for c in content_container.content.controls
-        )
-
-        # 2. Provider error arriving while viewing private page must clear private view
-        provider_err_event = ft.LoginEvent(
-            name="login",
-            control=None,
-            error="access_denied",
-            error_description="The user cancelled the authorization request.",
-        )
-        await page.on_login(provider_err_event)
-        login_view = content_container.content
-        assert any(
-            isinstance(ctrl, ft.Button) and ctrl.content == "使用 GitHub 登录"
-            for ctrl in login_view.controls
-        )
-        login_msg = login_view.controls[3]
-        assert "登录失败: The user cancelled" in login_msg.value
-
-        # 3. Re-login successfully
-        await page.on_login(success_event)
-        assert any(
-            "波段机会" == getattr(c, "value", "") for c in content_container.content.controls
-        )
-
-        # 4. Unauthorized user error arriving while viewing private page must clear private view
-        mock_auth.user = {"id": "87654321"}
-        unauth_event = ft.LoginEvent(name="login", control=None, error=None, error_description=None)
-        await page.on_login(unauth_event)
-        login_view = content_container.content
-        assert any(
-            isinstance(ctrl, ft.Button) and ctrl.content == "使用 GitHub 登录"
-            for ctrl in login_view.controls
-        )
-        login_msg = login_view.controls[3]
-        assert "登录被拒绝: unauthorized GitHub user ID" in login_msg.value
-
-    asyncio.run(_test())
-
-
-def test_real_disconnect_and_reconnect_lifecycle(tmp_path, monkeypatch):
-    initialize(tmp_path, "production", journal_mode="DELETE")
-    monkeypatch.setattr(app, "APP_MODE", "production")
-    monkeypatch.setattr(app, "GITHUB_CLIENT_ID", "test_client_id")
-    monkeypatch.setattr(app, "GITHUB_CLIENT_SECRET", "test_client_secret")
-    monkeypatch.setattr(app, "GITHUB_ALLOWED_USER_ID", "12345678")
-    monkeypatch.setattr(app, "STATE_DIR", tmp_path)
-
-    from a_stock_tracker.workspace import add_watch_item, connect_workspace, register_run
-
-    init_snap = {
-        "rows": [
-            {
-                "code": "600001.SH",
-                "name": "测试标的甲",
-                "facts_usable": True,
-                "pb": 1.5,
-                "valuation_date": "2026-09-20",
-                "valuation_source": "tracker",
-                "financial_source": "tracker",
-                "risk_source": "tracker",
-                "annual_roes": [
-                    {"year": y, "roe": 14.0, "source": "tracker", "ann_date": f"{y + 1}0415"}
-                    for y in (2023, 2024, 2025)
-                ],
-                "roe_mean": 14.0,
-            }
-        ],
-        "results": {"ranking": [{"code": "600001.SH", "name": "测试标的甲", "position": 1}]},
-    }
-    snap_bytes = json.dumps(init_snap).encode("utf-8")
-    snap_path = tmp_path / "snapshots" / "init.json"
-    snap_path.parent.mkdir(parents=True, exist_ok=True)
-    snap_path.write_bytes(snap_bytes)
-
-    conn = connect_workspace(tmp_path, "production")
-    register_run(
-        conn,
-        run_id="run_init",
-        kind="peer",
-        anchor_code="600001.SH",
-        rule_id="peer-screen-v1",
-        captured_at="2026-09-20T16:00:00+08:00",
-        valuation_date="2026-09-20",
-        health="complete",
-        snapshot_path="snapshots/init.json",
-        snapshot_bytes=snap_bytes,
-    )
-    add_watch_item(conn, code="600001.SH", name="测试标的甲", added_run_id="run_init")
-    conn.commit()
-    conn.close()
-
-    async def _test():
-        main = app.build_app()
-        mock_auth = MagicMock()
-        mock_auth.user = {"id": "12345678"}
-        page = AppMockPage(auth=mock_auth)
-        await main(page)
-
-        # Successful login
-        success_event = ft.LoginEvent(
-            name="login", control=None, error=None, error_description=None
-        )
-        await page.on_login(success_event)
-        await page.on_route_change(SimpleNamespace(route="/research"))
-        col = page.controls[0].controls[0].controls[0]
-        content_container = col.content.controls[1]
-        assert any(
-            isinstance(c, ft.Card) or "关注" in getattr(c, "value", "")
-            for c in content_container.content.controls
-        )
-
-        # Navigate to company details
-        card = next(c for c in content_container.content.controls if isinstance(c, ft.Card))
-        await card.content.on_click(None)
-
-        # Find reason_field in personal research form card and type unsaved draft
-        form_card = research_form(content_container)
-        reason_field = form_card.controls[2]
-        assert "研究理由" in getattr(reason_field, "label", "")
-        assert reason_field.value == ""
-        reason_field.value = "未保存的草稿理由"
-        reason_field.on_change(None)
-
-        # 1. Brief disconnect and fast reconnect keeps authorization and preserves unsaved draft!
-        await page.on_disconnect(None)
-        await page.on_connect(None)
-        reconnected_form_card = research_form(content_container)
-        reconnected_reason_field = reconnected_form_card.controls[2]
-        assert reconnected_reason_field.value == "未保存的草稿理由"
-
-        # Save the form and confirm draft is cleared from page_state
-        save_btn = reconnected_form_card.controls[5].controls[0]
-        await save_btn.on_click(None)
-        feedback_text = reconnected_form_card.controls[6]
-        assert "保存成功" in feedback_text.value
-
-        # Strictly prove draft was cleared: update record directly in SQLite from another tab/process
-        from a_stock_tracker.workspace import get_watch_item, save_watch_item
-
-        db_conn = connect_workspace(tmp_path, "production")
-        current_item = get_watch_item(db_conn, "600001.SH")
-        assert current_item is not None
-        save_watch_item(
-            db_conn,
-            code="600001.SH",
-            expected_revision=current_item["revision"],
-            status="research",
-            reason="由另一会话在数据库中更新的最新理由",
-            next_check="新提示",
-        )
-        db_conn.commit()
-        db_conn.close()
-
-        # Reconnect: verifies fresh data is loaded from SQLite without resurrecting old in-memory values
-        await page.on_disconnect(None)
-        await page.on_connect(None)
-        saved_form_card = research_form(content_container)
-        saved_reason_field = saved_form_card.controls[2]
-        assert saved_reason_field.value == "由另一会话在数据库中更新的最新理由"
-
-        # 2. When actor expires during disconnect, reconnect redirects to login view
-        from a_stock_tracker import auth
-
-        orig_mono = auth.time.monotonic
-        monkeypatch.setattr(auth.time, "monotonic", lambda: orig_mono() + 100000.0)
-        await page.on_disconnect(None)
-        await page.on_connect(None)
-        login_view = content_container.content
-        assert any(
-            isinstance(ctrl, ft.Button) and ctrl.content == "使用 GitHub 登录"
-            for ctrl in login_view.controls
-        )
-
-        # 3. Session close revokes actor
-        monkeypatch.setattr(auth.time, "monotonic", orig_mono)
-        await page.on_login(success_event)
-        await page.on_route_change(SimpleNamespace(route="/research"))
-        assert any(
-            isinstance(c, ft.Card) or "关注" in getattr(c, "value", "")
-            for c in content_container.content.controls
-        )
-        await page.on_close(None)
-        await page.on_connect(None)
-        login_view = content_container.content
-        assert any(
-            isinstance(ctrl, ft.Button) and ctrl.content == "使用 GitHub 登录"
-            for ctrl in login_view.controls
-        )
-
-    asyncio.run(_test())
-
-
-def test_real_logout_cleanup_and_actor_revocation(tmp_path, monkeypatch):
-    initialize(tmp_path, "production", journal_mode="DELETE")
-    monkeypatch.setattr(app, "APP_MODE", "production")
-    monkeypatch.setattr(app, "GITHUB_CLIENT_ID", "test_client_id")
-    monkeypatch.setattr(app, "GITHUB_CLIENT_SECRET", "test_client_secret")
-    monkeypatch.setattr(app, "GITHUB_ALLOWED_USER_ID", "12345678")
-    monkeypatch.setattr(app, "STATE_DIR", tmp_path)
-
-    async def _test():
-        main = app.build_app()
-        mock_auth = MagicMock()
-        mock_auth.user = {"id": "12345678"}
-        page = AppMockPage(auth=mock_auth)
-        await main(page)
-
-        # Log in
-        await page.on_login(
-            ft.LoginEvent(name="login", control=None, error=None, error_description=None)
-        )
-        assert page.logged_out is False
-
-        # Navigate to settings
-        col = page.controls[0].controls[0].controls[0]
-        header = col.content.controls[0]
-        settings_btn = header.content.controls[2]
-        assert inspect.iscoroutinefunction(settings_btn.on_click)
-        await settings_btn.on_click(None)
-
-        content_container = col.content.controls[1]
-        settings_view = content_container.content
-        assert settings_view.controls[0].controls[1].value == "账户与运行信息"
-        settings_back = settings_view.controls[0].controls[0]
-        assert inspect.iscoroutinefunction(settings_back.on_click)
-        await settings_back.on_click(None)
-        assert content_container.content is not settings_view
-
-        await settings_btn.on_click(None)
-        logout_btn = content_container.content.controls[4]
-        await logout_btn.on_click(None)
-
-        assert page.logged_out is True
-        current_content = content_container.content
-        assert any(
-            isinstance(ctrl, ft.Button) and ctrl.content == "使用 GitHub 登录"
-            for ctrl in current_content.controls
-        )
-
-    asyncio.run(_test())
-
-
-@pytest.mark.parametrize("gap", ["unusable", "missing"])
-def test_company_gap_disables_ack_and_labels_old_facts(tmp_path, monkeypatch, gap):
-    initialize(tmp_path, "demo", journal_mode="DELETE")
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-    monkeypatch.setattr(app, "STATE_DIR", tmp_path)
-    fixture = Path(__file__).parent / "fixtures/peer_complete_v1.json"
-    previous_run = import_snapshot(tmp_path, fixture, "demo")
-    from a_stock_tracker.workspace import add_watch_item
-
-    snap = json.loads(fixture.read_text(encoding="utf-8"))
-    if gap == "missing":
-        snap["rows"] = snap["rows"][1:]
-    else:
-        snap["rows"][0].update(pb=None, facts_usable=False, financial_status="failed")
-    raw = json.dumps(snap, ensure_ascii=False).encode("utf-8")
-    path = "snapshots/new_gap.json"
-    (tmp_path / path).write_bytes(raw)
-    conn = connect_workspace(tmp_path, "demo")
-    try:
-        add_watch_item(conn, code="600001.SH", name="示例公司甲", added_run_id=previous_run)
-        register_run(
-            conn,
-            run_id="new_gap",
-            kind="peer",
-            anchor_code="600001.SH",
-            rule_id="peer-screen-v1",
-            captured_at="2026-09-21T16:00:00+08:00",
-            valuation_date="2026-09-21",
-            health="partial",
-            snapshot_path=path,
-            snapshot_bytes=raw,
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-    async def check():
-        page = AppMockPage()
-        await app.build_app()(page)
-        content = page.controls[0].controls[0].controls[0].content.controls[1]
-        home_card = next(c for c in content.content.controls if isinstance(c, ft.Card))
-        await home_card.content.on_click(None)
-        company = content.content
-        assert (
-            "缺少事实数据" if gap == "missing" else "本次尝试失败/数据缺口"
-        ) in company.controls[1].content.value
-        assert "2026-09-21" in company.controls[1].content.value
-        assert "旧可用事实（2026-09-20）" in company.controls[1].content.value
-        ack = next(c for c in app_controls(company) if c.key == "mark-reviewed")
-        assert ack.disabled is True
-        await ack.on_click(None)  # Even a stale callback cannot acknowledge old facts.
-        assert any(
-            "不可将旧资料标记" in c.value for c in app_controls(company) if isinstance(c, ft.Text)
-        )
-        company_back = company.controls[0].controls[0]
-        assert inspect.iscoroutinefunction(company_back.on_click)
-        await company_back.on_click(None)
-        assert content.content is not company
-
-    asyncio.run(check())
-    conn = connect_workspace(tmp_path, "demo")
-    try:
-        assert get_watch_item(conn, "600001.SH")["ack_run_id"] is None
-    finally:
-        conn.close()
-
-
-@pytest.mark.parametrize("damage", ["missing", "corrupt"])
-def test_company_latest_snapshot_error_disables_ack(tmp_path, monkeypatch, damage):
-    initialize(tmp_path, "demo", journal_mode="DELETE")
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-    monkeypatch.setattr(app, "STATE_DIR", tmp_path)
-    fixture = Path(__file__).parent / "fixtures/peer_complete_v1.json"
-    previous_run = import_snapshot(tmp_path, fixture, "demo")
-    from a_stock_tracker.workspace import add_watch_item
-
-    raw = json.dumps({"anchor": "600001.SH", "rows": [{"code": "600001.SH"}]}).encode()
-    path = tmp_path / "snapshots" / "latest.json"
-    path.write_bytes(raw)
-    conn = connect_workspace(tmp_path, "demo")
-    try:
-        add_watch_item(conn, code="600001.SH", name="示例公司甲", added_run_id=previous_run)
-        register_run(
-            conn,
-            run_id="latest",
-            kind="peer",
-            anchor_code="600001.SH",
-            rule_id="peer-screen-v1",
-            captured_at="2026-09-21T16:00:00+08:00",
-            valuation_date="2026-09-21",
-            health="complete",
-            snapshot_path="snapshots/latest.json",
-            snapshot_bytes=raw,
-        )
-        conn.commit()
-    finally:
-        conn.close()
-    if damage == "missing":
-        path.unlink()
-    else:
-        path.write_text("corrupt", encoding="utf-8")
-
-    async def check():
-        page = AppMockPage()
-        await app.build_app()(page)
-        content = page.controls[0].controls[0].controls[0].content.controls[1]
-        home_card = next(c for c in content.content.controls if isinstance(c, ft.Card))
-        await home_card.content.on_click(None)
-        company = content.content
-        assert "快照文件损坏或无法读取" in company.controls[1].content.value
-        assert "旧可用事实" in company.controls[1].content.value
-        ack = next(c for c in app_controls(company) if c.key == "mark-reviewed")
-        assert ack.disabled is True
-        await ack.on_click(None)
-        assert any(
-            "不可将旧资料标记" in c.value for c in app_controls(company) if isinstance(c, ft.Text)
-        )
-
-    asyncio.run(check())
-    conn = connect_workspace(tmp_path, "demo")
-    try:
-        assert get_watch_item(conn, "600001.SH")["ack_run_id"] is None
-    finally:
-        conn.close()
-
-
-def test_company_callbacks_show_safe_feedback_on_unexpected_error(tmp_path, monkeypatch):
-    initialize(tmp_path, "demo", journal_mode="DELETE")
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-    monkeypatch.setattr(app, "STATE_DIR", tmp_path)
-    fixture = Path(__file__).parent / "fixtures/peer_complete_v1.json"
-    first = import_snapshot(tmp_path, fixture, "demo")
-    from a_stock_tracker.workspace import add_watch_item
-
-    with connect_workspace(tmp_path, "demo") as conn:
-        add_watch_item(conn, code="600001.SH", name="示例公司甲", added_run_id=first)
-
-    def fail(**_kwargs):
-        raise RuntimeError("private diagnostic")
-
-    monkeypatch.setattr(app, "save_watch", fail)
-    monkeypatch.setattr(app, "mark_seen", fail)
-
-    async def check():
-        page = AppMockPage()
-        await app.build_app()(page)
-        content = page.controls[0].controls[0].controls[0].content.controls[1]
-        card = next(c for c in content.content.controls if isinstance(c, ft.Card))
-        await card.content.on_click(None)
-        company = content.content
-        form = research_form(company).controls
-        buttons = form[5]
-        feedback = form[6]
-        await buttons.controls[0].on_click(None)
-        assert feedback.value == "保存失败: 请稍后重试"
-        ack = next(c for c in app_controls(company) if c.key == "mark-reviewed")
-        await ack.on_click(None)
-        ack_feedback = next(c for c in app_controls(company) if c.key == "review-feedback")
-        assert ack_feedback.value == "标记已阅失败: 请稍后重试"
-        assert "private diagnostic" not in feedback.value
-
-    asyncio.run(check())
-
-
-def test_timeout_boundaries_configured():
-    assert app.FLET_SESSION_TIMEOUT > 0
-    assert app.FLET_OAUTH_STATE_TIMEOUT > 0
-    assert app.FLET_SESSION_TIMEOUT == 3600
-    assert app.FLET_OAUTH_STATE_TIMEOUT == 600
-
-
-def test_disconnect_draft_version_conflict_prevents_overwrite(tmp_path, monkeypatch):
-    initialize(tmp_path, "production", journal_mode="DELETE")
-    monkeypatch.setattr(app, "APP_MODE", "production")
-    monkeypatch.setattr(app, "GITHUB_CLIENT_ID", "test_client_id")
-    monkeypatch.setattr(app, "GITHUB_CLIENT_SECRET", "test_client_secret")
-    monkeypatch.setattr(app, "GITHUB_ALLOWED_USER_ID", "12345678")
-    monkeypatch.setattr(app, "STATE_DIR", tmp_path)
-
-    from a_stock_tracker.workspace import (
-        add_watch_item,
-        connect_workspace,
-        get_watch_item,
-        register_run,
-        save_watch_item,
-    )
-
-    init_snap = {
-        "rows": [
-            {
-                "code": "600001.SH",
-                "name": "测试标的甲",
-                "facts_usable": True,
-                "pb": 1.5,
-                "valuation_date": "2026-09-20",
-                "valuation_source": "tracker",
-                "financial_source": "tracker",
-                "risk_source": "tracker",
-                "annual_roes": [
-                    {"year": y, "roe": 14.0, "source": "tracker", "ann_date": f"{y + 1}0415"}
-                    for y in (2023, 2024, 2025)
-                ],
-                "roe_mean": 14.0,
-            }
-        ],
-        "results": {"ranking": [{"code": "600001.SH", "name": "测试标的甲", "position": 1}]},
-    }
-    snap_bytes = json.dumps(init_snap).encode("utf-8")
-    snap_path = tmp_path / "snapshots" / "init.json"
-    snap_path.parent.mkdir(parents=True, exist_ok=True)
-    snap_path.write_bytes(snap_bytes)
-
-    conn = connect_workspace(tmp_path, "production")
-    register_run(
-        conn,
-        run_id="run_init",
-        kind="peer",
-        anchor_code="600001.SH",
-        rule_id="peer-screen-v1",
-        captured_at="2026-09-20T16:00:00+08:00",
-        valuation_date="2026-09-20",
-        health="complete",
-        snapshot_path="snapshots/init.json",
-        snapshot_bytes=snap_bytes,
-    )
-    add_watch_item(conn, code="600001.SH", name="测试标的甲", added_run_id="run_init")
-    conn.commit()
-    conn.close()
-
-    async def _test():
-        main = app.build_app()
-        mock_auth = MagicMock()
-        mock_auth.user = {"id": "12345678"}
-        page = AppMockPage(auth=mock_auth)
-        await main(page)
-
-        # Login, then explicitly open the preserved legacy workspace.
-        await page.on_login(
-            ft.LoginEvent(name="login", control=None, error=None, error_description=None)
-        )
-        await page.on_route_change(SimpleNamespace(route="/research"))
-        col = page.controls[0].controls[0].controls[0]
-        content_container = col.content.controls[1]
-
-        # Navigate to company
-        card = next(c for c in content_container.content.controls if isinstance(c, ft.Card))
-        await card.content.on_click(None)
-
-        # Type draft reason while revision is 1
-        form_card = research_form(content_container)
-        reason_field = form_card.controls[2]
-        reason_field.value = "用户编写中的草稿"
-        reason_field.on_change(None)
-
-        # Disconnect happens
-        await page.on_disconnect(None)
-
-        # While disconnected, another session updates SQLite to revision 2
-        db_conn = connect_workspace(tmp_path, "production")
-        it = get_watch_item(db_conn, "600001.SH")
-        assert it is not None
-        save_watch_item(
-            db_conn,
-            code="600001.SH",
-            expected_revision=it["revision"],
-            status="research",
-            reason="并发会话已提交更新",
-        )
-        db_conn.commit()
-        db_conn.close()
-
-        # Reconnect
-        await page.on_connect(None)
-
-        reconnected_card = research_form(content_container)
-        ctrls = reconnected_card.controls
-        # Conflict banner inserted at index 1
-        assert "版本冲突" in getattr(ctrls[1].content.controls[0], "value", "")
-        # Reason field preserved at index 3
-        reason_in_ui = ctrls[3]
-        assert reason_in_ui.value == "用户编写中的草稿"
-
-        # Save button disabled
-        btn_row = ctrls[6]
-        save_btn = btn_row.controls[0]
-        assert save_btn.disabled is True
-
-        # Direct save blocked
-        await save_btn.on_click(None)
-        feedback = ctrls[7]
-        assert "版本冲突" in feedback.value
-
-        # While in conflict mode, user continues typing edits
-        reason_in_ui.value = "冲突状态下继续编辑的内容"
-        reason_in_ui.on_change(None)
-
-        # Second disconnect happens
-        await page.on_disconnect(None)
-
-        # Second reconnect
-        await page.on_connect(None)
-
-        reconnected_card2 = research_form(content_container)
-        ctrls2 = reconnected_card2.controls
-        # Conflict banner MUST STILL be present
-        assert "版本冲突" in getattr(ctrls2[1].content.controls[0], "value", "")
-        # Reason field preserved with latest typed edits
-        reason_in_ui2 = ctrls2[3]
-        assert reason_in_ui2.value == "冲突状态下继续编辑的内容"
-        # Save button MUST STILL be disabled
-        save_btn2 = ctrls2[6].controls[0]
-        assert save_btn2.disabled is True
-
-        # Direct save still blocked
-        await save_btn2.on_click(None)
-        feedback2 = ctrls2[7]
-        assert "版本冲突" in feedback2.value
-
-        # Discard draft button
-        discard_btn = ctrls2[1].content.controls[2]
-        assert "放弃草稿" in discard_btn.content
-        await discard_btn.on_click(None)
-
-        # Reloads fresh DB revision 2
-        fresh_card = research_form(content_container)
-        fresh_ctrls = fresh_card.controls
-        fresh_reason = fresh_ctrls[2]
-        assert fresh_reason.value == "并发会话已提交更新"
-        fresh_save_btn = fresh_ctrls[5].controls[0]
-        assert fresh_save_btn.disabled is False
-
-    asyncio.run(_test())
-
-
-def test_discover_damaged_snapshot_shows_fallback_then_error(tmp_path, monkeypatch):
-    initialize(tmp_path, "demo", journal_mode="DELETE")
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-    monkeypatch.setattr(app, "STATE_DIR", tmp_path)
-    fixture = Path(__file__).parent / "fixtures/peer_complete_v1.json"
-    first = import_snapshot(tmp_path, fixture, "demo")
-    raw = b"{}"
-    path = tmp_path / "snapshots" / "latest.json"
-    path.write_bytes(raw)
-    with connect_workspace(tmp_path, "demo") as conn:
-        register_run(
-            conn,
-            run_id="latest",
-            kind="peer",
-            anchor_code="600001.SH",
-            rule_id="peer-screen-v1",
-            captured_at="2026-09-21T16:00:00+08:00",
-            valuation_date="2026-09-21",
-            health="complete",
-            snapshot_path="snapshots/latest.json",
-            snapshot_bytes=raw,
-        )
-        old_path = (
-            tmp_path
-            / conn.execute(
-                "SELECT snapshot_path FROM screen_runs WHERE run_id=?", (first,)
-            ).fetchone()["snapshot_path"]
-        )
-    path.unlink()
-
-    async def check():
-        page = AppMockPage()
-        await app.build_app()(page)
-        page.navigation_bar.selected_index = 1
-        await page.navigation_bar.on_change(SimpleNamespace(control=page.navigation_bar))
-        disc = page.controls[0].controls[0].controls[0].content.controls[1].content
-        text = "\n".join(str(c.value) for c in app_controls(disc) if isinstance(c, ft.Text))
-        assert "最新同业运行 (latest) 快照损坏" in text
-        assert "PB 1.85 倍" in text  # History facts, not just an empty ranking shell.
-        old_path.unlink()
-        await page.navigation_bar.on_change(SimpleNamespace(control=page.navigation_bar))
-        disc = page.controls[0].controls[0].controls[0].content.controls[1].content
-        text = "\n".join(str(c.value) for c in app_controls(disc) if isinstance(c, ft.Text))
-        assert "最新同业快照损坏或无法读取" in text
-        assert "PB 1.85 倍" not in text
-
-    asyncio.run(check())
-
-
-@pytest.mark.parametrize(
-    "values",
-    [[30, 20, -5], [10, 20, 15], [12, 13, 14], [8, 8, 8], [10, -2, -1], [10, -5, 15]],
-)
-def test_discover_cautions_are_outside_collapsed_details_without_changing_ranks(
-    tmp_path, monkeypatch, values
-):
-    from a_stock_tracker.research import rank_peers
-    from a_stock_tracker.services import get_peer_discover, roe_trend
-
-    initialize(tmp_path, "demo", journal_mode="DELETE")
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-    monkeypatch.setattr(app, "STATE_DIR", tmp_path)
-    snapshot = json.loads((Path(__file__).parent / "fixtures/peer_complete_v1.json").read_text())
-    row = snapshot["rows"][0]
-    for annual, value in zip(row["annual_roes"], values):
-        annual["roe"] = value
-    row["roe_mean"] = sum(values) / 3
-    snapshot["results"] = rank_peers(snapshot["rows"], snapshot["anchor"], ["600001"])
-    path = tmp_path / "cautions.json"
-    path.write_text(json.dumps(snapshot))
-    import_snapshot(tmp_path, path, "demo")
-
-    async def check():
-        page = AppMockPage()
-        await app.build_app()(page)
-        await page.on_route_change(SimpleNamespace(route="/discover?anchor=600001.SH"))
-        card = next(
-            c
-            for c in app_controls(page.controls[0])
-            if isinstance(c, ft.Column)
-            and c.controls
-            and isinstance(c.controls[0], ft.Text)
-            and "(600001.SH)" in str(c.controls[0].value)
-        )
-        texts = [c.value for c in card.controls if isinstance(c, ft.Text)]
-        assert roe_trend(row) in texts
-        assert "系统未核查业务可比性，行业标签不能证明业务相似。" in texts
-        assert ("待核查：复核历史盈利能力下降" in texts) == (values[-1] < values[-2])
-        assert ("最新年度ROE为负" in " ".join(texts)) == (values[-1] < 0)
-        assert ("历史年度ROE出现负值" in " ".join(texts)) == (
-            values[-1] >= 0 and any(value < 0 for value in values[:-1])
-        )
-        detail = next(c for c in card.controls if isinstance(c, ft.ExpansionTile))
-        assert not detail.expanded
-        assert not any(
-            isinstance(c, ft.Text) and c.value == roe_trend(row) for c in detail.controls
-        )
-        board = get_peer_discover(app.create_demo_actor(), "600001.SH", tmp_path, "demo")
-        for key in ("ranking", "top", "qualified_codes"):
-            assert board["results"][key] == snapshot["results"][key]
-        assert json.loads(path.read_text()) == snapshot
-        await page.on_close(None)
-
-    asyncio.run(check())
-
-
-def test_discover_join_context_navigation_and_unsaved_guard(tmp_path, monkeypatch):
-    initialize(tmp_path, "demo", journal_mode="DELETE")
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-    monkeypatch.setattr(app, "STATE_DIR", tmp_path)
-    fixture = Path(__file__).parent / "fixtures/peer_complete_v1.json"
-    first = import_snapshot(tmp_path, fixture, "demo")
-
-    async def check():
-        page = AppMockPage()
-        await app.build_app()(page)
-        content = page.controls[0].controls[0].controls[0].content.controls[1]
-
-        def controls():
-            return list(app_controls(content.content))
-
-        def button(label):
-            return next(c for c in controls() if isinstance(c, ft.Button) and c.content == label)
-
-        entry = button("前往发现候选")
-        assert (
-            sum(isinstance(c, ft.Button) and c.content == "前往发现候选" for c in controls()) == 1
-        )
-        assert not any(isinstance(c, ft.Button) and c.content == "开始同业研究" for c in controls())
-        await entry.on_click(None)
-        discover_route = page.route
-        assert page.navigation_bar.selected_index == 1
-        texts = [str(c.value) for c in controls() if isinstance(c, ft.Text)]
-        assert sum("600001.SH) · 参照公司" in t for t in texts) == 1
-        assert any("2023年 ROE 12.50%" in t for t in texts)
-        assert any("ROE 均值差" in t for t in texts)
-        assert any("PB名次" in t for t in texts)
-        assert not any("PB rank" in t for t in texts)
-        assert any("中位数 1.68 倍（4家，含本公司）" in t for t in texts)
-        assert any("ROE趋势（2023—2025）：连续上升" in t for t in texts)
-        assert any("尚未核查" in t and "现金流" in t for t in texts)
-        await button("展开完整比较").on_click(None)
-        page.views[0].on_scroll(SimpleNamespace(pixels=320))
-        # Main order starts at company B. Joining is explicit and idempotent.
-        add = button("关注")
-        await add.on_click(None)
-        with connect_workspace(tmp_path, "demo") as conn:
-            saved = get_watch_item(conn, "600002.SH")
-        assert saved["ack_run_id"] is None
-        assert saved["added_run_id"] == first
-        assert saved["revision"] == 1 and saved["reason"] == ""
-        await add.on_click(None)  # This button now opens existing research.
-        assert page.route == "/company/600002.SH"
-        assert page.navigation_bar.selected_index == 1
-        # New data arrives while a detail is open; returning must keep the old board.
-        import_snapshot(tmp_path, fixture.with_name("peer_second_change.json"), "demo")
-        back = next(c for c in controls() if isinstance(c, ft.IconButton) and c.tooltip == "返回")
-        await back.on_click(None)
-        assert page.route == discover_route and page.scroll_offset == 320
-        assert any("扫描 2026-09-20" in str(c.value) for c in controls() if isinstance(c, ft.Text))
-        full = next(
-            c
-            for c in controls()
-            if isinstance(c, ft.Column)
-            and c.controls
-            and isinstance(c.controls[0], ft.Button)
-            and c.controls[0].content == "展开完整比较"
-        )
-        assert full.controls[1].visible
-        # Browser navigation uses the same context, without a new submission.
-        await page.on_route_change(SimpleNamespace(route="/company/600002.SH"))
-        reason = next(c for c in controls() if isinstance(c, ft.TextField) and "理由" in c.label)
-        assert reason.visible  # Followed companies expose the optional research editor.
-        reason.value = "未保存草稿"
-        await page.on_route_change(SimpleNamespace(route=discover_route))
-        assert page.dialog is not None
-        await page.dialog.actions[0].on_click(None)  # Continue editing.
-        assert page.dialog is None and reason.value == "未保存草稿"
-        await page.on_route_change(SimpleNamespace(route=discover_route))
-        await page.dialog.actions[1].on_click(None)  # Explicit discard.
-        assert page.route == discover_route
-        with connect_workspace(tmp_path, "demo") as conn:
-            assert get_watch_item(conn, "600002.SH")["reason"] == ""
-            assert conn.execute("SELECT count(*) FROM update_jobs").fetchone()[0] == 0
-        # A detached old add callback cannot write after navigation.
-        stale_add = button("关注")
-        original_update = page.update
-
-        def late_scroll_during_render():
-            original_update()
-            if page.route == "/research":
-                page.views[0].on_scroll(SimpleNamespace(pixels=2500))
-
-        page.update = late_scroll_during_render
-        page.navigation_bar.selected_index = 0
-        await page.navigation_bar.on_change(SimpleNamespace(control=page.navigation_bar))
-        assert page.scroll_offset == 0  # A departing long page must not steal Home's offset.
-        page.update = original_update
-        page.views[0].on_scroll(SimpleNamespace(pixels=0))
-        await stale_add.on_click(None)
-        # The new detail-page follow/toggle callbacks must also expire on navigation.
-        await page.on_route_change(SimpleNamespace(route="/company/600001.SH"))
-        stale_follow = button("关注")
-        stale_toggle = button("展开可选笔记与状态")
-        await page.on_route_change(SimpleNamespace(route="/research"))
-        await stale_follow.on_click(None)
-        await stale_toggle.on_click(None)
-        assert page.route == "/research"
-        with connect_workspace(tmp_path, "demo") as conn:
-            assert conn.execute("SELECT count(*) FROM watch_items").fetchone()[0] == 1
-        await page.on_close(None)
-
-    asyncio.run(check())
-
-
-@pytest.mark.parametrize("damage_baseline", [False, True])
-def test_company_changed_ack_requires_displayed_comparison(tmp_path, monkeypatch, damage_baseline):
-    from a_stock_tracker.auth import create_demo_actor
-    from a_stock_tracker.services import mark_seen, save_watch
-
-    initialize(tmp_path, "demo", journal_mode="DELETE")
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-    monkeypatch.setattr(app, "STATE_DIR", tmp_path)
-    fixture = Path(__file__).parent / "fixtures/peer_complete_v1.json"
-    first = import_snapshot(tmp_path, fixture, "demo")
-    actor = create_demo_actor()
-    item = save_watch(actor, "600001.SH", first, {}, 0, tmp_path, "demo")
-    mark_seen(actor, "600001.SH", first, item["revision"], tmp_path, "demo")
-    second = import_snapshot(tmp_path, fixture.with_name("peer_second_change.json"), "demo")
-    if damage_baseline:
-        with connect_workspace(tmp_path, "demo") as conn:
-            path = conn.execute(
-                "SELECT snapshot_path FROM screen_runs WHERE run_id=?", (first,)
-            ).fetchone()[0]
-        (tmp_path / path).unlink()
-
-    async def check():
-        page = AppMockPage()
-        await app.build_app()(page)
-        await page.on_route_change(SimpleNamespace(route="/company/600001.SH"))
-        controls = list(app_controls(page.controls[0]))
-        ack = next(
-            c for c in controls if isinstance(c, ft.Button) and c.content == "标记本次变化已阅"
-        )
-        if damage_baseline:
-            assert ack.disabled
-            await ack.on_click(None)  # A stale client must not bypass the disabled control.
-            assert any("已阅基准异常" in str(c.value) for c in controls if isinstance(c, ft.Text))
-            with connect_workspace(tmp_path, "demo") as conn:
-                assert get_watch_item(conn, "600001.SH")["ack_run_id"] == first
-            await page.on_close(None)
-            return
-        assert not ack.disabled
-        texts = [str(c.value) for c in controls if isinstance(c, ft.Text)]
-        assert "上次已阅 → 当前资料" in texts
-        assert "【变化】PB（倍）：1.85 → 1.8" in texts
-        highlight = next(
-            c
-            for c in controls
-            if isinstance(c, ft.Container)
-            and isinstance(c.content, ft.Text)
-            and c.content.value == "【变化】PB（倍）：1.85 → 1.8"
-        )
-        assert highlight.bgcolor == ft.Colors.AMBER_50
-        assert highlight.content.weight == ft.FontWeight.W_600
-        assert "【变化】2025年ROE（%）：15.8 → 16.5" in texts
-        assert "PB（倍） · 变化" in texts
-        assert "当前资料：1.8" in texts
-        assert "上次已阅：1.85" in texts
-        assert "2025年ROE（%） · 变化" in texts
-        assert "上次已阅：15.8" in texts
-        # The expanded view is complete, including changes already summarized above.
-        assert "上市状态 · 未变" in texts
-        assert any(
-            isinstance(c, ft.ExpansionTile) and str(c.title).startswith("本次范围成员")
-            for c in controls
-        )
-        with connect_workspace(tmp_path, "demo") as conn:
-            assert get_watch_item(conn, "600001.SH")["ack_run_id"] == first
-        await ack.on_click(None)
-        assert ack.disabled
-        with connect_workspace(tmp_path, "demo") as conn:
-            assert get_watch_item(conn, "600001.SH")["ack_run_id"] == second
-        await page.on_close(None)
-
-    asyncio.run(check())
-
-
-def test_removal_dialog_cancel_conflict_navigation_and_readd(tmp_path, monkeypatch):
-    from a_stock_tracker.auth import create_demo_actor
-    from a_stock_tracker.services import save_watch
-
-    initialize(tmp_path, "demo", journal_mode="DELETE")
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-    monkeypatch.setattr(app, "STATE_DIR", tmp_path)
-    run = import_snapshot(
-        tmp_path, Path(__file__).parent / "fixtures/peer_complete_v1.json", "demo"
-    )
-    actor = create_demo_actor()
-    item = save_watch(actor, "600001.SH", run, {}, 0, tmp_path, "demo")
-
-    async def check():
-        page = AppMockPage()
-        await app.build_app()(page)
-
-        def button(label):
-            return next(
-                c
-                for c in app_controls(page.controls[0])
-                if isinstance(c, ft.Button) and c.content == label
-            )
-
-        await page.on_route_change(SimpleNamespace(route="/company/600001.SH"))
-        delete = button("删除个人研究记录")
-        await delete.on_click(None)
-        cancelled_confirm = page.dialog.actions[1]
-        await page.dialog.actions[0].on_click(None)
-        await cancelled_confirm.on_click(None)
-        assert page.dialog is None
-        with connect_workspace(tmp_path, "demo") as conn:
-            assert get_watch_item(conn, "600001.SH") == item
-        # Another tab's save makes this confirmation stale, without losing either record.
-        save_watch(
-            actor, "600001.SH", run, {"reason": "新判断"}, item["revision"], tmp_path, "demo"
-        )
-        await delete.on_click(None)
-        await page.dialog.actions[1].on_click(None)
-        assert any(
-            "操作未确认" in str(c.value)
-            for c in app_controls(page.dialog)
-            if isinstance(c, ft.Text)
-        )
-        await page.dialog.actions[0].on_click(None)
-        await page.on_route_change(SimpleNamespace(route="/research"))
-        await page.on_route_change(SimpleNamespace(route="/company/600001.SH"))
-        await button("删除个人研究记录").on_click(None)
-        stale_confirm = page.dialog.actions[1]
-        await page.on_route_change(SimpleNamespace(route="/research"))
-        await stale_confirm.on_click(None)
-        with connect_workspace(tmp_path, "demo") as conn:
-            assert get_watch_item(conn, "600001.SH")["reason"] == "新判断"
-        await page.on_route_change(SimpleNamespace(route="/company/600001.SH"))
-        await button("删除个人研究记录").on_click(None)
-        await page.dialog.actions[1].on_click(None)
-        assert page.route == "/research" and page.dialog is None
-        assert any(
-            "已删除个人研究记录" in str(c.value)
-            for c in app_controls(page.controls[0])
-            if isinstance(c, ft.Text)
-        )
-        with connect_workspace(tmp_path, "demo") as conn:
-            assert get_watch_item(conn, "600001.SH") is None
-        await page.on_route_change(SimpleNamespace(route="/company/600001.SH"))
-        assert not button("删除个人研究记录").visible
-        await button("关注").on_click(None)
-        assert button("已关注").disabled
-        assert button("删除个人研究记录").visible
-        with connect_workspace(tmp_path, "demo") as conn:
-            assert get_watch_item(conn, "600001.SH")["reason"] == ""
-        await button("删除个人研究记录").on_click(None)
-        revoked_confirm = page.dialog.actions[1]
-        await page.on_close(None)
-        await revoked_confirm.on_click(None)
-        with connect_workspace(tmp_path, "demo") as conn:
-            assert get_watch_item(conn, "600001.SH") is not None
-
-    asyncio.run(check())
-
-
-@pytest.mark.parametrize(
-    "outcome", ["success", "cancel", "navigation", "disconnect", "revocation", "uncertain"]
-)
-def test_peer_rescan_confirmation_submits_task(tmp_path, monkeypatch, outcome):
-    from a_stock_tracker.services import request_peer_update
-    from a_stock_tracker.worker import run_worker
-
-    initialize(tmp_path, "demo", journal_mode="DELETE")
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-    monkeypatch.setattr(app, "STATE_DIR", tmp_path)
-    actor = app.create_demo_actor()
-    monkeypatch.setattr(app, "create_demo_actor", lambda: actor)
-    original = request_peer_update(actor, "600001.SH", "original", tmp_path, "demo")
-    run_worker(tmp_path, "demo", once=True)
-    requests = []
-
-    def submit(*args):
-        requests.append(args[2])
-        result = request_peer_update(*args)
-        if outcome == "uncertain" and len(requests) == 1:
-            raise TimeoutError("synthetic lost receipt")
-        return result
-
-    monkeypatch.setattr(app, "request_peer_update", submit)
-
-    async def check():
-        page = AppMockPage()
-        await app.build_app()(page)
-        await page.on_route_change(SimpleNamespace(route=f"/jobs/{original['job_id']}"))
-        button = next(
-            c
-            for c in app_controls(page.controls[0])
-            if isinstance(c, ft.Button) and c.content == "重新扫描"
-        )
-        await button.on_click(None)
-        assert requests == []
-        confirm = page.dialog.actions[1]
-        if outcome == "cancel":
-            await page.dialog.actions[0].on_click(None)
-        elif outcome == "navigation":
-            await page.on_route_change(SimpleNamespace(route="/settings"))
-            assert page.dialog is None
-        elif outcome == "disconnect":
-            await page.on_disconnect(None)
-            await page.on_connect(None)
-            assert page.dialog is None
-        elif outcome == "revocation":
-            actor.revoke()
-        await confirm.on_click(None)
-        if outcome == "uncertain":
-            await confirm.on_click(None)
-            assert len(requests) == 2 and requests[0] == requests[1]
-        with connect_workspace(tmp_path, "demo") as conn:
-            jobs = conn.execute(
-                "SELECT job_id,status FROM update_jobs ORDER BY requested_at"
-            ).fetchall()
-        if outcome in ("success", "uncertain"):
-            assert len(jobs) == 2
-            assert jobs[1][1] == "queued"
-            assert page.route == f"/jobs/{jobs[1][0]}"
-            await confirm.on_click(None)
-            assert len(requests) == (2 if outcome == "uncertain" else 1)
-        else:
-            assert len(jobs) == 1 and not requests
-        await page.on_close(None)
-
-    asyncio.run(check())
-
-
-def test_first_review_shows_current_facts_and_folds_missing_metadata(tmp_path, monkeypatch):
-    initialize(tmp_path, "demo", journal_mode="DELETE")
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-    monkeypatch.setattr(app, "STATE_DIR", tmp_path)
-    import_snapshot(tmp_path, Path(__file__).parent / "fixtures/peer_complete_v1.json", "demo")
-
-    async def check():
-        page = AppMockPage()
-        await app.build_app()(page)
-        await page.on_route_change(SimpleNamespace(route="/company/600001.SH"))
-        controls = list(app_controls(page.controls[0]))
-        toggle = next(
-            c for c in controls if isinstance(c, ft.Button) and c.content == "查看全部字段与来源"
-        )
-        body = next(
-            c
-            for c in controls
-            if isinstance(c, ft.Column)
-            and c.controls
-            and isinstance(c.controls[0], ft.Text)
-            and str(c.controls[0].value).startswith("未记录表示")
-        )
-        assert body.visible is False
-        texts = [str(c.value) for c in controls if isinstance(c, ft.Text)]
-        assert "当前资料（首次待阅，无已阅基准）" in texts
-        assert "PB（倍） · 首次待阅" in texts
-        assert "当前资料：1.85" in texts
-        assert not any(t.startswith("上次已阅：") for t in texts)
-        assert {"指标与公司状态", "逐年财务资料", "数据来源与范围"} <= set(texts)
-        assert not any("未提供/不适用" in t or " → " in t for t in texts)
-        await toggle.on_click(None)
-        assert body.visible is True
-        assert "2025年报告类型 · 首次待阅" in texts
-        assert "当前资料：当前资料未记录" in texts
-        assert any(
-            isinstance(c, ft.ExpansionTile) and str(c.title).startswith("未记录的补充字段")
-            for c in controls
-        )
-        await page.on_close(None)
-
-    asyncio.run(check())
-
-
-def test_home_tiered_grouping_and_styling(tmp_path, monkeypatch):
-    initialize(tmp_path, "demo", journal_mode="DELETE")
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-    monkeypatch.setattr(app, "STATE_DIR", tmp_path)
-    monkeypatch.setattr(
-        app,
-        "get_home",
-        lambda *args: {
-            "valuation_date": "2026-09-21",
-            "important_review_count": 2,
-            "total_watch_count": 6,
-            "watch_items": [
-                {
-                    "code": "600006.SH",
-                    "name": "标的己",
-                    "status": "observe",
-                    "has_change": True,
-                    "needs_attention": True,
-                    "change_tier": "risk_change",
-                    "reason": "",
-                    "change_summary": "公司上市状态变化，请核查",
-                    "valuation_date": "2026-09-21",
-                },
-                {
-                    "code": "600004.SH",
-                    "name": "标的丁",
-                    "status": "observe",
-                    "reason": "",
-                    "has_change": False,
-                    "needs_attention": False,
-                    "change_tier": "no_change",
-                    "change_summary": "本工具覆盖的字段暂无未阅变化",
-                    "valuation_date": "2026-09-20",
-                },
-                {
-                    "code": "600002.SH",
-                    "name": "标的乙",
-                    "status": "research",
-                    "reason": "",
-                    "has_change": True,
-                    "needs_attention": False,
-                    "change_tier": "fact_change",
-                    "change_summary": "PB变动: 1.85 → 1.8",
-                    "valuation_date": "2026-09-21",
-                },
-                {
-                    "code": "600001.SH",
-                    "name": "标的甲",
-                    "status": "observe",
-                    "reason": "",
-                    "has_change": True,
-                    "needs_attention": True,
-                    "change_tier": "anomaly",
-                    "change_summary": "最新运行估值日倒退异常，仍展示上次可用资料",
-                    "valuation_date": "2026-09-20",
-                    "usable_run_id": "previous-run",
-                    "pb": 0,
-                    "roe_mean": -1.5,
-                    "latest_report_period": "2026-06-30",
-                    "dt_netprofit_yoy": 0,
-                    "ocfps": -2,
-                },
-                {
-                    "code": "600003.SH",
-                    "name": "标的丙",
-                    "status": "observe",
-                    "reason": "",
-                    "has_change": True,
-                    "needs_attention": False,
-                    "change_tier": "date_change",
-                    "change_summary": "估值日期变动: 2026-09-20 → 2026-09-21",
-                    "valuation_date": "2026-09-21",
-                },
-                {
-                    "code": "600005.SH",
-                    "name": "标的戊",
-                    "status": "paused",
-                    "reason": "",
-                    "has_change": True,
-                    "needs_attention": False,
-                    "change_tier": "fact_change",
-                    "change_summary": "PB变动",
-                    "valuation_date": "2026-09-21",
-                },
-            ],
-        },
-    )
-
-    async def check():
-        page = AppMockPage()
-        await app.build_app()(page)
-        home = page.controls[0].controls[0].controls[0].content.controls[1].content
-        header_texts = []
-        for c in home.controls:
-            if isinstance(c, ft.Text) and c.value in (
-                "数据异常与缺口",
-                "公司状态变化（请核查）",
-                "指标与资料变化",
-                "仅数据日更新",
-                "暂无未阅变化",
-            ):
-                header_texts.append(c.value)
-            elif isinstance(c, ft.Row) and c.controls and isinstance(c.controls[-1], ft.Text):
-                val = c.controls[-1].value
-                if val in (
-                    "数据异常与缺口",
-                    "公司状态变化（请核查）",
-                    "指标与资料变化",
-                    "仅数据日更新",
-                    "暂无未阅变化",
-                ):
-                    header_texts.append(val)
-        assert header_texts == [
-            "数据异常与缺口",
-            "公司状态变化（请核查）",
-        ]
-
-        cards = [c for c in home.controls if isinstance(c, ft.Card)]
-        assert len(cards) == 2  # Routine changes and paused companies are folded.
-        card_titles = []
-        for card in cards:
-            for text_c in app_controls(card):
-                if isinstance(text_c, ft.Text) and ("标的" in (text_c.value or "")):
-                    card_titles.append(text_c.value.split()[0])
-                    break
-        assert card_titles == ["标的甲", "标的己"]
-        texts = [c.value for c in app_controls(home) if isinstance(c, ft.Text)]
-        assert "上次可用资料 · PB：0.00倍 | 3年ROE：-1.50%" in texts
-        assert "该次财报：2026-06-30 | 扣非同比：0.00% | 经营现金流：-2.00元/股（累计）" in texts
-        assert not any(
-            isinstance(c, ft.Button) and c.content == "标记本次已阅" for c in app_controls(home)
-        )  # Anomalies and date changes without a usable run have no shortcut.
-        routine = next(
-            c
-            for c in app_controls(home)
-            if isinstance(c, ft.Button) and c.content == "查看其余研究（含估值与日期变化）"
-        )
-        routine_body = home.controls[home.controls.index(routine) + 1]
-        assert routine_body.visible is False
-        await routine.on_click(SimpleNamespace())
-        assert routine.content == "收起其余研究（含估值与日期变化）"
-        assert routine_body.visible is True
-        await routine.on_click(SimpleNamespace())
-        assert routine.content == "查看其余研究（含估值与日期变化）"
-        assert routine_body.visible is False
-
-        # Folded cards retain their fact/date-specific styling.
-        for card in (c for c in app_controls(home) if isinstance(c, ft.Card)):
-            for text_c in app_controls(card):
-                if isinstance(text_c, ft.Text):
-                    if "估值日倒退" in (text_c.value or "") or "上市状态变化" in (
-                        text_c.value or ""
-                    ):
-                        assert (
-                            text_c.color == ft.Colors.RED_900
-                            and text_c.weight == ft.FontWeight.BOLD
-                        )
-                    elif "PB变动" in (text_c.value or ""):
-                        assert (
-                            text_c.color == ft.Colors.ORANGE_900
-                            and text_c.weight == ft.FontWeight.BOLD
-                        )
-                    elif "估值日期变动" in (text_c.value or ""):
-                        assert (
-                            text_c.color == ft.Colors.BLUE_GREY_700
-                            and text_c.weight == ft.FontWeight.NORMAL
-                        )
-                    elif "暂无未阅变化" in (text_c.value or ""):
-                        assert text_c.color == ft.Colors.GREY_700
-
-    asyncio.run(check())
-
-
-def test_edit_during_save_remains_unsaved_until_explicit_second_save(tmp_path, monkeypatch):
-    initialize(tmp_path, "demo", journal_mode="DELETE")
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-    monkeypatch.setattr(app, "STATE_DIR", tmp_path)
-    run = import_snapshot(
-        tmp_path, Path(__file__).parent / "fixtures/peer_complete_v1.json", "demo"
-    )
-    app.save_watch(app.create_demo_actor(), "600001.SH", run, {}, 0, tmp_path, "demo")
-    to_thread = asyncio.to_thread
-
-    async def check():
-        started, release = asyncio.Event(), asyncio.Event()
-
-        async def delayed(func, *args, **kwargs):
-            if func is app.save_watch:
-                started.set()
-                await release.wait()
-            return await to_thread(func, *args, **kwargs)
-
-        monkeypatch.setattr(asyncio, "to_thread", delayed)
-        page = AppMockPage()
-        await app.build_app()(page)
-        await page.on_route_change(SimpleNamespace(route="/company/600001.SH"))
-        controls = list(app_controls(page.controls[0]))
-        reason = next(c for c in controls if isinstance(c, ft.TextField) and "理由" in c.label)
-        save = next(
-            c for c in controls if isinstance(c, ft.Button) and c.content == "保存笔记与状态"
-        )
-        reason.value = "本次提交的判断"
-        reason.on_change(None)
-        pending = asyncio.create_task(save.on_click(None))
-        await asyncio.wait_for(started.wait(), timeout=2)
-        assert save.disabled and save.content == "保存中…"
-        await save.on_click(None)  # A duplicate callback must not submit a second write.
-        reason.value = "等待保存时补充的反证"
-        reason.on_change(None)
-        release.set()
-        await pending
-        with connect_workspace(tmp_path, "demo") as conn:
-            assert get_watch_item(conn, "600001.SH")["reason"] == "本次提交的判断"
-        assert reason.value == "等待保存时补充的反证"
-        await page.on_route_change(SimpleNamespace(route="/research"))
-        assert page.dialog is not None, "Later edits were incorrectly marked as saved"
-        await next(b for b in page.dialog.actions if b.content == "继续编辑").on_click(None)
-        await save.on_click(None)
-        with connect_workspace(tmp_path, "demo") as conn:
-            assert get_watch_item(conn, "600001.SH")["reason"] == "等待保存时补充的反证"
-        await page.on_route_change(SimpleNamespace(route="/research"))
-        assert page.dialog is None
-        await page.on_close(None)
-
-    asyncio.run(check())
-
-
-def test_stale_editor_cannot_replace_reconnected_draft(tmp_path, monkeypatch):
-    initialize(tmp_path, "demo", journal_mode="DELETE")
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-    monkeypatch.setattr(app, "STATE_DIR", tmp_path)
-    import_snapshot(tmp_path, Path(__file__).parent / "fixtures/peer_complete_v1.json", "demo")
-
-    async def check():
-        page = AppMockPage()
-        await app.build_app()(page)
-        await page.on_route_change(SimpleNamespace(route="/company/600001.SH"))
-
-        def reason_field():
-            return next(
-                c
-                for c in app_controls(page.controls[0])
-                if isinstance(c, ft.TextField) and c.label.startswith("研究理由")
-            )
-
-        old_editor = reason_field()
-        old_editor.value = "保留的草稿"
-        old_editor.on_change(None)
-        await page.on_disconnect(None)
-        await page.on_connect(None)
-        old_editor.value = "旧页面延迟事件"
-        old_editor.on_change(None)
-        await page.on_disconnect(None)
-        await page.on_connect(None)
-        assert reason_field().value == "保留的草稿"
-        await page.on_close(None)
-
-    asyncio.run(check())
-
-
-@pytest.mark.parametrize("kind", ["peer", "watch"])
-@pytest.mark.parametrize("leave", ["navigation", "disconnect"])
-def test_inflight_receipt_survives_return_without_new_request(tmp_path, monkeypatch, kind, leave):
-    from a_stock_tracker.worker import run_worker
-
-    initialize(tmp_path, "demo", journal_mode="DELETE")
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-    monkeypatch.setattr(app, "STATE_DIR", tmp_path)
-    run = import_snapshot(
-        tmp_path, Path(__file__).parent / "fixtures/peer_complete_v1.json", "demo"
-    )
-    app.save_watch(app.create_demo_actor(), "600001.SH", run, {}, 0, tmp_path, "demo")
-    service = getattr(app, f"request_{kind}_update")
-    to_thread = asyncio.to_thread
-    calls = []
-
-    async def check():
-        started, release = asyncio.Event(), asyncio.Event()
-
-        async def delayed(func, *args, **kwargs):
-            result = await to_thread(func, *args, **kwargs)
-            if func is service:
-                calls.append(args[1 if kind == "watch" else 2])
-                started.set()
-                await release.wait()
-            return result
-
-        monkeypatch.setattr(asyncio, "to_thread", delayed)
-        page = AppMockPage()
-        await app.build_app()(page)
-        route = "/research" if kind == "watch" else "/discover"
-        if kind == "peer":
-            await page.on_route_change(SimpleNamespace(route=route))
-
-        def submit_button():
-            return next(
-                c
-                for c in app_controls(page.controls[0])
-                if isinstance(c, ft.Button)
-                and c.content == ("更新资料" if kind == "watch" else "查找同业")
-            )
-
-        button = submit_button()
-        inflight = asyncio.create_task(button.on_click(None))
-        try:
-            await asyncio.wait_for(started.wait(), timeout=5)
-            await button.on_click(None)  # Double click never starts another call.
-            assert len(calls) == 1
-            if leave == "navigation":
-                await page.on_route_change(SimpleNamespace(route="/settings"))
-            else:
-                await page.on_disconnect(None)
-                await page.on_connect(None)
-        finally:
-            release.set()
-        await inflight
-        assert not page.route.startswith("/jobs/")
-        # A completed job no longer benefits from active-scope deduplication.
-        run_worker(tmp_path, "demo", once=True)  # Synthetic, main thread for signal setup.
-        if leave == "navigation":
-            await page.on_route_change(SimpleNamespace(route=route))
-        assert any(
-            "上次提交尚未确认" in c.value
-            for c in app_controls(page.controls[0])
-            if isinstance(c, ft.Text)
-        )
-        await submit_button().on_click(None)
-        assert len(calls) == 2 and calls[0] == calls[1]
-        assert page.route.startswith("/discover") if kind == "peer" else page.route == "/research"
-        with connect_workspace(tmp_path, "demo") as conn:
-            assert conn.execute("SELECT count(*) FROM update_jobs").fetchone()[0] == 1
-        await page.on_close(None)
-
-    asyncio.run(check())
-
-
-def test_late_read_cannot_replace_new_view_or_its_scroll(tmp_path, monkeypatch):
-    initialize(tmp_path, "demo", journal_mode="DELETE")
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-    monkeypatch.setattr(app, "STATE_DIR", tmp_path)
-    to_thread = asyncio.to_thread
-
-    async def check():
-        started, release = asyncio.Event(), asyncio.Event()
-
-        async def delayed(func, *args, **kwargs):
-            if func is app.get_company_context:
-                started.set()
-                await release.wait()
-            return await to_thread(func, *args, **kwargs)
-
-        monkeypatch.setattr(asyncio, "to_thread", delayed)
-        page = AppMockPage()
-        await app.build_app()(page)
-        await page.on_route_change(SimpleNamespace(route="/settings"))
-        page.views[0].on_scroll(SimpleNamespace(pixels=120))
-        await page.on_route_change(SimpleNamespace(route="/research"))
-        old_read = asyncio.create_task(
-            page.on_route_change(SimpleNamespace(route="/company/600001.SH"))
-        )
-        try:
-            await asyncio.wait_for(started.wait(), timeout=5)
-            assert any(
-                "正在读取资料" in c.value
-                for c in app_controls(page.controls[0])
-                if isinstance(c, ft.Text)
-            )
-            await page.on_route_change(SimpleNamespace(route="/settings"))
-        finally:
-            release.set()
-        await old_read
-        texts = [c.value for c in app_controls(page.controls[0]) if isinstance(c, ft.Text)]
-        assert "账户与运行信息" in texts and "公司筛选事实" not in texts
-        assert page.scroll_offset == 120
-        await page.on_close(None)
-
-    asyncio.run(check())
-
-
-@pytest.mark.parametrize("mode", ["demo", "production"])
-def test_initial_deep_link_keeps_demo_context_but_requires_production_login(
-    tmp_path, monkeypatch, mode
-):
-    initialize(tmp_path, mode, journal_mode="DELETE")
-    monkeypatch.setattr(app, "APP_MODE", mode)
-    monkeypatch.setattr(app, "STATE_DIR", tmp_path)
-
-    async def check():
-        page = AppMockPage()
-        page.route = "/company/600001.SH"
-        await app.build_app()(page)
-        controls = list(app_controls(page.controls[0]))
-        if mode == "demo":
-            assert any(isinstance(c, ft.Text) and c.value == "公司筛选事实" for c in controls)
-        else:
-            assert any(
-                isinstance(c, ft.Button) and c.content == "使用 GitHub 登录" for c in controls
-            )
-            assert not any(isinstance(c, ft.TextField) for c in controls)
-        await page.on_close(None)
-
-    asyncio.run(check())
-
-
-def test_read_failure_has_safe_retry_without_submitting(tmp_path, monkeypatch):
-    initialize(tmp_path, "demo", journal_mode="DELETE")
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-    monkeypatch.setattr(app, "STATE_DIR", tmp_path)
-    real_home = app.get_home
-    calls = []
-
-    def fail_once(*args):
-        calls.append(1)
-        if len(calls) == 1:
-            raise OSError("synthetic private diagnostic must not reach browser")
-        return real_home(*args)
-
-    monkeypatch.setattr(app, "get_home", fail_once)
-
-    async def check():
-        page = AppMockPage()
-        await app.build_app()(page)
-        controls = list(app_controls(page.controls[0]))
-        texts = [c.value for c in controls if isinstance(c, ft.Text)]
-        assert any("暂时无法读取" in text for text in texts)
-        assert not any("private diagnostic" in text for text in texts)
-        retry = next(c for c in controls if isinstance(c, ft.Button) and c.content == "重新读取")
-        await retry.on_click(None)
-        assert any(
-            "暂无关注" in c.value for c in app_controls(page.controls[0]) if isinstance(c, ft.Text)
-        )
-        with connect_workspace(tmp_path, "demo") as conn:
-            assert conn.execute("SELECT count(*) FROM update_jobs").fetchone()[0] == 0
-        await page.on_close(None)
-
-    asyncio.run(check())
-
-
-def test_navigation_survives_scroll_to_timeout(tmp_path, monkeypatch):
-    initialize(tmp_path, "demo", journal_mode="DELETE")
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-    monkeypatch.setattr(app, "STATE_DIR", tmp_path)
-
-    async def check():
-        page = AppMockPage()
-
-        async def failing_scroll_to(*, offset, duration):
-            raise RuntimeError(
-                "TimeoutException after 0:00:10.000000: Timeout waiting for invoke method listener for View(3).scroll_to"
-            )
-
-        page.scroll_to = failing_scroll_to
-        await app.build_app()(page)
-        # Navigating via navigation bar (the exact production trigger) must survive scroll_to failure
-        nav_bar = page.navigation_bar
-        nav_bar.selected_index = 1
-        await nav_bar.on_change(SimpleNamespace(control=nav_bar))
-        assert page.route.startswith("/discover")
-        # Navigating via route change must also survive scroll_to failure
-        await page.on_route_change(SimpleNamespace(route="/settings"))
-        texts = [c.value for c in app_controls(page.controls[0]) if isinstance(c, ft.Text)]
-        assert any("账户与运行信息" in text for text in texts)
-        await page.on_close(None)
-
-    asyncio.run(check())
-
-
-def test_review_is_visible_without_opening_or_saving_notes(tmp_path, monkeypatch):
-    from a_stock_tracker.auth import create_demo_actor
-    from a_stock_tracker.services import save_watch
-
-    initialize(tmp_path, "demo", journal_mode="DELETE")
-    run = import_snapshot(
-        tmp_path, Path(__file__).parent / "fixtures/peer_complete_v1.json", "demo"
-    )
-    save_watch(create_demo_actor(), "600001.SH", run, {}, 0, tmp_path, "demo")
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-    monkeypatch.setattr(app, "STATE_DIR", tmp_path)
-
-    async def check():
-        page = AppMockPage()
-        await app.build_app()(page)
-        card = next(c for c in app_controls(page.controls[0]) if isinstance(c, ft.Card))
-        await card.content.on_click(None)
-        controls = list(app_controls(page.controls[0]))
-        ack = next(c for c in controls if c.key == "mark-reviewed")
-        assert ack.visible and not ack.disabled
-        assert any(
-            isinstance(c, ft.Text)
-            and "已阅确认界面所示事实并更新对照基准" in c.value
-            and "不代表已核验公告原文或作出投资判断" in c.value
-            for c in controls
-        )
-        next_check = next(
-            c for c in controls if isinstance(c, ft.TextField) and "下一步" in c.label
-        )
-        assert next_check.value == ""
-        assert (
-            next_check.hint_text
-            == "可选。触发：下次财报/某事件；核查：哪项证据；反证：若出现X，重新考虑原判断。"
-        )
-        report = next(
-            c
-            for c in controls
-            if isinstance(c, ft.ExpansionTile) and c.title == "最新财报证据与原文"
-        )
-        assert report.expanded and next_check.visible
-        assert controls.index(report) < controls.index(next_check) < controls.index(ack)
-        notes = next(
-            c for c in controls if isinstance(c, ft.Button) and c.content == "收起可选笔记与状态"
-        )
-        await notes.on_click(None)
-        assert not next_check.visible and ack.visible
-        await ack.on_click(None)
-        with connect_workspace(tmp_path, "demo") as conn:
-            item = get_watch_item(conn, "600001.SH")
-            assert item["ack_run_id"] == run and item["reason"] == "" and item["next_check"] == ""
-        await notes.on_click(None)
-        next_check.value = "已阅后补充下一步"
-        next_check.on_change(None)
-        save = next(
-            c for c in controls if isinstance(c, ft.Button) and c.content == "保存笔记与状态"
-        )
-        await save.on_click(None)
-        assert ack.disabled and ack.content == "已标记本次已阅"
-        await page.on_close(None)
-
-    asyncio.run(check())
-
-
-@pytest.mark.parametrize("outcome", ["success", "conflict", "gap", "navigation", "disconnect"])
-def test_home_inline_ack_revalidates_and_ignores_late_results(tmp_path, monkeypatch, outcome):
-    from a_stock_tracker.auth import create_demo_actor
-    from a_stock_tracker.services import mark_seen, save_watch
-
-    initialize(tmp_path, "demo", journal_mode="DELETE")
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-    monkeypatch.setattr(app, "STATE_DIR", tmp_path)
-    fixture = Path(__file__).parent / "fixtures/peer_complete_v1.json"
-    first = import_snapshot(tmp_path, fixture, "demo")
-    actor = create_demo_actor()
-    item = save_watch(actor, "600001.SH", first, {}, 0, tmp_path, "demo")
-    mark_seen(actor, "600001.SH", first, item["revision"], tmp_path, "demo")
-    snapshot = json.loads(fixture.read_text())
-    snapshot["screened_at"] = snapshot["generated_at"] = "2026-09-21T16:00:00+08:00"
-    snapshot["data_date"] = "2026-09-21"
-    for row in snapshot["rows"]:
-        row["valuation_date"] = "2026-09-21"
-    path = tmp_path / "date-only.json"
-    path.write_text(json.dumps(snapshot))
-    second = import_snapshot(tmp_path, path, "demo")
-    # A second card catches accidentally binding the callback to the last loop item.
-    save_watch(actor, "600002.SH", second, {}, 0, tmp_path, "demo")
-    to_thread = asyncio.to_thread
-
-    async def check():
-        page = AppMockPage()
-        await app.build_app()(page)
-        controls = list(app_controls(page.controls[0]))
-        buttons = [c for c in controls if isinstance(c, ft.Button) and c.content == "标记本次已阅"]
-        assert len(buttons) == 1
-        assert any(
-            isinstance(c, ft.Text)
-            and c.value
-            == "已阅确认界面所示事实并更新对照基准，不代表已核验公告原文或作出投资判断。"
-            for c in controls
-        )
-        button = buttons[0]
-        assert any(
-            "PB：1.85倍 | 3年ROE：" in str(c.value) for c in controls if isinstance(c, ft.Text)
-        )
-        assert any(
-            c.value == "最新财报：尚未取得，可主动更新" for c in controls if isinstance(c, ft.Text)
-        )
-        if outcome == "conflict":
-            with connect_workspace(tmp_path, "demo") as conn:
-                current = get_watch_item(conn, "600001.SH")
-            save_watch(
-                actor,
-                "600001.SH",
-                second,
-                {"reason": "另一页面保存"},
-                current["revision"],
-                tmp_path,
-                "demo",
-            )
-        elif outcome == "gap":
-            raw = json.dumps({"anchor": "600001.SH", "rows": []}).encode()
-            gap_path = "snapshots/new-gap.json"
-            (tmp_path / gap_path).write_bytes(raw)
-            with connect_workspace(tmp_path, "demo") as conn:
-                register_run(
-                    conn,
-                    run_id="new-gap",
-                    kind="peer",
-                    anchor_code="600001.SH",
-                    rule_id="peer-screen-v1",
-                    captured_at="2026-09-22T16:00:00+08:00",
-                    valuation_date="2026-09-22",
-                    health="partial",
-                    snapshot_path=gap_path,
-                    snapshot_bytes=raw,
+            await page.on_login(event)
+            if user_id in ("12345678", 12345678):
+                assert page.route == "/" and actors[0].is_valid
+                assert any(
+                    isinstance(c, ft.Text) and "还没有经过核验" in c.value
+                    for c in app_controls(page.controls[0])
                 )
-                conn.commit()
-        started, release = asyncio.Event(), asyncio.Event()
-        calls = []
-
-        async def delayed(func, *args, **kwargs):
-            if func is app.mark_seen:
-                calls.append(kwargs)
-                started.set()
-                await release.wait()
-            return await to_thread(func, *args, **kwargs)
-
-        monkeypatch.setattr(asyncio, "to_thread", delayed)
-        event = SimpleNamespace(control=button)
-        pending = asyncio.create_task(button.on_click(event))
-        try:
-            await asyncio.wait_for(started.wait(), timeout=5)
-            await button.on_click(event)
-            assert len(calls) == 1
-            assert calls[0]["code"] == "600001.SH"
-            assert calls[0]["displayed_run_id"] == second
-            assert calls[0]["expected_updated_at"]
-            if outcome == "navigation":
-                page.route = "/settings"  # The browser updates the route before this event.
+                page.route = "/settings"
                 await page.on_route_change(SimpleNamespace(route="/settings"))
-            elif outcome == "disconnect":
-                await page.on_disconnect(None)
+                logout = next(
+                    c
+                    for c in app_controls(page.controls[0])
+                    if isinstance(c, ft.Button) and c.content == "退出登录"
+                )
+                await logout.on_click(None)
+                assert page.logged_out and not actors[0].is_valid and page.route == "/login"
+            else:
+                assert not actors and page.route == "/login"
         finally:
-            release.set()
-        await pending
-        texts = [str(c.value) for c in app_controls(page.controls[0]) if isinstance(c, ft.Text)]
-        if outcome == "success":
-            assert any("已标记本次已阅" in t for t in texts)
-            assert not any(
-                isinstance(c, ft.Button) and c.content == "标记本次已阅"
+            await page.on_close(None)
+
+    asyncio.run(run())
+
+
+def test_oauth_uses_same_tab_authorization(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(app, "APP_MODE", "production")
+    launcher = MagicMock(launch_url=AsyncMock())
+    monkeypatch.setattr(ft, "UrlLauncher", lambda: launcher)
+
+    async def run():
+        page = AppMockPage()
+        page.login = AsyncMock()
+        await app.build_app()(page)
+        try:
+            login = next(
+                c
+                for c in app_controls(page.controls[0])
+                if isinstance(c, ft.Button) and c.content == "使用 GitHub 登录"
+            )
+            await login.on_click(None)
+            assert page.login.call_args.kwargs.get("redirect_to_page") is True
+            callback = page.login.call_args.kwargs["on_open_authorization_url"]
+            await callback("https://github.com/login/oauth/authorize?state=synthetic")
+            launcher.launch_url.assert_awaited_once_with(
+                "https://github.com/login/oauth/authorize?state=synthetic",
+                web_only_window_name="_self",
+            )
+        finally:
+            await page.on_close(None)
+
+    asyncio.run(run())
+
+
+def test_reconnect_revokes_expired_actor(monkeypatch):
+    from a_stock_tracker import auth
+
+    monkeypatch.setattr(app, "APP_MODE", "production")
+    monkeypatch.setattr(app, "GITHUB_ALLOWED_USER_ID", "12345678")
+    clock = [auth.time.monotonic()]
+    monkeypatch.setattr(auth.time, "monotonic", lambda: clock[0])
+    actors = []
+    monkeypatch.setattr(app, "load_board", lambda actor, root: actors.append(actor))
+
+    async def run():
+        page = AppMockPage(auth=MagicMock(user={"id": "12345678"}))
+        await app.build_app()(page)
+        try:
+            await page.on_login(
+                ft.LoginEvent(name="login", control=None, error=None, error_description=None)
+            )
+            await page.on_disconnect(None)
+            clock[0] = actors[0].expires_at + 1
+            await page.on_connect(None)
+            assert len(actors) == 1 and not actors[0].is_valid
+            assert any(
+                isinstance(c, ft.Button) and c.content == "使用 GitHub 登录"
                 for c in app_controls(page.controls[0])
             )
-        elif outcome in ("conflict", "gap"):
-            assert any("标记已阅未确认" in t for t in texts)
-            assert not button.disabled
-        else:
-            assert not any("已标记本次已阅" in t for t in texts)
-            if outcome == "navigation":
-                assert page.route == "/settings"
-        with connect_workspace(tmp_path, "demo") as conn:
-            assert get_watch_item(conn, "600001.SH")["ack_run_id"] == (
-                first if outcome in ("conflict", "gap") else second
-            )
-            assert get_watch_item(conn, "600002.SH")["ack_run_id"] is None
-            assert conn.execute("SELECT count(*) FROM update_jobs").fetchone()[0] == 0
-        await page.on_close(None)
+        finally:
+            await page.on_close(None)
 
-    asyncio.run(check())
+    asyncio.run(run())
+
+
+def test_report_read_failure_has_retry_without_legacy_link(monkeypatch):
+    monkeypatch.setattr(app, "APP_MODE", "production")
+    monkeypatch.setattr(app, "GITHUB_ALLOWED_USER_ID", "12345678")
+    reads = []
+
+    def broken(actor, root):
+        reads.append(actor)
+        raise ValueError("synthetic malformed batch")
+
+    monkeypatch.setattr(app, "load_board", broken)
+
+    async def run():
+        page = AppMockPage(auth=MagicMock(user={"id": "12345678"}))
+        await app.build_app()(page)
+        try:
+            await page.on_login(
+                ft.LoginEvent(name="login", control=None, error=None, error_description=None)
+            )
+            controls = list(app_controls(page.controls[0]))
+            retry = next(
+                c for c in controls if isinstance(c, ft.Button) and c.content == "重新读取"
+            )
+            assert not any(
+                "工作台" in str(getattr(c, "value", ""))
+                or "兼容入口" in str(getattr(c, "content", ""))
+                for c in controls
+            )
+            await retry.on_click(None)
+            assert len(reads) == 2
+            page.route = "/settings"
+            await page.on_route_change(SimpleNamespace(route="/settings"))
+            await retry.on_click(None)
+            assert len(reads) == 2
+        finally:
+            await page.on_close(None)
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("route", ["/research", "/discover", "/company/600001.SH", "/jobs/old"])
+def test_retired_page_state_never_restores_workbench(monkeypatch, route):
+    monkeypatch.setattr(app, "APP_MODE", "demo")
+
+    async def run():
+        page = AppMockPage()
+        page.route = route
+        await app.build_app()(page)
+        try:
+            controls = list(app_controls(page.controls[0]))
+            assert any(isinstance(c, ft.Text) and c.value == "页面不存在" for c in controls)
+            assert page.navigation_bar is None
+            back = next(
+                c for c in controls if isinstance(c, ft.TextButton) and c.content == "返回波段机会"
+            )
+            await back.on_click(None)
+            assert page.route == "/"
+        finally:
+            await page.on_close(None)
+
+    asyncio.run(run())
+
+
+def test_stale_logout_and_closed_reconnect_are_inert(monkeypatch):
+    monkeypatch.setattr(app, "APP_MODE", "demo")
+
+    async def run():
+        page = AppMockPage()
+        await app.build_app()(page)
+        try:
+            page.route = "/settings"
+            await page.on_route_change(SimpleNamespace(route="/settings"))
+            logout = next(
+                c
+                for c in app_controls(page.controls[0])
+                if isinstance(c, ft.Button) and c.content == "退出登录"
+            )
+            page.route = "/"
+            await page.on_route_change(SimpleNamespace(route="/"))
+            await logout.on_click(None)
+            assert not page.logged_out and page.route == "/"
+            await page.on_close(None)
+            updates = page.updated_count
+            await page.on_connect(None)
+            assert page.updated_count == updates
+        finally:
+            await page.on_close(None)
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "changes, success",
+    [
+        (
+            {
+                "APP_MODE": "production",
+                "GITHUB_CLIENT_ID": "synthetic",
+                "GITHUB_CLIENT_SECRET": "synthetic",
+                "GITHUB_ALLOWED_USER_ID": "12345678",
+            },
+            True,
+        ),
+        ({"APP_MODE": "production"}, False),
+        ({"APP_MODE": "demo", "HOST": "0.0.0.0"}, False),
+        ({"FLET_SESSION_TIMEOUT": "0"}, False),
+        ({"APP_MODE": "unknown"}, False),
+    ],
+)
+def test_startup_without_workspace_and_fail_closed(tmp_path, changes, success):
+    import os
+    import subprocess
+    import sys
+
+    env = {
+        **os.environ,
+        "APP_MODE": "demo",
+        "HOST": "127.0.0.1",
+        "STATE_DIR": str(tmp_path / "does-not-exist"),
+        "FLET_SESSION_TIMEOUT": "3600",
+        "FLET_OAUTH_STATE_TIMEOUT": "600",
+        "GITHUB_CLIENT_ID": "",
+        "GITHUB_CLIENT_SECRET": "",
+        "GITHUB_ALLOWED_USER_ID": "",
+        **changes,
+    }
+    result = subprocess.run(
+        [sys.executable, "-c", "import a_stock_tracker.app"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert (result.returncode == 0) is success, result.stderr
+    assert not list(tmp_path.iterdir())
