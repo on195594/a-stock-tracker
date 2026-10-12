@@ -2,8 +2,12 @@
 
 import asyncio
 import json
+import sys
+import time
 import uuid
 from copy import deepcopy
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import flet as ft
 import httpx
@@ -85,6 +89,22 @@ def test_private_service_auth_budget_confirmation_and_same_nonce(tmp_path, monke
         assert client.post("/runs", json=p).json()["status"] == "interrupted"
 
 
+@pytest.mark.parametrize("mode", ["swing", "financial"])
+def test_model_cost_boundary_requires_new_consent_before_execution(tmp_path, monkeypatch, mode):
+    store = ResearchStore(tmp_path / "service")
+    request = payload(mode)
+    boundary = request["quote"].pop("model_budget")
+    assert boundary["cost_hard_limit"] is None
+    assert boundary["output_token_hard_limit"] is None
+    monkeypatch.setattr(store, "lease", lambda: pytest.fail("accepted stale consent"))
+    with pytest.raises(ValueError, match="重新确认"):
+        store.submit(request)
+    assert not store.directory(request["id"]).exists()
+    request["quote"]["model_budget"] = {**boundary, "cost_hard_limit": 0}
+    with pytest.raises(ValueError, match="重新确认"):
+        store.submit(request)
+
+
 def test_service_rejects_old_private_workspaces_symlinks_and_bad_tokens(tmp_path):
     root = tmp_path / "old"
     root.mkdir(mode=0o700)
@@ -100,6 +120,33 @@ def test_service_rejects_old_private_workspaces_symlinks_and_bad_tokens(tmp_path
     assert (root / "history.sqlite").read_text() == "historical data"
 
 
+@pytest.mark.parametrize("case", ["same", "inside", "above", "extra", "valid"])
+def test_service_socket_bridge_is_separate_and_socket_only(tmp_path, monkeypatch, case):
+    from a_stock_tracker import research_service
+
+    root = tmp_path / "artifacts"
+    bridge = {
+        "same": root,
+        "inside": root / "bridge",
+        "above": tmp_path,
+    }.get(case, tmp_path / "bridge")
+    if case == "extra":
+        bridge.mkdir(mode=0o700)
+        (bridge / "private.txt").write_text("synthetic private data")
+    monkeypatch.setenv("RESEARCH_SERVICE_ROOT", str(root))
+    monkeypatch.setenv("RESEARCH_SERVICE_TOKEN", "x" * 32)
+    monkeypatch.setenv("RESEARCH_SERVICE_SOCKET", str(bridge / "service.sock"))
+    calls = []
+    monkeypatch.setattr("uvicorn.run", lambda *a, **kw: calls.append(kw))
+    if case == "valid":
+        research_service.main()
+        assert calls[0]["uds"] == str(bridge / "service.sock")
+    else:
+        with pytest.raises(ValueError, match="separate|socket-only"):
+            research_service.main()
+        assert not calls
+
+
 def test_command_is_not_shell_and_pins_explicit_limits(tmp_path, monkeypatch):
     monkeypatch.setenv("RESEARCH_PROVIDER", "synthetic")
     monkeypatch.setenv("RESEARCH_MODEL", "synthetic")
@@ -110,6 +157,8 @@ def test_command_is_not_shell_and_pins_explicit_limits(tmp_path, monkeypatch):
     assert command[command.index("--request-budget") + 1] == "20"
     assert command[command.index("--codes") + 1] == "600519.SH"
     assert "--max-research" in store.command(store.directory(p["id"]), payload("screen"))
+    assert "--pb-mv-screen" in store.command(store.directory(p["id"]), payload("screen"))
+    assert "--pb-mv-screen" not in store.command(store.directory(p["id"]), payload("financial"))
 
 
 def test_completed_results_revalidated_on_each_read_and_failure_not_success(tmp_path, monkeypatch):
@@ -468,6 +517,88 @@ def test_execute_pins_cwd_to_repo_root(tmp_path, monkeypatch):
     assert store.status(p["id"])["result"] == {"coverage": {"status": "complete"}}
 
 
+def test_dead_leader_descendant_is_stopped_before_next_run(tmp_path, monkeypatch):
+    store = ResearchStore(tmp_path / "service")
+    p = payload("screen")
+    directory = store.directory(p["id"])
+    directory.mkdir(mode=0o700)
+    pid_path = directory / "child.pid"
+    script = (
+        "import subprocess,sys,pathlib; "
+        "p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)']); "
+        "pathlib.Path(sys.argv[1]).write_text(str(p.pid)); sys.exit(1)"
+    )
+    monkeypatch.setattr(store, "command", lambda *_: [sys.executable, "-c", script, str(pid_path)])
+    state = {"id": p["id"], "request": p, "status": "running", "limits": {"seconds": 5}}
+    store.execute(directory, state, store.lease())
+    child = int(pid_path.read_text())
+    for _ in range(100):
+        stat = Path(f"/proc/{child}/stat")
+        try:
+            if stat.read_text().split()[2] == "Z":
+                break
+        except (FileNotFoundError, ProcessLookupError):
+            break
+        time.sleep(0.01)
+    else:
+        pytest.fail("descendant survived completed execution")
+    assert state["status"] == "failed"
+    store.lease().close()
+
+
+def test_same_day_screen_reuses_verified_original_without_spending(tmp_path, monkeypatch):
+    monkeypatch.setenv("TUSHARE_TOKEN", "synthetic")
+    store = ResearchStore(tmp_path / "service")
+    original = payload("screen")
+    directory = store.directory(original["id"])
+    directory.mkdir(mode=0o700)
+    old = {
+        "id": original["id"],
+        "request": original,
+        "status": "partial",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "limits": original["quote"],
+    }
+    save_state(directory / "request.json", old)
+    reads = []
+    monkeypatch.setattr(store, "result", lambda path, _: reads.append(path) or {"synthetic": True})
+    monkeypatch.setattr(
+        "a_stock_tracker.research_service.Thread", lambda **_: pytest.fail("new spend")
+    )
+    new = payload("screen")
+    accepted = store.submit(new)
+    assert accepted["reused_from"] == old["id"]
+    assert store.submit(new) == accepted
+    assert store.status(new["id"])["result"] == {"synthetic": True}
+    assert reads == [directory, directory]
+    assert not (store.directory(new["id"]) / "batch").exists()
+    store.lease().close()
+
+
+def test_yesterday_screen_not_reused_and_disk_reserve_required(tmp_path, monkeypatch):
+    from a_stock_tracker import research_service as service
+
+    monkeypatch.setenv("TUSHARE_TOKEN", "synthetic")
+    store = ResearchStore(tmp_path / "service")
+    original = payload("screen")
+    directory = store.directory(original["id"])
+    directory.mkdir(mode=0o700)
+    save_state(
+        directory / "request.json",
+        {
+            "id": original["id"],
+            "request": original,
+            "status": "partial",
+            "created_at": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
+        },
+    )
+    monkeypatch.setattr(service, "disk_bytes", lambda _: service.MAX_ROOT_BYTES)
+    monkeypatch.setattr(store, "result", lambda *_: pytest.fail("stale reuse"))
+    with pytest.raises(ValueError, match="存储预算"):
+        store.submit(payload("screen"))
+    store.lease().close()
+
+
 @pytest.mark.parametrize("operation", ["status", "recent", "submit"])
 def test_slow_store_does_not_block_service_event_loop(tmp_path, monkeypatch, operation):
     import threading
@@ -702,3 +833,280 @@ def test_analysis_invalid_route_and_unreachable_service_handled_cleanly(monkeypa
         await page.on_close(None)
 
     asyncio.run(run())
+
+
+def test_real_cost_notice_consent_resets_when_mode_changes(monkeypatch):
+    monkeypatch.setattr(app, "APP_MODE", "demo")
+    client = DemoResearchClient()
+    info = dict(client.info(), demo=False)
+    monkeypatch.setattr(client, "info", lambda: info)
+    monkeypatch.setattr(app, "DemoResearchClient", lambda: client)
+
+    async def run():
+        page = AppMockPage()
+        page.route = "/analysis?mode=swing&code=600519.SH"
+        try:
+            await app.build_app()(page)
+            controls = list(app_controls(page))
+            consent = next(c for c in controls if isinstance(c, ft.Checkbox))
+            start = next(
+                c for c in controls if isinstance(c, ft.Button) and c.content == "确认启动研究"
+            )
+            mode = next(c for c in controls if isinstance(c, ft.RadioGroup))
+            assert "接受模型费用无硬上限" in consent.label
+            assert any(
+                isinstance(c, ft.Text) and "不保证提供方停止生成或计费" in (c.value or "")
+                for c in controls
+            )
+            assert start.disabled and not consent.value
+            consent.value = True
+            consent.on_change(None)
+            assert not start.disabled
+            mode.value = "screen"
+            mode.on_change(None)
+            assert start.disabled and not consent.value
+            assert "费用无硬上限" not in consent.label
+            mode.value = "financial"
+            mode.on_change(None)
+            assert start.disabled and not consent.value
+            assert "接受模型费用无硬上限" in consent.label
+            assert not client.runs
+        finally:
+            await page.on_close(None)
+
+    asyncio.run(run())
+
+
+def screen_checkpoint_fixture(tmp_path):
+    from a_stock_tracker import automation as automation
+    from tests.test_automation import basic, fixture, records
+
+    store = ResearchStore(tmp_path / "service")
+    request = payload("screen")
+    directory = store.directory(request["id"])
+    run = directory / "batch" / "run-2026-10-12T14-44-08-a321278e88e6"
+    run.mkdir(mode=0o700, parents=True)
+    frozen, state = fixture(5)
+    frozen["prefilter"] = dict(automation.PB_MV_SCREEN)
+    for row in frozen["rows"]:
+        row["total_mv"] = 600000
+    valuation = {"pb": 4, "total_mv": 600000}
+    frozen["rows"].append(
+        automation.prefilter_row(
+            automation.initial_row(basic(6), valuation, frozen["data_date"]), valuation
+        )
+    )
+    frozen["cutoff"] = datetime.now().date().isoformat()
+    state.update(
+        research={},
+        model_calls=0,
+        model={"provider": "p", "model": "m"},
+        queue=[],
+        cursor=0,
+        last_industry="",
+        notification="not_enabled",
+    )
+    state["freeze"] = automation.save(run / "universe.json", frozen)
+    row = frozen["rows"][0]
+    name = f"scan-{row['code']}.json"
+    save_state(
+        run / name,
+        {
+            "freeze": state["freeze"],
+            "result": automation.evaluate(row, records(row["code"]), frozen),
+        },
+    )
+    state["scan"][row["code"]] = automation.save(run / name, automation.read_result(run / name))
+    save_state(run / "state.json", state)
+    save_state(
+        directory / "request.json",
+        {
+            "id": request["id"],
+            "request": request,
+            "status": "partial",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "limits": request["quote"],
+            "message": "synthetic",
+        },
+    )
+    return store, request, run
+
+
+def test_continuation_copies_verified_checkpoint_and_preserves_original(tmp_path, monkeypatch):
+    from a_stock_tracker import automation as automation
+    from tests.test_automation import Client
+
+    monkeypatch.setenv("TUSHARE_TOKEN", "synthetic")
+    store, original, source = screen_checkpoint_fixture(tmp_path)
+    before = {p.name: p.read_bytes() for p in source.iterdir()}
+    leases = []
+
+    class DeferredThread:
+        def __init__(self, target, args, daemon):
+            leases.append(args[2])
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr("a_stock_tracker.research_service.Thread", DeferredThread)
+    request = {**payload("screen"), "resume_from": original["id"]}
+    accepted = store.submit(request)
+    assert accepted["status"] == "running" and accepted["continued_from"] == original["id"]
+    assert store.submit(request) == accepted and len(leases) == 1
+    leases.pop().close()
+    with pytest.raises(ValueError, match="已发起后续"):
+        store.submit({**request, "id": uuid.uuid4().hex})
+    destination = store.directory(request["id"])
+    command = store.command(destination, request)
+    assert command[command.index("--resume") + 1] == source.name
+    assert command[command.index("--max-research") + 1] == "0"
+    assert "--pb-mv-screen" in command
+    assert command[command.index("--screen-contract") + 1] == automation.digest(
+        automation.PB_MV_SCREEN
+    )
+    copied = destination / "batch" / source.name
+    state = read_state(copied / "state.json")
+    frozen = automation.read_result(copied / "universe.json", state["freeze"])
+    client = Client()
+    automation.scan(copied, frozen, state, client, "synthetic", automation.Budget(50, 300))
+    assert len(client.calls) == 4 and frozen["rows"][0]["code"] not in client.calls
+    assert frozen["rows"][-1]["status"] == "excluded"
+    assert frozen["rows"][-1]["code"] not in client.calls
+    assert before == {p.name: p.read_bytes() for p in source.iterdir()}
+    assert store.result(destination, "screen")["coverage"]["counts"]["qualified"] == 5
+
+
+@pytest.mark.parametrize("damage", ["hash", "symlink", "expired", "complete", "model_calls"])
+def test_continuation_refuses_invalid_checkpoints_before_spend(tmp_path, monkeypatch, damage):
+    from a_stock_tracker import automation as automation
+
+    monkeypatch.setenv("TUSHARE_TOKEN", "synthetic")
+    store, original, source = screen_checkpoint_fixture(tmp_path)
+    if damage == "hash":
+        next(source.glob("scan-*")).write_text("{}")
+    elif damage == "symlink":
+        target = next(source.glob("scan-*"))
+        moved = tmp_path / "moved.json"
+        target.rename(moved)
+        target.symlink_to(moved)
+    elif damage == "expired":
+        frozen = automation.read_result(source / "universe.json")
+        frozen["cutoff"] = "2020-01-01"
+        state = read_state(source / "state.json")
+        state["freeze"] = automation.save(source / "universe.json", frozen)
+        save_state(source / "state.json", state)
+    elif damage == "complete":
+        path = source.parent.parent / "request.json"
+        state = read_state(path)
+        state["status"] = "completed"
+        save_state(path, state)
+    else:
+        state = read_state(source / "state.json")
+        state["model_calls"] = 1
+        save_state(source / "state.json", state)
+    monkeypatch.setattr(
+        "a_stock_tracker.research_service.Thread", lambda **_: pytest.fail("unexpected spend")
+    )
+    request = {**payload("screen"), "resume_from": original["id"]}
+    with pytest.raises((ValueError, automation.ScreenError)):
+        store.submit(request)
+    assert not store.directory(request["id"]).exists()
+    store.lease().close()
+
+
+def test_entry_continuation_requires_explicit_new_budget_confirmation(monkeypatch):
+    monkeypatch.setattr(app, "APP_MODE", "demo")
+    client = DemoResearchClient()
+    original = payload("screen")
+    original["quote"] = quote(client.info(), "screen")
+    client.submit(original)
+    monkeypatch.setattr(app, "DemoResearchClient", lambda: client)
+
+    async def run():
+        page = AppMockPage()
+        page.route = "/analysis"
+        try:
+            await app.build_app()(page)
+            controls = list(app_controls(page))
+            start = next(
+                c
+                for c in controls
+                if isinstance(c, ft.Button) and c.content == "确认新增预算并继续初筛"
+            )
+            assert start.disabled and len(client.runs) == 1
+            await start.on_click(None)
+            assert len(client.runs) == 1
+            consent = next(c for c in controls if isinstance(c, ft.Checkbox))
+            consent.value = True
+            consent.on_change(None)
+            await start.on_click(None)
+            assert len(client.runs) == 2
+            new = list(client.runs.values())[-1]
+            assert new["request"]["resume_from"] == original["id"]
+            assert new["request"]["quote"]["requests"] == 400
+            assert "model_budget" not in new["request"]["quote"]
+        finally:
+            await page.on_close(None)
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("change", ["missing", "threshold"])
+def test_screen_rule_requires_new_consent(tmp_path, monkeypatch, change):
+    store = ResearchStore(tmp_path / "service")
+    request = deepcopy(payload("screen"))
+    if change == "missing":
+        request["quote"].pop("prefilter")
+    else:
+        request["quote"]["prefilter"]["pb_max"] = 2
+    monkeypatch.setattr(store, "lease", lambda: pytest.fail("accepted stale scope"))
+    with pytest.raises(ValueError, match="重新确认"):
+        store.submit(request)
+    assert not store.directory(request["id"]).exists()
+
+
+def test_legacy_screen_remains_readable_but_cannot_resume_under_new_rule(tmp_path, monkeypatch):
+    from a_stock_tracker import automation
+
+    store, original, source = screen_checkpoint_fixture(tmp_path)
+    state = read_state(source / "state.json")
+    frozen = automation.read_result(source / "universe.json", state["freeze"])
+    frozen.pop("prefilter")
+    state["freeze"] = automation.save(source / "universe.json", frozen)
+    save_state(source / "state.json", state)
+    assert store.status(original["id"])["can_continue"] is False
+    assert store.result(source.parent.parent, "screen")["coverage"]["prefilter"] is None
+    monkeypatch.setenv("TUSHARE_TOKEN", "synthetic")
+    request = {**payload("screen"), "resume_from": original["id"]}
+    with pytest.raises(ValueError, match="规则已变化"):
+        store.submit(request)
+    assert not store.directory(request["id"]).exists()
+
+
+def test_screen_quote_uses_receiver_scope_not_web_default():
+    info = deepcopy(request_info())
+    info["modes"]["screen"]["prefilter"]["pb_max"] = 2
+    assert quote(info, "screen")["prefilter"]["pb_max"] == 2
+
+
+@pytest.mark.parametrize("drift", ["pb_max", "total_mv_min_yi", "rule"])
+def test_child_refuses_changed_confirmed_screen_before_market_access(tmp_path, monkeypatch, drift):
+    import tushare
+
+    from a_stock_tracker import automation
+
+    request = payload("screen")
+    command = ResearchStore(tmp_path / "store").command(tmp_path / "batch", request)
+    assert command[command.index("--screen-contract") + 1] == automation.digest(
+        request["quote"]["prefilter"]
+    )
+    changed = {**automation.PB_MV_SCREEN, drift: "changed" if drift == "rule" else 2}
+    monkeypatch.setattr(automation, "PB_MV_SCREEN", changed)
+    monkeypatch.setattr(sys, "argv", ["automation", *command[3:]])
+    monkeypatch.setattr(
+        tushare, "pro_api", lambda *_, **__: pytest.fail("accessed market before confirming scope")
+    )
+    with pytest.raises(SystemExit) as error:
+        automation.main()
+    assert error.value.code == 2
+    assert not (tmp_path / "batch").exists()

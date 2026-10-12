@@ -349,7 +349,7 @@ def test_pdf_missing_page_or_identity_cannot_publish(tmp_path, monkeypatch, page
         )
         return result
 
-    monkeypatch.setattr(d.subprocess, "run", command)
+    monkeypatch.setattr(d, "run_bounded", command)
     with pytest.raises(ScreenError, match="Missing"):
         d.extract_document(
             Source(),
@@ -467,7 +467,7 @@ def test_cli_resume_fills_new_industries_and_finishes_bounded_queue(tmp_path, mo
     monkeypatch.setattr(a, "MarketClient", lambda *_: client)
     monkeypatch.setattr(a.time, "sleep", lambda *_: None)
     monkeypatch.setattr(tushare, "pro_api", lambda *_, **__: None)
-    monkeypatch.setattr(a, "freeze", lambda *_: frozen)
+    monkeypatch.setattr(a, "freeze", lambda *_, **__: frozen)
     monkeypatch.setattr(a, "now_iso", lambda: frozen["created_at"])
     monkeypatch.setattr(a.signal, "signal", lambda *_: None)
     monkeypatch.setattr(a.signal, "alarm", lambda *_: None)
@@ -518,7 +518,7 @@ def test_cli_reports_actual_research_outcome(tmp_path, monkeypatch, capsys, outc
         review["analysis_supported"] = False
         review["issues"] = ["合成复核失败"]
     monkeypatch.setattr(tushare, "pro_api", lambda *_, **__: Client())
-    monkeypatch.setattr(a, "freeze", lambda *_: frozen)
+    monkeypatch.setattr(a, "freeze", lambda *_, **__: frozen)
     monkeypatch.setattr(a, "now_iso", lambda: frozen["created_at"])
     monkeypatch.setattr(a.time, "sleep", lambda *_: None)
     monkeypatch.setattr(a.signal, "signal", lambda *_: None)
@@ -675,8 +675,8 @@ def test_table_units_and_relative_periods_do_not_authorize_new_numeric_literals(
 def test_pdf_identity_checks_report_kind_not_only_year(tmp_path, monkeypatch, period, accepted):
     source = SimpleNamespace(request=lambda *_: b"%PDF-offline")
     monkeypatch.setattr(
-        d.subprocess,
-        "run",
+        d,
+        "run_bounded",
         lambda args, **kwargs: SimpleNamespace(
             stdout="Pages: 1\n"
             if args[0] == "pdfinfo"
@@ -721,8 +721,8 @@ def test_pdf_code_identity_is_exact_and_late_label_is_bounded(
     pages[0] = header or "合成股份有限公司2025年年度报告，完整的合并财务正文。"
     pages[page - 1] += f"\n股票简称  {page_name}\n公司的中文名称  合成股份有限公司\n{code_line}"
     monkeypatch.setattr(
-        d.subprocess,
-        "run",
+        d,
+        "run_bounded",
         lambda args, **kwargs: SimpleNamespace(
             stdout="Pages: 17\n" if args[0] == "pdfinfo" else "\f".join(pages) + "\f"
         ),
@@ -805,8 +805,8 @@ def test_late_issuer_table_binds_all_complete_fields_to_one_cover_page(
     pages[: len(opening)] = opening
     pages[11] += "\n" + table
     monkeypatch.setattr(
-        d.subprocess,
-        "run",
+        d,
+        "run_bounded",
         lambda args, **kwargs: SimpleNamespace(
             stdout="Pages: 17\n" if args[0] == "pdfinfo" else "\f".join(pages) + "\f"
         ),
@@ -825,18 +825,32 @@ def test_late_issuer_table_binds_all_complete_fields_to_one_cover_page(
             d.extract_document(source, document, tmp_path)
 
 
-def test_model_subprocess_success_and_response_resume(tmp_path, monkeypatch):
+@pytest.mark.parametrize("engine", ["hermes", "pi"])
+def test_model_subprocess_success_and_response_resume(tmp_path, monkeypatch, engine):
     runtime = tmp_path / "runtime"
     (runtime / ".venv/bin").mkdir(parents=True)
     (runtime / ".venv/bin/python").touch()
     monkeypatch.setenv("AUTOMATION_HERMES_RUNTIME", str(runtime))
+    if engine == "pi":
+        (runtime / "dist/core").mkdir(parents=True)
+        (runtime / "dist/core/model-runtime.js").touch()
+        (runtime / "auth.json").write_text("{}")
+        (runtime / "provider.ts").touch()
+        monkeypatch.setenv("AUTOMATION_PI_RUNTIME", str(runtime))
+        monkeypatch.setenv("AUTOMATION_PI_AGENT_DIR", str(runtime))
+        monkeypatch.setenv("AUTOMATION_PI_EXTENSION", str(runtime / "provider.ts"))
+    else:
+        monkeypatch.delenv("AUTOMATION_PI_RUNTIME", raising=False)
     monkeypatch.setenv("TUSHARE_TOKEN", "not-a-secret")
+    monkeypatch.setenv("RESEARCH_SERVICE_TOKEN", "private-bridge-token")
     monkeypatch.setenv("STATE_DIR", "/must-not-be-used")
     calls = []
 
     def command(args, **kwargs):
         calls.append(args)
         assert "TUSHARE_TOKEN" not in kwargs["env"] and "STATE_DIR" not in kwargs["env"]
+        assert "RESEARCH_SERVICE_TOKEN" not in kwargs["env"]
+        assert any(f"automation_model{('_pi.mjs' if engine == 'pi' else '.py')}" in a for a in args)
         return SimpleNamespace(
             returncode=0,
             stdout=json.dumps(
@@ -850,7 +864,7 @@ def test_model_subprocess_success_and_response_resume(tmp_path, monkeypatch):
             ),
         )
 
-    monkeypatch.setattr(d.subprocess, "run", command)
+    monkeypatch.setattr(d, "run_bounded", command)
     state = {"model_calls": 0}
     for _ in range(2):
         assert d.model_call(
@@ -900,10 +914,163 @@ def test_model_generation_resumes_across_packet_serialization(tmp_path, monkeypa
             ),
         )
 
-    monkeypatch.setattr(d.subprocess, "run", command)
+    monkeypatch.setattr(d, "run_bounded", command)
     monkeypatch.setattr(d, "model_call", model)
     d.research_batch(tmp_path, frozen, summary, state, [], a.Budget(50, 300), 5)
     assert state["cursor"] == 0 and len(calls) == 1
     d.research_batch(tmp_path, frozen, summary, state, [], a.Budget(50, 300), 5)
     assert state["cursor"] == 1 and len(calls) == state["model_calls"] == 2
     assert a.read_state(tmp_path / "report-600001.SH.json")["result"]["evidence_review"] == "passed"
+
+
+@pytest.mark.parametrize("outcome", ["invalid_json", "provider_failed", "timeout"])
+def test_failed_model_preserves_usage_and_never_retries(tmp_path, monkeypatch, outcome):
+    monkeypatch.setattr(d, "model_command", lambda: (["synthetic"], tmp_path))
+    calls = []
+
+    def command(*args, **kwargs):
+        calls.append(1)
+        if outcome == "timeout":
+            raise d.subprocess.TimeoutExpired("synthetic", 260)
+        return SimpleNamespace(
+            returncode=1 if outcome == "provider_failed" else 0,
+            stdout=json.dumps(
+                {
+                    "tool_count": 0,
+                    "provider": "p",
+                    "model": "m",
+                    "text": "not JSON",
+                    "usage": {"output": 123},
+                }
+            ),
+        )
+
+    monkeypatch.setattr(d, "run_bounded", command)
+    state = {"model_calls": 0}
+    args = (tmp_path, "failed", "public", {"provider": "p", "model": "m"}, state, a.Budget(2, 300))
+    with pytest.raises((ScreenError, ValueError, d.subprocess.TimeoutExpired)):
+        d.model_call(*args)
+    audit = a.read_state(tmp_path / "failed.usage.json")
+    assert audit["usage"] == (None if outcome == "timeout" else {"output": 123})
+    with pytest.raises(ScreenError, match="refusing another charge"):
+        d.model_call(*args)
+    assert len(calls) == state["model_calls"] == 1
+    assert not (tmp_path / "failed.response.json").exists()
+
+
+def test_small_industry_completes_within_budget_without_repeating_cached_rows(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(a.time, "sleep", lambda *_: None)
+    frozen, state = fixture(5)
+    for row in frozen["rows"][-2:]:
+        row["industry"] = "小行业"
+    state["freeze"] = a.digest(frozen)
+    client = Client()
+    budget = a.Budget(3, 300)
+    rows = a.scan(tmp_path, frozen, state, a.MarketClient(client, budget), "synthetic", budget)
+    summary = a.coverage(rows, frozen)
+    assert client.calls == [r["code"] for r in frozen["rows"][-2:]]
+    assert summary["groups"][0]["industry"] == "小行业"
+    assert len(a.candidates(summary, frozen)) == 2
+    budget = a.Budget(3, 300)
+    rows = a.scan(tmp_path, frozen, state, a.MarketClient(client, budget), "synthetic", budget)
+    assert len(client.calls) == len(set(client.calls)) == 4
+    assert sum(r["status"] == "qualified" for r in rows) == 4
+
+
+@pytest.mark.parametrize(
+    "pb,mv,status,reason",
+    [
+        (3, 500000, "pending", "FINANCIAL_PENDING"),
+        (3.001, 600000, "excluded", "PB_ABOVE_SCREEN_MAX"),
+        (1, 499999, "excluded", "TOTAL_MV_BELOW_SCREEN_MIN"),
+        (1, 10**12, "pending", "FINANCIAL_PENDING"),
+        *[
+            (1, v, "gap", "MISSING_OR_INVALID_TOTAL_MV")
+            for v in (None, True, 0, -1, "bad", float("nan"), float("inf"))
+        ],
+    ],
+)
+def test_pb_mv_prefilter_boundaries_and_units(pb, mv, status, reason):
+    valuation = {"pb": pb, "total_mv": mv}
+    original = a.initial_row(basic(), valuation, "2026-09-30")
+    row = a.prefilter_row(original, valuation)
+    assert (row["status"], row["reason"]) == (status, reason)
+    assert original["status"] == "pending"  # Do not mutate historical rows.
+
+
+def test_prefilter_freezes_scope_and_skips_financial_requests(tmp_path, monkeypatch):
+    basics = [basic(i) for i in range(1, 5)]
+    valuations = [
+        {"ts_code": basics[0]["ts_code"], "pb": 3, "total_mv": 500000},
+        {"ts_code": basics[1]["ts_code"], "pb": 4, "total_mv": 600000},
+        {"ts_code": basics[2]["ts_code"], "pb": 1, "total_mv": 499999},
+        {"ts_code": basics[3]["ts_code"], "pb": 1, "total_mv": None},
+    ]
+    monkeypatch.setattr(a, "target_date", lambda *_: ("2026-09-30", []))
+    monkeypatch.setattr(a, "fetch_universe", lambda *_: (basics, valuations, {}))
+    frozen = a.freeze(None, "synthetic", "2026-10-06", [], pb_mv_screen=True)
+    assert frozen["prefilter"] == a.PB_MV_SCREEN
+    state = {"freeze": a.digest(frozen), "scan": {}}
+    client = Client()
+    rows = a.scan(tmp_path, frozen, state, client, "synthetic", a.Budget(20, 300))
+    assert client.calls == [basics[0]["ts_code"]]
+    summary = a.coverage(rows, frozen)
+    assert summary["prefilter_counts"] == {"pending": 1, "excluded": 2, "gap": 1}
+    assert not summary["groups"]  # Unknown eligibility still blocks same-industry ranking.
+    without_gap = a.coverage(rows[:3], {**frozen, "rows": frozen["rows"][:3]})
+    assert without_gap["groups"][0]["top"] == [basics[0]["ts_code"]]
+    legacy = a.freeze(None, "synthetic", "2026-10-06", [])
+    assert "prefilter" not in legacy
+    assert all(r["status"] == "pending" for r in legacy["rows"])
+    with pytest.raises(ScreenError):
+        a.freeze(None, "synthetic", "2026-10-06", [basics[0]["ts_code"]], pb_mv_screen=True)
+
+
+def test_market_client_leaves_frequency_headroom(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(a.time, "sleep", sleeps.append)
+    budget = a.Budget(5, 300)
+    client = a.MarketClient(Client(), budget)
+    client.fina_indicator(ts_code="600001.SH")
+    client.fina_indicator(ts_code="600002.SH")
+    assert budget.used == 2 and sleeps == [0.5, 0.5]
+
+
+@pytest.mark.parametrize("frozen_filtered", [True, False])
+def test_cli_rejects_changed_screen_rule_before_resume_scan(tmp_path, monkeypatch, frozen_filtered):
+    import sys
+
+    import tushare
+
+    frozen, state = fixture(1)
+    if frozen_filtered:
+        frozen["prefilter"] = dict(a.PB_MV_SCREEN)
+    with a.locked_root(tmp_path / "batch") as root:
+        directory = root / "run-2026-10-06T10-00-00-abcdef123456"
+        directory.mkdir()
+        state["freeze"] = a.save(directory / "universe.json", frozen)
+        a.save_state(directory / "state.json", state)
+    monkeypatch.setenv("TUSHARE_TOKEN", "synthetic")
+    monkeypatch.setattr(tushare, "pro_api", lambda *_, **__: None)
+    monkeypatch.setattr(a.signal, "signal", lambda *_: None)
+    monkeypatch.setattr(a.signal, "alarm", lambda *_: None)
+    monkeypatch.setattr(a, "scan", lambda *_: pytest.fail("mismatched scope reached scan"))
+    flags = [] if frozen_filtered else ["--pb-mv-screen"]
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "automation",
+            "--root",
+            str(root),
+            "--resume",
+            directory.name,
+            "--max-research",
+            "0",
+            *flags,
+        ],
+    )
+    with pytest.raises(ScreenError, match="rule mismatch"):
+        a.main()

@@ -11,7 +11,7 @@ from a_stock_tracker.opportunity_view import heading, notice, opportunity_view, 
 LABELS = {
     "running": "研究执行中",
     "completed": "研究结果",
-    "partial": "研究结束 · 部分覆盖或有缺口",
+    "partial": "本轮已结束 · 覆盖未完成或有缺口",
     "failed": "研究失败",
     "interrupted": "研究中断",
 }
@@ -29,7 +29,7 @@ def result_view(run: dict[str, Any], open_route, back, code: str | None = None) 
     status = run["status"]
     controls.append(
         notice(
-            LABELS.get(status, status),
+            "已有初筛结果" if run.get("reused_from") else LABELS.get(status, status),
             run["message"],
             caution=status in {"partial", "failed", "interrupted"},
         )
@@ -81,20 +81,56 @@ def result_view(run: dict[str, Any], open_route, back, code: str | None = None) 
             f"{name} {summary['counts'].get(key, 0)}" for key, name in count_names.items()
         )
         scope = "指定样本" if summary["mode"] == "sample" else "全市场尝试"
+        screening = summary.get("prefilter")
+        ranking_note = "仅完整行业形成可比较候选；样本只验证指定公司。"
+        if screening:
+            scope = "全市场 PB／市值门槛内股票池"
+            ranking_note = "仅筛后池资料完整的行业形成候选；这是筛后同业排名，不是完整行业前三。"
         covered = "部分覆盖或有缺口" if summary["status"] == "partial" else "覆盖完成"
         controls.extend(
             [
                 heading("财报筛选与研究", level=1),
                 notice(
                     "财报资格不是波段推荐",
-                    f"依据日期：{summary['data_date']}\n范围：{scope} · {covered}\n总记录：{summary['total']}；{counts}\n仅完整行业形成可比较候选；样本只验证指定公司。未覆盖与失败不由模型补齐。\n来源核查时间：{summary.get('source_times') or '未记录'}；证据截止：{summary.get('cutoff') or '未记录'}",
+                    f"依据日期：{summary['data_date']}\n范围：{scope} · {covered}\n总记录：{summary['total']}；{counts}\n{ranking_note}未覆盖与失败不由模型补齐。\n来源核查时间：{summary.get('source_times') or '未记录'}；证据截止：{summary.get('cutoff') or '未记录'}",
                 ),
             ]
         )
+        if screening:
+            initial = summary["prefilter_counts"]
+            controls.append(
+                paragraph(
+                    f"冻结门槛：0＜PB≤{screening['pb_max']}；总市值≥{screening['total_mv_min_yi']}亿元，不设上限。\n"
+                    f"财报采集前：排除 {initial.get('excluded', 0)} 家；"
+                    f"资料缺口 {initial.get('gap', 0)} 家；进入财报采集池 {initial.get('pending', 0)} 家。\n"
+                    "门槛用于控制采集量，未经收益验证，可能漏选。"
+                )
+            )
+        pending_screen = (
+            run["request"]["mode"] == "screen" and summary["counts"].get("pending", 0) > 0
+        )
+        if pending_screen:
+            controls.extend(
+                [
+                    notice(
+                        "初筛尚未完成",
+                        "当前覆盖不足，不能据此认定没有值得研究的股票。可继续时须确认新增预算；规则变化或资料超过七天须返回入口确认新批次，不会自动追加请求。",
+                        caution=True,
+                    ),
+                    ft.Button(
+                        "继续未覆盖初筛（核对预算）",
+                        on_click=open_route("/analysis?mode=screen&resume_from=" + run["id"]),
+                        height=48,
+                        visible=run.get("can_continue", False),
+                    ),
+                ]
+            )
         if not result["candidates"]:
             controls.append(
                 paragraph(
-                    "本次没有可核查候选，不凑推荐。可回入口研究指定股票，或另行确认一次新的筛选。"
+                    "尚未形成可比较候选；这不是对全市场的否定结论。"
+                    if pending_screen
+                    else "本次没有可核查候选，不凑推荐。可回入口研究指定股票；资料缺口不会自动重试。"
                 )
             )
         for row in result["candidates"]:
@@ -104,7 +140,13 @@ def result_view(run: dict[str, Any], open_route, back, code: str | None = None) 
                     ft.Divider(),
                     heading(f"{row['name']} · {c}"),
                     paragraph(
-                        f"行业：{row['industry']}\nPB（倍）：{row['pb']}；历史年度平均 ROE：{row['roe_mean']}%\n仅财报初筛资格，不是投资价值验证。\n核查时间：{row.get('checked_at') or '未记录'}"
+                        f"行业：{row['industry']}\nPB（倍）：{row['pb']}；历史年度平均 ROE：{row['roe_mean']}%\n"
+                        + (
+                            f"总市值：{row['total_mv'] / 10000:g}亿元\n"
+                            if row.get("total_mv") is not None
+                            else ""
+                        )
+                        + f"仅财报初筛资格，不是投资价值验证。\n核查时间：{row.get('checked_at') or '未记录'}"
                     ),
                     ft.Button(
                         "核对量价条件",

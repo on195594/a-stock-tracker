@@ -36,6 +36,7 @@ from a_stock_tracker.research import (
 )
 
 RULE = "market-research-v1"
+PB_MV_SCREEN: dict[str, Any] = {"rule": "pb-mv-screen-v1", "pb_max": 3, "total_mv_min_yi": 50}
 MARKER = {"owner": "a-stock-tracker.automation", "schema": 1}
 
 
@@ -140,7 +141,7 @@ class MarketClient:
     def __getattr__(self, name: str):
         def request(**kwargs):
             self.budget.take()
-            time.sleep(0.35)
+            time.sleep(0.5)  # Leave headroom below the 2000-point account's 200 calls/minute.
             return getattr(self.client, name)(**kwargs)
 
         return request
@@ -218,16 +219,37 @@ def initial_row(basic: dict[str, Any], valuation: dict[str, Any], target: str) -
     return row
 
 
-def freeze(client: Any, token: str, today: str, sample: list[str]) -> dict[str, Any]:
+def prefilter_row(row: dict[str, Any], valuation: dict[str, Any]) -> dict[str, Any]:
+    """Filter before per-stock acquisition; total_mv arrives in ten-thousand yuan."""
+    row = {**row, "total_mv": finite_number(valuation.get("total_mv"))}
+    if row["status"] != "pending":
+        return row
+    if row["pb"] > PB_MV_SCREEN["pb_max"]:
+        row.update(status="excluded", reason="PB_ABOVE_SCREEN_MAX")
+    elif row["total_mv"] is None or row["total_mv"] <= 0:
+        row.update(status="gap", reason="MISSING_OR_INVALID_TOTAL_MV")
+    elif row["total_mv"] < PB_MV_SCREEN["total_mv_min_yi"] * 10000:
+        row.update(status="excluded", reason="TOTAL_MV_BELOW_SCREEN_MIN")
+    return row
+
+
+def freeze(
+    client: Any, token: str, today: str, sample: list[str], *, pb_mv_screen: bool = False
+) -> dict[str, Any]:
+    if pb_mv_screen and sample:
+        raise ScreenError("PB/市值初筛不能用于指定股票研究")
     target, calendar = target_date(client, token, today)
     basics, valuations, times = fetch_universe(client, token, target)
     by_code = {r["ts_code"]: r for r in valuations}
     rows = [initial_row(r, by_code.get(r["ts_code"], {}), target) for r in basics]
+    if pb_mv_screen:
+        rows = [prefilter_row(r, by_code.get(r["code"], {})) for r in rows]
     if len({r["code"] for r in rows}) != len(rows):
         raise ScreenError("Duplicate scope identifiers")
     if not set(sample) <= {r["code"] for r in rows}:
         raise ScreenError("Sample identifier absent from universe")
     return {
+        **({"prefilter": dict(PB_MV_SCREEN)} if pb_mv_screen else {}),
         "rule": RULE,
         "data_date": target,
         "cutoff": today,
@@ -282,7 +304,30 @@ def scan(
     budget: Budget,
 ) -> list[dict[str, Any]]:
     result_rows = []
-    for original in frozen["rows"]:
+    remaining: Counter = Counter()
+    blocked = set()
+    for row in frozen["rows"]:
+        if row["code"] in state["scan"]:
+            row = read_result(directory / f"scan-{row['code']}.json", state["scan"][row["code"]])[
+                "state"
+            ]["result"]
+        industry = row.get("industry") or "UNKNOWN"
+        if row["status"] == "pending":
+            remaining[industry] += 1
+        if row["status"] == "gap" or industry == "UNKNOWN":
+            blocked.add(industry)
+    # Validate all saved rows first, then complete the smallest unblocked industries.
+    ordered = sorted(
+        frozen["rows"],
+        key=lambda r: (
+            r["code"] not in state["scan"],
+            (r.get("industry") or "UNKNOWN") in blocked,
+            remaining[r.get("industry") or "UNKNOWN"],
+            r.get("industry") or "UNKNOWN",
+            r["code"],
+        ),
+    )
+    for original in ordered:
         code = original["code"]
         path = directory / f"scan-{code}.json"
         stored = state["scan"].get(code)
@@ -381,6 +426,10 @@ def coverage(rows: list[dict[str, Any]], frozen: dict[str, Any]) -> dict[str, An
     return {
         "rule": RULE,
         "mode": frozen["mode"],
+        "prefilter": frozen.get("prefilter"),
+        "prefilter_counts": dict(Counter(r["status"] for r in frozen["rows"]))
+        if frozen.get("prefilter")
+        else {},
         "data_date": frozen["data_date"],
         "status": "partial"
         if frozen["sample"] or counts.get("gap") or counts.get("pending")
@@ -410,6 +459,10 @@ def main() -> int:
     parser.add_argument("--root", required=True, type=Path)
     parser.add_argument("--resume", help="Frozen run id; cannot change scope or date")
     parser.add_argument(
+        "--pb-mv-screen", action="store_true", help="PB <= 3, total market cap >= 50亿元"
+    )
+    parser.add_argument("--screen-contract", help="Expected digest of the confirmed screen profile")
+    parser.add_argument(
         "--sample",
         default="",
         help="Comma-separated exact TS identifiers; validation only, never a full-market result",
@@ -420,6 +473,12 @@ def main() -> int:
     parser.add_argument("--model", default="gpt-6-astra")
     parser.add_argument("--provider", default="openai-codex")
     args = parser.parse_args()
+    if args.screen_contract is not None and (
+        not args.pb_mv_screen or args.screen_contract != digest(PB_MV_SCREEN)
+    ):
+        parser.error("Confirmed screening rule changed; confirm a new request before acquisition")
+    if args.pb_mv_screen and (args.sample or args.max_research):
+        parser.error("--pb-mv-screen requires a scan-only market run (--max-research 0)")
     if (
         not 3 <= args.request_budget <= 10000
         or not 60 <= args.seconds <= 21600
@@ -453,12 +512,14 @@ def main() -> int:
             directory = root / args.resume
             state = read_state(directory / "state.json")
             frozen = read_result(directory / "universe.json", state["freeze"])
+            if frozen.get("prefilter") != (PB_MV_SCREEN if args.pb_mv_screen else None):
+                raise ScreenError("Resume screening rule mismatch")
             if (parse_date(now_iso()[:10]) - parse_date(frozen["cutoff"])).days > 7:
                 raise ScreenError("Frozen run expired; create a new run explicitly")
             if state["model"] != {"provider": args.provider, "model": args.model}:
                 raise ScreenError("Resume model mismatch")
         else:
-            frozen = freeze(client, token, now_iso()[:10], sample)
+            frozen = freeze(client, token, now_iso()[:10], sample, pb_mv_screen=args.pb_mv_screen)
             run_id = (
                 "run-" + frozen["created_at"][:19].replace(":", "-") + "-" + digest(frozen)[:12]
             )

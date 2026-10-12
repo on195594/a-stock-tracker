@@ -8,9 +8,11 @@ import hmac
 import json
 import os
 import re
+import resource
 import signal
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Thread
@@ -21,37 +23,72 @@ from starlette.concurrency import run_in_threadpool
 
 from a_stock_tracker.auth import create_owner_actor
 from a_stock_tracker.automation import (
+    PB_MV_SCREEN,
     candidates,
     coverage,
+    digest,
     locked_root,
     read_result,
     read_state,
     save,
     save_state,
 )
+from a_stock_tracker.disclosures import model_command
 from a_stock_tracker.disclosures import render as render_report
 from a_stock_tracker.opportunities import load_board
-from a_stock_tracker.research import ScreenError
+from a_stock_tracker.research import SHANGHAI, ScreenError, parse_date
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-LIMITS = {
-    "screen": {"title": "财报初筛找候选", "requests": 400, "seconds": 1800, "reports": 0},
+LIMITS: dict[str, dict[str, Any]] = {
+    "screen": {
+        "title": "财报初筛找候选",
+        "requests": 400,
+        "seconds": 1800,
+        "reports": 0,
+        "prefilter": PB_MV_SCREEN,
+    },
     "swing": {"title": "指定股票量价研究", "requests": 20, "seconds": 900, "reports": 0},
     "financial": {"title": "单家公司财报研究", "requests": 100, "seconds": 1800, "reports": 1},
 }
 OWNER = {"owner": "explicit-research-requests-v1"}
+MAX_ROOT_BYTES = 2_000_000_000
+MAX_RUN_BYTES = 256_000_000
+
+
+def disk_bytes(root: Path) -> int:
+    return sum(p.stat().st_size for p in root.rglob("*") if p.is_file() and not p.is_symlink())
 
 
 def quote(info: dict[str, Any], mode: str) -> dict[str, Any]:
-    return {**LIMITS[mode], "model": info["model"] if mode != "screen" else None}
+    value = {**LIMITS[mode], "model": info["model"] if mode != "screen" else None}
+    if mode == "screen":
+        value["prefilter"] = info["modes"][mode].get("prefilter")
+    else:
+        value["model_budget"] = {
+            "calls": 10,
+            "local_timeout_seconds": 240,
+            "output_token_hard_limit": None,
+            "cost_hard_limit": None,
+            "timeout_guarantees_billing_stop": False,
+        }
+    return value
 
 
 def validate_request(value: Any) -> dict[str, Any]:
-    if not isinstance(value, dict) or set(value) != {"id", "mode", "codes", "confirmed", "quote"}:
+    if not isinstance(value, dict) or set(value) not in (
+        {"id", "mode", "codes", "confirmed", "quote"},
+        {"id", "mode", "codes", "confirmed", "quote", "resume_from"},
+    ):
         raise ValueError("请求格式不正确")
     if not isinstance(value["id"], str) or not re.fullmatch(r"[a-f0-9]{32}", value["id"]):
         raise ValueError("请求编号不正确")
     mode, codes = value["mode"], value["codes"]
+    if "resume_from" in value and (
+        mode != "screen"
+        or not isinstance(value["resume_from"], str)
+        or not re.fullmatch(r"[a-f0-9]{32}", value["resume_from"])
+    ):
+        raise ValueError("继续初筛必须指定有效的原请求编号")
     if not isinstance(mode, str) or mode not in LIMITS or value["confirmed"] is not True:
         raise ValueError("必须明确确认研究类型与预算")
     if not isinstance(codes, list) or any(
@@ -72,10 +109,13 @@ def validate_request(value: Any) -> dict[str, Any]:
 def request_info() -> dict[str, Any]:
     market_token = os.getenv("TUSHARE_TOKEN", "")
     market = bool(market_token and not market_token.startswith("REPLACE_"))
-    runtime = Path(os.getenv("AUTOMATION_HERMES_RUNTIME", ""))
+    try:
+        model_command()
+        runtime_ready = True
+    except ScreenError:
+        runtime_ready = False
     model = bool(
-        runtime.is_absolute()
-        and (runtime / ".venv/bin/python").is_file()
+        runtime_ready
         and os.getenv("RESEARCH_PROVIDER")
         and os.getenv("RESEARCH_MODEL")
         and not os.environ["RESEARCH_PROVIDER"].startswith("REPLACE_")
@@ -147,7 +187,21 @@ class ResearchStore:
         state.pop("result", None)
         # Published batches are immutable; verify them without holding the request-state lock.
         if include_result and state["status"] in {"completed", "partial"}:
-            state["result"] = self.result(self.directory(identifier), state["request"]["mode"])
+            source = state.get("reused_from", identifier)
+            state["result"] = self.result(self.directory(source), state["request"]["mode"])
+            if state["request"]["mode"] == "screen":
+                summary = state["result"].get("coverage", {})
+                try:
+                    age = (
+                        datetime.now(SHANGHAI).date() - parse_date(summary.get("cutoff", ""))
+                    ).days
+                    state["can_continue"] = (
+                        bool(summary.get("counts", {}).get("pending"))
+                        and 0 <= age <= 7
+                        and summary.get("prefilter") == PB_MV_SCREEN
+                    )
+                except (ValueError, ScreenError):
+                    state["can_continue"] = False
         return state
 
     def recent(self) -> list[dict[str, Any]]:
@@ -191,6 +245,46 @@ class ResearchStore:
                 raise ValueError("该研究类型尚未配置行情或模型服务，请联系管理员")
             handle = self.lease()
             try:
+                if disk_bytes(self.root) + MAX_RUN_BYTES > MAX_ROOT_BYTES:
+                    raise ValueError("研究存储预算不足，请管理员核查；不会自动删除历史数据")
+                continuation = None
+                if payload.get("resume_from"):
+                    continuation = self.screen_checkpoint(payload["resume_from"])[0].name
+                    for previous in self.root.glob("*/request.json"):
+                        if previous.is_symlink() or previous.parent.is_symlink():
+                            continue
+                        if read_state(previous).get("continued_from") == continuation:
+                            raise ValueError("该检查点已发起后续请求，请打开最近研究核对进度")
+                if payload["mode"] == "screen" and not continuation:
+                    today = datetime.now(SHANGHAI).date()
+                    for previous in self.root.glob("*/request.json"):
+                        if previous.is_symlink() or previous.parent.is_symlink():
+                            continue
+                        old = read_state(previous)
+                        if (
+                            old["request"]["mode"] == "screen"
+                            and old["request"]["quote"] == payload["quote"]
+                            and old["status"] in {"completed", "partial"}
+                            and not old.get("reused_from")
+                            and datetime.fromisoformat(old["created_at"])
+                            .astimezone(SHANGHAI)
+                            .date()
+                            == today
+                        ):
+                            self.result(previous.parent, "screen")
+                            directory.mkdir(mode=0o700)
+                            state = {
+                                **old,
+                                "id": payload["id"],
+                                "request": payload,
+                                "created_at": datetime.now(timezone.utc).isoformat(),
+                                "finished_at": datetime.now(timezone.utc).isoformat(),
+                                "reused_from": old["id"],
+                                "message": "复用今日已校验初筛；没有新增请求或扩大覆盖。",
+                            }
+                            save_state(path, state)
+                            handle.close()
+                            return state
                 directory.mkdir(mode=0o700)
                 state = {
                     "id": payload["id"],
@@ -200,12 +294,69 @@ class ResearchStore:
                     "limits": LIMITS[payload["mode"]],
                     "message": "预算已确认，后台执行中；离开网页不会取消已受理研究。",
                 }
+                if continuation:
+                    state["continued_from"] = continuation
                 save_state(path, state)
                 Thread(target=self.execute, args=(directory, state, handle), daemon=True).start()
             except BaseException:
                 handle.close()
                 raise
             return state
+
+    def screen_checkpoint(self, identifier: str):
+        directory = self.directory(identifier)
+        if (directory / "request.json").is_symlink():
+            raise ScreenError("Symlink checkpoint metadata refused")
+        metadata = read_state(directory / "request.json")
+        if metadata.get("reused_from"):
+            directory = self.directory(metadata["reused_from"])
+            if (directory / "request.json").is_symlink():
+                raise ScreenError("Symlink checkpoint metadata refused")
+            metadata = read_state(directory / "request.json")
+        if metadata["request"]["mode"] != "screen" or metadata["status"] != "partial":
+            raise ValueError("只能继续尚未完成的财报初筛")
+        root = directory / "batch"
+        if root.is_symlink():
+            raise ScreenError("Symlink checkpoint refused")
+        runs = list(root.glob("run-*"))
+        if len(runs) != 1 or not re.fullmatch(r"run-[0-9T-]+-[a-f0-9]{12}", runs[0].name):
+            raise ScreenError("Invalid checkpoint run")
+        run = runs[0]
+        if run.is_symlink() or any(p.is_symlink() for p in run.iterdir()):
+            raise ScreenError("Symlink checkpoint refused")
+        state = read_state(run / "state.json")
+        frozen = read_result(run / "universe.json", state["freeze"])
+        if frozen.get("prefilter") != PB_MV_SCREEN:
+            raise ValueError("初筛规则已变化，请确认新规则后发起新批次")
+        age = (datetime.now(SHANGHAI).date() - parse_date(frozen["cutoff"])).days
+        if not 0 <= age <= 7:
+            raise ValueError("原初筛已超过七天，请明确发起新的初筛")
+        if state["research"] or state["model_calls"] or frozen["sample"]:
+            raise ScreenError("Only scan-only market checkpoints can continue")
+        if any(not re.fullmatch(r"[0-9]{6}\.(SH|SZ)", code) for code in state["scan"]):
+            raise ScreenError("Invalid checkpoint security code")
+        result = self.result(directory, "screen")
+        if not result["coverage"]["counts"].get("pending"):
+            raise ValueError("没有尚未覆盖的股票；资料缺口不会自动重试")
+        return directory, run, state, frozen
+
+    def copy_checkpoint(self, directory: Path, identifier: str) -> str:
+        _, source, state, frozen = self.screen_checkpoint(identifier)
+        with locked_root(directory / "batch") as root:
+            target = root / source.name
+            target.mkdir(mode=0o700)
+            save(target / "universe.json", frozen, immutable=True)
+            for code, sha in state["scan"].items():
+                name = f"scan-{code}.json"
+                envelope = read_result(source / name, sha)
+                if (
+                    envelope["state"]["freeze"] != state["freeze"]
+                    or envelope["state"]["result"]["code"] != code
+                ):
+                    raise ScreenError("Checkpoint scan identity mismatch")
+                save(target / name, envelope, immutable=True)
+            save_state(target / "state.json", state)
+        return source.name
 
     def command(self, directory: Path, payload: dict[str, Any]) -> list[str]:
         mode, codes = payload["mode"], payload["codes"]
@@ -225,8 +376,25 @@ class ResearchStore:
             args += ["--codes", ",".join(codes), "--latest"]
         else:
             args += ["--max-research", str(limits["reports"])]
+            if mode == "screen":
+                args += [
+                    "--pb-mv-screen",
+                    "--screen-contract",
+                    digest(payload["quote"]["prefilter"]),
+                ]
             if codes:
                 args += ["--sample", ",".join(codes)]
+        if payload.get("resume_from"):
+            run_name = self.copy_checkpoint(directory, payload["resume_from"])
+            frozen_state = read_state(directory / "batch" / run_name / "state.json")
+            args += [
+                "--resume",
+                run_name,
+                "--provider",
+                frozen_state["model"]["provider"],
+                "--model",
+                frozen_state["model"]["model"],
+            ]
         if mode != "screen":
             args += [
                 "--provider",
@@ -274,11 +442,21 @@ class ResearchStore:
                 **{k: summary[k] for k in ("mode", "data_date", "status", "total", "counts")},
                 "source_times": frozen.get("source_times", {}),
                 "cutoff": frozen.get("cutoff"),
+                "prefilter": summary["prefilter"],
+                "prefilter_counts": summary["prefilter_counts"],
             },
             "candidates": [
                 {
                     k: by_code[c].get(k)
-                    for k in ("code", "name", "industry", "pb", "roe_mean", "checked_at")
+                    for k in (
+                        "code",
+                        "name",
+                        "industry",
+                        "pb",
+                        "total_mv",
+                        "roe_mean",
+                        "checked_at",
+                    )
                 }
                 for c in selected
             ],
@@ -299,15 +477,26 @@ class ResearchStore:
                     pass_fds=(handle.fileno(),),
                 )
                 try:
-                    code = process.wait(timeout=state["limits"]["seconds"] + 30)
-                finally:
-                    if process.poll() is None:
+                    deadline = time.monotonic() + state["limits"]["seconds"] + 30
+                    while True:
+                        if disk_bytes(directory) > MAX_RUN_BYTES:
+                            raise ScreenError("Research disk budget exceeded")
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise ScreenError("Research time budget exceeded")
                         try:
-                            os.killpg(process.pid, signal.SIGKILL)
-                        except ProcessLookupError:
-                            pass
-                        process.wait()
-            if code not in (0, 2):
+                            code = process.wait(timeout=min(2, remaining))
+                            break
+                        except subprocess.TimeoutExpired:
+                            continue
+                finally:
+                    # A dead leader can leave model descendants running; retain the lease until cleanup.
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    process.wait()
+            if code not in (0, 2) or disk_bytes(directory) > MAX_RUN_BYTES:
                 raise ScreenError("Batch failed")
             result = self.result(directory, state["request"]["mode"])
             complete = code == 0 or (
@@ -391,8 +580,15 @@ def main() -> None:
         path = Path(socket)
         if not path.is_absolute() or any(p.is_symlink() for p in (path, *path.parents)):
             raise ValueError("Research socket must have an explicit non-symlink path")
+        bridge, artifacts = path.parent.resolve(), root.resolve()
+        if bridge == artifacts or bridge in artifacts.parents or artifacts in bridge.parents:
+            raise ValueError("Research bridge and artifacts must be separate directories")
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        if path.parent.stat().st_mode & 0o077 or (path.exists() and not path.is_socket()):
+        if (
+            path.parent.stat().st_mode & 0o077
+            or (path.exists() and not path.is_socket())
+            or any(p != path for p in path.parent.iterdir())
+        ):
             raise ValueError("Research socket directory must be private and socket-only")
         uvicorn.run(app, uds=str(path), access_log=False)
     else:
@@ -405,4 +601,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    # Includes execution logs and inherited worker writes; never truncate historical data.
+    resource.setrlimit(resource.RLIMIT_FSIZE, (32_000_000, 32_000_000))
     main()

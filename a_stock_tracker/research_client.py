@@ -92,7 +92,7 @@ class DemoResearchClient:
 
     def recent(self) -> list[dict[str, Any]]:
         return [
-            {k: v for k, v in dict(r, status="completed").items() if k != "result"}
+            {k: v for k, v in self.status(r["id"]).items() if k != "result"}
             for r in list(self.runs.values())[-10:][::-1]
         ]
 
@@ -111,11 +111,19 @@ class DemoResearchClient:
         else:
             result = {
                 "coverage": {
-                    "mode": "sample",
+                    "mode": "market" if payload["mode"] == "screen" else "sample",
+                    "prefilter": payload["quote"].get("prefilter"),
+                    "prefilter_counts": {"excluded": 1, "pending": 2, "gap": 0},
                     "data_date": "合成日期",
                     "status": "partial",
-                    "total": 1,
-                    "counts": {"qualified": 1},
+                    "total": 3 if payload["mode"] == "screen" else 1,
+                    "counts": {
+                        "qualified": 2 if payload.get("resume_from") else 1,
+                        "excluded": 1 if payload["mode"] == "screen" else 0,
+                        "pending": 1
+                        if payload["mode"] == "screen" and not payload.get("resume_from")
+                        else 0,
+                    },
                 },
                 "candidates": [
                     {
@@ -123,6 +131,7 @@ class DemoResearchClient:
                         "name": "演示公司",
                         "industry": "合成行业",
                         "pb": 1.0,
+                        "total_mv": 600000,
                         "roe_mean": 10.0,
                     }
                 ],
@@ -153,7 +162,9 @@ class DemoResearchClient:
     def status(self, identifier: str) -> dict[str, Any]:
         if identifier not in self.runs:
             raise ResearchUnavailable("没有该合成研究记录")
-        return dict(self.runs[identifier], status="completed")
+        value = self.runs[identifier]
+        pending = value["result"].get("coverage", {}).get("counts", {}).get("pending", 0)
+        return dict(value, status="partial" if pending else "completed", can_continue=bool(pending))
 
 
 def configured_client() -> ResearchClient | None:

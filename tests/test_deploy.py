@@ -5,13 +5,19 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
 
-def test_deploy_success_and_config_rollback(tmp_path: Path) -> None:
+
+@pytest.mark.parametrize("research_bridge", [False, True])
+def test_deploy_success_and_config_rollback(tmp_path: Path, research_bridge: bool) -> None:
     root = tmp_path / "app"
     (root / "docker").mkdir(parents=True)
     shutil.copyfile(Path(__file__).resolve().parents[1] / "deploy.sh", root / "deploy.sh")
     (root / ".web.env").write_text("# isolated test\n")
     (root / "docker-compose.yml").write_text("services: {}\n")
+    if research_bridge:
+        (root / ".research-web.env").write_text("# synthetic bridge configuration\n")
+        (root / "docker-compose.research.yml").write_text("services: {}\n")
     candidate = root / "docker" / "nginx-stock.conf"
     candidate.write_text("new config\n")
 
@@ -45,6 +51,7 @@ def test_deploy_success_and_config_rollback(tmp_path: Path) -> None:
         "NGINX_DIR": str(nginx_dir),
         "COMMAND_LOG": str(log),
         "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        "RESEARCH_WEB_ENABLED": "1" if research_bridge else "0",
     }
 
     def run() -> subprocess.CompletedProcess[str]:
@@ -62,6 +69,7 @@ def test_deploy_success_and_config_rollback(tmp_path: Path) -> None:
     assert site.read_text() == "new config\n"
     assert len(list(site.parent.glob("stock.conf.bak.*"))) == 1
     calls = log.read_text().splitlines()
+    assert any("--env-file .research-web.env" in line for line in calls) is research_bridge
     build = next(i for i, line in enumerate(calls) if " build web" in line)
     up = next(i for i, line in enumerate(calls) if " up -d " in line and line.endswith(" web"))
     reload = next(i for i, line in enumerate(calls) if "nginx -s reload" in line)

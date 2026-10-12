@@ -271,6 +271,10 @@ def main() -> int:
                             page.get_by_role("heading", name="选股与研究", exact=True)
                         ).to_be_visible()
                         start = page.get_by_role("button", name="确认启动研究", exact=True)
+                        expect(page.get_by_text("初筛门槛：0＜PB≤3", exact=False)).to_be_visible()
+                        expect(
+                            page.get_by_text("总市值≥50亿元，不设上限", exact=False)
+                        ).to_be_visible()
                         expect(start).to_be_disabled()
                         click_settled(page, page.get_by_role("checkbox"))
                         expect(start).to_be_enabled()
@@ -278,7 +282,28 @@ def main() -> int:
                         expect(
                             page.get_by_role("heading", name="财报筛选与研究", exact=True)
                         ).to_be_visible(timeout=10000)
+                        expect(page.get_by_text("这是筛后同业排名", exact=False)).to_be_visible()
+                        expect(page.get_by_text("冻结门槛：0＜PB≤3", exact=False)).to_be_visible()
                         assert_layout(page, width)
+                        click_settled(
+                            page,
+                            page.get_by_role(
+                                "button", name="继续未覆盖初筛（核对预算）", exact=True
+                            ),
+                        )
+                        continuation = page.get_by_role(
+                            "button", name="确认新增预算并继续初筛", exact=True
+                        )
+                        expect(continuation).to_be_disabled()
+                        expect(
+                            page.get_by_text("本次另增最多 400 次数据请求", exact=False)
+                        ).to_be_visible()
+                        assert_layout(page, width)
+                        click_settled(page, page.get_by_role("checkbox"))
+                        click_settled(page, continuation)
+                        expect(
+                            page.get_by_role("heading", name="财报筛选与研究", exact=True)
+                        ).to_be_visible(timeout=10000)
                         screen_url = page.url
                         click_settled(
                             page, page.get_by_role("button", name="核对量价条件", exact=True)
@@ -287,6 +312,10 @@ def main() -> int:
                         expect(page.get_by_role("textbox", name="股票代码")).to_have_value(
                             "600001.SH"
                         )
+                        expect(
+                            page.get_by_text("输出 token 与费用无硬上限", exact=False)
+                        ).to_be_visible()
+                        assert_layout(page, width)
                         start = page.get_by_role("button", name="确认启动研究", exact=True)
                         expect(start).to_be_disabled()
                         click_settled(page, page.get_by_role("checkbox"))
@@ -320,6 +349,10 @@ def main() -> int:
                         expect(page.get_by_role("textbox", name="股票代码")).to_have_value(
                             "600001.SH"
                         )
+                        expect(
+                            page.get_by_text("输出 token 与费用无硬上限", exact=False)
+                        ).to_be_visible()
+                        assert_layout(page, width)
                         start = page.get_by_role("button", name="确认启动研究", exact=True)
                         expect(start).to_be_disabled()
                         click_settled(page, page.get_by_role("checkbox"))

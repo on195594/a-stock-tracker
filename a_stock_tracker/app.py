@@ -320,6 +320,61 @@ def build_app():
                     spacing=24,
                 )
             query = parse_qs(urlparse(state["route"]).query)
+            resume_id = query.get("resume_from", [""])[0]
+            if not resume_id:
+                latest_screen = next((r for r in recent if r["request"]["mode"] == "screen"), None)
+                if latest_screen and latest_screen["status"] == "partial":
+                    resume_id = latest_screen["id"]
+            resume_source = None
+            if resume_id:
+                try:
+                    resume_source = await asyncio.to_thread(research.status, resume_id)
+                    pending_count = (
+                        resume_source.get("result", {})
+                        .get("coverage", {})
+                        .get("counts", {})
+                        .get("pending", 0)
+                    )
+                    if (
+                        resume_source["request"]["mode"] != "screen"
+                        or resume_source["status"] != "partial"
+                        or not pending_count
+                        or not resume_source.get("can_continue", False)
+                    ):
+                        if query.get("resume_from"):
+                            return ft.Column(
+                                [
+                                    notice(
+                                        "该初筛不能继续",
+                                        "已无待覆盖股票、冻结资料已超过七天或筛选规则已变化。请返回入口核对并确认新的初筛。",
+                                        caution=True,
+                                    ),
+                                    ft.TextButton(
+                                        "返回选股与研究",
+                                        on_click=open_route("/analysis", gen, actor),
+                                        height=48,
+                                    ),
+                                ]
+                            )
+                        resume_id = ""
+                        resume_source = None
+                except ResearchUnavailable:
+                    return ft.Column(
+                        [
+                            notice(
+                                "无法核对原初筛",
+                                "请返回最近研究核对原记录；未启动新的收费请求。",
+                                caution=True,
+                            ),
+                            ft.TextButton(
+                                "返回选股与研究",
+                                on_click=open_route("/analysis", gen, actor),
+                                height=48,
+                            ),
+                        ]
+                    )
+                if not current(gen, actor):
+                    return ft.Column([])
             initial = query.get("mode", ["screen"])[0]
             if initial not in info["modes"]:
                 initial = "screen"
@@ -343,6 +398,7 @@ def build_app():
                 max_lines=3,
             )
             budget = paragraph("")
+            continuation_note = paragraph("")
             confirmation = ft.Checkbox(label="已核对范围、预算与模型，确认启动", value=False)
             feedback = paragraph("")
             submit = ft.Button("确认启动研究", height=48, disabled=True)
@@ -355,10 +411,28 @@ def build_app():
                 nonlocal pending, request_id
                 pending = None
                 request_id = uuid.uuid4().hex
-                submit.content = "确认启动研究"
+                submit.content = (
+                    "确认新增预算并继续初筛"
+                    if mode.value == "screen" and resume_id
+                    else "确认启动研究"
+                )
                 selected = info["modes"][mode.value]
                 codes.visible = mode.value != "screen"
+                continuation_note.visible = mode.value == "screen" and bool(resume_id)
+                if resume_source and resume_id:
+                    coverage = resume_source["result"]["coverage"]
+                    continuation_note.value = (
+                        f"继续原初筛 {resume_id}\n冻结依据日期：{coverage['data_date']}；"
+                        f"尚未覆盖 {coverage['counts']['pending']} 家。保留已采集资料，只扫描未覆盖部分。"
+                        "本次另增最多 400 次数据请求 / 30 分钟，不调用模型；不是重新刷新全市场，"
+                        "仍可能因预算或资料缺口没有候选。原批次保持不变。"
+                    )
                 confirmation.value = False
+                confirmation.label = (
+                    "已核对范围、预算与模型，接受模型费用无硬上限"
+                    if mode.value != "screen" and not info["demo"]
+                    else "已核对范围、预算与模型，确认启动"
+                )
                 submit.disabled = True
                 budget.value = (
                     (
@@ -366,8 +440,26 @@ def build_app():
                         if info["demo"]
                         else "确认后后台将请求行情；研究股票还会调用模型。\n"
                     )
-                    + f"本次最多 {selected['requests']} 次数据请求、{selected['seconds'] // 60} 分钟；最多 {selected['reports']} 份财报报告。\n量价研究限五家，每家公司解释与复核各一次；不保证入选或通过。初筛只是财报资格，不是波段推荐。\n模型：{info['model']['provider']} / {info['model']['model']}"
+                    + f"本次最多 {selected['requests']} 次数据请求、{selected['seconds'] // 60} 分钟；最多 {selected['reports']} 份财报报告。\n量价研究限五家，每家公司解释与复核各一次；不保证入选或通过。初筛只是财报资格，不是波段推荐。未完成初筛需确认新增预算后继续；已完成结果可直接查看。\n模型：{info['model']['provider']} / {info['model']['model']}"
                 )
+                if mode.value != "screen":
+                    model_budget = quote(info, mode.value)["model_budget"]
+                    budget.value += (
+                        ("\n真实运行时：" if info["demo"] else "\n")
+                        + f"模型调用最多 {model_budget['calls']} 次，每次本地等待最多 "
+                        f"{model_budget['local_timeout_seconds']} 秒。输出 token 与费用无硬上限；"
+                        "超时中止本地等待不保证提供方停止生成或计费。失败调用也可能产生费用。"
+                    )
+                else:
+                    screening = selected.get("prefilter")
+                    if screening:
+                        budget.value += (
+                            f"\n初筛门槛：0＜PB≤{screening['pb_max']}；"
+                            f"总市值≥{screening['total_mv_min_yi']}亿元，不设上限。"
+                            "自动覆盖各行业，仅门槛内股票采集财报；不调用模型。"
+                            "结果是筛后同业排名，不是完整行业前三。"
+                            "门槛用于控制采集量，未经收益验证，可能漏选。"
+                        )
                 if not selected["available"]:
                     feedback.value = "本类型尚未配置，需管理员完成一次连接；不能假装已研究。"
                 else:
@@ -405,6 +497,8 @@ def build_app():
                         "confirmed": True,
                         "quote": quote(info, mode.value),
                     }
+                if mode.value == "screen" and resume_id and pending is not None:
+                    pending["resume_from"] = resume_id
                 submit.disabled = True
                 mode.disabled = codes.disabled = confirmation.disabled = True
                 feedback.value = "正在核对受理状态，请勿重复启动。"
@@ -445,6 +539,7 @@ def build_app():
                     "打开页面不产生研究费用；只有确认启动才会执行。尚未配置的类型不会启动。",
                 ),
                 budget,
+                continuation_note,
                 confirmation,
                 submit,
                 feedback,

@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import time
 from datetime import datetime, timedelta
@@ -24,6 +25,7 @@ from a_stock_tracker.automation import (
     save,
     save_state,
 )
+from a_stock_tracker.bounded_process import run_bounded
 from a_stock_tracker.calendar import _atomic_write_bytes
 from a_stock_tracker.research import SHANGHAI, ScreenError, now_iso, parse_date
 
@@ -213,16 +215,12 @@ def extract_document(
             raise ScreenError("Stored PDF hash conflict")
     else:
         _atomic_write_bytes(path, payload)
-    info = subprocess.run(
-        ["pdfinfo", str(path)], capture_output=True, text=True, timeout=40, check=True
-    ).stdout
+    info = run_bounded(["pdfinfo", str(path)], timeout=40, check=True).stdout
     match = re.search(r"^Pages:\s+([0-9]+)$", info, re.M)
     if not match or not 1 <= int(match[1]) <= 1000:
         raise ScreenError("Invalid PDF page count")
-    text = subprocess.run(
+    text = run_bounded(
         ["pdftotext", "-layout", "-enc", "UTF-8", str(path), "-"],
-        capture_output=True,
-        text=True,
         timeout=60,
         check=True,
     ).stdout
@@ -450,6 +448,36 @@ def validate_review(review: dict[str, Any], report: dict[str, Any]) -> bool:
     )
 
 
+def model_command() -> tuple[list[str], Path]:
+    """Use only an explicitly configured host runtime, never the Web interpreter."""
+    scripts = Path(__file__).resolve().parents[1] / "scripts"
+    if os.getenv("AUTOMATION_PI_RUNTIME"):
+        runtime = Path(os.environ["AUTOMATION_PI_RUNTIME"])
+        agent = Path(os.getenv("AUTOMATION_PI_AGENT_DIR", ""))
+        extension = Path(os.getenv("AUTOMATION_PI_EXTENSION", ""))
+        node = shutil.which("node")
+        if (
+            not runtime.is_absolute()
+            or not (runtime / "dist/core/model-runtime.js").is_file()
+            or not agent.is_absolute()
+            or not (agent / "auth.json").is_file()
+            or not extension.is_absolute()
+            or not extension.is_file()
+            or not node
+        ):
+            raise ScreenError("Explicit installed pi runtime, credentials and provider required")
+        return [node, str(scripts / "automation_model_pi.mjs")], runtime
+    runtime = Path(os.getenv("AUTOMATION_HERMES_RUNTIME", ""))
+    if not runtime.is_absolute() or not (runtime / ".venv/bin/python").is_file():
+        raise ScreenError("Explicit installed Hermes runtime required; no fallback")
+    return [
+        str(runtime / ".venv/bin/python"),
+        "-c",
+        "import runpy,sys; runpy.run_path(sys.argv[1], run_name='__main__')",
+        str(scripts / "automation_model.py"),
+    ], runtime
+
+
 def model_call(
     directory: Path,
     label: str,
@@ -460,49 +488,47 @@ def model_call(
 ) -> dict[str, Any]:
     output = directory / f"{label}.response.json"
     request = {**model, "prompt": prompt, "timeout": 240}
+    if os.getenv("AUTOMATION_PI_RUNTIME"):
+        request["runtime"] = "pi"
     request_path = directory / f"{label}.request.json"
+    usage_path = directory / f"{label}.usage.json"
     if output.exists():
         saved = read_state(output)
         if saved["request_hash"] != digest(request):
             raise ScreenError("Frozen model request mismatch")
         return saved["response"]
+    if usage_path.exists() or request_path.exists():
+        raise ScreenError(
+            "Previous model attempt has no verified response; refusing another charge"
+        )
     budget.check(260)
     if state["model_calls"] >= 10:
         raise BudgetStop("MODEL_CALL_BUDGET")
-    runtime = os.environ.get("AUTOMATION_HERMES_RUNTIME")
-    if (
-        not runtime
-        or not Path(runtime).is_absolute()
-        or not (Path(runtime) / ".venv/bin/python").is_file()
-    ):
-        raise ScreenError("Explicit installed Hermes runtime required; no fallback")
+    command, runtime = model_command()
     state["model_calls"] += 1  # Count even a killed or failed subprocess before starting it.
     save_state(directory / "state.json", state)
     save(request_path, request, immutable=True)
-    runner = Path(__file__).resolve().parents[1] / "scripts/automation_model.py"
+    audit = {"request_hash": digest(request), "model": model, "status": "started", "usage": None}
+    save_state(usage_path, audit)
     env = {
         k: v
         for k, v in os.environ.items()
-        if not k.startswith(("TUSHARE", "TELEGRAM", "DISCORD", "SLACK", "HERMES_KANBAN"))
+        if not k.startswith(
+            ("TUSHARE", "TELEGRAM", "DISCORD", "SLACK", "HERMES_KANBAN", "RESEARCH_SERVICE_")
+        )
         and k not in {"STATE_DIR", "TRACKER_DATA_DIR", "PYTHONPATH"}
     }
-    process = subprocess.run(
-        [
-            str(Path(runtime) / ".venv/bin/python"),
-            "-c",
-            "import runpy,sys; runpy.run_path(sys.argv[1], run_name='__main__')",
-            str(runner),
-            str(request_path),
-        ],
+    process = run_bounded(
+        [*command, str(request_path)],
         cwd=runtime,
         env=env,
-        capture_output=True,
-        text=True,
         timeout=260,
     )
+    envelope = json.loads(process.stdout)
+    audit.update(status="returned", usage=envelope.get("usage"), returncode=process.returncode)
+    save_state(usage_path, audit)
     if process.returncode:
         raise ScreenError("Tool-free model invocation failed")
-    envelope = json.loads(process.stdout)
     if (
         envelope.get("tool_count") != 0
         or envelope.get("model") != model["model"]
@@ -732,6 +758,11 @@ def research_batch(
         f"范围 {summary['total']} 家，状态 {json.dumps(summary['counts'], ensure_ascii=False)}",
         "",
     ]
+    if screening := frozen.get("prefilter"):
+        lines += [
+            f"前置门槛：0＜PB≤{screening['pb_max']}；总市值≥{screening['total_mv_min_yi']}亿元，不设上限。",
+            "仅筛后同业排名，不是完整行业前三；门槛未经收益验证，可能漏选。",
+        ]
     lines += [
         f"- {r['code']}: {r['status']}；变化 {r.get('change', '未建立')}；[报告](report-{r['code']}.md)"
         for r in published
