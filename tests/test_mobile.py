@@ -13,6 +13,7 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import urlparse
 
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import expect, sync_playwright
 
 
@@ -37,20 +38,39 @@ def click_settled(page, control):
     center = page.viewport_size["height"] / 2
     page.mouse.move(page.viewport_size["width"] / 2, center)
     page.mouse.wheel(0, box["y"] + box["height"] / 2 - center)
-    page.wait_for_function(
-        """el => {
-            const r = el.getBoundingClientRect();
-            const geometry = [r.x, r.y, r.width, r.height].join(',');
-            if (el._testGeometry !== geometry) {
-                el._testGeometry = geometry;
-                el._testStableSince = performance.now();
-            }
-            return r.top >= 0 && r.bottom <= innerHeight &&
-                performance.now() - el._testStableSince >= 250;
-        }""",
-        arg=control.element_handle(),
-        timeout=5000,
-    )
+    element = control.element_handle()
+    try:
+        page.wait_for_function(
+            """el => {
+                const r = el.getBoundingClientRect();
+                const geometry = [r.x, r.y, r.width, r.height].join(',');
+                if (el._testGeometry !== geometry) {
+                    el._testGeometry = geometry;
+                    el._testStableSince = performance.now();
+                }
+                return r.top >= 0 && r.bottom <= innerHeight &&
+                    performance.now() - el._testStableSince >= 250;
+            }""",
+            arg=element,
+            timeout=5000,
+        )
+    except PlaywrightTimeoutError:
+        print(
+            "Unsettled synthetic control:",
+            {
+                "url": page.url,
+                "viewport": page.viewport_size,
+                "before": box,
+                "current": control.bounding_box(),
+                "element": element.evaluate(
+                    """el => ({connected: el.isConnected, rect: el.getBoundingClientRect().toJSON(),
+                    label: el.getAttribute('aria-label'), text: el.textContent,
+                    stableSince: el._testStableSince, now: performance.now()})"""
+                ),
+            },
+            flush=True,
+        )
+        raise
     control.click()
 
 
