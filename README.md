@@ -56,6 +56,18 @@ make test-mobile             # 真实浏览器点击，含 360/390/430px
 - 根据 `.research-web.env.example` 配置 `.research-web.env`，仅包含同一桥目录与共享令牌。生产 Web 显式使用 `docker-compose.research.yml` 覆盖文件。已授权部署时可运行 `RESEARCH_WEB_ENABLED=1 ./deploy.sh`；脚本不启动宿主研究进程、不请求行情或模型。默认部署不启用该桥。
 - 服务一次只接受一个执行请求；无队列、无自动恢复、无自动收费重试。进程异常后记录未确认/中断，不能冒充成功；原始产物保留供核查。基础设施配置/启动/部署不授权任何实际研究请求。
 
+### 离线性能对照
+
+`make test-mobile` 同时打印合成首屏资源的编码/解码字节数及可操作页面与中文字体加载完成的耗时。只测冷启动、禁用浏览器路由缓存，不代表线上或真机指标。以下命令仅运行首屏测量，不能替代完整点击回归：
+
+```bash
+# 同一台空闲机器顺序运行：模拟 10Mbps 下行、1Mbps 上行、80ms 延迟
+.venv/bin/python -m tests.test_mobile --performance-only --mobile-network --uncompressed-assets
+.venv/bin/python -m tests.test_mobile --performance-only --mobile-network
+```
+
+`--uncompressed-assets` 只在合成测试服务中关闭公开资源压缩；省略 `--mobile-network` 可核对 loopback 下的 CPU/压缩开销。比较时同时看传输量和耗时，不把单次结果当成稳定性能预算；真实网络、并发负载和生产反向代理仍需另行验收。
+
 ## 波段观察批处理（维护与高级使用）
 
 批处理与 Web 分离；打开页面不请求行情或模型。demo 默认展示明确标记的合成机会与解释，不冒充真实 AI 结果。生产未配置/未发布批次时显示空状态。

@@ -179,6 +179,105 @@ def test_web_consent_demo_and_late_callback_are_inert_after_logout(monkeypatch):
     asyncio.run(run())
 
 
+def test_research_entry_loads_independent_reads_concurrently(monkeypatch):
+    import threading
+
+    monkeypatch.setattr(app, "APP_MODE", "demo")
+    client = DemoResearchClient()
+    monkeypatch.setattr(app, "DemoResearchClient", lambda: client)
+    barrier = threading.Barrier(2)
+
+    def concurrent(method):
+        def read():
+            barrier.wait(timeout=3)
+            return method()
+
+        return read
+
+    monkeypatch.setattr(client, "info", concurrent(client.info))
+    monkeypatch.setattr(client, "recent", concurrent(client.recent))
+
+    async def run():
+        page = AppMockPage()
+        page.route = "/analysis"
+        try:
+            await app.build_app()(page)
+            assert any(
+                isinstance(c, ft.Button) and c.content == "确认启动研究" for c in app_controls(page)
+            )
+        finally:
+            await page.on_close(None)
+
+    asyncio.run(run())
+
+
+def test_research_poll_only_renders_changed_data(monkeypatch):
+    monkeypatch.setattr(app, "APP_MODE", "demo")
+    client = DemoResearchClient()
+    monkeypatch.setattr(app, "DemoResearchClient", lambda: client)
+    identifier = "a" * 32
+    initial = {
+        "id": identifier,
+        "status": "running",
+        "message": "采集中",
+        "created_at": "2026-09-22T10:00:00+08:00",
+        "limits": {"title": "合成研究"},
+    }
+    snapshots = iter(
+        [
+            initial,
+            dict(initial),
+            dict(initial, message="解释中"),
+            dict(initial, status="completed", message="完成"),
+        ]
+    )
+    monkeypatch.setattr(client, "status", lambda _: next(snapshots))
+    rendered = []
+    original_view = app.result_view
+
+    def result_view(run, *args, **kwargs):
+        rendered.append(run)
+        return original_view(run, *args, **kwargs)
+
+    monkeypatch.setattr(app, "result_view", result_view)
+    original_sleep = asyncio.sleep
+
+    async def run():
+        ready = asyncio.Event()
+        ticks = asyncio.Queue()
+
+        async def sleep(delay):
+            if delay == 2:
+                ready.set()
+                await ticks.get()
+            else:
+                await original_sleep(delay)
+
+        monkeypatch.setattr(app.asyncio, "sleep", sleep)
+        page = AppMockPage()
+        page.route = f"/analysis/{identifier}"
+        try:
+            await app.build_app()(page)
+            await asyncio.wait_for(ready.wait(), 3)
+            poll = next(t for t in asyncio.all_tasks() if t.get_coro().__name__ == "poll")
+            initial_updates = page.updated_count
+            for expected_renders in (1, 2):
+                ready.clear()
+                ticks.put_nowait(None)
+                await asyncio.wait_for(ready.wait(), 3)
+                assert len(rendered) == expected_renders
+                assert page.updated_count == initial_updates + expected_renders - 1
+            ticks.put_nowait(None)
+            await asyncio.wait_for(poll, 3)
+            assert len(rendered) == 3
+            assert rendered[-1]["status"] == "completed"
+            assert page.updated_count == initial_updates + 2
+        finally:
+            await page.on_close(None)
+
+    asyncio.run(run())
+
+
 def test_late_submit_response_cannot_overwrite_logout(monkeypatch):
     import threading
     from types import SimpleNamespace
@@ -365,6 +464,121 @@ def test_execute_pins_cwd_to_repo_root(tmp_path, monkeypatch):
     monkeypatch.setattr(store, "result", lambda *a: {"coverage": {"status": "complete"}})
     store.execute(directory, state, lease)
     assert captured_kw.get("cwd") == str(REPO_ROOT)
+    assert "result" not in read_state(directory / "request.json")
+    assert store.status(p["id"])["result"] == {"coverage": {"status": "complete"}}
+
+
+@pytest.mark.parametrize("operation", ["status", "recent", "submit"])
+def test_slow_store_does_not_block_service_event_loop(tmp_path, monkeypatch, operation):
+    import threading
+
+    started, release = threading.Event(), threading.Event()
+
+    def slow(*args):
+        started.set()
+        assert release.wait(5)
+        return [] if operation == "recent" else {"status": "running"}
+
+    monkeypatch.setattr(ResearchStore, operation, slow)
+    service = create_service(tmp_path / "service", "x" * 32)
+
+    async def run():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=service),
+            base_url="http://research",
+            headers={"Authorization": "Bearer " + "x" * 32},
+        ) as client:
+            path = "/runs/" + "a" * 32 if operation == "status" else "/runs"
+            method = "POST" if operation == "submit" else "GET"
+            pending = asyncio.create_task(client.request(method, path, json=payload()))
+            try:
+                assert await asyncio.to_thread(started.wait, 3)
+                response = await asyncio.wait_for(client.get("/info"), 2)
+                assert response.status_code == 200
+                assert not pending.done()
+            finally:
+                release.set()
+                assert (await pending).status_code == 200
+
+    asyncio.run(run())
+
+
+def test_result_reverified_outside_request_lock_and_not_in_history(tmp_path, monkeypatch):
+    from a_stock_tracker.automation import locked_root
+
+    store = ResearchStore(tmp_path / "service")
+    p = payload()
+    directory = store.directory(p["id"])
+    directory.mkdir(mode=0o700)
+    save_state(
+        directory / "request.json",
+        {"id": p["id"], "request": p, "status": "completed", "result": {"old": True}},
+    )
+    verified = []
+
+    def result(*args):
+        with locked_root(store.root):
+            verified.append(True)
+        return {"verified": len(verified)}
+
+    monkeypatch.setattr(store, "result", result)
+    assert "result" not in store.status(p["id"], include_result=False)
+    assert not verified
+    assert store.status(p["id"])["result"] == {"verified": 1}
+    assert store.status(p["id"])["result"] == {"verified": 2}
+    assert read_state(directory / "request.json")["result"] == {"old": True}
+
+
+def test_recent_selects_only_ten_newest_states(tmp_path, monkeypatch):
+    import os
+
+    store = ResearchStore(tmp_path / "service")
+    for number in range(30):
+        directory = store.directory(f"{number:032x}")
+        directory.mkdir(mode=0o700)
+        path = directory / "request.json"
+        save_state(path, {"id": directory.name, "status": "failed"})
+        os.utime(path, (number + 1, number + 1))
+    calls = []
+    original = store.status
+
+    def status(identifier, **kwargs):
+        calls.append(identifier)
+        return original(identifier, **kwargs)
+
+    monkeypatch.setattr(store, "status", status)
+    runs = store.recent()
+    assert [r["id"] for r in runs] == [f"{n:032x}" for n in range(29, 19, -1)]
+    assert len(calls) == 10
+
+
+def test_recent_handles_concurrent_file_deletion_during_stat(tmp_path, monkeypatch):
+    import errno
+    from pathlib import Path
+
+    store = ResearchStore(tmp_path / "service")
+    p1 = payload("screen")
+    d1 = store.directory(p1["id"])
+    d1.mkdir(mode=0o700)
+    save_state(d1 / "request.json", {"id": p1["id"], "request": p1, "status": "running"})
+
+    p2 = payload("swing")
+    d2 = store.directory(p2["id"])
+    d2.mkdir(mode=0o700)
+    path2 = d2 / "request.json"
+    save_state(path2, {"id": p2["id"], "request": p2, "status": "running"})
+
+    original_stat = Path.stat
+
+    def flaky_stat(self, *args, **kwargs):
+        if self == path2 and kwargs.get("follow_symlinks", True):
+            raise FileNotFoundError(errno.ENOENT, "concurrent deletion")
+        return original_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", flaky_stat)
+    runs = store.recent()
+    assert len(runs) == 1
+    assert runs[0]["id"] == p1["id"]
 
 
 def test_recent_ignores_malformed_directories_and_missing_files(tmp_path):

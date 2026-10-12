@@ -38,6 +38,7 @@ from a_stock_tracker.research_client import (
 )
 from a_stock_tracker.research_service import quote
 from a_stock_tracker.research_view import LABELS, result_view
+from a_stock_tracker.web_assets import PublicAssetCompression
 
 RAW_MODE = os.getenv("APP_MODE", "demo")
 if RAW_MODE not in ("demo", "production"):
@@ -238,6 +239,7 @@ def build_app():
                     )
 
                 async def poll():
+                    last_run = run
                     consecutive_errors = 0
                     try:
                         while current(gen, actor):
@@ -252,6 +254,9 @@ def build_app():
                                 raise
                             if not current(gen, actor):
                                 return
+                            if updated == last_run:
+                                continue
+                            last_run = updated
                             content_container.content = result_view(
                                 updated, lambda r: open_route(r, gen, actor), back, code
                             )
@@ -291,8 +296,9 @@ def build_app():
                     state["poll"] = asyncio.create_task(poll())
                 return result_view(run, lambda r: open_route(r, gen, actor), back, code)
             try:
-                info = await asyncio.to_thread(research.info)
-                recent = await asyncio.to_thread(research.recent)
+                info, recent = await asyncio.gather(
+                    asyncio.to_thread(research.info), asyncio.to_thread(research.recent)
+                )
             except ResearchUnavailable:
                 return ft.Column(
                     [
@@ -880,7 +886,9 @@ def get_asgi_app():
     )
 
     return SecurityMiddleware(
-        inner_app, is_demo=(APP_MODE == "demo"), public_base_url=PUBLIC_BASE_URL
+        PublicAssetCompression(inner_app),
+        is_demo=(APP_MODE == "demo"),
+        public_base_url=PUBLIC_BASE_URL,
     )
 
 

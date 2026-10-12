@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import heapq
 import hmac
 import json
 import os
@@ -16,6 +17,7 @@ from threading import Thread
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
+from starlette.concurrency import run_in_threadpool
 
 from a_stock_tracker.auth import create_owner_actor
 from a_stock_tracker.automation import (
@@ -142,21 +144,29 @@ class ResearchStore:
                         message="研究进程已中断，未确认发布成功；不会自动重新收费。",
                     )
                     save_state(path, state)
-            if include_result and state["status"] in {"completed", "partial"}:
-                state["result"] = self.result(self.directory(identifier), state["request"]["mode"])
-            return state
+        state.pop("result", None)
+        # Published batches are immutable; verify them without holding the request-state lock.
+        if include_result and state["status"] in {"completed", "partial"}:
+            state["result"] = self.result(self.directory(identifier), state["request"]["mode"])
+        return state
 
     def recent(self) -> list[dict[str, Any]]:
         runs = []
-        paths = [
+        paths = (
             p
             for p in self.root.glob("*/request.json")
             if re.fullmatch(r"[a-f0-9]{32}", p.parent.name)
             and not p.parent.is_symlink()
             and not p.is_symlink()
-        ]
-        paths.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-        for p in paths[:10]:
+        )
+
+        def safe_mtime(p: Path) -> float:
+            try:
+                return p.stat().st_mtime
+            except OSError:
+                return 0.0
+
+        for p in heapq.nlargest(10, paths, key=safe_mtime):
             try:
                 state = self.status(p.parent.name, include_result=False)
                 runs.append({k: v for k, v in state.items() if k != "result"})
@@ -303,8 +313,8 @@ class ResearchStore:
             complete = code == 0 or (
                 state["request"]["mode"] == "screen" and result["coverage"]["status"] == "complete"
             )
+            state.pop("result", None)
             state.update(
-                result=result,
                 exit_code=code,
                 status="completed" if complete else "partial",
                 message="本次研究已结束。请核对覆盖、缺口与证据，不是买入信号。",
@@ -339,18 +349,18 @@ def create_service(root: Path, token: str) -> FastAPI:
         try:
             if request.method == "GET":
                 if path == "info":
-                    return request_info()
+                    return await run_in_threadpool(request_info)
                 if path == "runs":
-                    return {"runs": store.recent()}
+                    return {"runs": await run_in_threadpool(store.recent)}
                 if path.startswith("runs/"):
-                    return store.status(path.removeprefix("runs/"))
+                    return await run_in_threadpool(store.status, path.removeprefix("runs/"))
             elif path == "runs":
                 body = bytearray()
                 async for chunk in request.stream():
                     body.extend(chunk)
                     if len(body) > 4096:
                         raise HTTPException(413, "请求过大")
-                return store.submit(json.loads(body))
+                return await run_in_threadpool(store.submit, json.loads(body))
             raise HTTPException(404, "没有该研究入口")
         except FileNotFoundError:
             raise HTTPException(404, "没有该研究记录") from None

@@ -1,0 +1,67 @@
+"""Public transfer savings must not change private responses or byte ranges."""
+
+import pytest
+from starlette.responses import Response
+from starlette.testclient import TestClient
+
+from a_stock_tracker.app import get_asgi_app
+from a_stock_tracker.web_assets import PublicAssetCompression
+
+
+@pytest.mark.parametrize(
+    "path,compressed",
+    [
+        ("/main.dart.js", True),
+        ("/main.dart.mjs", True),
+        ("/main.dart.wasm", True),
+        ("/flutter_bootstrap.js", True),
+        ("/canvaskit/chromium/canvaskit.wasm", True),
+        ("/fonts/NotoSansSC-Regular.otf", False),
+        ("/", False),
+        ("/oauth_callback", False),
+        ("/analysis/" + "a" * 32, False),
+        ("/runs/" + "a" * 32, False),
+        ("/private/report.js", False),
+    ],
+)
+def test_only_public_assets_are_compressed(path, compressed):
+    body = b"synthetic content " * 1000
+    client = TestClient(PublicAssetCompression(Response(body)))
+    response = client.get(path, headers={"Accept-Encoding": "gzip"})
+    assert response.content == body
+    assert (response.headers.get("content-encoding") == "gzip") is compressed
+    if compressed:
+        assert int(response.headers["content-length"]) < len(body) // 2
+        assert "Accept-Encoding" in response.headers["vary"]
+    assert "cache-control" not in response.headers
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"Accept-Encoding": "identity"},
+        {"Range": "bytes=0-4095"},
+        {"range": "bytes=0-4095"},
+        {"RANGE": "bytes=0-4095"},
+    ],
+)
+def test_uncompressed_clients_and_ranges_are_preserved(headers):
+    body = b"x" * 4096
+    status = 206 if "Range" in headers else 200
+    client = TestClient(PublicAssetCompression(Response(body, status_code=status)))
+    response = client.get("/main.dart.js", headers=headers)
+    assert response.status_code == status
+    assert response.content == body
+    assert "content-encoding" not in response.headers
+
+
+def test_real_wasm_compression_preserves_security_and_conditional_requests():
+    client = TestClient(get_asgi_app(), base_url="http://127.0.0.1:8550")
+    path = "/main.dart.wasm"
+    response = client.get(path, headers={"Accept-Encoding": "gzip"})
+    assert response.status_code == 200
+    assert response.headers["content-encoding"] == "gzip"
+    assert response.content.startswith(b"\x00asm")
+    cached = client.get(path, headers={"If-None-Match": response.headers["etag"]})
+    assert cached.status_code == 304 and not cached.content
+    assert client.get(path, headers={"Host": "evil.example"}).status_code == 403

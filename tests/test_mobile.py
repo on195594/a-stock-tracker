@@ -54,7 +54,7 @@ def click_settled(page, control):
     control.click()
 
 
-def serve_ui_cases(case_file: str) -> None:
+def serve_ui_cases(case_file: str, uncompressed_assets: bool = False) -> None:
     """Test-only data substitution; use the real app, routes and actor checks."""
     import uvicorn
 
@@ -87,6 +87,9 @@ def serve_ui_cases(case_file: str) -> None:
         return result
 
     opportunity_demo.demo_board = board
+    if uncompressed_assets:
+        app.PublicAssetCompression = lambda inner: inner
+        app.asgi_app = app.get_asgi_app()
     uvicorn.run(app.asgi_app, host=app.HOST, port=app.PORT, access_log=False)
 
 
@@ -127,8 +130,9 @@ def main() -> int:
                 [
                     sys.executable,
                     "-c",
-                    "from tests.test_mobile import serve_ui_cases; import sys; serve_ui_cases(sys.argv[1])",
+                    "from tests.test_mobile import serve_ui_cases; import sys; serve_ui_cases(sys.argv[1], sys.argv[2] == 'identity')",
                     str(case_file),
+                    "identity" if "--uncompressed-assets" in sys.argv else "gzip",
                 ],
                 cwd=Path(__file__).resolve().parents[1],
                 env=env,
@@ -167,6 +171,18 @@ def main() -> int:
 
                     context.route("**/*", local_only)
                     page = context.new_page()
+                    if "--mobile-network" in sys.argv:
+                        cdp = context.new_cdp_session(page)
+                        cdp.send("Network.enable")
+                        cdp.send(
+                            "Network.emulateNetworkConditions",
+                            {
+                                "offline": False,
+                                "latency": 80,
+                                "downloadThroughput": 10_000_000 / 8,
+                                "uploadThroughput": 1_000_000 / 8,
+                            },
+                        )
                     page.on(
                         "response",
                         lambda response: (
@@ -177,14 +193,38 @@ def main() -> int:
                     )
                     for width in (360, 390, 430):
                         page.set_viewport_size({"width": width, "height": 844})
-                        page.goto(base, timeout=15000)
-                        page.wait_for_selector("flt-semantics-placeholder", timeout=15000)
+                        timeout = 60000 if "--mobile-network" in sys.argv else 15000
+                        page.goto(base, timeout=timeout)
+                        page.wait_for_selector("flt-semantics-placeholder", timeout=timeout)
                         page.evaluate('document.querySelector("flt-semantics-placeholder").click()')
                         expect(
                             page.get_by_text("合成演示 · 非真实股票、非AI研究结果")
                         ).to_be_visible()
                         expect(page.get_by_text("等待条件核对 · 不是已触发信号")).to_be_visible()
                         assert_layout(page, width)
+                        if width == 360:
+                            page.wait_for_function(
+                                """() => performance.getEntriesByType('resource')
+                                .some(r => r.name.endsWith('/fonts/NotoSansSC-Regular.otf'))""",
+                                timeout=timeout,
+                            )
+                            metrics = page.evaluate("""() => {
+                                const resources = performance.getEntriesByType('resource')
+                                    .filter(r => r.name.startsWith(location.origin));
+                                return {
+                                    ready_ms: Math.round(performance.now()),
+                                    encoded_bytes: resources.reduce((n, r) => n + r.encodedBodySize, 0),
+                                    decoded_bytes: resources.reduce((n, r) => n + r.decodedBodySize, 0),
+                                };
+                            }""")
+                            network = (
+                                "10Mbps/80ms" if "--mobile-network" in sys.argv else "unthrottled"
+                            )
+                            encoding = "identity" if "--uncompressed-assets" in sys.argv else "gzip"
+                            print(f"Synthetic cold entry ({network}, {encoding}): {metrics}")
+                            if "--performance-only" in sys.argv:
+                                browser.close()
+                                return 0
                         assert page.get_by_role("heading", level=1).count() == 1
                         assert page.get_by_role("tablist").count() == 0
                         assert (
