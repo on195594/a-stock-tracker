@@ -58,7 +58,7 @@ make test-mobile             # 真实浏览器点击，含 360/390/430px
 - 根据 `.research.env.example` 创建 Git 忽略的 `.research.env`，选择全新私有 `RESEARCH_SERVICE_ROOT`、单独的 `RESEARCH_SERVICE_SOCKET` 目录、已有的授权行情/模型和明确 provider/model。共享令牌用 `secrets.token_urlsafe(32)` 生成，不用示例占位值。
 - 模型运行时可选已安装的 Hermes 或 pi。pi 配置 `AUTOMATION_PI_RUNTIME`（安装包目录）、`AUTOMATION_PI_AGENT_DIR`（凭据目录）及 `AUTOMATION_PI_EXTENSION`（仅模型提供方入口），并将其默认 provider/model 明确写入 `RESEARCH_PROVIDER` / `RESEARCH_MODEL`；不会随 pi 默认设置变化而静默换模型。仅直接调用提供方推理，不启动编码会话、不加载技能、个人上下文或工具；每次本地最多等待 240 秒，向运行时请求 6000 输出 token；已安装 pi 的 openai-codex 提供方不会把该上限传给服务端，因此不能把它当作 token 或费用硬上限。pi 固定 SSE、关闭传输重试，无模型调用回退。提供方扩展若注册工具或事件回调则拒绝执行。pi 与 Hermes 的原始调用缓存分开核验。
 - 明确授权后，在宿主启动一次 `.venv/bin/python -m a_stock_tracker.research_service`（仅启动接收器，不主动研究），启动前用 `set -a; source .research.env; set +a` 加载宿主环境，勿将此文件传给 Web。默认仅 loopback；配置 socket 时通过私有 Unix socket 通信。此源码不安装 cron、定时或进程管理器。
-- 根据 `.research-web.env.example` 配置 `.research-web.env`，仅包含同一桥目录与共享令牌。生产 Web 显式使用 `docker-compose.research.yml` 覆盖文件。已授权部署时可运行 `RESEARCH_WEB_ENABLED=1 ./deploy.sh`；脚本不启动宿主研究进程、不请求行情或模型。默认部署不启用该桥。
+- 根据 `.research-web.env.example` 配置 `.research-web.env`，仅包含同一桥目录与共享令牌。生产 Web 显式使用 `docker-compose.research.yml` 覆盖文件。已授权部署时可运行 `RESEARCH_WEB_ENABLED=1 ./deploy.sh`；脚本不启动宿主研究进程、不请求行情或模型。首次部署默认不启用该桥；现有容器已有桥时，省略开关会在修改前中止并要求明确选择。
 - 服务一次只接受一个执行请求；无队列、无自动恢复、无自动收费重试。进程异常后记录未确认/中断，不能冒充成功；原始产物保留供核查。异常/正常退出均清理工作进程组后才释放执行锁。失败调用保留 `.usage.json`；`usage: null` 表示未知而非零费用，已有调用记录但无合格响应时禁止自动再次调用。基础设施配置/启动/部署不授权任何实际研究请求。
 
 接收器启动时将单文件写入上限设为 32 MB；PDF 提取和模型子进程的 stdout/stderr 合计最多读取 8 MB。每批目录超过 256 MB 则停止（每两秒检查，可能短暂超出），新批次须在研究根目录 2 GB 预算内预留 256 MB；不会自动删除历史产物。持久用户服务模板为 [config/a-stock-tracker-research.service](config/a-stock-tracker-research.service)，适用于项目位于 `~/a-stock-tracker` 的宿主，包含 cgroup 资源隔离与有限异常重启。完整部署流程、systemd 服务生命周期与排障见 [运维与生产部署](#运维与生产部署)。
@@ -123,18 +123,23 @@ Docker 可选覆盖文件 `docker-compose.opportunities.yml` 提供只读挂载�
 部署需在当前会话**明确授权**。`deploy.sh` 具有线上副作用，严禁用作本地日常开发验证。
 
 ```bash
-# 基础只读 Web 部署（仅展示机会列表、详情与账户）
+# 首次或已有无桥容器的基础只读 Web 部署
 ./deploy.sh
 
 # 启用网页研究网关的 Web 部署（需先配置 .research-web.env 与宿主接收器）
 RESEARCH_WEB_ENABLED=1 ./deploy.sh
+
+# 明确停用已有 Web 研究桥（不停止宿主接收器、不删除研究数据）
+RESEARCH_WEB_ENABLED=0 ./deploy.sh
 ```
+
+开关只接受 `0` 或 `1`，空值及其他写法均拒绝。省略开关时，脚本检查现有 Web（含已停止容器）的研究环境项与桥挂载；发现已有桥则在构建、重建或修改 Nginx 前中止，要求显式选择 `1` 保留或 `0` 停用。Docker 状态读取失败也中止；不会仅因 `.research-web.env` 存在就自动启用。
 
 **部署脚本自动执行的防护步骤：**
 1. **配置预检**：检查 `.web.env`、`docker-compose.yml`、Nginx 源配置及目标站点；若启用桥接则核验 `.research-web.env` 与 `docker-compose.research.yml`；
 2. **语法与回归**：运行 `docker compose config --quiet` 验证编排语法，执行 `make check` 确保 100% 测试通过且类型/格式干净；
 3. **镜像构建与容器重构**：构建 `web` 镜像并执行 `up -d --no-deps --force-recreate --remove-orphans`（自动移除已退役的旧 worker 容器，不删除宿主卷或数据）；
-4. **本地健康探针**：以生产 Host 轮询探测 `http://127.0.0.1:8550/`（最多 10 次，每次间隔 2 秒），失败则中断并保留日志；
+4. **本地健康探针**：以生产 Host 轮询探测 `http://127.0.0.1:8550/`（最多 10 次，每次间隔 2 秒），失败则中断并保留日志；启用桥时，再从新 Web 容器以现有令牌和 socket 只读请求 `GET /info`，核对认证与桥响应；不打印令牌或响应、不启动研究或调用行情/模型。探针失败不会修改/重载 Nginx 或报告部署成功，但 Web 此时已重建，须修复宿主接收器/桥配置后显式启用重部署；该探针仅证明桥可达，不证明市场/模型凭据有效或真实研究可成功；
 5. **Nginx 配置平滑切换**：自动备份原配置为 `$site.bak.<时间戳>.<PID>`，写入新配置并执行 `docker exec nginx nginx -t`。校验失败自动恢复备份；通过后执行 `docker exec nginx nginx -s reload`；
 6. **外网回环探针**：探测 `https://stock.keyi.win/`（最多 5 次），确认容器持续运行且重启计数为 0。
 

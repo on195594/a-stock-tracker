@@ -5,9 +5,29 @@ cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 nginx_dir="${NGINX_DIR:-/home/lin/nginx}"
 site="$nginx_dir/sites-enabled/stock.conf"
 source_conf=docker/nginx-stock.conf
+command -v docker >/dev/null
+# Omission may never silently remove a bridge from an existing (even stopped) web.
+# Inspect only presence markers: never print the container environment or its token.
+research_enabled="${RESEARCH_WEB_ENABLED-}"
+if [[ "${RESEARCH_WEB_ENABLED+x}" ]]; then
+    if [[ "$research_enabled" != 0 && "$research_enabled" != 1 ]]; then
+        echo 'RESEARCH_WEB_ENABLED must be exactly 0 (disable) or 1 (enable).' >&2
+        exit 1
+    fi
+else
+    existing=$(docker ps -a --filter name=^/a-stock-tracker-web$ --format '{{.ID}}')
+    if [[ -n "$existing" ]]; then
+        bridge=$(docker inspect --format '{{range .Config.Env}}{{if or (eq (index (split . "=") 0) "RESEARCH_SERVICE_URL") (eq (index (split . "=") 0) "RESEARCH_SERVICE_SOCKET") (eq (index (split . "=") 0) "RESEARCH_SERVICE_TOKEN")}}bridge{{end}}{{end}}{{range .Mounts}}{{if eq .Destination "/research-bridge"}}bridge{{end}}{{end}}' "$existing")
+        if [[ -n "$bridge" ]]; then
+            echo 'Existing web has a research bridge. No changes made. Use RESEARCH_WEB_ENABLED=1 ./deploy.sh to keep it, or RESEARCH_WEB_ENABLED=0 ./deploy.sh to explicitly disable it.' >&2
+            exit 1
+        fi
+    fi
+    research_enabled=0
+fi
 compose=(docker compose -f docker-compose.yml)
-# Opt-in bridge; does not install/start the host research process or make a research request.
-if [[ "${RESEARCH_WEB_ENABLED:-0}" == "1" ]]; then
+# Explicit opt-in only; config-file presence alone never enables research.
+if [[ "$research_enabled" == 1 ]]; then
     if [[ ! -f .research-web.env || ! -f docker-compose.research.yml ]]; then
         echo 'Missing .research-web.env or docker-compose.research.yml bridge configuration.' >&2
         exit 1
@@ -21,7 +41,6 @@ for file in .web.env docker-compose.yml "$source_conf" "$site"; do
         exit 1
     fi
 done
-command -v docker >/dev/null
 command -v curl >/dev/null
 command -v make >/dev/null
 "${compose[@]}" config --quiet
@@ -51,6 +70,15 @@ done
 if [[ "$ready" -ne 1 ]]; then
     echo 'Web health check failed; Nginx was not reloaded. Inspect the web container.' >&2
     exit 1
+fi
+
+if [[ "$research_enabled" == 1 ]]; then
+    # Authenticate over the actual mounted socket, using in-container credentials.
+    # GET /info only: no run submission, market request, model call or token output.
+    if ! docker exec a-stock-tracker-web python -m a_stock_tracker.research_client; then
+        echo 'Research bridge health check failed; Nginx was not reloaded. Check the host receiver and private bridge configuration. Web was already recreated; fix and redeploy with RESEARCH_WEB_ENABLED=1.' >&2
+        exit 1
+    fi
 fi
 
 if ! cmp -s "$source_conf" "$site"; then

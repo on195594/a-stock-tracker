@@ -68,7 +68,7 @@ Web 只读 `OPPORTUNITY_ROOT`，读取前后检查 actor，限制大小、拒绝
 
 ## 部署与历史隔离
 
-`docker-compose.research.yml` 为 Web 挂载整个桥目录（只读）及接收器令牌，因此宿主桥目录必须专用、只含 socket，不能与研究目录、模型运行时或凭据目录混用。启动检查验证路径无符号链接、目录私有及目标为 socket，拒绝其他目录内容，并拒绝桥目录与研究根目录相同或互为祖先。部署仍须核对实际挂载，运行后不能向桥目录写入私人文件。`.research.env` 属于宿主接收器，`.research-web.env` 只含桥配置；均 Git 忽略且 Docker 构建排除。宿主接收器配置/启动与 Web 覆盖部署须明确授权，不因改源码自动运行。默认 `deploy.sh` 不启用；`RESEARCH_WEB_ENABLED=1` 才加载桥配置，不启动接收器或研究。
+`docker-compose.research.yml` 为 Web 挂载整个桥目录（只读）及接收器令牌，因此宿主桥目录必须专用、只含 socket，不能与研究目录、模型运行时或凭据目录混用。启动检查验证路径无符号链接、目录私有及目标为 socket，拒绝其他目录内容，并拒绝桥目录与研究根目录相同或互为祖先。部署仍须核对实际挂载，运行后不能向桥目录写入私人文件。`.research.env` 属于宿主接收器，`.research-web.env` 只含桥配置；均 Git 忽略且 Docker 构建排除。宿主接收器配置/启动与 Web 覆盖部署须明确授权，不因改源码自动运行。`deploy.sh` 首次部署默认不启用；若现有 Web（含停止容器）包含研究环境项或桥挂载，省略开关会在修改前中止。`RESEARCH_WEB_ENABLED=1` 显式加载桥配置，`0` 显式停用 Web 桥，其他值拒绝；不因配置文件存在自动启用。启用后从新 Web 容器经私有 socket 认证读取 `GET /info`，不输出令牌/响应、不启动接收器或研究；失败中止 Nginx 切换，但不自动回滚已重建的 Web。
 
 宿主持久接收器服务模板为 `config/a-stock-tracker-research.service`，定义用户级 systemd 单元与 cgroup 限制（`MemoryMax=1G`、`CPUQuota=100%`、`TasksMax=64`）；异常退出 10 秒后重启（5 分钟最多 3 次），手动停止不重启。服务仅重启接收器，不自动恢复、重试或新建研究批次；敏感凭据仅留于宿主私有 `.research.env`，不写入单元文件。
 

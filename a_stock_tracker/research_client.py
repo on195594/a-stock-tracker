@@ -175,3 +175,26 @@ def configured_client() -> ResearchClient | None:
         return ResearchClient(url, token, os.getenv("RESEARCH_SERVICE_SOCKET"))
     except ValueError:
         return None
+
+
+def check_bridge() -> int:
+    """No-cost deployment probe; never print credentials, responses or exceptions."""
+    try:
+        client = configured_client()
+        if client is None or not client.socket:
+            raise ValueError("Missing private bridge")
+        info = client.info()
+        if info.get("demo") is not False or not isinstance(info.get("modes"), dict):
+            raise ValueError("Invalid bridge response")
+        for mode in LIMITS:
+            if not isinstance(info["modes"].get(mode, {}).get("available"), bool):
+                raise ValueError("Invalid bridge mode")
+    except Exception:
+        print("Research bridge unavailable; check receiver, socket mount and shared token.")
+        return 1
+    print("Research bridge authenticated; no research was started.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(check_bridge())
