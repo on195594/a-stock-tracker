@@ -418,6 +418,35 @@ def test_stale_logout_and_closed_reconnect_are_inert(monkeypatch):
     asyncio.run(run())
 
 
+@pytest.mark.parametrize("route", ["/", "/opportunity/600001.SH", "/analysis"])
+def test_account_back_label_matches_contextual_navigation(monkeypatch, route):
+    monkeypatch.setattr(app, "APP_MODE", "demo")
+
+    async def run():
+        page = AppMockPage()
+        page.route = route
+        await app.build_app()(page)
+        try:
+            account = next(
+                c
+                for c in app_controls(page)
+                if isinstance(c, ft.TextButton) and c.content == "账户"
+            )
+            await account.on_click(None)
+            assert page.route == "/settings"
+            back = next(
+                c
+                for c in app_controls(page)
+                if isinstance(c, ft.TextButton) and c.content == "返回上一页"
+            )
+            await back.on_click(None)
+            assert page.route == route
+        finally:
+            await page.on_close(None)
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize(
     "changes, success",
     [

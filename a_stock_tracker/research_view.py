@@ -7,6 +7,7 @@ from typing import Any
 import flet as ft
 
 from a_stock_tracker.opportunity_view import heading, notice, opportunity_view, paragraph
+from a_stock_tracker.research import finite_number
 
 LABELS = {
     "running": "研究执行中",
@@ -15,6 +16,27 @@ LABELS = {
     "failed": "研究失败",
     "interrupted": "研究中断",
 }
+
+
+def source_times_text(value: Any) -> str:
+    """Label known sources without changing timestamps or dropping extra evidence."""
+    if not isinstance(value, dict):
+        return str(value) if value else "未记录"
+    labels = {
+        "stock_basic_acquired_at": "证券基本资料",
+        "daily_basic_acquired_at": "每日估值资料",
+    }
+    entries = [f"{label}：{value.get(key) or '未记录'}" for key, label in labels.items()]
+    entries.extend(
+        f"{key}：{stamp or '未记录'}" for key, stamp in value.items() if key not in labels
+    )
+    return "\n".join(entries)
+
+
+def roe_text(value: Any) -> str:
+    """Round presentation only; qualification/ranking keep their original precision."""
+    number = finite_number(value)
+    return f"{number:.2f}%" if number is not None else "未记录"
 
 
 def result_view(run: dict[str, Any], open_route, back, code: str | None = None) -> ft.Column:
@@ -92,7 +114,7 @@ def result_view(run: dict[str, Any], open_route, back, code: str | None = None) 
                 heading("财报筛选与研究", level=1),
                 notice(
                     "财报资格不是波段推荐",
-                    f"依据日期：{summary['data_date']}\n范围：{scope} · {covered}\n总记录：{summary['total']}；{counts}\n{ranking_note}未覆盖与失败不由模型补齐。\n来源核查时间：{summary.get('source_times') or '未记录'}；证据截止：{summary.get('cutoff') or '未记录'}",
+                    f"依据日期：{summary['data_date']}\n范围：{scope} · {covered}\n总记录：{summary['total']}；{counts}\n{ranking_note}未覆盖与失败不由模型补齐。\n来源核查时间：\n{source_times_text(summary.get('source_times'))}\n证据截止：{summary.get('cutoff') or '未记录'}",
                 ),
             ]
         )
@@ -140,7 +162,7 @@ def result_view(run: dict[str, Any], open_route, back, code: str | None = None) 
                     ft.Divider(),
                     heading(f"{row['name']} · {c}"),
                     paragraph(
-                        f"行业：{row['industry']}\nPB（倍）：{row['pb']}；历史年度平均 ROE：{row['roe_mean']}%\n"
+                        f"行业：{row['industry']}\nPB（倍）：{row['pb']}；历史年度平均 ROE：{roe_text(row.get('roe_mean'))}\n"
                         + (
                             f"总市值：{row['total_mv'] / 10000:g}亿元\n"
                             if row.get("total_mv") is not None

@@ -250,7 +250,7 @@ def main() -> int:
                         click_settled(page, page.get_by_role("button", name="账户", exact=True))
                         expect(page.get_by_text("当前模式: demo")).to_be_visible()
                         click_settled(
-                            page, page.get_by_role("button", name="返回波段机会", exact=True)
+                            page, page.get_by_role("button", name="返回上一页", exact=True)
                         )
                         expect(page).to_have_url(base + "/opportunity/600001.SH")
                         click_settled(

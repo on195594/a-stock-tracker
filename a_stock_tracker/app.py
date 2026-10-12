@@ -657,7 +657,7 @@ def build_app():
                     content = ft.Column(
                         [
                             ft.TextButton(
-                                "返回波段机会",
+                                "返回上一页",
                                 on_click=open_route(state["settings_return"], gen, actor),
                                 height=48,
                             ),
