@@ -32,46 +32,66 @@ def wait_for_server(url: str, timeout_sec: int = 20) -> bool:
 
 def click_settled(page, control):
     """Scroll the painted Flutter canvas, not just its invisible semantics."""
-    control.wait_for(state="visible")
-    box = control.bounding_box()
-    assert box
-    center = page.viewport_size["height"] / 2
-    page.mouse.move(page.viewport_size["width"] / 2, center)
-    page.mouse.wheel(0, box["y"] + box["height"] / 2 - center)
-    element = control.element_handle()
+    deadline = time.monotonic() + 5
+
+    def remaining_ms():
+        remaining = (deadline - time.monotonic()) * 1000
+        if remaining <= 0:
+            raise PlaywrightTimeoutError("Control did not settle inside viewport within 5000ms")
+        return remaining
+
+    before = None
+    box = None
+    scrolls = 0
     try:
-        page.wait_for_function(
-            """el => {
-                const r = el.getBoundingClientRect();
-                const geometry = [r.x, r.y, r.width, r.height].join(',');
-                if (el._testGeometry !== geometry) {
-                    el._testGeometry = geometry;
-                    el._testStableSince = performance.now();
-                }
-                return r.top >= 0 && r.bottom <= innerHeight &&
-                    performance.now() - el._testStableSince >= 250;
-            }""",
-            arg=element,
-            timeout=5000,
-        )
+        control.wait_for(state="visible", timeout=remaining_ms())
+        while time.monotonic() < deadline:
+            element = control.element_handle(timeout=remaining_ms())
+            page.wait_for_function(
+                """el => {
+                    if (!el.isConnected) return true;
+                    const r = el.getBoundingClientRect();
+                    const geometry = [r.x, r.y, r.width, r.height].join(',');
+                    if (el._testGeometry !== geometry) {
+                        el._testGeometry = geometry;
+                        el._testStableSince = performance.now();
+                    }
+                    return performance.now() - el._testStableSince >= 250;
+                }""",
+                arg=element,
+                timeout=remaining_ms(),
+            )
+            if not element.evaluate("el => el.isConnected"):
+                continue  # Flutter may replace semantics while laying out the page.
+            box = element.bounding_box()
+            if before is None:
+                before = box
+            assert box and box["width"] > 0 and box["height"] > 0
+            height = page.viewport_size["height"]
+            if box["y"] >= 0 and box["y"] + box["height"] <= height:
+                element.click(timeout=remaining_ms())
+                return
+            # Flutter can consume less than the requested wheel delta. Re-measure
+            # after it settles instead of waiting forever on an offscreen target.
+            center = height / 2
+            page.mouse.move(page.viewport_size["width"] / 2, center)
+            page.mouse.wheel(0, box["y"] + box["height"] / 2 - center)
+            scrolls += 1
+            element.evaluate("el => { el._testStableSince = performance.now(); }")
+        raise PlaywrightTimeoutError("Control did not settle inside viewport within 5000ms")
     except PlaywrightTimeoutError:
         print(
             "Unsettled synthetic control:",
             {
                 "url": page.url,
                 "viewport": page.viewport_size,
-                "before": box,
-                "current": control.bounding_box(),
-                "element": element.evaluate(
-                    """el => ({connected: el.isConnected, rect: el.getBoundingClientRect().toJSON(),
-                    label: el.getAttribute('aria-label'), text: el.textContent,
-                    stableSince: el._testStableSince, now: performance.now()})"""
-                ),
+                "before": before,
+                "current": box,
+                "scrolls": scrolls,
             },
             flush=True,
         )
         raise
-    control.click()
 
 
 def serve_ui_cases(case_file: str, uncompressed_assets: bool = False) -> None:
