@@ -94,7 +94,9 @@ def test_asgi_demo_origin_and_port_checks():
 
     # Correct origin matches configured base URL strictly under RFC 6454
     assert s._validate_origin("http://127.0.0.1:8550") is True
+    assert s._validate_origin("https://127.0.0.1:8550") is False
     assert s._validate_origin("http://localhost:8550") is False
+    assert s._validate_origin("http://[::1]:8550") is False
 
     # Different port rejected in demo
     assert s._validate_origin("http://127.0.0.1:9999") is False
@@ -104,7 +106,22 @@ def test_asgi_demo_origin_and_port_checks():
     assert s._validate_origin("http://127.0.0.1:65536") is False
     assert s._validate_host("127.0.0.1:bad") is False
     assert s._validate_host("127.0.0.1:65536") is False
+
+    # Host header allows loopback variants in demo
     assert s._validate_host("127.0.0.1:8550") is True
+    assert s._validate_host("[::1]:8550") is True
+    assert s._validate_host("localhost:8550") is True
+    assert s._validate_host("evil.com:8550") is False
+
+    # Base URL configured with IPv6 [::1]
+    s_v6 = SecurityMiddleware(dummy_app, is_demo=True, public_base_url="http://[::1]:8550")
+    assert s_v6._validate_origin("http://[::1]:8550") is True
+    assert s_v6._validate_origin("http://127.0.0.1:8550") is False
+
+    # Base URL configured with localhost
+    s_lh = SecurityMiddleware(dummy_app, is_demo=True, public_base_url="http://localhost:8550")
+    assert s_lh._validate_origin("http://localhost:8550") is True
+    assert s_lh._validate_origin("http://127.0.0.1:8550") is False
 
 
 @pytest.mark.parametrize(
@@ -162,35 +179,6 @@ def test_production_auth_checks():
 
     # Valid config passes
     check_production_auth_config("client", "sec", "12345678")
-
-
-def test_demo_origin_scheme_mismatch():
-    async def dummy_app(scope, receive, send):
-        pass
-
-    # 1. Base URL configured with 127.0.0.1
-    s_127 = SecurityMiddleware(dummy_app, is_demo=True, public_base_url="http://127.0.0.1:8550")
-    assert s_127._validate_origin("http://127.0.0.1:8550") is True
-    # Different schemes or hosts are different origins under RFC 6454
-    assert s_127._validate_origin("https://127.0.0.1:8550") is False
-    assert s_127._validate_origin("http://localhost:8550") is False
-    assert s_127._validate_origin("http://[::1]:8550") is False
-
-    # Host header allows loopback variants in demo
-    assert s_127._validate_host("127.0.0.1:8550") is True
-    assert s_127._validate_host("[::1]:8550") is True
-    assert s_127._validate_host("localhost:8550") is True
-    assert s_127._validate_host("evil.com:8550") is False
-
-    # 2. Base URL configured with IPv6 [::1]
-    s_v6 = SecurityMiddleware(dummy_app, is_demo=True, public_base_url="http://[::1]:8550")
-    assert s_v6._validate_origin("http://[::1]:8550") is True
-    assert s_v6._validate_origin("http://127.0.0.1:8550") is False
-
-    # 3. Base URL configured with localhost
-    s_lh = SecurityMiddleware(dummy_app, is_demo=True, public_base_url="http://localhost:8550")
-    assert s_lh._validate_origin("http://localhost:8550") is True
-    assert s_lh._validate_origin("http://127.0.0.1:8550") is False
 
 
 class AppMockPage:

@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from a_stock_tracker import app
 from a_stock_tracker.automation import read_state, save_state
+from a_stock_tracker.research import ScreenError
 from a_stock_tracker.research_client import DemoResearchClient, ResearchClient, ResearchUnavailable
 from a_stock_tracker.research_service import (
     ResearchStore,
@@ -109,11 +110,11 @@ def test_service_rejects_old_private_workspaces_symlinks_and_bad_tokens(tmp_path
     root = tmp_path / "old"
     root.mkdir(mode=0o700)
     (root / "history.sqlite").write_text("historical data")
-    with pytest.raises(Exception):
+    with pytest.raises(ScreenError):
         ResearchStore(root)
     linked = tmp_path / "linked"
     linked.symlink_to(root)
-    with pytest.raises(Exception):
+    with pytest.raises(ScreenError):
         ResearchStore(linked)
     with pytest.raises(ValueError):
         create_service(tmp_path / "new", "short")
@@ -429,7 +430,7 @@ def test_financial_result_reads_verified_envelopes_not_unchecked_markdown(tmp_pa
     assert "合成证据缺口" in result["reports"][0]["text"]
     assert "unverified claims" not in result["reports"][0]["text"]
     (run / "report-600519.SH.json").write_text("{}")
-    with pytest.raises(Exception):
+    with pytest.raises(ScreenError):
         store.result(directory, "financial")
 
 
@@ -878,7 +879,7 @@ def test_real_cost_notice_consent_resets_when_mode_changes(monkeypatch):
 
 
 def screen_checkpoint_fixture(tmp_path):
-    from a_stock_tracker import automation as automation
+    from a_stock_tracker import automation
     from tests.test_automation import basic, fixture, records
 
     store = ResearchStore(tmp_path / "service")
@@ -933,7 +934,7 @@ def screen_checkpoint_fixture(tmp_path):
 
 
 def test_continuation_copies_verified_checkpoint_and_preserves_original(tmp_path, monkeypatch):
-    from a_stock_tracker import automation as automation
+    from a_stock_tracker import automation
     from tests.test_automation import Client
 
     monkeypatch.setenv("TUSHARE_TOKEN", "synthetic")
@@ -978,7 +979,7 @@ def test_continuation_copies_verified_checkpoint_and_preserves_original(tmp_path
 
 @pytest.mark.parametrize("damage", ["hash", "symlink", "expired", "complete", "model_calls"])
 def test_continuation_refuses_invalid_checkpoints_before_spend(tmp_path, monkeypatch, damage):
-    from a_stock_tracker import automation as automation
+    from a_stock_tracker import automation
 
     monkeypatch.setenv("TUSHARE_TOKEN", "synthetic")
     store, original, source = screen_checkpoint_fixture(tmp_path)

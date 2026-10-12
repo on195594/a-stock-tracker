@@ -61,7 +61,7 @@ make test-mobile             # 真实浏览器点击，含 360/390/430px
 - 根据 `.research-web.env.example` 配置 `.research-web.env`，仅包含同一桥目录与共享令牌。生产 Web 显式使用 `docker-compose.research.yml` 覆盖文件。已授权部署时可运行 `RESEARCH_WEB_ENABLED=1 ./deploy.sh`；脚本不启动宿主研究进程、不请求行情或模型。默认部署不启用该桥。
 - 服务一次只接受一个执行请求；无队列、无自动恢复、无自动收费重试。进程异常后记录未确认/中断，不能冒充成功；原始产物保留供核查。异常/正常退出均清理工作进程组后才释放执行锁。失败调用保留 `.usage.json`；`usage: null` 表示未知而非零费用，已有调用记录但无合格响应时禁止自动再次调用。基础设施配置/启动/部署不授权任何实际研究请求。
 
-接收器启动时将单文件写入上限设为 32 MB；PDF 提取和模型子进程的 stdout/stderr 合计最多读取 8 MB。每批目录超过 256 MB 则停止（每两秒检查，可能短暂超出），新批次须在研究根目录 2 GB 预算内预留 256 MB；不会自动删除历史产物。这些磁盘检查不是文件系统配额。宿主使用 systemd 时应同时设置 `MemoryMax=1G`、`CPUQuota=100%`、`TasksMax=64`，限制包含所有研究子进程；普通 Python 启动不会自动获得这些 cgroup 限制。
+接收器启动时将单文件写入上限设为 32 MB；PDF 提取和模型子进程的 stdout/stderr 合计最多读取 8 MB。每批目录超过 256 MB 则停止（每两秒检查，可能短暂超出），新批次须在研究根目录 2 GB 预算内预留 256 MB；不会自动删除历史产物。持久用户服务模板为 [config/a-stock-tracker-research.service](config/a-stock-tracker-research.service)，适用于项目位于 `~/a-stock-tracker` 的宿主，包含 cgroup 资源隔离与有限异常重启。完整部署流程、systemd 服务生命周期与排障见 [运维与生产部署](#运维与生产部署)。
 
 ### 离线性能对照
 
@@ -103,18 +103,126 @@ export AUTOMATION_HERMES_RUNTIME=/absolute/path/to/installed/hermes-agent
 
 Docker 可选覆盖文件 `docker-compose.opportunities.yml` 提供只读挂载，宿主路径由 `OPPORTUNITY_HOST_ROOT` 指定；目录需预先创建并允许容器运行用户读取。基础 compose 不自动启用；现有 `deploy.sh` 不加载此覆盖文件，后续部署必须显式使用两个 compose 文件且另行授权，不能误称已上线。
 
-## Web 运行与历史边界
+## 运维与生产部署
 
-生产 Web 缺 OAuth 配置拒绝启动，变量模板见 `.web.env.example`。应用提供机会浏览、网页研究确认/进度/结果与账户信息；不再依赖 `STATE_DIR`、SQLite、旧日历挂载、研究工作区初始化或 `.worker.env`。
+生产环境由三层解耦架构构成：宿主 Nginx 反向代理、Docker 容器化 Web 服务、以及宿主独立的 `systemd` 用户研究服务。三者通过严格的只读权限、凭据隔离与受限 Unix socket 通信。
 
-- `docker-compose.yml` 只有 Web，无私人工作区挂载；独立机会报告只读挂载和研究 socket 桥均为显式可选覆盖，不自动启用。
-- `deploy.sh` 检查配置、运行 `make check`、构建并重建 Web、验证和重载 Nginx；下一次明确授权部署时使用 `--remove-orphans` 停止并移除旧 worker 容器，不删除其宿主数据或卷。脚本有线上副作用，不能用于普通开发验证。
-- Host、WS Origin、OAuth state、数字 ID 白名单、actor 到期/撤销与 `/upload` 限制保持不变；demo 仅 loopback 与合成数据。
-- 独立批处理和日历命令的凭据不进入 Web；显式日历维护仍可运行 `make calendar`，不会启动研究或个人更新任务。
-- 本次移除只改变源码与后续部署合同，**不自动切换线上、清理生产容器或修改 cron**。已安装任务需另行核验与授权停用。
-- 历史数据库、笔记、不可变事实 JSON、日志、凭据与备份不删除、不迁移、不重新解释为波段报告；旧维护工具可从 `fb408f4` 的 Git 历史查阅，不保留当前启动器。历史目录的安全处置需单独授权。
+### 架构组件与凭据隔离
 
-提交、推送、部署、重启、历史数据删除、定时与投递均需当前会话明确授权。
+| 组件 | 运行形态 | 网络与通信 | 凭据与配置文件 | 隔离边界与安全要求 |
+|---|---|---|---|---|
+| **Web 界面** (`web`) | Docker 容器 (`a-stock-tracker-web`) | 监听宿主 `127.0.0.1:8550`；仅接受已验证的 Host 与 WS Origin | `.web.env`（GitHub OAuth、白名单用户 ID） | 无行情/模型凭据，不打开业务数据库，只读挂载机会目录；缺配置拒绝启动 |
+| **研究网关桥**（可选） | Docker 挂载 (`docker-compose.research.yml`) | 仅挂载专用私有 Unix socket 目录（只读） | `.research-web.env`（socket 路径与共享令牌） | 仅转发经用户显式确认的研究请求，无法读取宿主模型/行情凭据 |
+| **宿主研究服务** (`research_service`) | 宿主 systemd 用户单元 | 私有 Unix socket（目录权限 `0700`），仅监听本地 | `.research.env`（TuShare Token、模型运行时凭据、私有根目录） | 持有凭据执行有界子进程，绝不进入 Docker 镜像或挂载给 Web；单次执行互斥 |
+| **反向代理** (`nginx`) | 宿主 Nginx | 暴露 80/443，反向代理至 `127.0.0.1:8550` | `docker/nginx-stock.conf`（HTTPS 证书、静态资产 gzip/ETag） | 阻断非法 Host 与外部直接访问容器端口 |
+
+所有环境变量模板见 `.web.env.example`、`.research-web.env.example` 和 `.research.env.example`。敏感配置文件权限须设为 `0600`，宿主数据根目录设为 `0700`，禁止提交至 Git。
+
+### 生产 Web 部署流程（deploy.sh）
+
+部署需在当前会话**明确授权**。`deploy.sh` 具有线上副作用，严禁用作本地日常开发验证。
+
+```bash
+# 基础只读 Web 部署（仅展示机会列表、详情与账户）
+./deploy.sh
+
+# 启用网页研究网关的 Web 部署（需先配置 .research-web.env 与宿主接收器）
+RESEARCH_WEB_ENABLED=1 ./deploy.sh
+```
+
+**部署脚本自动执行的防护步骤：**
+1. **配置预检**：检查 `.web.env`、`docker-compose.yml`、Nginx 源配置及目标站点；若启用桥接则核验 `.research-web.env` 与 `docker-compose.research.yml`；
+2. **语法与回归**：运行 `docker compose config --quiet` 验证编排语法，执行 `make check` 确保 100% 测试通过且类型/格式干净；
+3. **镜像构建与容器重构**：构建 `web` 镜像并执行 `up -d --no-deps --force-recreate --remove-orphans`（自动移除已退役的旧 worker 容器，不删除宿主卷或数据）；
+4. **本地健康探针**：以生产 Host 轮询探测 `http://127.0.0.1:8550/`（最多 10 次，每次间隔 2 秒），失败则中断并保留日志；
+5. **Nginx 配置平滑切换**：自动备份原配置为 `$site.bak.<时间戳>.<PID>`，写入新配置并执行 `docker exec nginx nginx -t`。校验失败自动恢复备份；通过后执行 `docker exec nginx nginx -s reload`；
+6. **外网回环探针**：探测 `https://stock.keyi.win/`（最多 5 次），确认容器持续运行且重启计数为 0。
+
+### 宿主研究服务运维（systemd 用户单元）
+
+持久用户服务模板位于 [config/a-stock-tracker-research.service](config/a-stock-tracker-research.service)，适用于项目位于 `~/a-stock-tracker` 的宿主。
+
+#### 安装与常驻配置
+```bash
+# 1. 复制单元模板至用户 systemd 目录
+mkdir -p ~/.config/systemd/user
+cp config/a-stock-tracker-research.service ~/.config/systemd/user/
+
+# 2. 启用用户 linger（确保用户登出或未登录时，后台服务仍持续运行）
+loginctl enable-linger "$USER"
+
+# 3. 重载并立即启动服务
+systemctl --user daemon-reload
+systemctl --user enable --now a-stock-tracker-research.service
+```
+
+#### 生命周期管理
+```bash
+# 查看服务运行状态
+systemctl --user status a-stock-tracker-research.service
+
+# 查看实时跟踪日志
+journalctl --user -u a-stock-tracker-research.service -f
+
+# 临时停止服务（注意：手动停止不会触发自动重启）
+systemctl --user stop a-stock-tracker-research.service
+
+# 重新启动服务
+systemctl --user restart a-stock-tracker-research.service
+
+# 彻底停用开机自启并停止
+systemctl --user disable --now a-stock-tracker-research.service
+```
+
+#### 资源限制与故障恢复
+- **cgroup 硬限制**：由单元文件设置 `MemoryMax=1G`、`CPUQuota=100%`、`TasksMax=64`，覆盖包含所有研究子进程；普通 Python 启动不会自动获得这些限制；
+- **异常重启策略**：服务异常退出后等待 10 秒重启，5 分钟内最多重启 3 次（`StartLimitBurst=3`）。**重启仅恢复请求接收器监听**，不自动恢复、重试或新建研究批次；
+- **进程组安全清理**：停止或异常退出时通过 `KillMode=control-group` 清理全部子进程组，超时 90 秒后硬清理（`TimeoutStopSec=90`），释放执行锁。
+
+### 日常维护与健康巡检
+
+#### 交易日历维护
+交易日历采用确定性来源并保留审计证据，与模型研究完全解耦：
+```bash
+# 更新或补齐交易日历（拉取上交所交易日历并与官方节假日交叉核对，原子落盘）
+make calendar
+```
+日历维护不启动研究任务、不消费模型凭据。
+
+#### 磁盘空间与配额监控
+研究产物受内置有界预算控制，但系统**不会自动删除历史产物**，运维需定期巡检磁盘：
+- **目录配额**：研究根目录预算 2 GB，新批次须保留至少 256 MB 可用空间；单批次目录超过 256 MB 自动停止（每两秒轮询检查）；
+- **文件与输出限制**：单文件写入上限 32 MB，PDF 提取与模型子进程 stdout/stderr 合计最多读取 8 MB；
+- **磁盘巡检命令**：
+  ```bash
+  # 检查研究请求总占用
+  du -sh /path/to/research-root/*
+  # 检查日历与缓存数据占用
+  du -sh data/*
+  ```
+
+#### 服务状态探针与排障
+- **Web 服务直接探针**：
+  ```bash
+  curl -I -H 'Host: stock.keyi.win' http://127.0.0.1:8550/
+  ```
+- **Nginx 语法核对**：
+  ```bash
+  docker exec nginx nginx -t
+  ```
+- **Socket 桥接连通性排查**：
+  若 Web 提示“未配置研究服务”，核对：
+  1. 宿主接收器服务是否处于 active 状态：`systemctl --user status a-stock-tracker-research.service`；
+  2. 桥接目录权限是否为 `0700`，且仅包含目标 socket 文件（无符号链接或杂乱文件）；
+  3. `docker-compose.research.yml` 中挂载的 socket 路径与宿主 `.research.env` 中 `RESEARCH_SERVICE_SOCKET` 是否完全一致。
+
+### 运维安全红线与历史隔离
+
+遵循 [AGENTS.md](AGENTS.md) 约束：
+- **明确授权原则**：代码修改、命令示例与测试通过均不构成生产操作授权。提交、推送、部署、重启、定时/投递启停及历史数据归档/删除，均须当前会话明确授权；
+- **数据不可动原则**：历史数据库（`tracker.db` / `tushare-primary.db`）、笔记、不可变事实 JSON、历史日志与备份原样保留在宿主目录，不挂载给 Web，禁止线上迁移、重算或删除；
+- **凭据零泄露原则**：所有凭据与私钥不得进入 Git、Docker 镜像或静态资源包；
+- **容器与计划任务**：部署脚本仅按需清理已退役的旧 worker 容器，不得删除宿主卷或宿主数据；源码退役不等于生产容器或系统 cron 已自动停用，已安装定时任务须另行核验与授权停用。
 
 ## 自动选股与机器研究（独立批处理）
 

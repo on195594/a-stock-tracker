@@ -45,7 +45,7 @@ def test_package_has_no_legacy_entrypoints_or_path_injection():
 def test_web_has_no_private_workspace_dependency():
     assert not (ROOT / "config/anchors.json").exists()
     assert not (ROOT / ".worker.env.example").exists()
-    assert not list((ROOT / "tests/fixtures").glob("*.json"))
+    assert not (ROOT / "tests/fixtures").exists()
     compose = (ROOT / "docker-compose.yml").read_text()
     assert "worker:" not in compose and "data/research" not in compose
     assert ".worker.env" not in compose and "STATE_DIR" not in compose

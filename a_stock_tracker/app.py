@@ -845,7 +845,7 @@ class SecurityMiddleware:
             parts = netloc.split(":")
             if len(parts) == 1:
                 return (parts[0], None)
-            elif len(parts) == 2:
+            if len(parts) == 2:
                 if not parts[1].isdigit():
                     return None
                 try:
@@ -871,8 +871,7 @@ class SecurityMiddleware:
             if hostname not in ("127.0.0.1", "localhost", "::1"):
                 return False
             return effective_port == self.expected_port
-        else:
-            return hostname == self.expected_hostname and effective_port == self.expected_port
+        return hostname == self.expected_hostname and effective_port == self.expected_port
 
     def _validate_origin(self, origin_header: str) -> bool:
         if not origin_header:

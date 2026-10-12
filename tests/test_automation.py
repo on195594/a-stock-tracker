@@ -568,9 +568,9 @@ def test_unchanged_reports_remain_readable_and_reusable(tmp_path, monkeypatch):
         directory.mkdir()
         frozen, state, summary, packet, report, review = research_case(directory)
 
-        def model(directory, label, *args):
+        def model(directory, label, *args, _review=review, _report=report):
             calls.append(label)
-            return review if label.endswith("verify") else report
+            return _review if label.endswith("verify") else _report
 
         monkeypatch.setattr(d, "model_call", model)
         d.research_batch(directory, frozen, summary, state, previous, a.Budget(50, 300), 5)

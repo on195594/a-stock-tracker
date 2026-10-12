@@ -306,11 +306,14 @@ def scan(
     result_rows = []
     remaining: Counter = Counter()
     blocked = set()
-    for row in frozen["rows"]:
-        if row["code"] in state["scan"]:
-            row = read_result(directory / f"scan-{row['code']}.json", state["scan"][row["code"]])[
+    for item in frozen["rows"]:
+        row = (
+            read_result(directory / f"scan-{item['code']}.json", state["scan"][item["code"]])[
                 "state"
             ]["result"]
+            if item["code"] in state["scan"]
+            else item
+        )
         industry = row.get("industry") or "UNKNOWN"
         if row["status"] == "pending":
             remaining[industry] += 1

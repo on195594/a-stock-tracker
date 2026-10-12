@@ -1,0 +1,21 @@
+[Unit]
+Description=A-stock explicit research receiver
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+WorkingDirectory=%h/a-stock-tracker
+EnvironmentFile=%h/a-stock-tracker/.research.env
+ExecStart=%h/a-stock-tracker/.venv/bin/python -m a_stock_tracker.research_service
+UMask=0077
+Restart=on-failure
+RestartSec=10
+KillMode=control-group
+TimeoutStopSec=90
+MemoryMax=1G
+CPUQuota=100%
+TasksMax=64
+
+[Install]
+WantedBy=default.target

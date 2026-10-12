@@ -23,6 +23,7 @@ market-research-v1 → 独立私有 root → 财报机器报告（不自动进�
 | `research_client.py` / `research_view.py` | 无行情/模型凭据的研究 API 客户端、合成请求示例及网页进度/结果 |
 | `research_service.py` | 独立宿主接收器：验证确认报价、单次执行互斥、幂等编号、预算子进程与结果校验 |
 | `web_assets.py` | 仅公开 Flutter JS/WASM 的传输压缩，位于 Host/路由安全检查之后 |
+| `bounded_process.py` | 管道与子进程内存边界、有界输出读取及硬超时管控 |
 | `opportunities.py` | 有界波段采集、程序计算价格条件、AI解释/复核、批次发布与鉴权读取 |
 | `opportunity_view.py` / `opportunity_demo.py` | 机会列表/详情；仅 loopback demo 与离线测试使用合成示例 |
 | `automation.py` | 独立财报全市场冻结、覆盖/排名、文件锁、预算与恢复 |
@@ -68,6 +69,8 @@ Web 只读 `OPPORTUNITY_ROOT`，读取前后检查 actor，限制大小、拒绝
 ## 部署与历史隔离
 
 `docker-compose.research.yml` 为 Web 挂载整个桥目录（只读）及接收器令牌，因此宿主桥目录必须专用、只含 socket，不能与研究目录、模型运行时或凭据目录混用。启动检查验证路径无符号链接、目录私有及目标为 socket，拒绝其他目录内容，并拒绝桥目录与研究根目录相同或互为祖先。部署仍须核对实际挂载，运行后不能向桥目录写入私人文件。`.research.env` 属于宿主接收器，`.research-web.env` 只含桥配置；均 Git 忽略且 Docker 构建排除。宿主接收器配置/启动与 Web 覆盖部署须明确授权，不因改源码自动运行。默认 `deploy.sh` 不启用；`RESEARCH_WEB_ENABLED=1` 才加载桥配置，不启动接收器或研究。
+
+宿主持久接收器服务模板为 `config/a-stock-tracker-research.service`，定义用户级 systemd 单元与 cgroup 限制（`MemoryMax=1G`、`CPUQuota=100%`、`TasksMax=64`）；异常退出 10 秒后重启（5 分钟最多 3 次），手动停止不重启。服务仅重启接收器，不自动恢复、重试或新建研究批次；敏感凭据仅留于宿主私有 `.research.env`，不写入单元文件。
 
 基础 compose 只有 Web，不挂载 `data/research` 或日历，不加载 `.worker.env`。可选覆盖文件将独立机会目录只读挂载；Web 启动无需旧工作区初始化。部署脚本在构建后用 `--remove-orphans` 移除旧 worker 容器，不带删除卷参数；该动作只在下一次明确授权部署时执行。源码删除不等于生产已停用，现存 cron/容器不在本次源码修改中更改。
 
