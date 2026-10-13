@@ -196,21 +196,27 @@ def main() -> int:
                     else:
                         raise AssertionError(f"Retired endpoint still accessible: {path}")
                 with sync_playwright() as p:
-                    browser = p.chromium.launch(headless=True)
+                    # Block external hosts at DNS level: Playwright routing would disable the
+                    # HTTP cache that lets the client reuse the preloaded font.
+                    browser = p.chromium.launch(
+                        headless=True,
+                        args=[
+                            "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1"
+                        ],
+                    )
                     context = browser.new_context(viewport={"width": 390, "height": 844})
                     blocked = set()
                     fonts = []
-
-                    def local_only(route):
-                        host = urlparse(route.request.url).hostname
-                        if host in ("127.0.0.1", "localhost"):
-                            route.continue_()
-                        else:
-                            blocked.add(host)
-                            route.abort()
-
-                    context.route("**/*", local_only)
                     page = context.new_page()
+                    page.on(
+                        "requestfailed",
+                        lambda request: (
+                            blocked.add(host)
+                            if (host := urlparse(request.url).hostname)
+                            not in ("127.0.0.1", "localhost")
+                            else None
+                        ),
+                    )
                     if "--mobile-network" in sys.argv:
                         cdp = context.new_cdp_session(page)
                         cdp.send("Network.enable")
@@ -227,7 +233,7 @@ def main() -> int:
                         "response",
                         lambda response: (
                             fonts.append(response.status)
-                            if response.url.endswith("/fonts/NotoSansSC-Regular.otf")
+                            if response.url.endswith("/fonts/NotoSansSC-Subset.woff2")
                             else None
                         ),
                     )
@@ -237,15 +243,16 @@ def main() -> int:
                         page.goto(base, timeout=timeout)
                         page.wait_for_selector("flt-semantics-placeholder", timeout=timeout)
                         page.evaluate('document.querySelector("flt-semantics-placeholder").click()')
+                        # Flet renders content only after page fonts load; allow the cold font.
                         expect(
                             page.get_by_text("合成演示 · 非真实股票、非AI研究结果")
-                        ).to_be_visible()
+                        ).to_be_visible(timeout=timeout)
                         expect(page.get_by_text("等待条件核对 · 不是已触发信号")).to_be_visible()
                         assert_layout(page, width)
                         if width == 360:
                             page.wait_for_function(
                                 """() => performance.getEntriesByType('resource')
-                                .some(r => r.name.endsWith('/fonts/NotoSansSC-Regular.otf'))""",
+                                .some(r => r.name.endsWith('/fonts/NotoSansSC-Subset.woff2'))""",
                                 timeout=timeout,
                             )
                             metrics = page.evaluate("""() => {
@@ -254,6 +261,8 @@ def main() -> int:
                                 return {
                                     ready_ms: Math.round(performance.now()),
                                     encoded_bytes: resources.reduce((n, r) => n + r.encodedBodySize, 0),
+                                    // Cache hits report a body size but cost no network bytes.
+                                    transfer_bytes: resources.reduce((n, r) => n + r.transferSize, 0),
                                     decoded_bytes: resources.reduce((n, r) => n + r.decodedBodySize, 0),
                                 };
                             }""")

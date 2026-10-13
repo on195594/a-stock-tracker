@@ -5,7 +5,7 @@ from starlette.responses import Response
 from starlette.testclient import TestClient
 
 from a_stock_tracker.app import get_asgi_app
-from a_stock_tracker.web_assets import PublicAssetCompression
+from a_stock_tracker.web_assets import CHINESE_FONT, PublicAssetCompression
 
 
 @pytest.mark.parametrize(
@@ -16,7 +16,10 @@ from a_stock_tracker.web_assets import PublicAssetCompression
         ("/main.dart.wasm", True),
         ("/flutter_bootstrap.js", True),
         ("/canvaskit/chromium/canvaskit.wasm", True),
-        ("/fonts/NotoSansSC-Regular.otf", False),
+        ("/assets/fonts/MaterialIcons-Regular.otf", True),
+        ("/assets/packages/cupertino_icons/assets/CupertinoIcons.ttf", True),
+        ("/fonts/NotoSansSC-Subset.woff2", False),
+        ("/fonts/private.otf", False),
         ("/", False),
         ("/oauth_callback", False),
         ("/analysis/" + "a" * 32, False),
@@ -33,7 +36,8 @@ def test_only_public_assets_are_compressed(path, compressed):
     if compressed:
         assert int(response.headers["content-length"]) < len(body) // 2
         assert "Accept-Encoding" in response.headers["vary"]
-    assert "cache-control" not in response.headers
+    # Only the content-stable Chinese font is long-cached; Flet assets keep names across upgrades.
+    assert ("cache-control" in response.headers) is (path == "/" + CHINESE_FONT)
 
 
 @pytest.mark.parametrize(
@@ -65,3 +69,21 @@ def test_real_wasm_compression_preserves_security_and_conditional_requests():
     cached = client.get(path, headers={"If-None-Match": response.headers["etag"]})
     assert cached.status_code == 304 and not cached.content
     assert client.get(path, headers={"Host": "evil.example"}).status_code == 403
+
+
+def test_html_shell_preloads_chinese_font_only():
+    page = TestClient(PublicAssetCompression(Response("<html></html>", media_type="text/html")))
+    link = page.get("/opportunity/600001.SH").headers["link"]
+    assert link == f"</{CHINESE_FONT}>; rel=preload; as=fetch; crossorigin"
+    asset = TestClient(PublicAssetCompression(Response(b"x" * 2048)))
+    assert "link" not in asset.get("/main.dart.js").headers
+
+
+def test_real_shell_preload_targets_served_font():
+    client = TestClient(get_asgi_app(), base_url="http://127.0.0.1:8550")
+    assert CHINESE_FONT in client.get("/").headers["link"]
+    font = client.get("/" + CHINESE_FONT, headers={"Accept-Encoding": "gzip"})
+    assert font.status_code == 200 and font.content.startswith(b"wOF2")
+    assert "content-encoding" not in font.headers
+    assert font.headers["cache-control"] == "public, max-age=2592000"
+    assert "cache-control" not in client.get("/main.dart.wasm").headers

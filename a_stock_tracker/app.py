@@ -39,7 +39,7 @@ from a_stock_tracker.research_client import (
 )
 from a_stock_tracker.research_service import quote
 from a_stock_tracker.research_view import LABELS, result_view
-from a_stock_tracker.web_assets import PublicAssetCompression
+from a_stock_tracker.web_assets import CHINESE_FONT, PublicAssetCompression
 
 RAW_MODE = os.getenv("APP_MODE", "demo")
 if RAW_MODE not in ("demo", "production"):
@@ -73,7 +73,7 @@ def build_app():
     async def main(page: ft.Page):
         page.title = "波段观察"
         page.theme_mode = ft.ThemeMode.LIGHT
-        page.fonts = {"NotoSansSC": "fonts/NotoSansSC-Regular.otf"}
+        page.fonts = {"NotoSansSC": CHINESE_FONT}
         page.theme = window_theme()
         page.bgcolor = BACKGROUND
         page.padding = 0
