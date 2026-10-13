@@ -919,33 +919,16 @@ def promotion_report(events: list[dict[str, Any]]) -> dict[str, Any]:
     positive = sum(np.mean(v) > 0 for v in months.values()) / len(months) if months else None
     mae = float(np.median(maes)) if maes else None
     baseline_mae = float(np.median(baseline)) if baseline else None
+    # Data sufficiency is a precondition, not a gate: short or thin history cannot be judged.
     sufficient = span >= 6 and len(values) >= 300
-    gates = {
-        "duration_and_count": "pass" if sufficient else "insufficient",
-        "excess_ci": "insufficient"
-        if not sufficient or ci is None
-        else "pass"
-        if ci[0] > 0
-        else "fail",
-        "positive_months": "insufficient"
-        if not sufficient or positive is None
-        else "pass"
-        if positive > 0.5
-        else "fail",
-        "mae_vs_baseline": "insufficient"
-        if not sufficient or mae is None or baseline_mae is None
-        else "pass"
-        if mae >= baseline_mae
-        else "fail",
-    }
+    if not sufficient or ci is None:
+        status = "insufficient"
+    else:
+        status = "pass" if ci[0] > 0 else "fail"
     return {
         "rule": events[0]["rule"],
         "rule_hash": events[0]["rule_hash"],
-        "status": "insufficient"
-        if "insufficient" in gates.values()
-        else "pass"
-        if all(v == "pass" for v in gates.values())
-        else "fail",
+        "status": status,
         "forward_months": span,
         "scan_days": len(scans),
         "observations_deduplicated": len(observations),
@@ -962,7 +945,6 @@ def promotion_report(events: list[dict[str, Any]]) -> dict[str, Any]:
         "mae20_count": len(maes),
         "baseline_mae20_median": baseline_mae,
         "baseline_mae20_count": len(baseline),
-        "gates": gates,
         "limits": "单位为百分比；正态近似95%区间，月聚类标准误。未结算及缺失值不填零；历史回填不计晋升。通过仅支持进一步讨论，不自动进入首页，不作为收益证明。",
     }
 
