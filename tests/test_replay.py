@@ -552,12 +552,28 @@ def test_scan_close_calendar_and_sampling(tmp_path, no_wait):
     assert replay.report(tmp_path / "historical")["observations_deduplicated"] == 0
 
 
-def promotion_events(values=(1, 1, 1, 1, 1, 1, 1), *, baseline=-6, mae=-5):
-    events = [{"type": "rule", "rule": swing.RULE, "rule_hash": "synthetic"}]
+def promotion_events(
+    values=(1, 1, 1, 1, 1, 1, 1),
+    *,
+    version="simple-promotion-v2",
+    counts=None,
+    dates=None,
+    baseline=-6,
+    mae=-5,
+):
+    events = [
+        {
+            "type": "rule",
+            "rule": swing.RULE,
+            "rule_hash": "synthetic",
+            "contract": replay.frozen_forward_contract(version),
+        }
+    ]
     for month, value in enumerate(values, 1):
-        day = f"2024{month:02}15"
+        day = dates[month - 1] if dates else f"2024{month:02}15"
         sessions = pd.bdate_range(end=day, periods=61).strftime("%Y%m%d").tolist()
-        samples = [{"code": f"{600000 + i}.SH"} for i in range(50)]
+        count = counts[month - 1] if counts is not None else 50
+        samples = [{"code": f"{600000 + i}.SH"} for i in range(count)]
         events.append(
             {
                 "type": "scan",
@@ -617,7 +633,8 @@ def test_month_cluster_ci_and_ten_session_deduplication():
     events = promotion_events((1, 2, 3, 4, 5, 6, 7))
     result = replay.promotion_report(events)
     se = np.std([1, 2, 3, 4, 5, 6, 7], ddof=1) / np.sqrt(7)
-    assert result["excess20_ci95"] == pytest.approx([4 - 1.645 * se, 4 + 1.645 * se])
+    assert result["excess20_ci"] == pytest.approx([4 - 1.645 * se, 4 + 1.645 * se])
+    assert result["excess20_ci95"] == pytest.approx([4 - 1.96 * se, 4 + 1.96 * se])
     extra = deepcopy(events[1])
     extra["as_of"] = "20240126"  # Nine sessions since January 15: exclude.
     extra["sessions"] = pd.bdate_range(end=extra["as_of"], periods=61).strftime("%Y%m%d").tolist()
@@ -628,6 +645,206 @@ def test_month_cluster_ci_and_ten_session_deduplication():
     result = replay.promotion_report(events)
     assert result["observations_deduplicated"] == 400
     assert result["observations_settled"] == result["excess20_count"] == 350
+
+
+@pytest.mark.parametrize("version", ["simple-promotion-v1", "simple-promotion-v2"])
+def test_explicit_contract_sufficiency_and_confidence_separately(version):
+    short = replay.promotion_report(promotion_events((1,) * 4, version=version))
+    assert short["forward_months"] == 3 and short["excess20_count"] == 200
+    assert short["status"] == ("pass" if version.endswith("v2") else "insufficient")
+    values = (-1.55, -0.55, 0.45, 1.45, 2.45, 3.45, 4.45)
+    result = replay.promotion_report(promotion_events(values, version=version))
+    assert result["forward_months"] == 6 and result["excess20_count"] == 350
+    assert result["status"] == ("pass" if version.endswith("v2") else "fail")
+    expected = (
+        [0.10686312437389, 2.793136875626109]
+        if version.endswith("v2")
+        else [-0.15033329861834366, 3.0503332986183427]
+    )
+    assert result["excess20_ci"] == pytest.approx(expected)
+    assert result["excess20_ci95"] == pytest.approx([-0.15033329861834366, 3.0503332986183427])
+    contract = result["promotion_contract"]
+    assert contract["version"] == version
+    assert contract["method"] == "month_cluster_normal" and contract["two_sided"] is True
+    assert f"{contract['confidence']:.0%}双侧" in result["limits"]
+
+
+@pytest.mark.parametrize(
+    "version, minimum", [("simple-promotion-v1", 300), ("simple-promotion-v2", 150)]
+)
+@pytest.mark.parametrize("delta", [-1, 0])
+def test_promotion_valid_observation_threshold(version, minimum, delta):
+    result = replay.promotion_report(
+        promotion_events((1,) * 7, version=version, counts=[20] * 6 + [minimum + delta - 120])
+    )
+    assert result["excess20_count"] == minimum + delta
+    assert result["status"] == ("pass" if delta == 0 else "insufficient")
+
+
+@pytest.mark.parametrize("version, month", [("simple-promotion-v1", 7), ("simple-promotion-v2", 4)])
+@pytest.mark.parametrize("day", [14, 15, 16])
+def test_promotion_complete_calendar_month_boundary(version, month, day):
+    result = replay.promotion_report(
+        promotion_events(
+            (1, 1), version=version, counts=[150, 150], dates=["20240115", f"2024{month:02}{day}"]
+        )
+    )
+    assert result["forward_months"] == month - 1 - (day < 15)
+    assert result["status"] == ("insufficient" if day < 15 else "pass")
+
+
+@pytest.mark.parametrize("version", ["simple-promotion-v1", "simple-promotion-v2"])
+@pytest.mark.parametrize("clusters", [0, 1, 2])
+def test_promotion_effective_month_clusters(version, clusters):
+    result = replay.promotion_report(
+        promotion_events(
+            tuple(1 if i < clusters else None for i in range(7)), version=version, counts=[300] * 7
+        )
+    )
+    assert result["observations_settled"] == 2100
+    assert result["excess20_count"] == clusters * 300
+    assert len(result["monthly"]) == clusters
+    assert result["excess20_ci"] == ([1, 1] if clusters == 2 else None)
+    assert result["excess20_ci95"] == ([1, 1] if clusters == 2 else None)
+    assert result["status"] == ("pass" if clusters == 2 else "insufficient")
+
+
+def test_missing_and_unsettled_are_counted_but_not_valid_returns():
+    events = promotion_events((None, 2, 2, 2))
+    events.pop()  # Last scan is not settled yet.
+    result = replay.promotion_report(events)
+    assert result["observations_deduplicated"] == 200
+    assert result["observations_settled"] == 150
+    assert result["excess20_count"] == 100
+    assert result["excess20_mean"] == 2
+    assert result["status"] == "insufficient"
+    assert result["mae20_count"] == 150
+
+
+@pytest.mark.parametrize("version", [None, "simple-promotion-v1", "simple-promotion-v2"])
+def test_historical_backfill_cannot_change_forward_statistics(version):
+    events = promotion_events((-1,) * 7, version=version)
+    expected = replay.promotion_report(events)
+    for day in ("20231215", "20240112", "20240116", "20241015"):
+        historical = promotion_events(
+            (1000,), version=version, dates=[day], baseline=1000, mae=1000
+        )[1:]
+        historical[0]["prospective"] = False
+        events.extend(historical)
+    assert replay.promotion_report(events) == expected
+
+
+@pytest.mark.parametrize("version", [None, "simple-promotion-v1", "simple-promotion-v2"])
+def test_hash_linked_report_uses_header_across_default_changes(tmp_path, monkeypatch, version):
+    events = promotion_events((-1.55, -0.55, 0.45, 1.45, 2.45, 3.45, 4.45), version=version)
+    monkeypatch.setattr(replay, "FORWARD_CONTRACT", events[0]["contract"])
+    root = tmp_path / "forward"
+    with replay.ledger_root(root, create=True):
+        for event in events[1:]:
+            replay.append_event(root, event)
+    paths = [root / "ledger/events.jsonl", root / "replay.json"]
+    original = [path.read_bytes() for path in paths]
+    expected = replay.report(root)
+    for default in ("simple-promotion-v1", "simple-promotion-v2"):
+        monkeypatch.setattr(replay, "FORWARD_CONTRACT", replay.frozen_forward_contract(default))
+        assert replay.report(root) == expected
+        replay.FORWARD_CONTRACT["promotion"].update(version="future", min_valid_observations=1, z=0)
+        assert replay.report(root) == expected
+    assert [path.read_bytes() for path in paths] == original
+    if version is None:
+        assert expected["status"] == "insufficient"
+        assert expected["status_reason"] == "legacy_unfrozen_promotion_contract"
+        assert expected["promotion_contract"] is expected["excess20_ci"] is None
+        assert expected["excess20_ci95"] is not None
+        assert expected["excess20_count"] == expected["mae20_count"] == 350
+        assert "未冻结" in expected["limits"]
+    else:
+        assert expected["promotion_contract"] == events[0]["contract"]["promotion"]
+        assert expected["status"] == ("pass" if version.endswith("v2") else "fail")
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "missing_contract",
+        "null_contract",
+        "null_promotion",
+        "missing_version",
+        "unknown_version",
+        "contradictory_version",
+        "missing_parameter",
+        "string_parameter",
+        "bool_parameter",
+        "changed_entry",
+        "changed_dedupe",
+        "extra_parameter",
+    ],
+)
+def test_malformed_frozen_contract_fails_closed(tmp_path, monkeypatch, damage):
+    contract = replay.frozen_forward_contract("simple-promotion-v2")
+    promotion = contract["promotion"]
+    if damage == "null_contract":
+        contract = None
+    elif damage == "null_promotion":
+        contract["promotion"] = None
+    elif damage == "missing_version":
+        del promotion["version"]
+    elif damage == "unknown_version":
+        promotion["version"] = "unknown"
+    elif damage == "contradictory_version":
+        promotion["version"] = "simple-promotion-v1"
+    elif damage == "missing_parameter":
+        del promotion["z"]
+    elif damage == "string_parameter":
+        promotion["z"] = "1.645"
+    elif damage == "bool_parameter":
+        promotion["lower_bound_gt"] = False
+    elif damage == "changed_entry":
+        contract["entry"] = "trigger_close"
+    elif damage == "changed_dedupe":
+        contract["dedupe_sessions"] = 1
+    elif damage == "extra_parameter":
+        promotion["extra_gate"] = True
+    monkeypatch.setattr(replay, "FORWARD_CONTRACT", contract)
+    root = tmp_path / "forward"
+    if damage == "missing_contract":
+        root.mkdir(mode=0o700)
+        replay.append_event(
+            root, {k: v for k, v in promotion_events()[0].items() if k != "contract"}
+        )
+    else:
+        with replay.ledger_root(root, create=True):
+            pass
+    paths = [root / "ledger/events.jsonl", root / "replay.json"]
+    original = [path.read_bytes() for path in paths]
+    with pytest.raises(ScreenError, match="晋升统计合同"):
+        replay.report(root)
+    assert [path.read_bytes() for path in paths] == original
+
+
+@pytest.mark.parametrize("version", [None, "simple-promotion-v1", "simple-promotion-v2"])
+def test_scan_refuses_contract_change_but_old_settlement_works(
+    tmp_path, monkeypatch, no_wait, version
+):
+    client = ForwardClient()
+    root = tmp_path / "forward"
+    event = forward_scan(tmp_path / "source", client)
+    monkeypatch.setattr(replay, "FORWARD_CONTRACT", replay.frozen_forward_contract(version))
+    with replay.ledger_root(root, create=True):
+        replay.append_event(root, event)
+    prefix = (root / "ledger/events.jsonl").read_bytes()
+    calls = len(client.calls)
+    default = replay.frozen_forward_contract("simple-promotion-v2")
+    if version == "simple-promotion-v2":
+        default["promotion"]["min_valid_observations"] = 151
+    monkeypatch.setattr(replay, "FORWARD_CONTRACT", default)
+    with pytest.raises(ScreenError, match="规则已变化须新账本"):
+        forward_scan(root, client, at=61)
+    assert len(client.calls) == calls
+    assert (root / "ledger/events.jsonl").read_bytes() == prefix
+    assert replay.settle(root, 100, client, now=closed(client.days[125]))["settled"] == 1
+    assert (root / "ledger/events.jsonl").read_bytes().startswith(prefix)
+    assert replay.report(root)["observations_settled"] == 2
 
 
 def test_missing_later_bar_keeps_only_complete_horizons(tmp_path, no_wait):

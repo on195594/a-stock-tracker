@@ -445,16 +445,60 @@ def run(root: Path, horizon: int = 60) -> dict[str, Any]:
 
 
 LEDGER_OWNER = {"owner": OWNER, "mode": "prospective-v1"}
-FORWARD_CONTRACT = {
-    "dedupe_sessions": 10,
-    "window": 5,
-    "horizons": [10, 20, 40, 60],
-    "baseline_max": 500,
-    "seed": 0,
-    "order": "ts_code",
-    "entry": "observation_close",
-    "outcome_order": ["invalidated_first", "triggered", "gap_above", "expired"],
-}
+
+
+def frozen_forward_contract(version: str | None) -> dict[str, Any]:
+    # Version meanings are literals, independent of the mutable default for new ledgers.
+    contract = {
+        "dedupe_sessions": 10,
+        "window": 5,
+        "horizons": [10, 20, 40, 60],
+        "baseline_max": 500,
+        "seed": 0,
+        "order": "ts_code",
+        "entry": "observation_close",
+        "outcome_order": ["invalidated_first", "triggered", "gap_above", "expired"],
+    }
+    if version is None:
+        return contract
+    if version == "simple-promotion-v1":
+        months, observations, confidence, z = 6, 300, 0.95, 1.96
+    elif version == "simple-promotion-v2":
+        months, observations, confidence, z = 3, 150, 0.90, 1.645
+    else:
+        raise ScreenError("账本晋升统计合同版本未知")
+    contract["promotion"] = {
+        "version": version,
+        "min_complete_calendar_months": months,
+        "min_valid_observations": observations,
+        "min_month_clusters": 2,
+        "population": "settled_deduplicated_prospective_observations",
+        "statistic": "observation_weighted_excess20_mean",
+        "method": "month_cluster_normal",
+        "confidence": confidence,
+        "two_sided": True,
+        "z": z,
+        "lower_bound_gt": 0.0,
+    }
+    return contract
+
+
+FORWARD_CONTRACT = frozen_forward_contract("simple-promotion-v2")
+
+
+def frozen_promotion(header: dict[str, Any]) -> dict[str, Any] | None:
+    contract = header.get("contract")
+    if not isinstance(contract, dict):
+        raise ScreenError("账本晋升统计合同格式无效")
+    promotion = contract.get("promotion")
+    if "promotion" in contract and (
+        not isinstance(promotion, dict) or not isinstance(promotion.get("version"), str)
+    ):
+        raise ScreenError("账本晋升统计合同格式无效")
+    expected = frozen_forward_contract(promotion["version"] if promotion is not None else None)
+    if encoded(contract) != encoded(expected):
+        raise ScreenError("账本晋升统计合同参数缺失、矛盾或不受支持")
+    return expected.get("promotion")
 
 
 def rule_hash() -> str:
@@ -610,8 +654,10 @@ def scan(
     if as_of > closed_cutoff(now):
         raise ScreenError("as_of 必须是已收盘交易日；当日须上海时间18:00后")
     with ledger_root(root, create=True) as events:
-        if events[0]["rule_hash"] != rule_hash() or events[0]["contract"] != FORWARD_CONTRACT:
+        if events[0]["rule_hash"] != rule_hash() or events[0].get("contract") != FORWARD_CONTRACT:
             raise ScreenError("规则已变化须新账本")
+        if frozen_promotion(events[0]) is None:
+            raise ScreenError("规则已变化须新账本：旧账本未冻结晋升统计合同")
         previous = [event["as_of"] for event in events if event["type"] == "scan"]
         if as_of in previous:
             raise ScreenError("同一 as_of 不可重复 scan")
@@ -864,6 +910,7 @@ def settle(
 
 
 def promotion_report(events: list[dict[str, Any]]) -> dict[str, Any]:
+    promotion = frozen_promotion(events[0])
     scans = sorted(
         [e for e in events if e["type"] == "scan" and e["prospective"]], key=lambda e: e["as_of"]
     )
@@ -901,7 +948,7 @@ def promotion_report(events: list[dict[str, Any]]) -> dict[str, Any]:
             maes.append(row["metrics"]["mae20"])
     values = [v for group in months.values() for v in group]
     mean = float(np.mean(values)) if values else None
-    ci = None
+    ci = ci95 = None
     if len(months) >= 2 and mean is not None:
         # Cluster-robust standard error of the observation-weighted mean (month clusters).
         g, n = len(months), len(values)
@@ -911,8 +958,9 @@ def promotion_report(events: list[dict[str, Any]]) -> dict[str, Any]:
             )
             / n
         )
-        # 90% two-sided interval: its lower bound > 0 equals a one-sided 95% test.
-        ci = [mean - 1.645 * se, mean + 1.645 * se]
+        ci95 = [mean - 1.96 * se, mean + 1.96 * se]
+        if promotion is not None:
+            ci = [mean - promotion["z"] * se, mean + promotion["z"] * se]
     span = 0
     if scans:
         first, end = (datetime.strptime(e["as_of"], "%Y%m%d") for e in (scans[0], scans[-1]))
@@ -921,22 +969,41 @@ def promotion_report(events: list[dict[str, Any]]) -> dict[str, Any]:
     mae = float(np.median(maes)) if maes else None
     baseline_mae = float(np.median(baseline)) if baseline else None
     # Data sufficiency is a precondition, not a gate: short or thin history cannot be judged.
-    sufficient = span >= 3 and len(values) >= 150
-    if not sufficient or ci is None:
+    sufficient = (
+        promotion is not None
+        and span >= promotion["min_complete_calendar_months"]
+        and len(values) >= promotion["min_valid_observations"]
+        and len(months) >= promotion["min_month_clusters"]
+    )
+    if not sufficient or ci is None or promotion is None:
         status = "insufficient"
     else:
-        status = "pass" if ci[0] > 0 else "fail"
+        status = "pass" if ci[0] > promotion["lower_bound_gt"] else "fail"
+    interval_limit = (
+        f"晋升采用正态近似{promotion['confidence']:.0%}双侧区间，月聚类标准误。"
+        if promotion is not None
+        else "旧账本未冻结晋升统计合同，不推定置信水平或晋升结论。"
+    )
     return {
         "rule": events[0]["rule"],
         "rule_hash": events[0]["rule_hash"],
         "status": status,
+        "status_reason": (
+            "legacy_unfrozen_promotion_contract"
+            if promotion is None
+            else "insufficient_data"
+            if status == "insufficient"
+            else None
+        ),
+        "promotion_contract": promotion,
         "forward_months": span,
         "scan_days": len(scans),
         "observations_deduplicated": len(observations),
         "observations_settled": settled_count,
         "excess20_count": len(values),
         "excess20_mean": mean,
-        "excess20_ci95": ci,
+        "excess20_ci": ci,
+        "excess20_ci95": ci95,
         "positive_month_fraction": positive,
         "monthly": {
             month: {"count": len(v), "excess20_mean": float(np.mean(v))}
@@ -946,7 +1013,9 @@ def promotion_report(events: list[dict[str, Any]]) -> dict[str, Any]:
         "mae20_count": len(maes),
         "baseline_mae20_median": baseline_mae,
         "baseline_mae20_count": len(baseline),
-        "limits": "单位为百分比；正态近似90%双侧区间，月聚类标准误。未结算及缺失值不填零；历史回填不计晋升。通过仅支持进一步讨论，不自动进入首页，不作为收益证明。",
+        "limits": "单位为百分比；"
+        + interval_limit
+        + "excess20_ci95仅为正态近似95%双侧月聚类诊断区间，不一定是晋升区间。未结算及缺失值不填零；历史回填不计晋升。通过仅支持进一步讨论，不自动进入首页，不作为收益证明。",
     }
 
 
