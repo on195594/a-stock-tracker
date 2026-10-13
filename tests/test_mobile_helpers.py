@@ -9,13 +9,15 @@ from tests import test_mobile
 
 
 class ScrollPage:
-    def __init__(self, y, consumed=256):
+    def __init__(self, y, consumed=256, *, editable=False):
         self.viewport_size = {"width": 360, "height": 844}
         self.url = "http://127.0.0.1/synthetic"
         self.y, self.consumed = y, consumed
         self.clock = 0.0
         self.wheels = []
         self.clicked = False
+        self.editable = editable
+        self.focus_waits = []
         self.mouse = SimpleNamespace(move=lambda *args: None, wheel=self.wheel)
 
     def wheel(self, x, delta):
@@ -25,6 +27,9 @@ class ScrollPage:
     def wait_for_function(self, script, *, arg, timeout):
         assert "250" in script
         assert 0 < timeout <= 5000
+        if "_testFocusedSince" in script:
+            assert self.clicked and self.editable and arg is self
+            self.focus_waits.append(timeout)
         self.clock += 0.25
 
     def wait_for(self, **kwargs):
@@ -38,6 +43,8 @@ class ScrollPage:
         return self
 
     def evaluate(self, script):
+        if "el.matches" in script:
+            return self.editable
         return True
 
     def click(self, *, timeout):
@@ -100,6 +107,37 @@ def test_locator_lookup_receives_only_remaining_budget(monkeypatch):
     locator = SimpleNamespace(wait_for=visibility, element_handle=lookup)
     test_mobile.click_settled(page, locator)
     assert page.clicked and page.clock == 4.75
+
+
+def test_editable_focus_settles_after_click_with_remaining_budget(monkeypatch):
+    page = ScrollPage(112, editable=True)
+    monkeypatch.setattr(test_mobile.time, "monotonic", lambda: page.clock)
+
+    def visibility(**kwargs):
+        page.clock = 4.5
+
+    locator = SimpleNamespace(wait_for=visibility, element_handle=page.element_handle)
+    test_mobile.click_settled(page, locator)
+    assert page.clicked and page.focus_waits == [250]
+    assert page.clock == 5
+
+
+def test_editable_focus_failure_does_not_extend_click_budget(monkeypatch):
+    page = ScrollPage(112, editable=True)
+    monkeypatch.setattr(test_mobile.time, "monotonic", lambda: page.clock)
+    original_wait = page.wait_for_function
+
+    def fail_focus(script, *, arg, timeout):
+        if "_testFocusedSince" in script:
+            assert page.clicked and timeout == 4750
+            page.clock += timeout / 1000
+            raise PlaywrightTimeoutError("Editing focus did not settle")
+        original_wait(script, arg=arg, timeout=timeout)
+
+    monkeypatch.setattr(page, "wait_for_function", fail_focus)
+    with pytest.raises(PlaywrightTimeoutError, match="Editing focus"):
+        test_mobile.click_settled(page, page)
+    assert page.clock == 5
 
 
 @pytest.mark.parametrize("y,valid", [(874, True), (100, False)])

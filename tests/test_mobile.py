@@ -70,6 +70,21 @@ def click_settled(page, control):
             height = page.viewport_size["height"]
             if box["y"] >= 0 and box["y"] + box["height"] <= height:
                 element.click(timeout=remaining_ms())
+                if element.evaluate("el => el.matches('input, textarea')"):
+                    # Flutter's editing connection settles after the canvas click.
+                    element.evaluate("el => { el._testFocusedSince = null; }")
+                    page.wait_for_function(
+                        """el => {
+                            if (!el.isConnected || el !== document.activeElement) {
+                                el._testFocusedSince = null;
+                                return false;
+                            }
+                            el._testFocusedSince ??= performance.now();
+                            return performance.now() - el._testFocusedSince >= 250;
+                        }""",
+                        arg=element,
+                        timeout=remaining_ms(),
+                    )
                 return
             # Flutter can consume less than the requested wheel delta. Re-measure
             # after it settles instead of waiting forever on an offscreen target.
