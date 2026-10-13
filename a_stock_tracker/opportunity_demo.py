@@ -44,7 +44,7 @@ def demo_packet():
     }
 
 
-def demo_board():
+def demo_board(scenario="observation"):
     row = evaluate(demo_packet())
     row.update(
         status="observation",
@@ -64,4 +64,19 @@ def demo_board():
             },
         },
     )
-    return {"demo": True, "source": "本地合成日线，未调用行情或模型", "rows": [row]}
+    if scenario == "excluded":
+        packet = demo_packet()
+        packet["bars"][-5]["low"] = 8.0
+        row = evaluate(packet)
+    elif scenario == "gap":
+        row = {
+            "code": row["code"],
+            "name": row["name"],
+            "status": "gap",
+            "reasons": ["合成日线资料缺失；补齐资料后另行确认研究。"],
+        }
+    return {
+        "demo": True,
+        "source": "本地合成日线，未调用行情或模型",
+        "rows": [] if scenario == "zero" else [row],
+    }

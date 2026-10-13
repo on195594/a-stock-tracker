@@ -100,3 +100,18 @@ def test_locator_lookup_receives_only_remaining_budget(monkeypatch):
     locator = SimpleNamespace(wait_for=visibility, element_handle=lookup)
     test_mobile.click_settled(page, locator)
     assert page.clicked and page.clock == 4.75
+
+
+@pytest.mark.parametrize("y,valid", [(874, True), (100, False)])
+def test_touch_target_measurement_distinguishes_viewport_clipping(y, valid):
+    button = SimpleNamespace(bounding_box=lambda: {"x": 280, "y": y, "width": 720, "height": 26})
+    page = SimpleNamespace(
+        viewport_size={"width": 1280, "height": 900},
+        evaluate=lambda _: True,
+        get_by_role=lambda role: SimpleNamespace(all=lambda: [button] if role == "button" else []),
+    )
+    if valid:
+        test_mobile.assert_layout(page, 1280)
+    else:
+        with pytest.raises(AssertionError):
+            test_mobile.assert_layout(page, 1280)

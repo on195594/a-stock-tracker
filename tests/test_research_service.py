@@ -77,7 +77,9 @@ def test_private_service_auth_budget_confirmation_and_same_nonce(tmp_path, monke
         p = payload("screen")
         bad = deepcopy(p)
         bad["quote"]["requests"] += 1
-        assert client.post("/runs", json=bad).status_code == 400
+        rejection = client.post("/runs", json=bad)
+        assert rejection.status_code == 409
+        assert rejection.json()["code"] == "quote_changed"
         first = client.post("/runs", json=p)
         assert first.status_code == 200 and first.json()["status"] == "running"
         assert client.post("/runs", json=p).json()["id"] == p["id"]
@@ -570,7 +572,9 @@ def test_same_day_screen_reuses_verified_original_without_spending(tmp_path, mon
     accepted = store.submit(new)
     assert accepted["reused_from"] == old["id"]
     assert store.submit(new) == accepted
-    assert store.status(new["id"])["result"] == {"synthetic": True}
+    result = store.status(new["id"])["result"]
+    assert result["synthetic"] is True
+    assert result["usage"]["requests"] == 0
     assert reads == [directory, directory]
     assert not (store.directory(new["id"]) / "batch").exists()
     store.lease().close()
@@ -951,6 +955,7 @@ def test_continuation_copies_verified_checkpoint_and_preserves_original(tmp_path
 
     monkeypatch.setattr("a_stock_tracker.research_service.Thread", DeferredThread)
     request = {**payload("screen"), "resume_from": original["id"]}
+    request["quote"] = quote(request_info(), "screen", 4)
     accepted = store.submit(request)
     assert accepted["status"] == "running" and accepted["continued_from"] == original["id"]
     assert store.submit(request) == accepted and len(leases) == 1
@@ -1044,7 +1049,7 @@ def test_entry_continuation_requires_explicit_new_budget_confirmation(monkeypatc
             assert len(client.runs) == 2
             new = list(client.runs.values())[-1]
             assert new["request"]["resume_from"] == original["id"]
-            assert new["request"]["quote"]["requests"] == 400
+            assert new["request"]["quote"]["requests"] == 21
             assert "model_budget" not in new["request"]["quote"]
         finally:
             await page.on_close(None)
@@ -1111,3 +1116,253 @@ def test_child_refuses_changed_confirmed_screen_before_market_access(tmp_path, m
         automation.main()
     assert error.value.code == 2
     assert not (tmp_path / "batch").exists()
+
+
+def test_resume_quote_scales_with_remaining_and_pins_child_limits(tmp_path, monkeypatch):
+    store, original, _ = screen_checkpoint_fixture(tmp_path)
+    status = store.status(original["id"])
+    offered = status["continuation_quote"]
+    assert offered["requests"] == 24 and offered["seconds"] == 66
+    assert quote(request_info(), "screen")["requests"] == 1500
+    assert quote(request_info(), "screen")["seconds"] == 3600
+    assert quote(request_info(), "screen", 2000)["seconds"] == 3600
+    assert quote(request_info(), "screen", 100)["seconds"] == 288
+    request = {**payload("screen"), "quote": offered, "resume_from": original["id"]}
+    destination = store.directory(request["id"])
+    destination.mkdir(mode=0o700)
+    command = store.command(destination, request)
+    assert command[command.index("--request-budget") + 1] == "24"
+    assert command[command.index("--seconds") + 1] == "66"
+
+
+def test_reuse_follows_chain_tail_and_recent_groups_all_references(tmp_path, monkeypatch):
+    monkeypatch.setenv("TUSHARE_TOKEN", "synthetic")
+    store, original, source = screen_checkpoint_fixture(tmp_path)
+    first = read_state(source.parent.parent / "request.json")
+    tail_id = uuid.uuid4().hex
+    tail = store.directory(tail_id)
+    tail.mkdir(mode=0o700)
+    save_state(
+        tail / "request.json",
+        {
+            **first,
+            "id": tail_id,
+            "continued_from": original["id"],
+            "request": {**payload("screen"), "quote": quote(request_info(), "screen", 4)},
+        },
+    )
+    reads = []
+    monkeypatch.setattr(
+        store,
+        "result",
+        lambda path, mode: (
+            reads.append(path.name)
+            or {
+                "coverage": {
+                    "counts": {"pending": 2},
+                    "cutoff": datetime.now().date().isoformat(),
+                    "prefilter": first["limits"]["prefilter"],
+                }
+            }
+        ),
+    )
+    for _ in range(12):
+        request = payload("screen")
+        accepted = store.submit(request)
+        assert accepted["reused_from"] == tail_id
+        assert store.submit(request)["id"] == request["id"]
+    assert set(reads) == {tail_id}
+    old = store.status(original["id"])
+    assert old["continued_by"] == tail_id and old["can_continue"] is False
+    recent = store.recent()
+    assert len(recent) == 1 and recent[0]["id"] == tail_id
+    assert recent[0]["continuations"] == 1 and recent[0]["reused"]
+
+
+@pytest.mark.parametrize("source", ["../x", "a" * 31, "A" * 32, 123, "f" * 32])
+def test_source_metadata_rejects_invalid_or_foreign_reference(tmp_path, monkeypatch, source):
+    store = ResearchStore(tmp_path / "service")
+    request = {**payload(), "from": source}
+    monkeypatch.setattr(store, "lease", lambda: pytest.fail("invalid source spent budget"))
+    with pytest.raises((ValueError, FileNotFoundError)):
+        store.submit(request)
+    assert not store.directory(request["id"]).exists()
+
+
+def test_source_metadata_accepts_only_local_screen_and_rejects_symlink(tmp_path, monkeypatch):
+    store, original, source = screen_checkpoint_fixture(tmp_path)
+    info = request_info()
+    for mode in info["modes"].values():
+        mode["available"] = True
+    monkeypatch.setattr("a_stock_tracker.research_service.request_info", lambda: info)
+    leases = []
+
+    class DeferredThread:
+        def __init__(self, target, args, daemon):
+            leases.append(args[2])
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr("a_stock_tracker.research_service.Thread", DeferredThread)
+    request = {**payload(), "from": original["id"]}
+    try:
+        accepted = store.submit(request)
+        assert accepted["request"]["from"] == original["id"]
+    finally:
+        for lease in leases:
+            lease.close()
+    with pytest.raises(ValueError, match="来源必须"):
+        store.submit({**payload(), "from": request["id"]})
+    linked = store.directory(uuid.uuid4().hex)
+    linked.symlink_to(source.parent.parent)
+    with pytest.raises(ScreenError):
+        store.submit({**payload(), "from": linked.name})
+
+
+def test_complete_screen_groups_are_not_batch_queue_and_response_is_bounded(tmp_path, monkeypatch):
+    from a_stock_tracker import automation
+    from tests.test_automation import Client
+
+    store, original, source = screen_checkpoint_fixture(tmp_path)
+    state = read_state(source / "state.json")
+    frozen = automation.read_result(source / "universe.json", state["freeze"])
+    automation.scan(source, frozen, state, Client(), "synthetic", automation.Budget(50, 300))
+    base = store.result(source.parent.parent, "screen")
+    assert len(base["groups"][0]["ranking"]) == 5
+    row = base["groups"][0]["ranking"][0]
+    assert set(row) == {
+        "code",
+        "name",
+        "pb",
+        "roe_mean",
+        "total_mv",
+        "order",
+        "pb_rank",
+        "roe_rank",
+    }
+    assert not base["truncated"] and base["usage"] is None
+    real_coverage = automation.coverage
+
+    def expanded(rows, frozen):
+        summary = real_coverage(rows, frozen)
+        summary["groups"][0]["ranking"] *= 6000
+        return summary
+
+    monkeypatch.setattr("a_stock_tracker.research_service.coverage", expanded)
+    result = store.result(source.parent.parent, "screen")
+    assert result["truncated"] and "上限" in result["truncation_note"]
+    assert 5 < len(result["groups"][0]["ranking"]) < 30000
+    assert len(json.dumps(result, ensure_ascii=False).encode()) < 3_900_000
+
+
+@pytest.mark.parametrize(
+    "response_code,error_type",
+    [("quote_changed", "ResearchQuoteChanged"), ("busy", "ResearchRejected")],
+)
+def test_client_distinguishes_explicit_rejection(monkeypatch, response_code, error_type):
+    from a_stock_tracker import research_client
+
+    original = httpx.Client
+    monkeypatch.setattr(
+        httpx,
+        "Client",
+        lambda **kw: original(
+            transport=httpx.MockTransport(
+                lambda _: httpx.Response(409, json={"code": response_code, "detail": "请重新确认"})
+            )
+        ),
+    )
+    with pytest.raises(getattr(research_client, error_type)):
+        ResearchClient("http://research", "x" * 32).submit(payload())
+
+
+@pytest.mark.parametrize("refresh_fails", [False, True])
+def test_quote_rejection_preserves_input_and_requires_fresh_consent(monkeypatch, refresh_fails):
+    from a_stock_tracker.research_client import ResearchQuoteChanged
+
+    monkeypatch.setattr(app, "APP_MODE", "demo")
+    client = DemoResearchClient()
+    monkeypatch.setattr(app, "DemoResearchClient", lambda: client)
+    submitted = []
+    original_submit, original_info = client.submit, client.info
+
+    def reject_once(request):
+        submitted.append(deepcopy(request))
+        if len(submitted) == 1:
+            raise ResearchQuoteChanged("报价已变化")
+        return original_submit(request)
+
+    monkeypatch.setattr(client, "submit", reject_once)
+
+    async def run():
+        page = AppMockPage()
+        page.route = "/analysis?mode=swing&code=600519"
+        try:
+            await app.build_app()(page)
+            field = next(c for c in app_controls(page) if isinstance(c, ft.TextField))
+            consent = next(c for c in app_controls(page) if isinstance(c, ft.Checkbox))
+            start = next(
+                c
+                for c in app_controls(page)
+                if isinstance(c, ft.Button) and c.content == "确认启动研究"
+            )
+            if refresh_fails:
+                monkeypatch.setattr(
+                    client, "info", lambda: (_ for _ in ()).throw(ResearchUnavailable("离线"))
+                )
+            consent.value = True
+            consent.on_change(None)
+            await start.on_click(None)
+            assert field.value == "600519" and not consent.value and not client.runs
+            if refresh_fails:
+                assert start.content == "重新获取报价"
+                monkeypatch.setattr(client, "info", original_info)
+                await start.on_click(None)
+            assert start.disabled and start.content == "确认启动研究"
+            await start.on_click(None)
+            assert len(submitted) == 1
+            consent.value = True
+            consent.on_change(None)
+            await start.on_click(None)
+            assert len(client.runs) == 1 and len(submitted) == 2
+            assert submitted[0]["id"] != submitted[1]["id"]
+        finally:
+            await page.on_close(None)
+
+    asyncio.run(run())
+
+
+def test_late_home_research_response_cannot_replace_new_page(monkeypatch):
+    from threading import Event
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(app, "APP_MODE", "demo")
+    client = DemoResearchClient()
+    started, release = Event(), Event()
+
+    def delayed_recent():
+        started.set()
+        assert release.wait(5)
+        return []
+
+    monkeypatch.setattr(client, "recent", delayed_recent)
+    monkeypatch.setattr(app, "DemoResearchClient", lambda: client)
+
+    async def run():
+        page = AppMockPage()
+        pending = asyncio.create_task(app.build_app()(page))
+        try:
+            assert await asyncio.to_thread(started.wait, 3)
+            page.route = "/settings"
+            await page.on_route_change(SimpleNamespace(route="/settings"))
+        finally:
+            release.set()
+            await pending
+        try:
+            text = "\n".join(str(getattr(c, "value", "")) for c in app_controls(page))
+            assert "账户与运行信息" in text and "研究首页" not in text
+        finally:
+            await page.on_close(None)
+
+    asyncio.run(run())

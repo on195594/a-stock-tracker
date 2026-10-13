@@ -3,6 +3,7 @@
 import asyncio
 from copy import deepcopy
 from datetime import date, timedelta
+from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -303,6 +304,7 @@ def test_late_private_board_cannot_overwrite_navigation(monkeypatch):
         assert release.wait(5)
         return demo_board()
 
+    monkeypatch.setattr(app, "OPPORTUNITY_ROOT", Path("/synthetic"))
     monkeypatch.setattr(app, "load_board", delayed_board)
 
     async def run():

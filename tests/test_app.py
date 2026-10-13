@@ -1,6 +1,7 @@
 """Application authentication, lifecycle and ASGI security regressions."""
 
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -235,6 +236,7 @@ def test_owner_login_and_logout(monkeypatch, user_id):
         actors.append(actor)
         return None
 
+    monkeypatch.setattr(app, "OPPORTUNITY_ROOT", Path("/synthetic"))
     monkeypatch.setattr(app, "load_board", read)
 
     async def run():
@@ -305,6 +307,7 @@ def test_reconnect_revokes_expired_actor(monkeypatch):
     clock = [auth.time.monotonic()]
     monkeypatch.setattr(auth.time, "monotonic", lambda: clock[0])
     actors = []
+    monkeypatch.setattr(app, "OPPORTUNITY_ROOT", Path("/synthetic"))
     monkeypatch.setattr(app, "load_board", lambda actor, root: actors.append(actor))
 
     async def run():
@@ -337,6 +340,7 @@ def test_report_read_failure_has_retry_without_legacy_link(monkeypatch):
         reads.append(actor)
         raise ValueError("synthetic malformed batch")
 
+    monkeypatch.setattr(app, "OPPORTUNITY_ROOT", Path("/synthetic"))
     monkeypatch.setattr(app, "load_board", broken)
 
     async def run():
@@ -491,3 +495,28 @@ def test_startup_without_workspace_and_fail_closed(tmp_path, changes, success):
     )
     assert (result.returncode == 0) is success, result.stderr
     assert not list(tmp_path.iterdir())
+
+
+def test_home_without_published_root_shows_research_and_never_reads_batch(monkeypatch):
+    from a_stock_tracker.research_client import DemoResearchClient
+
+    monkeypatch.setattr(app, "APP_MODE", "production")
+    monkeypatch.setattr(app, "OPPORTUNITY_ROOT", None)
+    monkeypatch.setattr(app, "GITHUB_ALLOWED_USER_ID", "12345678")
+    monkeypatch.setattr(app, "configured_client", lambda: DemoResearchClient())
+    monkeypatch.setattr(app, "load_board", lambda *a: pytest.fail("unconfigured batch read"))
+
+    async def run():
+        page = AppMockPage(auth=MagicMock(user={"id": "12345678"}))
+        try:
+            await app.build_app()(page)
+            await page.on_login(
+                ft.LoginEvent(name="login", control=None, error=None, error_description=None)
+            )
+            text = "\n".join(str(getattr(c, "value", "")) for c in app_controls(page))
+            assert "进行中" in text and "最近研究" in text
+            assert "还没有经过核验的机会报告" not in text
+        finally:
+            await page.on_close(None)
+
+    asyncio.run(run())

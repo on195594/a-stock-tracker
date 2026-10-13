@@ -483,6 +483,12 @@ def test_cli_resume_fills_new_industries_and_finishes_bounded_queue(tmp_path, mo
     directory = next(root.glob("run-*"))
     state = a.read_state(directory / "state.json")
     assert len(state["queue"]) == 3
+    usage = a.read_result(directory / "invocation.json")
+    assert usage["stop_reason"] == "request_budget"
+    assert usage["requests"] == 3 and usage["remaining"] == 3
+    assert state["usage"]["newly_covered"] == 3
+    assert usage["seconds_used"] >= 0
+    budget.stop_reason = "completed"
     budget.used = 0
     budget.limit = 10
     monkeypatch.setattr(
@@ -491,6 +497,9 @@ def test_cli_resume_fills_new_industries_and_finishes_bounded_queue(tmp_path, mo
     assert a.main() == 0
     state = a.read_state(directory / "state.json")
     assert len(state["queue"]) == state["cursor"] == 5
+    assert state["usage"]["stop_reason"] == "completed"
+    assert state["usage"]["newly_covered"] == 3
+    assert state["usage"]["covered"] == 6 and state["usage"]["remaining"] == 0
     assert len({r["industry"] for r in frozen["rows"] if r["code"] in state["queue"]}) == 2
 
 
@@ -1074,3 +1083,27 @@ def test_cli_rejects_changed_screen_rule_before_resume_scan(tmp_path, monkeypatc
     )
     with pytest.raises(ScreenError, match="rule mismatch"):
         a.main()
+
+
+@pytest.mark.parametrize("reason", ["error", "time_budget"])
+def test_invocation_records_failure_before_freeze(tmp_path, monkeypatch, reason):
+    import sys
+
+    import tushare
+
+    root = tmp_path / "batch"
+    monkeypatch.setenv("TUSHARE_TOKEN", "synthetic")
+    monkeypatch.setattr(tushare, "pro_api", lambda *a, **kw: None)
+
+    def fail(*args, **kwargs):
+        if reason == "time_budget":
+            raise a.BudgetStop("TIME_BUDGET")
+        raise a.ScreenError("synthetic failure")
+
+    monkeypatch.setattr(a, "freeze", fail)
+    monkeypatch.setattr(sys, "argv", ["automation", "--root", str(root)])
+    with pytest.raises((a.ScreenError, a.BudgetStop)):
+        a.main()
+    usage = a.read_result(root / "invocation.json")
+    assert usage["stop_reason"] == reason and usage["requests"] == 0
+    assert usage["seconds_used"] >= 0 and usage["remaining"] is None

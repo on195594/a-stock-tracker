@@ -554,11 +554,26 @@ def model_call(
     return report
 
 
+def report_status_text(status: Any) -> str:
+    return {
+        "incomplete": "未完成：原文、引用或模型核查有缺口，补齐后再研究",
+        "scoped_complete": "范围内已完成，仍须核查反证与缺口",
+        "unchanged": "证据未变化，复用已复核报告",
+        "passed": "复核通过",
+        "failed": "复核未通过，不能作为确定结论",
+        "synthetic": "合成报告",
+        "not_real": "合成示例，未进行真实复核",
+        "gap": "资料缺口，补齐后再研究",
+        "excluded": "未通过资格筛选",
+        "partial": "部分完成，核对尚缺资料",
+    }.get(status, "未记录" if not status else "状态未识别，需核查原始依据")
+
+
 def render(result: dict[str, Any]) -> str:
     lines = [
         f"# {result['code']} 自动研究",
         "",
-        f"状态：{result['status']}；规则：{TEMPLATE}；非交易建议、非个人研究状态。",
+        f"状态：{report_status_text(result['status'])}；规则：{TEMPLATE}；非交易建议、非个人研究状态。",
         f"报告版本：{result.get('evidence_key', 'none')}",
         "",
     ]

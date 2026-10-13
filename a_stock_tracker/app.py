@@ -34,11 +34,13 @@ from a_stock_tracker.opportunity_view import (
 )
 from a_stock_tracker.research_client import (
     DemoResearchClient,
+    ResearchQuoteChanged,
+    ResearchRejected,
     ResearchUnavailable,
     configured_client,
 )
 from a_stock_tracker.research_service import quote
-from a_stock_tracker.research_view import LABELS, result_view
+from a_stock_tracker.research_view import recent_controls, result_view
 from a_stock_tracker.web_assets import CHINESE_FONT, PublicAssetCompression
 
 RAW_MODE = os.getenv("APP_MODE", "demo")
@@ -272,7 +274,11 @@ def build_app():
                                 continue
                             last_run = updated
                             content_container.content = result_view(
-                                updated, lambda r: open_route(r, gen, actor), back, code
+                                updated,
+                                lambda r: open_route(r, gen, actor),
+                                back,
+                                code,
+                                lambda: current(gen, actor),
                             )
                             if state["connected"]:
                                 try:
@@ -313,7 +319,13 @@ def build_app():
                 if current(gen, actor) and run["status"] == "running":
                     stop_poll()
                     state["poll"] = asyncio.create_task(poll())
-                return result_view(run, lambda r: open_route(r, gen, actor), back, code)
+                return result_view(
+                    run,
+                    lambda r: open_route(r, gen, actor),
+                    back,
+                    code,
+                    lambda: current(gen, actor),
+                )
             try:
                 info, recent = await asyncio.gather(
                     asyncio.to_thread(research.info), asyncio.to_thread(research.recent)
@@ -430,6 +442,50 @@ def build_app():
             submit = ft.Button("确认启动研究", height=48, disabled=True)
             request_id = uuid.uuid4().hex
             pending = None
+            quote_stale = False
+
+            def current_quote():
+                if mode.value == "screen" and resume_source and resume_id:
+                    return resume_source["continuation_quote"]
+                return quote(info, mode.value)
+
+            async def reload_quote():
+                nonlocal info, resume_source, quote_stale, pending
+                pending = None
+                quote_stale = True
+                confirmation.value = False
+                confirmation.disabled = True
+                try:
+                    new_info = await asyncio.to_thread(research.info)
+                    new_source = (
+                        await asyncio.to_thread(research.status, resume_id) if resume_id else None
+                    )
+                except ResearchUnavailable:
+                    if current(gen, actor):
+                        submit.content = "重新获取报价"
+                        submit.disabled = False
+                        feedback.value = (
+                            "旧报价已被拒绝；暂时无法获取新报价。输入已保留，请重新获取报价后确认。"
+                        )
+                        page.update()
+                    return
+                if not current(gen, actor):
+                    return
+                info, resume_source = new_info, new_source
+                if (
+                    mode.value == "screen"
+                    and resume_source
+                    and not resume_source.get("can_continue")
+                ):
+                    feedback.value = "该检查点已继续或已不可续跑，请返回来源初筛查看最新进度。"
+                    submit.disabled = True
+                    page.update()
+                    return
+                quote_stale = False
+                mode.disabled = codes.disabled = confirmation.disabled = False
+                refresh()
+                feedback.value = "报价或模型已变化，已刷新报价并保留输入；请重新核对并勾选确认。"
+                page.update()
 
             def refresh(e=None):
                 if not current(gen, actor):
@@ -442,7 +498,7 @@ def build_app():
                     if mode.value == "screen" and resume_id
                     else "确认启动研究"
                 )
-                selected = info["modes"][mode.value]
+                selected = {**current_quote(), "available": info["modes"][mode.value]["available"]}
                 codes.visible = mode.value != "screen"
                 continuation_note.visible = mode.value == "screen" and bool(resume_id)
                 if resume_source and resume_id:
@@ -450,7 +506,7 @@ def build_app():
                     continuation_note.value = (
                         f"继续原初筛 {resume_id}\n冻结依据日期 {coverage['data_date']}，"
                         f"尚未覆盖 {coverage['counts']['pending']} 家；只扫描未覆盖部分，原批次不变。\n"
-                        "本次另增最多 400 次数据请求 / 30 分钟，不调用模型；仍可能因预算或资料缺口没有候选。"
+                        f"本次另增最多 {selected['requests']} 次数据请求 / {selected['seconds']} 秒，不调用模型；只覆盖剩余部分，不自动重试缺口。"
                     )
                 confirmation.value = False
                 confirmation.label = (
@@ -465,7 +521,7 @@ def build_app():
                     if info["demo"]
                     else "确认后后台请求行情"
                     + ("，不调用模型。" if mode.value == "screen" else "并调用模型。"),
-                    f"上限：{selected['requests']} 次数据请求 · {selected['seconds'] // 60} 分钟"
+                    f"上限：{selected['requests']} 次数据请求 · {selected['seconds']} 秒"
                     + (f" · {selected['reports']} 份财报报告" if selected["reports"] else ""),
                 ]
                 if mode.value == "screen":
@@ -511,6 +567,9 @@ def build_app():
                 nonlocal pending
                 if not current(gen, actor) or submit.disabled:
                     return
+                if quote_stale:
+                    await reload_quote()
+                    return
                 if pending is None:
                     raw = [
                         c.strip().upper()
@@ -528,21 +587,26 @@ def build_app():
                         "mode": mode.value,
                         "codes": [] if mode.value == "screen" else normalized,
                         "confirmed": True,
-                        "quote": quote(info, mode.value),
+                        "quote": current_quote(),
                     }
                 if mode.value == "screen" and resume_id and pending is not None:
                     pending["resume_from"] = resume_id
+                if mode.value != "screen" and query.get("from") and pending is not None:
+                    pending["from"] = query["from"][0]
                 submit.disabled = True
                 mode.disabled = codes.disabled = confirmation.disabled = True
                 feedback.value = "正在核对受理状态，请勿重复启动。"
                 page.update()
                 try:
                     accepted = await asyncio.to_thread(research.submit, pending)
-                except ValueError as exc:
+                except ResearchQuoteChanged:
+                    if current(gen, actor):
+                        await reload_quote()
+                except (ValueError, ResearchRejected) as exc:
                     if current(gen, actor):
                         pending = None
                         mode.disabled = codes.disabled = confirmation.disabled = False
-                        submit.disabled = False
+                        refresh()
                         feedback.value = str(exc)
                         page.update()
                 except ResearchUnavailable as exc:
@@ -580,27 +644,70 @@ def build_app():
                 confirmation,
                 submit,
                 feedback,
-                heading("最近研究"),
             ]
-            if not recent:
-                controls.append(paragraph("还没有网页研究记录。从上面启动一次，结果会出现在这里。"))
-            for item in recent:
-                controls.extend(
-                    [
-                        heading(item["limits"]["title"], size=18),
-                        paragraph(
-                            ("、".join(item["request"]["codes"]) or "财报初筛")
-                            + "\n"
-                            + LABELS.get(item["status"], item["status"])
-                            + " · "
-                            + item["created_at"]
-                        ),
-                        ft.TextButton(
-                            ft.Text("查看进度与结果", semantics_label="查看研究 · " + item["id"]),
-                            on_click=open_route("/analysis/" + item["id"], gen, actor),
-                            height=48,
-                        ),
-                    ]
+            controls.extend(recent_controls(recent, lambda r: open_route(r, gen, actor)))
+            return ft.Column(
+                controls, spacing=20, horizontal_alignment=ft.CrossAxisAlignment.STRETCH
+            )
+
+        async def home_page(gen, actor):
+            controls = [
+                heading("研究首页", size=30, level=1),
+                ft.Button(
+                    "开始选股与研究", on_click=open_route("/analysis", gen, actor), height=48
+                ),
+            ]
+            if research is None:
+                controls.append(
+                    notice(
+                        "研究服务尚未连接",
+                        "管理员需一次配置独立研究服务；可进入选股与研究查看连接说明。",
+                        caution=True,
+                    )
+                )
+            else:
+                try:
+                    info, recent = await asyncio.gather(
+                        asyncio.to_thread(research.info), asyncio.to_thread(research.recent)
+                    )
+                    if not current(gen, actor):
+                        return ft.Column([])
+                    if not any(m["available"] for m in info["modes"].values()):
+                        controls.append(
+                            notice(
+                                "研究服务尚未配置",
+                                "管理员需连接行情或模型服务，完成后再确认研究。",
+                                caution=True,
+                            )
+                        )
+                    controls.extend(recent_controls(recent, lambda r: open_route(r, gen, actor)))
+                except ResearchUnavailable:
+                    controls.append(
+                        notice(
+                            "研究服务暂时无法连接",
+                            "请稍后刷新，或进入选股与研究查看连接说明；未启动新请求。",
+                            caution=True,
+                        )
+                    )
+                controls.append(
+                    ft.TextButton("刷新研究进度", on_click=open_route("/", gen, actor), height=48)
+                )
+            if OPPORTUNITY_ROOT is not None or APP_MODE == "demo":
+                if APP_MODE == "demo":
+                    from a_stock_tracker.opportunity_demo import demo_board
+
+                    board = demo_board()
+                else:
+                    board = await asyncio.to_thread(load_board, actor, OPPORTUNITY_ROOT)
+                controls.append(heading("已发布批次", size=22))
+                controls.append(
+                    opportunity_view(
+                        board,
+                        None,
+                        lambda c: open_route("/opportunity/" + c, gen, actor),
+                        open_route("/", gen, actor),
+                        embedded=True,
+                    )
                 )
             return ft.Column(
                 controls, spacing=20, horizontal_alignment=ft.CrossAxisAlignment.STRETCH
@@ -656,26 +763,20 @@ def build_app():
                         "Progress update skipped: %s", type(exc).__name__
                     )
             try:
-                if route == "/" or route.startswith("/opportunity/"):
+                if route == "/":
+                    content = await home_page(gen, actor)
+                elif route.startswith("/opportunity/"):
                     if APP_MODE == "demo":
                         from a_stock_tracker.opportunity_demo import demo_board
 
                         board = demo_board()
                     else:
                         board = await asyncio.to_thread(load_board, actor, OPPORTUNITY_ROOT)
-                    code = route.rsplit("/", 1)[-1] if route.startswith("/opportunity/") else None
                     content = opportunity_view(
                         board,
-                        code,
-                        lambda company: open_route("/opportunity/" + company, gen, actor),
+                        route.rsplit("/", 1)[-1],
+                        lambda c: open_route("/opportunity/" + c, gen, actor),
                         open_route("/", gen, actor),
-                        ft.Button(
-                            "开始选股与研究",
-                            on_click=open_route("/analysis", gen, actor),
-                            height=48,
-                        )
-                        if route == "/"
-                        else None,
                     )
                 elif route == "/analysis" or route.startswith("/analysis/"):
                     content = await research_page(gen, actor, route)

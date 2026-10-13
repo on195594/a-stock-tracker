@@ -26,7 +26,7 @@ def test_detail_keeps_counter_before_program_conditions_and_full_sources():
     assert row["facts"]["condition"] in texts
     assert f"依据截至 {row['as_of']}" in texts
     assert f"观察有效至 {row['expires']}" in texts
-    assert any(board["source"] in s and board["created_at"] in s for s in texts)
+    assert any(board["source"] in s and "2026-09-28 16:30" in s for s in texts)
     tile = next(c for c in app_controls(view) if isinstance(c, ft.ExpansionTile))
     facts = [c for c in tile.controls if isinstance(c, ft.Semantics)]
     assert facts and all(c.read_only and c.exclude_semantics for c in facts)
@@ -131,3 +131,8 @@ def test_semantic_text_colors_meet_normal_text_contrast(foreground, background):
     assert theme.color_scheme.primary == ui.ACCENT
     assert theme.button_theme.style.bgcolor[ft.ControlState.DISABLED] == ui.BAND
     assert theme.button_theme.style.color[ft.ControlState.DISABLED] == ui.MUTED
+
+
+def test_common_disclaimer_is_only_rendered_once_in_detail():
+    view = ui.opportunity_view(demo_board(), "600001.SH", lambda _: None, None)
+    assert sum(ui.LIMITS in text for text in text_values(view)) == 1

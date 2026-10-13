@@ -121,15 +121,19 @@ class Budget:
     def __init__(self, requests: int, seconds: int):
         self.limit = requests
         self.used = 0
-        self.deadline = time.monotonic() + seconds
+        self.started = time.monotonic()
+        self.deadline = self.started + seconds
+        self.stop_reason = "completed"
 
     def check(self, reserve: float = 0) -> None:
         if time.monotonic() + reserve >= self.deadline:
+            self.stop_reason = "time_budget"
             raise BudgetStop("TIME_BUDGET")
 
     def take(self) -> None:
         self.check()
         if self.used >= self.limit:
+            self.stop_reason = "request_budget"
             raise BudgetStop("REQUEST_BUDGET")
         self.used += 1
 
@@ -344,6 +348,7 @@ def scan(
         else:
             # Reserve both attempts so budget interruption cannot become a terminal data gap.
             if budget.limit - budget.used < 2:
+                budget.stop_reason = "request_budget"
                 break
             budget.check(65)
             result = None
@@ -500,92 +505,151 @@ def main() -> int:
         parser.error("TUSHARE_TOKEN is required; no production config fallback")
     os.umask(0o077)
     budget = Budget(args.request_budget, args.seconds)
-    signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(BudgetStop("HARD_TIMEOUT")))
+
+    def timeout(*_):
+        budget.stop_reason = "time_budget"
+        raise BudgetStop("HARD_TIMEOUT")
+
+    signal.signal(signal.SIGALRM, timeout)
     signal.alarm(args.seconds)
     import tushare as ts  # type: ignore[import-untyped]
 
     client = MarketClient(ts.pro_api(token, timeout=30), budget)
     with locked_root(args.root) as root:
-        previous = []
-        for path in sorted(root.glob("run-*/state.json")):
-            previous.append((path.parent, read_state(path)))
-        if args.resume:
-            if not re.fullmatch(r"run-[0-9T-]+-[a-f0-9]{12}", args.resume):
-                raise ScreenError("Invalid run id")
-            directory = root / args.resume
-            state = read_state(directory / "state.json")
-            frozen = read_result(directory / "universe.json", state["freeze"])
-            if frozen.get("prefilter") != (PB_MV_SCREEN if args.pb_mv_screen else None):
-                raise ScreenError("Resume screening rule mismatch")
-            if (parse_date(now_iso()[:10]) - parse_date(frozen["cutoff"])).days > 7:
-                raise ScreenError("Frozen run expired; create a new run explicitly")
-            if state["model"] != {"provider": args.provider, "model": args.model}:
-                raise ScreenError("Resume model mismatch")
-        else:
-            frozen = freeze(client, token, now_iso()[:10], sample, pb_mv_screen=args.pb_mv_screen)
-            run_id = (
-                "run-" + frozen["created_at"][:19].replace(":", "-") + "-" + digest(frozen)[:12]
-            )
-            directory = root / run_id
-            directory.mkdir(mode=0o700)
-            sha = save(directory / "universe.json", frozen, immutable=True)
-            state = {
-                "freeze": sha,
-                "scan": {},
-                "research": {},
-                "queue": [],
-                "cursor": 0,
-                "model_calls": 0,
-                "model": {"provider": args.provider, "model": args.model},
-                "last_industry": previous[-1][1].get("last_industry", "") if previous else "",
-                "notification": "not_enabled",
-            }
-            save_state(directory / "state.json", state)
+        directory = root
+        state = None
+        initial_scan = 0
+        invocation = {}
+        audit_ready = False
         try:
-            rows = scan(directory, frozen, state, client, token, budget)
-        except BudgetStop:
-            rows = [
-                read_result(directory / f"scan-{r['code']}.json", state["scan"][r["code"]])[
-                    "state"
-                ]["result"]
-                if r["code"] in state["scan"]
-                else r
-                for r in frozen["rows"]
-            ]
-        summary = coverage(rows, frozen)
-        save(directory / "coverage.json", summary)
-        # Newly completed industries can fill unused slots after a partial scan resumes.
-        state["queue"] = (
-            state["queue"]
-            + [
-                c
-                for c in candidates(summary, frozen, state["last_industry"])
-                if c not in state["queue"]
-            ]
-        )[:5]
-        save_state(directory / "state.json", state)
-        from a_stock_tracker.disclosures import research_batch
+            previous = []
+            for path in sorted(root.glob("run-*/state.json")):
+                previous.append((path.parent, read_state(path)))
+            if args.resume:
+                if not re.fullmatch(r"run-[0-9T-]+-[a-f0-9]{12}", args.resume):
+                    raise ScreenError("Invalid run id")
+                directory = root / args.resume
+                state = read_state(directory / "state.json")
+                frozen = read_result(directory / "universe.json", state["freeze"])
+                if frozen.get("prefilter") != (PB_MV_SCREEN if args.pb_mv_screen else None):
+                    raise ScreenError("Resume screening rule mismatch")
+                if (parse_date(now_iso()[:10]) - parse_date(frozen["cutoff"])).days > 7:
+                    raise ScreenError("Frozen run expired; create a new run explicitly")
+                if state["model"] != {"provider": args.provider, "model": args.model}:
+                    raise ScreenError("Resume model mismatch")
+            else:
+                frozen = freeze(
+                    client, token, now_iso()[:10], sample, pb_mv_screen=args.pb_mv_screen
+                )
+                run_id = (
+                    "run-" + frozen["created_at"][:19].replace(":", "-") + "-" + digest(frozen)[:12]
+                )
+                directory = root / run_id
+                directory.mkdir(mode=0o700)
+                sha = save(directory / "universe.json", frozen, immutable=True)
+                state = {
+                    "freeze": sha,
+                    "scan": {},
+                    "research": {},
+                    "queue": [],
+                    "cursor": 0,
+                    "model_calls": 0,
+                    "model": {"provider": args.provider, "model": args.model},
+                    "last_industry": previous[-1][1].get("last_industry", "") if previous else "",
+                    "notification": "not_enabled",
+                }
+                save_state(directory / "state.json", state)
+            initial_scan = len(state["scan"])
+            audit_ready = True
+            try:
+                rows = scan(directory, frozen, state, client, token, budget)
+            except BudgetStop as exc:
+                budget.stop_reason = (
+                    "time_budget"
+                    if str(exc) in {"HARD_TIMEOUT", "TIME_BUDGET"}
+                    else "request_budget"
+                )
+                rows = [
+                    read_result(directory / f"scan-{r['code']}.json", state["scan"][r["code"]])[
+                        "state"
+                    ]["result"]
+                    if r["code"] in state["scan"]
+                    else r
+                    for r in frozen["rows"]
+                ]
+            summary = coverage(rows, frozen)
+            save(directory / "coverage.json", summary)
+            # Newly completed industries can fill unused slots after a partial scan resumes.
+            state["queue"] = (
+                state["queue"]
+                + [
+                    c
+                    for c in candidates(summary, frozen, state["last_industry"])
+                    if c not in state["queue"]
+                ]
+            )[:5]
+            save_state(directory / "state.json", state)
+            from a_stock_tracker.disclosures import research_batch
 
-        research_batch(directory, frozen, summary, state, previous, budget, args.max_research)
-        reports = [
-            read_state(directory / f"report-{code}.json")["result"] for code in state["research"]
-        ]
-        report_counts = dict(Counter(r["status"] for r in reports))
-        failed_reports = sum(r.get("evidence_review") != "passed" for r in reports)
-        save(
-            directory / "invocation.json",
-            {
-                "finished_at": now_iso(),
+            research_batch(directory, frozen, summary, state, previous, budget, args.max_research)
+            reports = [
+                read_state(directory / f"report-{code}.json")["result"]
+                for code in state["research"]
+            ]
+            report_counts = dict(Counter(r["status"] for r in reports))
+            failed_reports = sum(r.get("evidence_review") != "passed" for r in reports)
+            invocation.update(
+                {
+                    "finished_at": now_iso(),
+                    "requests": budget.used,
+                    "request_limit": budget.limit,
+                    "coverage": summary["status"],
+                    "cursor": state["cursor"],
+                    "candidates": len(state["queue"]),
+                    "report_counts": report_counts,
+                    "failed_reports": failed_reports,
+                    "notification": "not_enabled",
+                },
+            )
+        except BaseException as exc:
+            budget.stop_reason = (
+                "time_budget"
+                if isinstance(exc, BudgetStop) and str(exc) in {"TIME_BUDGET", "HARD_TIMEOUT"}
+                else "request_budget"
+                if isinstance(exc, BudgetStop)
+                else "error"
+            )
+            raise
+        finally:
+            signal.alarm(0)
+            if not audit_ready:
+                state = None
+            usage = {
                 "requests": budget.used,
                 "request_limit": budget.limit,
-                "coverage": summary["status"],
-                "cursor": state["cursor"],
-                "candidates": len(state["queue"]),
-                "report_counts": report_counts,
-                "failed_reports": failed_reports,
-                "notification": "not_enabled",
-            },
-        )
+                "seconds_used": round(time.monotonic() - budget.started, 2),
+                "stop_reason": budget.stop_reason,
+                "newly_covered": len(state["scan"]) - initial_scan if state else 0,
+                "covered": sum(
+                    r["status"] != "pending" or r["code"] in state["scan"] for r in frozen["rows"]
+                )
+                if state
+                else None,
+                "remaining": sum(
+                    r["status"] == "pending" and r["code"] not in state["scan"]
+                    for r in frozen["rows"]
+                )
+                if state
+                else None,
+            }
+            if state is not None:
+                state["usage"] = usage
+                save_state(directory / "state.json", state)
+            if audit_ready or directory == root:
+                save(
+                    directory / "invocation.json", {**invocation, **usage, "finished_at": now_iso()}
+                )
+        assert state is not None
         print(
             json.dumps(
                 {

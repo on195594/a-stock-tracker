@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 import flet as ft
 
 from a_stock_tracker.opportunities import LIMITS, SECTIONS
+from a_stock_tracker.research import SHANGHAI
 
 BACKGROUND = "#E6EFF0"
 SURFACE = "#F6FAFA"
@@ -20,6 +22,18 @@ CAUTION_BG = "#FFF1D6"
 ERROR = "#99362B"
 # Native radio/checkbox labels default to 14px; consent text must read at body size.
 LABEL_STYLE = ft.TextStyle(size=16, color=INK)
+
+
+def local_time(value: Any) -> str:
+    if not value:
+        return "未记录"
+    try:
+        stamp = datetime.fromisoformat(value)
+        if stamp.tzinfo is None:
+            return str(value)
+        return stamp.astimezone(SHANGHAI).strftime("%Y-%m-%d %H:%M")
+    except (ValueError, TypeError):
+        return str(value)
 
 
 def window_theme() -> ft.Theme:
@@ -106,6 +120,8 @@ def opportunity_view(
     open_company,
     go_back,
     action: ft.Control | None = None,
+    *,
+    embedded: bool = False,
 ) -> ft.Column:
     controls: list[ft.Control] = []
     if code:
@@ -117,7 +133,7 @@ def opportunity_view(
     else:
         controls.extend(
             [
-                heading("波段观察", size=30, level=1),
+                heading("波段观察", size=22 if embedded else 30, level=2 if embedded else 1),
                 paragraph("先读解释与反证，再核对价格条件。"),
             ]
         )
@@ -136,7 +152,7 @@ def opportunity_view(
     else:
         source = "来源：" + board["source"]
         if board.get("created_at"):
-            source += "\n批次生成：" + board["created_at"]
+            source += "\n批次生成：" + local_time(board["created_at"])
         controls.append(
             notice(
                 "合成演示 · 非真实股票、非AI研究结果"
@@ -184,6 +200,14 @@ def opportunity_view(
                         caution=True,
                     )
                 )
+                if row["status"] == "excluded":
+                    controls.append(
+                        paragraph(
+                            f"{row.get('facts', {}).get('distance', '实际距离：未记录')}\n规则上限：8%\n依据日期：{row.get('as_of') or '未记录'}\n下一步：本次不满足观察规则，可返回初筛核查其他公司或另行确认财报研究。"
+                        )
+                    )
+                else:
+                    controls.append(paragraph("下一步：核对并补齐资料后，再明确确认新的研究。"))
                 continue
             controls.append(
                 ft.Container(
@@ -266,7 +290,7 @@ def opportunity_view(
                         ),
                     )
                     for k, v in facts.items()
-                    if k in fact_names
+                    if k in fact_names and not (k == "limits" and v == LIMITS)
                 ]
                 evidence.extend(
                     ft.Text(

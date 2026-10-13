@@ -102,10 +102,21 @@ def serve_ui_cases(case_file: str, uncompressed_assets: bool = False) -> None:
     from a_stock_tracker.research import ScreenError
 
     assert app.APP_MODE == "demo" and app.HOST == "127.0.0.1"
+    from a_stock_tracker.research_client import DemoResearchClient, ResearchQuoteChanged
+
+    original_submit = DemoResearchClient.submit
+
+    def submit(client, payload):
+        if json.loads(Path(case_file).read_text()) == "quote_changed":
+            Path(case_file).write_text(json.dumps("normal"))
+            raise ResearchQuoteChanged("预算或模型已变化，请重新确认")
+        return original_submit(client, payload)
+
+    DemoResearchClient.submit = submit
     original = opportunity_demo.demo_board
     failed = False
 
-    def board():
+    def board(scenario="observation"):
         nonlocal failed
         case = json.loads(Path(case_file).read_text())
         if case == "missing":
@@ -113,7 +124,9 @@ def serve_ui_cases(case_file: str, uncompressed_assets: bool = False) -> None:
         if case == "error" and not failed:
             failed = True
             raise ScreenError("synthetic read failure")
-        result = original()
+        result = original(scenario)
+        if not result["rows"]:
+            return result
         row = result["rows"][0]
         if case == "long":
             row["name"] = "合成的超长公司名称用于验证完整身份换行" * 3
@@ -121,7 +134,9 @@ def serve_ui_cases(case_file: str, uncompressed_assets: bool = False) -> None:
         elif case == "expired":
             row["expired"] = True
         elif case == "gap":
-            row.update(status="gap", reasons=["合成核验失败，不展示价格条件"])
+            result = original("gap")
+        elif case == "excluded":
+            result = original("excluded")
         elif case == "zero":
             result["rows"] = []
         return result
@@ -141,7 +156,13 @@ def assert_layout(page, width):
             assert box["x"] >= -1 and box["x"] + box["width"] <= width + 1, box
     for button in page.get_by_role("button").all():
         box = button.bounding_box()
-        if box and box["height"]:
+        # Flutter clips semantics at the viewport edge; measure complete touch targets.
+        if (
+            box
+            and box["height"]
+            and 0 < box["y"]
+            and box["y"] + box["height"] < page.viewport_size["height"]
+        ):
             assert box["height"] >= 47, box
 
 
@@ -245,9 +266,11 @@ def main() -> int:
                         page.evaluate('document.querySelector("flt-semantics-placeholder").click()')
                         # Flet renders content only after page fonts load; allow the cold font.
                         expect(
-                            page.get_by_text("合成演示 · 非真实股票、非AI研究结果")
+                            page.get_by_role("heading", name="研究首页", exact=True)
                         ).to_be_visible(timeout=timeout)
-                        expect(page.get_by_text("等待条件核对 · 不是已触发信号")).to_be_visible()
+                        expect(
+                            page.get_by_role("heading", name="最近研究", exact=True)
+                        ).to_be_visible()
                         assert_layout(page, width)
                         if width == 360:
                             page.wait_for_function(
@@ -334,6 +357,7 @@ def main() -> int:
                             page.get_by_role("heading", name="财报筛选与研究", exact=True)
                         ).to_be_visible(timeout=10000)
                         expect(page.get_by_text("这是筛后同业排名", exact=False)).to_be_visible()
+                        click_settled(page, page.get_by_role("button", name="依据", exact=True))
                         expect(page.get_by_text("冻结门槛：0＜PB≤3", exact=False)).to_be_visible()
                         assert_layout(page, width)
                         click_settled(
@@ -347,7 +371,7 @@ def main() -> int:
                         )
                         expect(continuation).to_be_disabled()
                         expect(
-                            page.get_by_text("本次另增最多 400 次数据请求", exact=False)
+                            page.get_by_text("本次另增最多 21 次数据请求", exact=False)
                         ).to_be_visible()
                         assert_layout(page, width)
                         click_settled(page, page.get_by_role("checkbox"))
@@ -356,8 +380,24 @@ def main() -> int:
                             page.get_by_role("heading", name="财报筛选与研究", exact=True)
                         ).to_be_visible(timeout=10000)
                         screen_url = page.url
+                        search = page.get_by_role("textbox", name="按代码、名称或行业筛选")
+                        click_settled(page, search)
+                        search.press("ControlOrMeta+A")
+                        page.keyboard.insert_text("600004")
+                        expect(
+                            page.get_by_role("heading", name="零观察示例 · 600004.SH", exact=True)
+                        ).to_be_visible()
+                        expect(
+                            page.get_by_role("heading", name="演示公司 · 600001.SH", exact=True)
+                        ).to_have_count(0)
+                        click_settled(page, search)
+                        search.press("ControlOrMeta+A")
+                        page.keyboard.insert_text("合成银行")
+                        expect(
+                            page.get_by_role("heading", name="演示公司 · 600001.SH", exact=True)
+                        ).to_be_visible()
                         click_settled(
-                            page, page.get_by_role("button", name="核对量价条件", exact=True)
+                            page, page.get_by_role("button", name="核对量价条件", exact=True).first
                         )
                         page.get_by_role("textbox", name="股票代码").focus()
                         expect(page.get_by_role("textbox", name="股票代码")).to_have_value(
@@ -368,6 +408,17 @@ def main() -> int:
                         ).to_be_visible()
                         assert_layout(page, width)
                         start = page.get_by_role("button", name="确认启动研究", exact=True)
+                        expect(start).to_be_disabled()
+                        case_file.write_text(json.dumps("quote_changed"))
+                        click_settled(page, page.get_by_role("checkbox"))
+                        click_settled(page, start)
+                        expect(
+                            page.get_by_text("报价或模型已变化，已刷新报价", exact=False)
+                        ).to_be_visible()
+                        expect(page.get_by_role("textbox", name="股票代码")).to_have_value(
+                            "600001.SH"
+                        )
+                        expect(page.get_by_role("checkbox")).not_to_be_checked()
                         expect(start).to_be_disabled()
                         click_settled(page, page.get_by_role("checkbox"))
                         click_settled(page, start)
@@ -390,11 +441,13 @@ def main() -> int:
                         expect(
                             page.get_by_role("heading", name="波段观察", exact=True)
                         ).to_be_visible()
-                        page.goto(screen_url)
-                        page.wait_for_selector("flt-semantics-placeholder")
-                        page.evaluate('document.querySelector("flt-semantics-placeholder").click()')
                         click_settled(
-                            page, page.get_by_role("button", name="研究这家公司财报", exact=True)
+                            page, page.get_by_role("button", name="返回来源初筛", exact=True)
+                        )
+                        expect(page).to_have_url(screen_url)
+                        click_settled(
+                            page,
+                            page.get_by_role("button", name="研究这家公司财报", exact=True).first,
                         )
                         page.get_by_role("textbox", name="股票代码").focus()
                         expect(page.get_by_role("textbox", name="股票代码")).to_have_value(
@@ -412,10 +465,56 @@ def main() -> int:
                             page.get_by_text(re.compile("合成财报报告 · 非真实研究结果"))
                         ).to_be_visible(timeout=10000)
                         assert_layout(page, width)
+                        click_settled(
+                            page, page.get_by_role("button", name="返回来源初筛", exact=True)
+                        )
+                        expect(page).to_have_url(screen_url)
+                        if width == 360:
+                            for code, label in (
+                                ("600002", "规则上限：8%"),
+                                ("600003", "资料或解读核验失败"),
+                                ("600004", "没有有效观察候选"),
+                            ):
+                                search = page.get_by_role("textbox", name="按代码、名称或行业筛选")
+                                click_settled(page, search)
+                                search.press("ControlOrMeta+A")
+                                page.keyboard.insert_text(code)
+                                expect(
+                                    page.get_by_role("button", name="核对量价条件", exact=True)
+                                ).to_have_count(1)
+                                click_settled(
+                                    page,
+                                    page.get_by_role("button", name="核对量价条件", exact=True),
+                                )
+                                click_settled(page, page.get_by_role("checkbox"))
+                                click_settled(
+                                    page,
+                                    page.get_by_role("button", name="确认启动研究", exact=True),
+                                )
+                                expect(page.get_by_text(label, exact=False)).to_be_visible(
+                                    timeout=10000
+                                )
+                                assert (
+                                    page.get_by_text("后续完整交易日收盘在", exact=False).count()
+                                    == 0
+                                )
+                                assert_layout(page, width)
+                                click_settled(
+                                    page,
+                                    page.get_by_role("button", name="返回来源初筛", exact=True),
+                                )
+                        page.goto(base)
+                        page.wait_for_selector("flt-semantics-placeholder")
+                        page.evaluate('document.querySelector("flt-semantics-placeholder").click()')
+                        expect(
+                            page.get_by_role("heading", name="最近研究", exact=True)
+                        ).to_be_visible()
+                        expect(page.get_by_text("续跑 1 次", exact=False).first).to_be_visible()
                     for case, label in (
                         ("long", "合成的超长公司名称"),
                         ("expired", "观察已过期"),
                         ("gap", "资料或解读核验失败"),
+                        ("excluded", "未入选"),
                         ("zero", "没有有效观察候选"),
                         ("missing", "还没有经过核验的机会报告"),
                         ("error", "报告暂时不可读"),
@@ -476,6 +575,11 @@ def main() -> int:
                     "Browser passed: 360/390/430px + desktop, list/detail/evidence/settings/logout; long text, expired/gap/empty/missing/read-retry states; keyboard detail/evidence; retired URLs return 404. Synthetic, not a real device."
                 )
                 return 0
+            except Exception:
+                print(
+                    "Synthetic server diagnostics:", (Path(tmp) / "server.log").read_text()[-5000:]
+                )
+                raise
             finally:
                 server.terminate()
                 server.wait(timeout=15)
