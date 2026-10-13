@@ -159,6 +159,12 @@ def serve_ui_cases(case_file: str, uncompressed_assets: bool = False) -> None:
             row["expired"] = True
         elif case == "gap":
             result = original("gap")
+        elif case == "excluded":
+            from tests.test_opportunities import legacy_board
+
+            result = legacy_board()
+            result["rows"][0].update(status="excluded", reasons=["旧规则距离超过8%"])
+            result["rows"][0]["facts"]["distance"] = "旧规则距离 9.26%"
         elif case == "wide":
             result = original("wide")
         elif case == "zero":
@@ -548,6 +554,7 @@ def main() -> int:
                         ("long", "合成的超长公司名称"),
                         ("expired", "价格参考已过期"),
                         ("gap", "资料核验失败"),
+                        ("excluded", "未入选"),
                         ("zero", "没有价格参考"),
                         ("missing", "还没有价格参考批次"),
                         ("error", "报告暂时不可读"),
@@ -565,6 +572,18 @@ def main() -> int:
                             page.get_by_role("heading", name=re.compile(re.escape(label)))
                         ).to_be_visible()
                         assert_layout(page, 360)
+                        if case in ("expired", "gap", "excluded", "zero"):
+                            expect(
+                                page.get_by_role("heading", name="本批次没有价格参考。", exact=True)
+                            ).to_be_visible()
+                            expect(
+                                page.get_by_text("本批次没有价格参考，请核查资料缺口。", exact=True)
+                            ).to_have_count(0)
+                        if case == "excluded":
+                            expect(page.get_by_text("旧规则距离超过8%", exact=True)).to_be_visible()
+                            expect(
+                                page.get_by_text("旧规则距离 9.26%", exact=False)
+                            ).to_be_visible()
                         if case in ("expired", "gap", "zero", "missing"):
                             assert page.get_by_text(re.compile("11\\.23|11\\.00")).count() == 0
                         if case == "expired":

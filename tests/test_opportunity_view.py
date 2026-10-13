@@ -73,6 +73,33 @@ def test_missing_batch_zero_references_and_unknown_company_stay_distinct():
     assert not any(isinstance(c, ft.Button) for c in app_controls(unknown))
 
 
+@pytest.mark.parametrize("status", ["excluded", "gap", "expired", "empty"])
+def test_no_reference_heading_does_not_invent_a_data_gap(status):
+    from tests.test_opportunities import legacy_board
+
+    board = legacy_board()
+    row = board["rows"][0]
+    if status == "empty":
+        board["rows"] = []
+        expected = "0 项价格参考 · 0 家显式股票池"
+    elif status == "expired":
+        row["expired"] = True
+        expected = "历史条件已过期 · 仅供历史查看"
+    else:
+        row.update(
+            status=status, reasons=["合成排除原因" if status == "excluded" else "合成资料缺口"]
+        )
+        expected = "未入选" if status == "excluded" else "资料核验失败"
+    texts = text_values(ui.opportunity_view(board, None, lambda _: None, None))
+    assert "本批次没有价格参考。" in texts
+    assert "本批次没有价格参考，请核查资料缺口。" not in texts
+    assert expected in texts
+    if status in {"excluded", "gap"}:
+        assert row["reasons"][0] in texts
+    if status == "gap":
+        assert "下一步：核对并补齐资料后，再明确确认新的研究。" in texts
+
+
 def test_long_identity_wraps_without_truncation_and_actions_have_touch_height():
     board = demo_board()
     board["rows"][0]["name"] = "合成的超长公司全称用于核查移动页面换行而非省略" * 2

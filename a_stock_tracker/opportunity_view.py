@@ -222,7 +222,7 @@ def opportunity_view(
                 )
             )
             if not available:
-                controls.append(heading("本批次没有价格参考，请核查资料缺口。"))
+                controls.append(heading("本批次没有价格参考。"))
         for row in rows:
             controls.extend(
                 [
