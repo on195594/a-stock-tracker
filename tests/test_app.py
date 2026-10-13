@@ -380,7 +380,7 @@ def test_retired_page_state_never_restores_workbench(monkeypatch, route):
             assert any(isinstance(c, ft.Text) and c.value == "页面不存在" for c in controls)
             assert page.navigation_bar is None
             back = next(
-                c for c in controls if isinstance(c, ft.TextButton) and c.content == "返回波段机会"
+                c for c in controls if isinstance(c, ft.TextButton) and c.content == "返回波段观察"
             )
             await back.on_click(None)
             assert page.route == "/"

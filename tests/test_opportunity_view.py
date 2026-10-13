@@ -54,7 +54,7 @@ def test_list_hierarchy_and_avoids_unheaded_price_conditions():
         c for c in app_controls(view) if isinstance(c, ft.Semantics) and c.heading_level is not None
     ]
     levels = {c.content.value: c.heading_level for c in headings}
-    assert levels["波段机会"] == 1
+    assert levels["波段观察"] == 1
     assert levels[row["name"]] == 2
     assert levels["为什么观察"] == 3
     assert levels["最强反对理由"] == 3

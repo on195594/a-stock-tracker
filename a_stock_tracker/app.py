@@ -25,6 +25,7 @@ from a_stock_tracker.opportunity_view import (
     BAND,
     ERROR,
     INK,
+    LABEL_STYLE,
     heading,
     notice,
     opportunity_view,
@@ -70,7 +71,7 @@ def build_app():
     research = DemoResearchClient() if APP_MODE == "demo" else configured_client()
 
     async def main(page: ft.Page):
-        page.title = "波段机会"
+        page.title = "波段观察"
         page.theme_mode = ft.ThemeMode.LIGHT
         page.fonts = {"NotoSansSC": "fonts/NotoSansSC-Regular.otf"}
         page.theme = window_theme()
@@ -199,7 +200,10 @@ def build_app():
                             caution=True,
                         ),
                         ft.TextButton(
-                            "返回机会列表", on_click=open_route("/", gen, actor), height=48
+                            icon=ft.Icons.ARROW_BACK,
+                            content="返回波段观察",
+                            on_click=open_route("/", gen, actor),
+                            height=48,
                         ),
                     ],
                     spacing=24,
@@ -217,7 +221,12 @@ def build_app():
                         [
                             heading("请求编号不正确", size=30, level=1),
                             paragraph("请核对请求编号，或返回重新查看最近研究。"),
-                            ft.TextButton("返回选股与研究", on_click=back, height=48),
+                            ft.TextButton(
+                                icon=ft.Icons.ARROW_BACK,
+                                content="返回选股与研究",
+                                on_click=back,
+                                height=48,
+                            ),
                         ],
                         spacing=24,
                     )
@@ -233,7 +242,12 @@ def build_app():
                                 on_click=open_route(state["route"], gen, actor),
                                 height=48,
                             ),
-                            ft.TextButton("返回选股与研究", on_click=back, height=48),
+                            ft.TextButton(
+                                icon=ft.Icons.ARROW_BACK,
+                                content="返回选股与研究",
+                                on_click=back,
+                                height=48,
+                            ),
                         ],
                         spacing=24,
                     )
@@ -282,7 +296,12 @@ def build_app():
                                         on_click=open_route(state["route"], gen, actor),
                                         height=48,
                                     ),
-                                    ft.TextButton("返回选股与研究", on_click=back, height=48),
+                                    ft.TextButton(
+                                        icon=ft.Icons.ARROW_BACK,
+                                        content="返回选股与研究",
+                                        on_click=back,
+                                        height=48,
+                                    ),
                                 ]
                             )
                             if state["connected"]:
@@ -314,7 +333,10 @@ def build_app():
                             height=48,
                         ),
                         ft.TextButton(
-                            "返回机会列表", on_click=open_route("/", gen, actor), height=48
+                            icon=ft.Icons.ARROW_BACK,
+                            content="返回波段观察",
+                            on_click=open_route("/", gen, actor),
+                            height=48,
                         ),
                     ],
                     spacing=24,
@@ -350,7 +372,8 @@ def build_app():
                                         caution=True,
                                     ),
                                     ft.TextButton(
-                                        "返回选股与研究",
+                                        icon=ft.Icons.ARROW_BACK,
+                                        content="返回选股与研究",
                                         on_click=open_route("/analysis", gen, actor),
                                         height=48,
                                     ),
@@ -367,7 +390,8 @@ def build_app():
                                 caution=True,
                             ),
                             ft.TextButton(
-                                "返回选股与研究",
+                                icon=ft.Icons.ARROW_BACK,
+                                content="返回选股与研究",
                                 on_click=open_route("/analysis", gen, actor),
                                 height=48,
                             ),
@@ -382,7 +406,7 @@ def build_app():
                 value=initial,
                 content=ft.Column(
                     [
-                        ft.Radio(value=k, label=v["title"], height=48)
+                        ft.Radio(value=k, label=v["title"], label_style=LABEL_STYLE, height=48)
                         for k, v in info["modes"].items()
                     ],
                     spacing=4,
@@ -399,7 +423,9 @@ def build_app():
             )
             budget = paragraph("")
             continuation_note = paragraph("")
-            confirmation = ft.Checkbox(label="已核对范围、预算与模型，确认启动", value=False)
+            confirmation = ft.Checkbox(
+                label="已核对范围、预算与模型，确认启动", label_style=LABEL_STYLE, value=False
+            )
             feedback = paragraph("")
             submit = ft.Button("确认启动研究", height=48, disabled=True)
             request_id = uuid.uuid4().hex
@@ -422,10 +448,9 @@ def build_app():
                 if resume_source and resume_id:
                     coverage = resume_source["result"]["coverage"]
                     continuation_note.value = (
-                        f"继续原初筛 {resume_id}\n冻结依据日期：{coverage['data_date']}；"
-                        f"尚未覆盖 {coverage['counts']['pending']} 家。保留已采集资料，只扫描未覆盖部分。"
-                        "本次另增最多 400 次数据请求 / 30 分钟，不调用模型；不是重新刷新全市场，"
-                        "仍可能因预算或资料缺口没有候选。原批次保持不变。"
+                        f"继续原初筛 {resume_id}\n冻结依据日期 {coverage['data_date']}，"
+                        f"尚未覆盖 {coverage['counts']['pending']} 家；只扫描未覆盖部分，原批次不变。\n"
+                        "本次另增最多 400 次数据请求 / 30 分钟，不调用模型；仍可能因预算或资料缺口没有候选。"
                     )
                 confirmation.value = False
                 confirmation.label = (
@@ -434,32 +459,40 @@ def build_app():
                     else "已核对范围、预算与模型，确认启动"
                 )
                 submit.disabled = True
-                budget.value = (
-                    (
-                        "合成演示：不调用真实接口、不产生费用。\n"
-                        if info["demo"]
-                        else "确认后后台将请求行情；研究股票还会调用模型。\n"
-                    )
-                    + f"本次最多 {selected['requests']} 次数据请求、{selected['seconds'] // 60} 分钟；最多 {selected['reports']} 份财报报告。\n量价研究限五家，每家公司解释与复核各一次；不保证入选或通过。初筛只是财报资格，不是波段推荐。未完成初筛需确认新增预算后继续；已完成结果可直接查看。\n模型：{info['model']['provider']} / {info['model']['model']}"
-                )
-                if mode.value != "screen":
-                    model_budget = quote(info, mode.value)["model_budget"]
-                    budget.value += (
-                        ("\n真实运行时：" if info["demo"] else "\n")
-                        + f"模型调用最多 {model_budget['calls']} 次，每次本地等待最多 "
-                        f"{model_budget['local_timeout_seconds']} 秒。输出 token 与费用无硬上限；"
-                        "超时中止本地等待不保证提供方停止生成或计费。失败调用也可能产生费用。"
-                    )
-                else:
+                # Show only the selected mode's limits so the cost being confirmed stays scannable.
+                lines = [
+                    "合成演示：不调用真实接口，不产生费用。"
+                    if info["demo"]
+                    else "确认后后台请求行情"
+                    + ("，不调用模型。" if mode.value == "screen" else "并调用模型。"),
+                    f"上限：{selected['requests']} 次数据请求 · {selected['seconds'] // 60} 分钟"
+                    + (f" · {selected['reports']} 份财报报告" if selected["reports"] else ""),
+                ]
+                if mode.value == "screen":
                     screening = selected.get("prefilter")
                     if screening:
-                        budget.value += (
-                            f"\n初筛门槛：0＜PB≤{screening['pb_max']}；"
+                        lines.append(
+                            f"初筛门槛：0＜PB≤{screening['pb_max']}；"
                             f"总市值≥{screening['total_mv_min_yi']}亿元，不设上限。"
-                            "自动覆盖各行业，仅门槛内股票采集财报；不调用模型。"
-                            "结果是筛后同业排名，不是完整行业前三。"
-                            "门槛用于控制采集量，未经收益验证，可能漏选。"
                         )
+                    lines.append(
+                        "结果是筛后同业排名（不是完整行业前三），只代表财报资格、不是波段推荐；"
+                        "门槛未经收益验证，可能漏选。"
+                    )
+                else:
+                    model_budget = quote(info, mode.value)["model_budget"]
+                    if mode.value == "swing":
+                        lines.append("最多五家，每家解释与复核各一次；不保证入选。")
+                    lines.append(
+                        f"模型：{info['model']['provider']} / {info['model']['model']}，"
+                        f"最多 {model_budget['calls']} 次调用，每次本地等待 ≤"
+                        f"{model_budget['local_timeout_seconds']} 秒。"
+                    )
+                    lines.append(
+                        ("真实运行时：" if info["demo"] else "")
+                        + "输出 token 与费用无硬上限；本地超时不保证提供方停止计费，失败调用也可能计费。"
+                    )
+                budget.value = "\n".join(lines)
                 if not selected["available"]:
                     feedback.value = "本类型尚未配置，需管理员完成一次连接；不能假装已研究。"
                 else:
@@ -528,7 +561,12 @@ def build_app():
             submit.on_click = start
             refresh()
             controls = [
-                ft.TextButton("返回机会列表", on_click=open_route("/", gen, actor), height=48),
+                ft.TextButton(
+                    icon=ft.Icons.ARROW_BACK,
+                    content="返回波段观察",
+                    on_click=open_route("/", gen, actor),
+                    height=48,
+                ),
                 heading("选股与研究", size=30, level=1),
                 paragraph("选择目标 → 核对预算并启动 → 查看进度与结果。无需终端命令。"),
                 heading("这次想做什么", size=18),
@@ -536,10 +574,9 @@ def build_app():
                 codes,
                 notice(
                     "边界与成本",
-                    "打开页面不产生研究费用；只有确认启动才会执行。尚未配置的类型不会启动。",
+                    "打开页面不产生费用，确认启动后才执行。",
+                    extra=[budget, continuation_note],
                 ),
-                budget,
-                continuation_note,
                 confirmation,
                 submit,
                 feedback,
@@ -632,20 +669,14 @@ def build_app():
                         code,
                         lambda company: open_route("/opportunity/" + company, gen, actor),
                         open_route("/", gen, actor),
-                    )
-                    if route == "/":
-                        content = ft.Column(
-                            [
-                                ft.Button(
-                                    "开始选股与研究",
-                                    on_click=open_route("/analysis", gen, actor),
-                                    height=48,
-                                ),
-                                content,
-                            ],
-                            spacing=24,
-                            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+                        ft.Button(
+                            "开始选股与研究",
+                            on_click=open_route("/analysis", gen, actor),
+                            height=48,
                         )
+                        if route == "/"
+                        else None,
+                    )
                 elif route == "/analysis" or route.startswith("/analysis/"):
                     content = await research_page(gen, actor, route)
                 elif route == "/settings":
@@ -657,7 +688,8 @@ def build_app():
                     content = ft.Column(
                         [
                             ft.TextButton(
-                                "返回上一页",
+                                icon=ft.Icons.ARROW_BACK,
+                                content="返回上一页",
                                 on_click=open_route(state["settings_return"], gen, actor),
                                 height=48,
                             ),
@@ -678,7 +710,10 @@ def build_app():
                         [
                             heading("页面不存在", size=30, level=1),
                             ft.TextButton(
-                                "返回波段机会", on_click=open_route("/", gen, actor), height=48
+                                icon=ft.Icons.ARROW_BACK,
+                                content="返回波段观察",
+                                on_click=open_route("/", gen, actor),
+                                height=48,
                             ),
                         ]
                     )
@@ -701,7 +736,10 @@ def build_app():
                         ),
                         ft.Button("重新读取", on_click=retry, height=48),
                         ft.TextButton(
-                            "返回波段机会", on_click=open_route("/", gen, actor), height=48
+                            icon=ft.Icons.ARROW_BACK,
+                            content="返回波段观察",
+                            on_click=open_route("/", gen, actor),
+                            height=48,
                         ),
                     ],
                     spacing=24,

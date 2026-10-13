@@ -294,7 +294,7 @@ def main() -> int:
                         )
                         expect(page).to_have_url(base + "/opportunity/600001.SH")
                         click_settled(
-                            page, page.get_by_role("button", name="返回波段机会", exact=True)
+                            page, page.get_by_role("button", name="返回波段观察", exact=True)
                         )
                         expect(page).to_have_url(base + "/")
                         page.mouse.move(width / 2, 200)
@@ -303,7 +303,9 @@ def main() -> int:
                         click_settled(page, page.get_by_role("button", name="退出登录", exact=True))
                         expect(page.get_by_text("仅本地合成演示")).to_be_visible()
                         click_settled(page, page.get_by_role("button", name="进入演示", exact=True))
-                        expect(page.get_by_text("波段机会", exact=True)).to_be_visible()
+                        expect(
+                            page.get_by_role("heading", name="波段观察", exact=True)
+                        ).to_be_visible()
                         click_settled(
                             page, page.get_by_role("button", name="开始选股与研究", exact=True)
                         )
@@ -361,7 +363,7 @@ def main() -> int:
                         click_settled(page, page.get_by_role("checkbox"))
                         click_settled(page, start)
                         expect(
-                            page.get_by_role("heading", name="波段机会", exact=True)
+                            page.get_by_role("heading", name="波段观察", exact=True)
                         ).to_be_visible(timeout=10000)
                         click_settled(
                             page,
@@ -374,10 +376,10 @@ def main() -> int:
                         ).to_be_visible()
                         assert_layout(page, width)
                         click_settled(
-                            page, page.get_by_role("button", name="返回波段机会", exact=True)
+                            page, page.get_by_role("button", name="返回波段观察", exact=True)
                         )
                         expect(
-                            page.get_by_role("heading", name="波段机会", exact=True)
+                            page.get_by_role("heading", name="波段观察", exact=True)
                         ).to_be_visible()
                         page.goto(screen_url)
                         page.wait_for_selector("flt-semantics-placeholder")
@@ -448,7 +450,7 @@ def main() -> int:
                     page.goto(base)
                     page.wait_for_selector("flt-semantics-placeholder")
                     page.evaluate('document.querySelector("flt-semantics-placeholder").click()')
-                    expect(page.get_by_role("heading", name="波段机会", exact=True)).to_be_visible()
+                    expect(page.get_by_role("heading", name="波段观察", exact=True)).to_be_visible()
                     assert_layout(page, 1280)
                     page.get_by_role("button", name="查看条件与反证 · 演示公司", exact=True).focus()
                     page.keyboard.press("Enter")

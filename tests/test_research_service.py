@@ -856,7 +856,7 @@ def test_real_cost_notice_consent_resets_when_mode_changes(monkeypatch):
             mode = next(c for c in controls if isinstance(c, ft.RadioGroup))
             assert "接受模型费用无硬上限" in consent.label
             assert any(
-                isinstance(c, ft.Text) and "不保证提供方停止生成或计费" in (c.value or "")
+                isinstance(c, ft.Text) and "不保证提供方停止计费" in (c.value or "")
                 for c in controls
             )
             assert start.disabled and not consent.value

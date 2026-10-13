@@ -18,6 +18,8 @@ LINE = "#BCCDCF"
 CAUTION = "#805500"
 CAUTION_BG = "#FFF1D6"
 ERROR = "#99362B"
+# Native radio/checkbox labels default to 14px; consent text must read at body size.
+LABEL_STYLE = ft.TextStyle(size=16, color=INK)
 
 
 def window_theme() -> ft.Theme:
@@ -40,6 +42,8 @@ def window_theme() -> ft.Theme:
                 color=ACCENT,
                 padding=ft.Padding.symmetric(horizontal=12, vertical=12),
                 shape=ft.RoundedRectangleBorder(radius=6),
+                # Stretched columns widen text links; keep them reading as left-edge navigation.
+                alignment=ft.Alignment.CENTER_LEFT,
             )
         ),
         button_theme=ft.ButtonTheme(
@@ -67,7 +71,12 @@ def paragraph(value: str) -> ft.Text:
 
 
 def notice(
-    title: str, detail: str, *, caution: bool = False, level: int | None = None
+    title: str,
+    detail: str,
+    *,
+    caution: bool = False,
+    level: int | None = None,
+    extra: list[ft.Control] | None = None,
 ) -> ft.Container:
     heading_level = level if level is not None else (2 if caution else None)
     return ft.Container(
@@ -80,6 +89,7 @@ def notice(
                     ),
                 ),
                 paragraph(detail),
+                *(extra or []),
             ],
             spacing=8,
             tight=True,
@@ -91,18 +101,28 @@ def notice(
 
 
 def opportunity_view(
-    board: dict[str, Any] | None, code: str | None, open_company, go_back
+    board: dict[str, Any] | None,
+    code: str | None,
+    open_company,
+    go_back,
+    action: ft.Control | None = None,
 ) -> ft.Column:
     controls: list[ft.Control] = []
     if code:
-        controls.append(ft.TextButton("返回波段机会", on_click=go_back, height=48))
+        controls.append(
+            ft.TextButton(
+                icon=ft.Icons.ARROW_BACK, content="返回波段观察", on_click=go_back, height=48
+            )
+        )
     else:
         controls.extend(
             [
-                heading("波段机会", size=30, level=1),
+                heading("波段观察", size=30, level=1),
                 paragraph("先读解释与反证，再核对价格条件。"),
             ]
         )
+        if action:
+            controls.append(action)
     if board is None:
         controls.extend(
             [
@@ -145,8 +165,15 @@ def opportunity_view(
             controls.extend(
                 [
                     ft.Divider(height=24),
-                    heading(row["name"], level=1 if code else 2),
-                    ft.Text(row["code"], size=14, color=MUTED),
+                    # Name and code form one identity; keep them tighter than section spacing.
+                    ft.Column(
+                        [
+                            heading(row["name"], level=1 if code else 2),
+                            ft.Text(row["code"], size=14, color=MUTED),
+                        ],
+                        spacing=4,
+                        tight=True,
+                    ),
                 ]
             )
             if row["status"] != "observation":

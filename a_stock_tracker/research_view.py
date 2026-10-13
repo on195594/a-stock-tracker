@@ -47,7 +47,9 @@ def result_view(run: dict[str, Any], open_route, back, code: str | None = None) 
             lambda c: open_route("/analysis/" + run["id"] + "/" + c),
             open_route("/analysis/" + run["id"]),
         )
-    controls: list[ft.Control] = [ft.TextButton("返回选股与研究", on_click=back, height=48)]
+    controls: list[ft.Control] = [
+        ft.TextButton(icon=ft.Icons.ARROW_BACK, content="返回选股与研究", on_click=back, height=48)
+    ]
     status = run["status"]
     controls.append(
         notice(
