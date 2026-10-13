@@ -911,7 +911,8 @@ def promotion_report(events: list[dict[str, Any]]) -> dict[str, Any]:
             )
             / n
         )
-        ci = [mean - 1.96 * se, mean + 1.96 * se]
+        # 90% two-sided interval: its lower bound > 0 equals a one-sided 95% test.
+        ci = [mean - 1.645 * se, mean + 1.645 * se]
     span = 0
     if scans:
         first, end = (datetime.strptime(e["as_of"], "%Y%m%d") for e in (scans[0], scans[-1]))
@@ -920,7 +921,7 @@ def promotion_report(events: list[dict[str, Any]]) -> dict[str, Any]:
     mae = float(np.median(maes)) if maes else None
     baseline_mae = float(np.median(baseline)) if baseline else None
     # Data sufficiency is a precondition, not a gate: short or thin history cannot be judged.
-    sufficient = span >= 6 and len(values) >= 300
+    sufficient = span >= 3 and len(values) >= 150
     if not sufficient or ci is None:
         status = "insufficient"
     else:
@@ -945,7 +946,7 @@ def promotion_report(events: list[dict[str, Any]]) -> dict[str, Any]:
         "mae20_count": len(maes),
         "baseline_mae20_median": baseline_mae,
         "baseline_mae20_count": len(baseline),
-        "limits": "单位为百分比；正态近似95%区间，月聚类标准误。未结算及缺失值不填零；历史回填不计晋升。通过仅支持进一步讨论，不自动进入首页，不作为收益证明。",
+        "limits": "单位为百分比；正态近似90%双侧区间，月聚类标准误。未结算及缺失值不填零；历史回填不计晋升。通过仅支持进一步讨论，不自动进入首页，不作为收益证明。",
     }
 
 

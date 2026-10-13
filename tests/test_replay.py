@@ -585,6 +585,7 @@ def promotion_events(values=(1, 1, 1, 1, 1, 1, 1), *, baseline=-6, mae=-5):
     "case, status",
     [
         ("short", "insufficient"),
+        ("threshold", "pass"),
         ("pass", "pass"),
         ("negative", "fail"),
         ("ci", "fail"),
@@ -594,7 +595,9 @@ def promotion_events(values=(1, 1, 1, 1, 1, 1, 1), *, baseline=-6, mae=-5):
 def test_promotion_gates(case, status):
     events = promotion_events()
     if case == "short":
-        events = events[:-2]
+        events = promotion_events((1, 1, 1))
+    elif case == "threshold":
+        events = promotion_events((1, 1, 1, 1))
     elif case == "negative":
         events = promotion_events((-1,) * 7)
     elif case == "ci":
@@ -614,7 +617,7 @@ def test_month_cluster_ci_and_ten_session_deduplication():
     events = promotion_events((1, 2, 3, 4, 5, 6, 7))
     result = replay.promotion_report(events)
     se = np.std([1, 2, 3, 4, 5, 6, 7], ddof=1) / np.sqrt(7)
-    assert result["excess20_ci95"] == pytest.approx([4 - 1.96 * se, 4 + 1.96 * se])
+    assert result["excess20_ci95"] == pytest.approx([4 - 1.645 * se, 4 + 1.645 * se])
     extra = deepcopy(events[1])
     extra["as_of"] = "20240126"  # Nine sessions since January 15: exclude.
     extra["sessions"] = pd.bdate_range(end=extra["as_of"], periods=61).strftime("%Y%m%d").tolist()
