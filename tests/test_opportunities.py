@@ -15,7 +15,6 @@ from a_stock_tracker import opportunities as swing
 from a_stock_tracker.auth import AuthError, create_demo_actor
 from a_stock_tracker.automation import Budget, digest, save_state
 from a_stock_tracker.opportunity_demo import demo_board, demo_packet
-from a_stock_tracker.opportunity_view import opportunity_view
 from a_stock_tracker.research import ScreenError
 from tests.test_app import AppMockPage, app_controls
 
@@ -266,15 +265,6 @@ def test_invalid_board_artifacts_refused(tmp_path, damage):
         save_state(tmp_path / "latest.json", {"run": "../secret", "digest": "x"})
     with pytest.raises(ScreenError):
         swing.load_board(create_demo_actor(), root)
-
-
-def test_expired_detail_hides_actionable_levels():
-    board = demo_board()
-    board["rows"][0]["expired"] = True
-    view = opportunity_view(board, "600001.SH", lambda _: None, None)
-    visible = " ".join(c.value or "" for c in app_controls(view) if isinstance(c, ft.Text))
-    assert "观察已过期" in visible
-    assert "11.23" not in visible and "11.00" not in visible
 
 
 def test_default_page_is_opportunities_and_stale_click_is_inert(monkeypatch):

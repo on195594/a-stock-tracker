@@ -22,7 +22,7 @@ market-research-v1 → 独立私有 root → 财报机器报告（不自动进�
 | `app.py` / `auth.py` | Flet 研究确认与只读结果、OAuth、会话与 ASGI 安全边界 |
 | `research_client.py` / `research_view.py` | 无行情/模型凭据的研究 API 客户端、合成请求示例及网页进度/结果 |
 | `research_service.py` | 独立宿主接收器：验证确认报价、单次执行互斥、幂等编号、预算子进程与结果校验 |
-| `web_assets.py` | 仅公开 Flutter JS/WASM 的传输压缩，位于 Host/路由安全检查之后 |
+| `web_assets.py` | 仅公开 Flutter JS/WASM 的传输压缩、同源裁剪中文字体预加载与 30 天长缓存，位于 Host/路由安全检查之后 |
 | `bounded_process.py` | 管道与子进程内存边界、有界输出读取及硬超时管控 |
 | `opportunities.py` | 有界波段采集、程序计算价格条件、AI解释/复核、批次发布与鉴权读取 |
 | `opportunity_view.py` / `opportunity_demo.py` | 机会列表/详情；仅 loopback demo 与离线测试使用合成示例 |
@@ -40,7 +40,7 @@ Web 不打开业务 SQLite、不持行情或模型凭据。当前新增本人授
 
 机会页回调检查 actor、页面 generation 和 connected，异步读取不得在切页、退出、断线或撤销/到期后泄露或覆盖内容。读取失败只提供重读与返回机会页，不引导到旧工作台。保留 OAuth state、数字 ID 白名单、actor 到期/撤销、Host/WS Origin 与 `/upload` 限制；demo 仅 loopback 与合成数据，生产缺配置拒绝启动。
 
-公开 JS/WASM 按客户端能力 gzip 压缩，范围请求保持原样，保留静态资源 ETag 条件读取。不压缩私人页面、OAuth 或研究响应，不增加业务缓存或长期静态缓存；完整中文字体保持原样。动态压缩消耗 CPU，局域网与受限网络的耗时须分别测量。
+公开 JS/WASM 按客户端能力 gzip 压缩，范围请求保持原样，保留静态资源 ETag 条件读取。不压缩私人页面、OAuth 或研究响应，不增加业务缓存；同源裁剪中文字体不压缩，但配置 30 天长期静态缓存与 HTML 首屏预加载头，其余动态/业务资源不设长期缓存。动态压缩消耗 CPU，局域网与受限网络的耗时须分别测量。
 
 ## 网页研究请求合同
 

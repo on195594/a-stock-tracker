@@ -1,1 +1,1 @@
-"""Personal research: discover, follow, refresh, compare, and review."""
+"""A-share swing opportunities: evidence, AI explanations and price conditions."""
