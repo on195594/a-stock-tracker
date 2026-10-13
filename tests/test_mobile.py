@@ -387,7 +387,9 @@ def main() -> int:
                         search = page.get_by_role("textbox", name="按代码、名称或行业筛选")
                         click_settled(page, search)
                         search.press("ControlOrMeta+A")
-                        page.keyboard.insert_text("600004")
+                        # Target the editable field rather than whichever canvas control has focus.
+                        search.press_sequentially("600004")
+                        expect(search).to_have_value("600004")
                         expect(
                             page.get_by_role("heading", name="无资料示例 · 600004.SH", exact=True)
                         ).to_be_visible()
@@ -396,7 +398,8 @@ def main() -> int:
                         ).to_have_count(0)
                         click_settled(page, search)
                         search.press("ControlOrMeta+A")
-                        page.keyboard.insert_text("合成银行")
+                        search.press_sequentially("合成银行")
+                        expect(search).to_have_value("合成银行")
                         expect(
                             page.get_by_role("heading", name="演示公司 · 600001.SH", exact=True)
                         ).to_be_visible()
@@ -493,7 +496,8 @@ def main() -> int:
                                 search = page.get_by_role("textbox", name="按代码、名称或行业筛选")
                                 click_settled(page, search)
                                 search.press("ControlOrMeta+A")
-                                page.keyboard.insert_text(code)
+                                search.press_sequentially(code)
+                                expect(search).to_have_value(code)
                                 expect(
                                     page.get_by_role("button", name="查看价格纪律参考", exact=True)
                                 ).to_have_count(1)
