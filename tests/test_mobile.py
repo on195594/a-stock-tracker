@@ -238,7 +238,7 @@ def main() -> int:
                     blocked = set()
                     fonts = []
                     page = context.new_page()
-                    page.on(
+                    context.on(
                         "requestfailed",
                         lambda request: (
                             blocked.add(host)
@@ -259,7 +259,7 @@ def main() -> int:
                                 "uploadThroughput": 1_000_000 / 8,
                             },
                         )
-                    page.on(
+                    context.on(
                         "response",
                         lambda response: (
                             fonts.append(response.status)
@@ -538,10 +538,14 @@ def main() -> int:
                         ("error", "报告暂时不可读"),
                     ):
                         case_file.write_text(json.dumps(case))
+                        # Isolate Flet reconnect state from the previous case's detail route.
+                        page.close()
+                        page = context.new_page()
                         page.set_viewport_size({"width": 360, "height": 844})
                         page.goto(base)
                         page.wait_for_selector("flt-semantics-placeholder")
                         page.evaluate('document.querySelector("flt-semantics-placeholder").click()')
+                        expect(page).to_have_url(base + "/")
                         expect(
                             page.get_by_role("heading", name=re.compile(re.escape(label)))
                         ).to_be_visible()
