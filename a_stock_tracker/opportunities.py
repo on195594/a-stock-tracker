@@ -88,6 +88,42 @@ def bars(rows: Any, sessions: list[str]) -> list[dict[str, float]]:
     return result
 
 
+def price_conditions(
+    stock: list[dict[str, float]], benchmark: list[dict[str, float]]
+) -> dict[str, Any]:
+    """Compute swing-observation-v1 levels from two validated 61-session windows."""
+    if len(stock) != 61 or len(benchmark) != 61:
+        raise ScreenError("Require 61 validated bars per series")
+    closes = [r["close"] for r in stock]
+    close = closes[-1]
+    ma20, ma60 = sum(closes[-20:]) / 20, sum(closes[-60:]) / 60
+    relative = (close / closes[-21] - benchmark[-1]["close"] / benchmark[-21]["close"]) * 100
+    trigger = round(max(r["high"] for r in stock[-20:]) + 0.01, 2)
+    stop = round(min(r["low"] for r in stock[-10:]), 2)
+    ceiling = round(trigger * 1.02, 2)
+    risk = (ceiling - stop) / ceiling * 100
+    volume = round(sum(r["vol"] for r in stock[-20:]) / 20 * 1.5, 2)
+    reasons = []
+    if not close > ma20 > ma60:
+        reasons.append("收盘价与均线未形成向上排列")
+    if relative <= 0:
+        reasons.append("近二十个交易日未跑赢沪深三百")
+    if risk > 8:
+        reasons.append("观察区间上沿至失效价距离超过规则上限")
+    return {
+        "close": close,
+        "ma20": ma20,
+        "ma60": ma60,
+        "relative": relative,
+        "trigger": trigger,
+        "stop": stop,
+        "ceiling": ceiling,
+        "risk": risk,
+        "volume": volume,
+        "reasons": reasons,
+    }
+
+
 def evaluate(packet: dict[str, Any]) -> dict[str, Any]:
     """Deterministic conditions. Reject gaps instead of letting a model invent levels."""
     sessions = validate_dates(packet["sessions"])
@@ -106,28 +142,13 @@ def evaluate(packet: dict[str, Any]) -> dict[str, Any]:
         raise ScreenError("Invalid issuer or known ST risk")
     stock = bars(packet["bars"], sessions)
     benchmark = bars(packet["benchmark"], sessions)
-    closes = [r["close"] for r in stock]
-    close = closes[-1]
-    ma20, ma60 = sum(closes[-20:]) / 20, sum(closes[-60:]) / 60
-    relative = (close / closes[-21] - benchmark[-1]["close"] / benchmark[-21]["close"]) * 100
-    trigger = round(max(r["high"] for r in stock[-20:]) + 0.01, 2)
-    stop = round(min(r["low"] for r in stock[-10:]), 2)
-    ceiling = round(trigger * 1.02, 2)
-    risk = (ceiling - stop) / ceiling * 100
-    volume = round(sum(r["vol"] for r in stock[-20:]) / 20 * 1.5, 2)
-    reasons = []
-    if not close > ma20 > ma60:
-        reasons.append("收盘价与均线未形成向上排列")
-    if relative <= 0:
-        reasons.append("近二十个交易日未跑赢沪深三百")
-    if risk > 8:
-        reasons.append("观察区间上沿至失效价距离超过规则上限")
+    c = price_conditions(stock, benchmark)
     facts = {
-        "trend": f"收盘 {close:.2f} 元；20日均线 {ma20:.2f} 元；60日均线 {ma60:.2f} 元。",
-        "relative": f"近20个交易日较沪深300价格涨幅差 {relative:.2f} 个百分点（非超额收益预测）。",
-        "condition": f"后续完整交易日收盘在 {trigger:.2f}–{ceiling:.2f} 元且成交量至少 {volume:.2f} 手，才重新评估；不代表可以买入。",
-        "invalidation": f"后续价格跌破 {stop:.2f} 元或超过观察有效期，撤销本观察；跳空高于 {ceiling:.2f} 元不追。",
-        "distance": f"区间上沿至失效价距离 {risk:.2f}%；不是最大损失承诺。",
+        "trend": f"收盘 {c['close']:.2f} 元；20日均线 {c['ma20']:.2f} 元；60日均线 {c['ma60']:.2f} 元。",
+        "relative": f"近20个交易日较沪深300价格涨幅差 {c['relative']:.2f} 个百分点（非超额收益预测）。",
+        "condition": f"后续完整交易日收盘在 {c['trigger']:.2f}–{c['ceiling']:.2f} 元且成交量至少 {c['volume']:.2f} 手，才重新评估；不代表可以买入。",
+        "invalidation": f"后续价格跌破 {c['stop']:.2f} 元或超过观察有效期，撤销本观察；跳空高于 {c['ceiling']:.2f} 元不追。",
+        "distance": f"区间上沿至失效价距离 {c['risk']:.2f}%；不是最大损失承诺。",
         "limits": LIMITS,
     }
     return {
@@ -135,10 +156,10 @@ def evaluate(packet: dict[str, Any]) -> dict[str, Any]:
         "name": name,
         "as_of": sessions[-1],
         "expires": future[-1],
-        "status": "excluded" if reasons else "pending_review",
-        "reasons": reasons,
+        "status": "excluded" if c["reasons"] else "pending_review",
+        "reasons": c["reasons"],
         "facts": facts,
-        "levels": {"trigger": trigger, "ceiling": ceiling, "stop": stop, "volume": volume},
+        "levels": {k: c[k] for k in ("trigger", "ceiling", "stop", "volume")},
     }
 
 

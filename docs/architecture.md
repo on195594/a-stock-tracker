@@ -25,6 +25,7 @@ market-research-v1 → 独立私有 root → 财报机器报告（不自动进�
 | `web_assets.py` | 仅公开 Flutter JS/WASM 的传输压缩、同源裁剪中文字体预加载与 30 天长缓存，位于 Host/路由安全检查之后 |
 | `bounded_process.py` | 管道与子进程内存边界、有界输出读取及硬超时管控 |
 | `opportunities.py` | 有界波段采集、程序计算价格条件、AI解释/复核、批次发布与鉴权读取 |
+| `replay.py` | 独立离线验证：显式预算采集至私有 JSON 缓存，与 `opportunities.py` 共用价格条件纯函数；重放统计不接入 Web、不作为收益证明 |
 | `opportunity_view.py` / `opportunity_demo.py` | 机会列表/详情；仅 loopback demo 与离线测试使用合成示例 |
 | `automation.py` | 独立财报全市场冻结、覆盖/排名、文件锁、预算与恢复 |
 | `research.py` | 共用行情/财报采集、年报版本选择、资格数值校验与平均名次公式 |
