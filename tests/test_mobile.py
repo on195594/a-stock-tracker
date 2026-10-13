@@ -497,6 +497,14 @@ def main() -> int:
                         ).to_be_visible()
                         assert_layout(page, width)
                         financial_url = page.url
+                        click_settled(page, page.get_by_role("button", name="依据", exact=True))
+                        expect(
+                            page.get_by_text("冻结证券范围背景统计", exact=False)
+                        ).to_be_visible()
+                        expect(
+                            page.get_by_text("已归类或扫描：5；尚未扫描：1", exact=False)
+                        ).to_be_visible()
+                        assert_layout(page, width)
                         click_settled(page, page.get_by_role("button", name=re.compile(r"^\[F1\]")))
                         expect(
                             page.get_by_text(

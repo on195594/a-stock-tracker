@@ -184,7 +184,7 @@ def recent_controls(runs, open_route) -> list[ft.Control]:
     return controls
 
 
-def usage_text(usage) -> str:
+def usage_text(usage, mode: str | None = None) -> str:
     if not usage:
         return "本轮用量：未记录"
 
@@ -198,9 +198,16 @@ def usage_text(usage) -> str:
         "time_budget": "时间预算用尽",
         "error": "执行异常",
     }.get(usage.get("stop_reason"), "未记录")
+    coverage = (
+        "冻结证券范围背景统计（非本次单家公司研究进度）：\n"
+        f"本轮新增财报扫描：{recorded('newly_covered')}；已归类或扫描：{recorded('covered')}；尚未扫描：{recorded('remaining')}\n"
+        "已归类或扫描包含预先排除和资料缺口；尚未扫描包含本次指定范围以外的证券。"
+        if mode == "financial"
+        else f"本轮新增覆盖：{recorded('newly_covered')}；累计覆盖：{recorded('covered')}；剩余未覆盖：{recorded('remaining')}"
+    )
     return (
         f"本轮请求：{recorded('requests')} / {recorded('request_limit')} 次；耗时：{recorded('seconds_used')} 秒\n"
-        f"停止原因：{reason}\n本轮新增覆盖：{recorded('newly_covered')}；累计覆盖：{recorded('covered')}；剩余未覆盖：{recorded('remaining')}"
+        f"停止原因：{reason}\n{coverage}"
     )
 
 
@@ -350,7 +357,7 @@ def result_view(
                     paragraph(
                         "覆盖：未完成不可继续。下一步：核对失败原因；新一轮研究须再次明确确认成本。"
                     ),
-                    paragraph(usage_text(run.get("usage"))),
+                    paragraph(usage_text(run.get("usage"), run.get("request", {}).get("mode"))),
                 ]
             )
         elif "board" in result:
@@ -377,7 +384,7 @@ def result_view(
             controls.append(heading("财报研究", level=1))
             for report in result["reports"]:
                 controls.extend(report_controls(report))
-            evidence.append(paragraph(usage_text(result.get("usage"))))
+            evidence.append(paragraph(usage_text(result.get("usage"), run["request"]["mode"])))
         else:
             summary = result["coverage"]
             counts = summary["counts"]
@@ -433,7 +440,7 @@ def result_view(
                 controls.append(
                     paragraph("下一步：选择公司研究财报或查看价格纪律参考；资料缺口不会自动重试。")
                 )
-            controls.append(paragraph(usage_text(result.get("usage"))))
+            controls.append(paragraph(usage_text(result.get("usage"), run["request"]["mode"])))
             controls.append(
                 paragraph(
                     "组内按 PB 与 ROE 平均名次排序，不是跨行业总榜。仅筛后池资料完整的行业形成候选；这是筛后同业排名，不是完整行业前三。财报资格不代表投资价值。"

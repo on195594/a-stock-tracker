@@ -209,3 +209,49 @@ def test_recent_summaries_show_counter_first_sentence_and_hide_expired_prices():
     text = "\n".join(text_values(ft.Column(recent_controls([run], lambda _: None))))
     assert "已过期" in text
     assert "11.20" not in text and "11.00" not in text and "1.79%" not in text
+
+
+@pytest.mark.parametrize("status", ["completed", "partial", "failed", "interrupted"])
+def test_financial_usage_labels_frozen_scope_without_changing_data_or_report_gaps(status):
+    from a_stock_tracker.opportunity_demo import demo_report
+
+    run = screen_result()
+    run["request"]["mode"] = "financial"
+    run["request"]["codes"] = ["600001.SH"]
+    run["status"] = status
+    usage = {
+        "requests": 8,
+        "request_limit": 100,
+        "seconds_used": 121.16,
+        "stop_reason": "completed" if status in {"completed", "partial"} else "error",
+        "newly_covered": 1,
+        "covered": 2654,
+        "remaining": 2920,
+    }
+    run["usage"] = usage
+    run["result"]["usage"] = usage
+    report = demo_report("600001.SH")
+    report.update(status="incomplete", evidence_review="passed", omitted_pages=269)
+    run["result"]["reports"] = [report]
+    before = deepcopy(run)
+    text = "\n".join(text_values(result_view(run, lambda _: None, None)))
+    assert "本轮请求：8 / 100 次；耗时：121.16 秒" in text
+    assert "冻结证券范围背景统计（非本次单家公司研究进度）" in text
+    assert "本轮新增财报扫描：1；已归类或扫描：2654；尚未扫描：2920" in text
+    assert "已归类或扫描包含预先排除和资料缺口" in text
+    assert "本次指定范围以外的证券" in text
+    assert "累计覆盖：2654" not in text
+    if status in {"completed", "partial"}:
+        assert "269 页原文未纳入分析" in text
+    assert run == before
+
+
+def test_screen_usage_keeps_progress_and_financial_missing_usage_stays_unknown():
+    from a_stock_tracker.research_view import usage_text
+
+    run = screen_result()
+    text = "\n".join(text_values(result_view(run, lambda _: None, None)))
+    assert "本轮新增覆盖：1；累计覆盖：5；剩余未覆盖：1" in text
+    assert "冻结证券范围背景统计" not in text
+    assert usage_text(None, "financial") == "本轮用量：未记录"
+    assert "已归类或扫描：未记录；尚未扫描：未记录" in usage_text({"requests": 8}, "financial")

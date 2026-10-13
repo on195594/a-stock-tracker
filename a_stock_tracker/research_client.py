@@ -217,6 +217,16 @@ class DemoResearchClient:
                 "covered": 6 if remaining else 5,
                 "remaining": 0 if remaining else 1,
             }
+        if payload["mode"] == "financial":
+            result["usage"] = {
+                "requests": 8,
+                "request_limit": payload["quote"]["requests"],
+                "seconds_used": 1.0,
+                "stop_reason": "completed",
+                "newly_covered": 1,
+                "covered": 5,
+                "remaining": 1,
+            }
         value = {
             "id": payload["id"],
             "request": payload,
