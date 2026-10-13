@@ -569,6 +569,46 @@ def report_status_text(status: Any) -> str:
     }.get(status, "未记录" if not status else "状态未识别，需核查原始依据")
 
 
+def structured_report(result: dict[str, Any]) -> dict[str, Any]:
+    """Project a verified report envelope; never expose rejected drafts or raw pages."""
+    packet = result.get("evidence", {})
+    report = result.get("report", {}) if result.get("evidence_review") == "passed" else {}
+    docs = {d["id"]: d for d in packet.get("documents", [])}
+    return {
+        "code": result["code"],
+        "status": result["status"],
+        "evidence_review": result.get("evidence_review"),
+        "documents": [{k: d[k] for k in ("period", "announced")} for d in docs.values()],
+        "clues": {
+            k: packet.get("structured", {}).get(k)
+            for k in ("industry", "valuation_date", "pb", "roe_mean")
+        },
+        "analysis": report.get("analysis", {}),
+        "facts": [
+            {k: fact[k] for k in ("id", "claim", "page", "quote")}
+            | {k: docs[fact["document"]][k] for k in ("title", "period", "announced", "url")}
+            for fact in report.get("facts", [])
+        ],
+        "gaps": packet.get("scope_gaps", []) + report.get("gaps", []),
+        "omitted_pages": len(packet.get("omitted_pages", [])),
+        "error": result.get("error"),
+    }
+
+
+def report_summary_status(report: dict[str, Any]) -> str:
+    if report.get("evidence_review") == "failed":
+        return "独立复核未通过，草稿不展示"
+    if report.get("evidence_review") == "passed":
+        if report["status"] == "scoped_complete" or (
+            report["status"] == "unchanged" and not report["omitted_pages"]
+        ):
+            return "引用与语义复核通过，范围内完整"
+        return f"引用已复核；有 {report['omitted_pages']} 页原文未纳入分析，结论范围受限"
+    if report.get("error"):
+        return "原文/模型检查失败，没有可读结论"
+    return report_status_text(report["status"])
+
+
 def render(result: dict[str, Any]) -> str:
     lines = [
         f"# {result['code']} 自动研究",

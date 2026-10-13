@@ -34,8 +34,7 @@ from a_stock_tracker.automation import (
     save,
     save_state,
 )
-from a_stock_tracker.disclosures import model_command
-from a_stock_tracker.disclosures import render as render_report
+from a_stock_tracker.disclosures import model_command, structured_report
 from a_stock_tracker.opportunities import load_board
 from a_stock_tracker.research import SHANGHAI, ScreenError, parse_date
 
@@ -48,8 +47,8 @@ LIMITS: dict[str, dict[str, Any]] = {
         "reports": 0,
         "prefilter": PB_MV_SCREEN,
     },
-    "swing": {"title": "指定股票量价研究", "requests": 20, "seconds": 900, "reports": 0},
     "financial": {"title": "单家公司财报研究", "requests": 100, "seconds": 1800, "reports": 1},
+    "swing": {"title": "价格纪律参考", "requests": 20, "seconds": 900, "reports": 0},
 }
 OWNER = {"owner": "explicit-research-requests-v1"}
 MAX_ROOT_BYTES = 2_000_000_000
@@ -65,7 +64,7 @@ class QuoteChanged(ValueError):
 
 
 def quote(info: dict[str, Any], mode: str, remaining: int | None = None) -> dict[str, Any]:
-    value = {**info["modes"][mode], "model": info["model"] if mode != "screen" else None}
+    value = {**info["modes"][mode], "model": info["model"] if mode == "financial" else None}
     value.pop("available", None)
     if mode == "screen" and remaining is not None:
         value["requests"] = min(remaining + 20, 1500)
@@ -73,7 +72,7 @@ def quote(info: dict[str, Any], mode: str, remaining: int | None = None) -> dict
         value["seconds"] = max(66, math.ceil(value["requests"] * 3600 / 1500))
     if mode == "screen":
         value["prefilter"] = info["modes"][mode].get("prefilter")
-    else:
+    elif mode == "financial":
         value["model_budget"] = {
             "calls": 10,
             "local_timeout_seconds": 240,
@@ -82,6 +81,53 @@ def quote(info: dict[str, Any], mode: str, remaining: int | None = None) -> dict
             "timeout_guarantees_billing_stop": False,
         }
     return value
+
+
+def result_summary(result: dict[str, Any]) -> dict[str, Any]:
+    if "board" in result:
+        board = result["board"]
+        return {
+            "board": {
+                "rule": board.get("rule"),
+                "rows": [
+                    {
+                        k: row[k]
+                        for k in (
+                            "code",
+                            "status",
+                            "as_of",
+                            "expires",
+                            "expired",
+                            "levels",
+                            "reasons",
+                        )
+                        if k in row
+                    }
+                    for row in board["rows"]
+                ],
+            }
+        }
+    return {
+        "reports": [
+            {
+                k: report[k]
+                for k in (
+                    "code",
+                    "status",
+                    "evidence_review",
+                    "documents",
+                    "omitted_pages",
+                    "error",
+                )
+            }
+            | {
+                "analysis": {"counterevidence": report["analysis"]["counterevidence"]}
+                if "counterevidence" in report["analysis"]
+                else {}
+            }
+            for report in result.get("reports", [])
+        ]
+    }
 
 
 def validate_request(value: Any) -> dict[str, Any]:
@@ -142,7 +188,7 @@ def request_info() -> dict[str, Any]:
     return {
         "demo": False,
         "modes": {
-            k: {**v, "available": market and (k == "screen" or model)} for k, v in LIMITS.items()
+            k: {**v, "available": market and (k != "financial" or model)} for k, v in LIMITS.items()
         },
         "model": {
             "provider": os.getenv("RESEARCH_PROVIDER", ""),
@@ -306,6 +352,13 @@ class ResearchStore:
         for item in heapq.nlargest(10, chains.values(), key=lambda item: item["time"]):
             try:
                 state = self.status(item["id"], include_result=False)
+                if (
+                    state["status"] in {"completed", "partial"}
+                    and state["request"]["mode"] != "screen"
+                ):
+                    state["summary"] = result_summary(
+                        self.result(self.directory(item["id"]), state["request"]["mode"])
+                    )
                 state.update(continuations=item["continuations"], reused=item["reused"])
                 runs.append(state)
             except (OSError, ValueError, ScreenError):
@@ -491,7 +544,7 @@ class ResearchStore:
                 "--model",
                 frozen_state["model"]["model"],
             ]
-        if mode != "screen":
+        if mode == "financial":
             args += [
                 "--provider",
                 os.environ["RESEARCH_PROVIDER"],
@@ -527,14 +580,7 @@ class ResearchStore:
         reports = []
         for code, sha in state["research"].items():
             report = read_result(run / f"report-{code}.json", sha)["state"]["result"]
-            reports.append(
-                {
-                    "code": code,
-                    "status": report["status"],
-                    "evidence_review": report.get("evidence_review"),
-                    "text": render_report(report),
-                }
-            )
+            reports.append(structured_report(report))
         result: dict[str, Any] = {
             "coverage": {
                 **{k: summary[k] for k in ("mode", "data_date", "status", "total", "counts")},

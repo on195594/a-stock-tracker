@@ -6,13 +6,14 @@ from typing import Any
 
 import flet as ft
 
-from a_stock_tracker.disclosures import report_status_text
+from a_stock_tracker.disclosures import report_summary_status
 from a_stock_tracker.opportunity_view import (
     heading,
     local_time,
     notice,
     opportunity_view,
     paragraph,
+    price_summary,
 )
 from a_stock_tracker.research import finite_number
 
@@ -44,6 +45,97 @@ def roe_text(value: Any) -> str:
     return f"{number:.2f}%" if number is not None else "未记录"
 
 
+def report_dates(report) -> str:
+    docs = report.get("documents", [])
+    if not docs:
+        return "资料日期：未记录"
+    latest = max(d["announced"] for d in docs)
+    return f"资料截至 {latest}（公告日）\n" + "；".join(
+        f"报告期 {d['period']} / 公告 {d['announced']}" for d in docs
+    )
+
+
+def readable_report(report) -> bool:
+    return report.get("evidence_review") == "passed" or report.get("status") == "synthetic"
+
+
+def report_controls(report) -> list[ft.Control]:
+    readable = readable_report(report)
+    analysis = report.get("analysis", {}) if readable else {}
+    counter = analysis.get("counterevidence", {})
+    summary: list[ft.Control] = [
+        paragraph(report_summary_status(report)),
+        paragraph(report_dates(report)),
+    ]
+    if counter:
+        summary.extend(
+            [
+                heading("最强反证", size=18),
+                paragraph(counter["text"]),
+                paragraph("引用：" + "、".join(counter["facts"])),
+            ]
+        )
+    gaps = report.get("gaps", [])
+    if gaps:
+        summary.extend([heading("主要缺口", size=18), *[paragraph(g) for g in gaps[:3]]])
+    if report.get("error"):
+        summary.append(paragraph(report["error"]))
+    controls: list[ft.Control] = [notice("报告 · " + report["code"], "财报研究摘要", extra=summary)]
+    clues = report.get("clues", {})
+    if any(v is not None for v in clues.values()):
+        controls.append(
+            paragraph(
+                f"入围线索：行业 {clues.get('industry')}；估值日 {clues.get('valuation_date')}；"
+                f"PB {clues.get('pb')}；历史年度平均 ROE {roe_text(clues.get('roe_mean'))}。仅为同业研究顺序。"
+            )
+        )
+    for key, title in (
+        ("business", "业务"),
+        ("financial", "财务"),
+        ("valuation", "估值方法"),
+        ("change_conditions", "改变判断的条件"),
+    ):
+        if key in analysis:
+            item = analysis[key]
+            controls.extend(
+                [
+                    heading(title, size=18),
+                    paragraph(item["text"]),
+                    paragraph("引用：" + "、".join(item["facts"])),
+                ]
+            )
+    if readable and report.get("facts"):
+        controls.append(heading("原文事实"))
+        for fact in report["facts"]:
+            controls.append(
+                ft.ExpansionTile(
+                    title=ft.Text(f"[{fact['id']}] {fact['claim']}"),
+                    controls=[
+                        paragraph(
+                            f"来源：{fact['title']} · PDF 第 {fact['page']} 页\n报告期 {fact['period']}；公告 {fact['announced']}"
+                        ),
+                        paragraph(fact["quote"]),
+                        paragraph("来源 URL：" + fact["url"]),
+                    ],
+                    controls_padding=16,
+                )
+            )
+    if gaps:
+        controls.append(
+            ft.ExpansionTile(
+                title=ft.Text("全部缺口与范围"),
+                controls=[paragraph(g) for g in gaps],
+                controls_padding=16,
+            )
+        )
+    controls.append(
+        paragraph(
+            f"未纳入分析的原文：{report.get('omitted_pages', 0)} 页。仅定期报告范围内研究，不是投资结论保证。"
+        )
+    )
+    return controls
+
+
 def recent_controls(runs, open_route) -> list[ft.Control]:
     controls: list[ft.Control] = []
     for title, active in (("进行中", True), ("最近研究", False)):
@@ -57,18 +149,37 @@ def recent_controls(runs, open_route) -> list[ft.Control]:
             chain = f" · 续跑 {item['continuations']} 次" if item.get("continuations") else ""
             if item.get("reused") or item.get("reused_from"):
                 chain += " · 复用"
-            controls.extend(
-                [
+            result = item.get("summary", {})
+            summaries = []
+            for report in result.get("reports", []):
+                counter = (
+                    report.get("analysis", {}).get("counterevidence", {}).get("text", "")
+                    if readable_report(report)
+                    else ""
+                )
+                summaries.append(
                     paragraph(
-                        f"{item['limits']['title']} · {','.join(item['request']['codes']) or '全市场初筛'}\n"
-                        f"{LABELS.get(item['status'], '状态待核查')}{chain} · {local_time(item.get('created_at'))}"
-                    ),
-                    ft.TextButton(
-                        ft.Text("查看进度与结果", semantics_label="查看研究 · " + item["id"]),
-                        on_click=open_route("/analysis/" + item["id"]),
-                        height=48,
-                    ),
-                ]
+                        f"{report['code']} · {report_summary_status(report)}\n{report_dates(report)}"
+                        + ("\n最强反证：" + counter.split("。", 1)[0] + "。" if counter else "")
+                    )
+                )
+            for row in result.get("board", {}).get("rows", []):
+                summaries.append(paragraph(row["code"] + "\n" + price_summary(row)))
+            controls.append(
+                notice(
+                    item["limits"]["title"]
+                    + " · "
+                    + (",".join(item["request"]["codes"]) or "全市场初筛"),
+                    f"{LABELS.get(item['status'], '状态待核查')}{chain} · {local_time(item.get('created_at'))}",
+                    extra=[
+                        *summaries,
+                        ft.TextButton(
+                            ft.Text("查看进度与结果", semantics_label="查看研究 · " + item["id"]),
+                            on_click=open_route("/analysis/" + item["id"]),
+                            height=48,
+                        ),
+                    ],
+                )
             )
     return controls
 
@@ -114,13 +225,13 @@ def ranking_controls(groups, identifier, open_route, is_current) -> list[ft.Cont
                     + f"平均名次：{row.get('order', '未记录')}；PB 名次：{row.get('pb_rank', '未记录')}；ROE 名次：{row.get('roe_rank', '未记录')}"
                 ),
                 ft.Button(
-                    "核对量价条件",
-                    on_click=open_route(f"/analysis?mode=swing&code={code}&from={identifier}"),
+                    "研究这家公司财报",
+                    on_click=open_route(f"/analysis?mode=financial&code={code}&from={identifier}"),
                     height=48,
                 ),
                 ft.TextButton(
-                    "研究这家公司财报",
-                    on_click=open_route(f"/analysis?mode=financial&code={code}&from={identifier}"),
+                    "查看价格纪律参考",
+                    on_click=open_route(f"/analysis?mode=swing&code={code}&from={identifier}"),
                     height=48,
                 ),
                 ft.Divider(),
@@ -262,6 +373,11 @@ def result_view(
                     back,
                 )
             )
+        elif run["request"]["mode"] == "financial" and result.get("reports"):
+            controls.append(heading("财报研究", level=1))
+            for report in result["reports"]:
+                controls.extend(report_controls(report))
+            evidence.append(paragraph(usage_text(result.get("usage"))))
         else:
             summary = result["coverage"]
             counts = summary["counts"]
@@ -315,12 +431,12 @@ def result_view(
                     )
             else:
                 controls.append(
-                    paragraph("下一步：选择公司核对量价条件或研究财报；资料缺口不会自动重试。")
+                    paragraph("下一步：选择公司研究财报或查看价格纪律参考；资料缺口不会自动重试。")
                 )
             controls.append(paragraph(usage_text(result.get("usage"))))
             controls.append(
                 paragraph(
-                    "组内按 PB 与 ROE 平均名次排序，不是跨行业总榜。仅筛后池资料完整的行业形成候选；这是筛后同业排名，不是完整行业前三。财报资格不是波段推荐。"
+                    "组内按 PB 与 ROE 平均名次排序，不是跨行业总榜。仅筛后池资料完整的行业形成候选；这是筛后同业排名，不是完整行业前三。财报资格不代表投资价值。"
                 )
             )
             evidence.append(
@@ -340,17 +456,5 @@ def result_view(
                 controls.append(notice("排名展示已截断", result["truncation_note"], caution=True))
             if groups:
                 controls.extend(ranking_controls(groups, run["id"], open_route, is_current))
-            for report in reports:
-                controls.extend(
-                    [
-                        heading("报告 · " + report["code"]),
-                        notice(
-                            "核查状态",
-                            f"报告状态：{report_status_text(report['status'])}\n证据复核：{report_status_text(report.get('evidence_review'))}",
-                        ),
-                        # Plain text prevents model-generated links/images from making external requests.
-                        paragraph(report["text"]),
-                    ]
-                )
     controls.append(ft.ExpansionTile(title=ft.Text("依据"), controls=evidence, controls_padding=16))
     return ft.Column(controls, spacing=20, horizontal_alignment=ft.CrossAxisAlignment.STRETCH)

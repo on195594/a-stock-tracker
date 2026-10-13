@@ -92,7 +92,7 @@ def test_private_service_auth_budget_confirmation_and_same_nonce(tmp_path, monke
         assert client.post("/runs", json=p).json()["status"] == "interrupted"
 
 
-@pytest.mark.parametrize("mode", ["swing", "financial"])
+@pytest.mark.parametrize("mode", ["financial"])
 def test_model_cost_boundary_requires_new_consent_before_execution(tmp_path, monkeypatch, mode):
     store = ResearchStore(tmp_path / "service")
     request = payload(mode)
@@ -429,8 +429,8 @@ def test_financial_result_reads_verified_envelopes_not_unchecked_markdown(tmp_pa
     (run / "report-600519.SH.md").write_text("unverified claims")
     result = store.result(directory, "financial")
     assert result["candidates"][0]["code"] == row["code"]
-    assert "合成证据缺口" in result["reports"][0]["text"]
-    assert "unverified claims" not in result["reports"][0]["text"]
+    assert "合成证据缺口" in result["reports"][0]["error"]
+    assert "unverified claims" not in result["reports"][0]["error"]
     (run / "report-600519.SH.json").write_text("{}")
     with pytest.raises(ScreenError):
         store.result(directory, "financial")
@@ -849,7 +849,7 @@ def test_real_cost_notice_consent_resets_when_mode_changes(monkeypatch):
 
     async def run():
         page = AppMockPage()
-        page.route = "/analysis?mode=swing&code=600519.SH"
+        page.route = "/analysis?mode=financial&code=600519.SH"
         try:
             await app.build_app()(page)
             controls = list(app_controls(page))
@@ -1366,3 +1366,105 @@ def test_late_home_research_response_cannot_replace_new_page(monkeypatch):
             await page.on_close(None)
 
     asyncio.run(run())
+
+
+def test_price_quote_has_no_model_and_rejects_old_model_consent(tmp_path, monkeypatch):
+    from a_stock_tracker.research_service import QuoteChanged
+
+    monkeypatch.setenv("TUSHARE_TOKEN", "synthetic")
+    monkeypatch.delenv("RESEARCH_PROVIDER", raising=False)
+    monkeypatch.delenv("RESEARCH_MODEL", raising=False)
+    info = request_info()
+    assert info["modes"]["swing"]["available"]
+    assert not info["modes"]["financial"]["available"]
+    request = payload()
+    assert request["quote"]["model"] is None and "model_budget" not in request["quote"]
+    store = ResearchStore(tmp_path / "root")
+    command = store.command(store.directory(request["id"]), request)
+    assert "--model" not in command and "--provider" not in command
+    request["quote"]["model_budget"] = {"calls": 10}
+    monkeypatch.setattr(store, "lease", lambda: pytest.fail("accepted old quote"))
+    with pytest.raises(QuoteChanged):
+        store.submit(request)
+
+
+def test_structured_projection_joins_sources_and_never_returns_rejected_draft():
+    from a_stock_tracker.disclosures import structured_report
+
+    result = {
+        "code": "600001.SH",
+        "status": "incomplete",
+        "evidence_review": "passed",
+        "evidence": {
+            "structured": {
+                "industry": "合成行业",
+                "valuation_date": "2026-04-01",
+                "pb": 1.2,
+                "roe_mean": 12.0,
+            },
+            "documents": [
+                {
+                    "id": "D1",
+                    "title": "合成年报",
+                    "period": "2025-12-31",
+                    "announced": "2026-04-01",
+                    "url": "https://example.invalid/a.pdf",
+                    "pages": [{"page": 12, "text": "私人全文"}],
+                }
+            ],
+            "scope_gaps": ["未核查新闻"],
+            "omitted_pages": [{"page": 13}],
+        },
+        "report": {
+            "analysis": {"business": {"text": "推论", "facts": ["F1"]}},
+            "facts": [
+                {"id": "F1", "claim": "合成事实", "document": "D1", "page": 12, "quote": "合成引文"}
+            ],
+            "gaps": ["回款缺口"],
+        },
+    }
+    before = deepcopy(result)
+    report = structured_report(result)
+    assert report["facts"][0] == {
+        "id": "F1",
+        "claim": "合成事实",
+        "page": 12,
+        "quote": "合成引文",
+        "title": "合成年报",
+        "period": "2025-12-31",
+        "announced": "2026-04-01",
+        "url": "https://example.invalid/a.pdf",
+    }
+    assert report["documents"] == [{"period": "2025-12-31", "announced": "2026-04-01"}]
+    assert report["gaps"] == ["未核查新闻", "回款缺口"] and report["omitted_pages"] == 1
+    assert report["analysis"]["business"]["facts"] == ["F1"]
+    assert "私人全文" not in json.dumps(report, ensure_ascii=False)
+    assert result == before
+    result["evidence_review"] = "failed"
+    result["rejected_draft"] = result["report"]
+    report = structured_report(result)
+    assert report["analysis"] == {} and report["facts"] == []
+    assert "rejected_draft" not in report
+
+
+def test_recent_revalidates_price_expiry_without_persisting_summaries(tmp_path, monkeypatch):
+    from a_stock_tracker import opportunities
+    from tests.test_opportunities import saved_board
+
+    store = ResearchStore(tmp_path / "root")
+    request = payload()
+    directory = store.directory(request["id"])
+    batch = directory / "batch"
+    batch.mkdir(parents=True, mode=0o700)
+    board = saved_board(batch)
+    expiry = datetime.fromisoformat(board["rows"][0]["expires"]).date()
+    state = {"id": request["id"], "request": request, "status": "completed"}
+    save_state(directory / "request.json", state)
+    monkeypatch.setattr(opportunities, "today", lambda: expiry)
+    assert not store.recent()[0]["summary"]["board"]["rows"][0]["expired"]
+    monkeypatch.setattr(opportunities, "today", lambda: expiry + timedelta(days=1))
+    assert store.recent()[0]["summary"]["board"]["rows"][0]["expired"]
+    assert read_state(directory / "request.json") == state
+    output = batch / ("swing-" + "a" * 32) / "result.json"
+    output.write_text("{}")
+    assert store.recent() == []

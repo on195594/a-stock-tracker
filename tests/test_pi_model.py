@@ -19,12 +19,13 @@ def test_pi_configuration_fails_closed_without_fallback(tmp_path, monkeypatch):
     monkeypatch.setenv("RESEARCH_MODEL", "m")
     with pytest.raises(ScreenError, match="pi runtime"):
         model_command()
-    assert not request_info()["modes"]["swing"]["available"]
+    assert not request_info()["modes"]["financial"]["available"]
+    assert request_info()["modes"]["swing"]["available"]
     (tmp_path / "dist/core").mkdir(parents=True)
     (tmp_path / "dist/core/model-runtime.js").touch()
     (tmp_path / "auth.json").write_text("{}")
     (tmp_path / "provider.ts").touch()
-    assert request_info()["modes"]["swing"]["available"]
+    assert request_info()["modes"]["financial"]["available"]
 
 
 def test_pi_one_call_no_tools_identity_and_output_limits():

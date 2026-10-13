@@ -79,7 +79,7 @@ def test_group_filter_and_source_routes_preserve_rankings_and_guard_late_events(
     assert [t.expanded for t in tiles] == [True, True, True, False]
     for term, code in [
         ("600004", "600004.SH"),
-        ("距离排除", "600002.SH"),
+        ("较大距离", "600002.SH"),
         ("合成能源", "600003.SH"),
     ]:
         field.value = term
@@ -136,14 +136,76 @@ def test_three_status_layers_legacy_usage_and_continued_checkpoint():
     assert all(word not in text for word in ("partial", "incomplete", "excluded", "passed"))
 
 
-def test_excluded_distance_visible_without_actionable_prices():
+def test_wide_distance_visible_as_reference():
     from a_stock_tracker.opportunity_demo import demo_board
     from a_stock_tracker.opportunity_view import opportunity_view
 
-    board = demo_board("excluded")
+    board = demo_board("wide")
     row = board["rows"][0]
-    assert row["status"] == "excluded"
-    text = "\n".join(text_values(opportunity_view(board, None, lambda _: None, None)))
-    assert row["facts"]["distance"] in text
-    assert "规则上限：8%" in text and row["as_of"] in text
-    assert row["facts"]["condition"] not in text and row["facts"]["invalidation"] not in text
+    assert row["status"] == "reference"
+    text = "\n".join(text_values(opportunity_view(board, row["code"], lambda _: None, None)))
+    assert row["facts"]["distance"] in text and "28.57%" in text
+    assert "规则上限" not in text and row["as_of"] in text
+    assert row["facts"]["condition"] in text and row["facts"]["invalidation"] in text
+
+
+@pytest.mark.parametrize(
+    "status,review,error,label",
+    [
+        ("scoped_complete", "passed", None, "引用与语义复核通过，范围内完整"),
+        ("incomplete", "passed", None, "引用已复核；有 2 页原文未纳入分析，结论范围受限"),
+        ("incomplete", "failed", "复核失败", "独立复核未通过，草稿不展示"),
+        ("incomplete", None, "读取失败", "原文/模型检查失败，没有可读结论"),
+    ],
+)
+def test_structured_report_hierarchy_and_failed_draft_is_hidden(status, review, error, label):
+    import flet as ft
+
+    from a_stock_tracker.opportunity_demo import demo_report
+    from a_stock_tracker.research_view import report_controls
+    from tests.test_app import app_controls
+
+    report = demo_report("600001.SH")
+    report.update(status=status, evidence_review=review, error=error)
+    report["gaps"] = [f"缺口{i}" for i in range(5)]
+    report["analysis"]["counterevidence"]["text"] = "完整反证第一句。第二句也必须保留。"
+    view = ft.Column(report_controls(report))
+    texts = text_values(view)
+    assert label in texts
+    assert any("2026-04-01" in t and "2025-12-31" in t for t in texts)
+    if review == "passed":
+        assert texts.index("完整反证第一句。第二句也必须保留。") < texts.index("业务")
+        assert "引用：F1" in texts
+        tiles = [c for c in app_controls(view) if isinstance(c, ft.ExpansionTile)]
+        assert any("[F1]" in t.title.value for t in tiles)
+        assert any("PDF 第 12 页" in t for t in texts)
+        assert "来源 URL：https://example.invalid/synthetic.pdf" in texts
+        summary = text_values(view.controls[0])
+        assert "缺口2" in summary and "缺口3" not in summary
+        assert "缺口4" in texts
+    else:
+        assert "完整反证第一句。第二句也必须保留。" not in texts
+        assert not any("合成收入集中事实" in t for t in texts)
+    assert not any(isinstance(c, (ft.Markdown, ft.Image)) for c in app_controls(view))
+
+
+def test_recent_summaries_show_counter_first_sentence_and_hide_expired_prices():
+    import flet as ft
+
+    from a_stock_tracker.opportunity_demo import demo_board, demo_report
+    from a_stock_tracker.research_service import result_summary
+    from a_stock_tracker.research_view import recent_controls
+
+    run = screen_result()
+    report = demo_report("600001.SH")
+    run["summary"] = result_summary({"reports": [report]})
+    routes = []
+    text = "\n".join(text_values(ft.Column(recent_controls([run], lambda r: routes.append(r)))))
+    assert "合成反证：单一产品收入集中。" in text
+    assert "需求变化可能影响回款" not in text
+    assert "2026-04-01" in text and "/analysis/" + run["id"] in routes
+    board = demo_board("expired")
+    run["summary"] = result_summary({"board": board})
+    text = "\n".join(text_values(ft.Column(recent_controls([run], lambda _: None))))
+    assert "已过期" in text
+    assert "11.20" not in text and "11.00" not in text and "1.79%" not in text

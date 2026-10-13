@@ -23,11 +23,14 @@ from tests.test_app import AppMockPage, app_controls
 def test_conditions_are_computed_and_not_claimed_triggered():
     packet = demo_packet()
     row = swing.evaluate(packet)
-    assert row["status"] == "pending_review"
-    assert row["levels"] == {"trigger": 11.23, "ceiling": 11.45, "stop": 11.0, "volume": 15000.0}
+    assert row["status"] == "reference"
+    assert row["levels"]["trigger"] == 11.23
+    assert row["levels"]["stop"] == 11.0
+    assert row["levels"]["distance"] == pytest.approx((11.2 - 11.0) / 11.2 * 100)
+    assert "ceiling" not in row["levels"] and "volume" not in row["levels"]
     assert row["as_of"] == packet["sessions"][-1]
     assert row["expires"] == packet["future_sessions"][-1]
-    assert "不代表可以买入" in row["facts"]["condition"]
+    assert "观察线" in row["facts"]["condition"]
     assert "不是最大损失承诺" in row["facts"]["distance"]
 
 
@@ -162,86 +165,116 @@ def test_collect_uses_explicit_pool_and_proven_calendar(damage, monkeypatch):
         weekend = as_of + timedelta(days=2)
         result = swing.collect(Client(), "mock", [packet["code"]], weekend, latest=True)
         assert result[0]["sessions"][-1] == as_of.isoformat()
-        assert swing.evaluate(result[0])["status"] == "pending_review"
+        assert swing.evaluate(result[0])["status"] == "reference"
     elif damage:
         with pytest.raises(ScreenError):
             swing.collect(Client(), "mock", [packet["code"]], as_of)
     else:
         result = swing.collect(Client(), "mock", [packet["code"]], as_of)
-        assert swing.evaluate(result[0])["status"] == "pending_review"
+        assert swing.evaluate(result[0])["status"] == "reference"
         assert calls == ["trade_cal", "index_daily", "stock_basic", "daily"]
 
 
-def test_flat_or_weak_stock_is_excluded():
+@pytest.mark.parametrize("kind", ["weak", "wide", "downtrend"])
+def test_complete_prices_are_references_regardless_of_old_exclusions(kind):
     packet = demo_packet()
-    packet["bars"] = deepcopy(packet["benchmark"])
-    assert "近二十个交易日未跑赢沪深三百" in swing.evaluate(packet)["reasons"]
+    if kind == "weak":
+        packet["bars"] = deepcopy(packet["benchmark"])
+    elif kind == "wide":
+        packet["bars"][-5]["low"] = 8.0
+    else:
+        for i, row in enumerate(packet["bars"]):
+            row.update(
+                open=20 - i * 0.01,
+                high=21 - i * 0.01,
+                low=19 - i * 0.01,
+                close=20 - i * 0.01,
+                pre_close=20 - (i - 1) * 0.01,
+            )
+    row = swing.evaluate(packet)
+    assert row["status"] == "reference"
+    if kind == "wide":
+        assert row["levels"]["distance"] > 8
+    if kind == "downtrend":
+        assert row["levels"]["uptrend"] is False
 
 
-def test_model_cannot_invent_price_or_reference():
-    row = demo_board()["rows"][0]
+def test_publish_has_no_model_path_and_preserves_company_gaps(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "a_stock_tracker.disclosures.model_call",
+        lambda *a: pytest.fail("price reference called model"),
+    )
+    packets = [{"code": "600002.SH", "name": "", "collect_error": "ScreenError"}, demo_packet()]
+    result = swing.publish(tmp_path, packets, Budget(20, 600))
+    assert result["rule"] == swing.REFERENCE_RULE
+    assert result["model_calls"] == 0 and "model" not in result
+    assert result["rows"][0]["status"] == "gap"
+    assert "levels" not in result["rows"][0]
+    assert result["rows"][1]["status"] == "reference"
+    assert (tmp_path / "result.json").is_file()
+
+
+def legacy_board():
+    packet = demo_packet()
+    c = swing.price_conditions(packet["bars"], packet["benchmark"])
+    row = {
+        "code": packet["code"],
+        "name": packet["name"],
+        "status": "observation",
+        "as_of": packet["sessions"][-1],
+        "expires": packet["future_sessions"][-1],
+        "facts": {
+            "trend": "合成历史趋势",
+            "relative": "合成历史相对强弱",
+            "limits": "历史资料范围有限",
+            "condition": "历史区间 11.23–11.45 元；量能 15000 手",
+            "invalidation": "历史失效价 11.00 元",
+            "distance": "旧规则距离 3.93%",
+        },
+        "levels": {k: c[k] for k in ("trigger", "ceiling", "stop", "volume")},
+        "explanation": {
+            k: {
+                "text": "合成历史说明：只引用当时日线中的资料，不表示现在仍然有效。",
+                "refs": ["trend"],
+            }
+            for k in swing.SECTIONS
+        },
+        "review": {"supported": True, "reason": "synthetic"},
+    }
+    return {"rule": swing.RULE, "source": "合成历史资料", "rows": [row]}
+
+
+def test_legacy_reader_keeps_explanation_validation():
+    row = legacy_board()["rows"][0]
     swing.validate_explanation(row["explanation"], row["facts"])
-    for field, value in (
-        ("text", "建议在12元买入，这个价格很值得考虑，可以带来确定性的上涨机会"),
-        ("refs", ["invented"]),
-    ):
+    for field, value in (("text", "无依据价格12元"), ("refs", ["invented"])):
         report = deepcopy(row["explanation"])
         report["reason"][field] = value
         with pytest.raises(ScreenError):
             swing.validate_explanation(report, row["facts"])
 
 
-@pytest.mark.parametrize(
-    ("approved", "collect_failed"), [(True, False), (False, False), ("true", False), (True, True)]
-)
-def test_publish_requires_second_model_review(tmp_path, monkeypatch, approved, collect_failed):
-    calls = []
-
-    def model_call(directory, label, prompt, model, state, budget):
-        calls.append(label)
-        state["model_calls"] += 1
-        return (
-            demo_board()["rows"][0]["explanation"]
-            if label.endswith("explain")
-            else {"supported": approved, "reason": "checked"}
-        )
-
-    monkeypatch.setattr(swing, "model_call", model_call)
-    packets = [demo_packet()]
-    if collect_failed:
-        packets.insert(0, {"code": "600002.SH", "name": "", "collect_error": "ScreenError"})
-    result = swing.publish(
-        tmp_path, packets, {"provider": "mock", "model": "mock"}, Budget(20, 600)
-    )
-    assert len(calls) == 2
-    if collect_failed:
-        assert result["rows"][0]["status"] == "gap"
-        assert "levels" not in result["rows"][0]
-    row = result["rows"][-1]
-    assert row["status"] == ("observation" if approved is True else "gap")
-    assert ("levels" in row) is (approved is True)
-    assert (tmp_path / "result.json").is_file()
-
-
-def saved_board(tmp_path):
+def saved_board(tmp_path, legacy=False):
     run = "swing-" + "a" * 32
     (tmp_path / run).mkdir()
-    board = demo_board()
-    board["rule"] = swing.RULE
-    board["rows"][0]["review"] = {"supported": True, "reason": "synthetic"}
+    board = legacy_board() if legacy else demo_board()
     save_state(tmp_path / run / "result.json", board)
     save_state(tmp_path / "latest.json", {"run": run, "digest": digest(board)})
     return board
 
 
-def test_board_integrity_expiry_and_actor(tmp_path):
-    board = saved_board(tmp_path)
+@pytest.mark.parametrize("legacy", [False, True])
+def test_board_integrity_expiry_and_actor(tmp_path, legacy):
+    board = saved_board(tmp_path, legacy)
+    output = tmp_path / ("swing-" + "a" * 32) / "result.json"
+    before = output.read_bytes()
     actor = create_demo_actor()
     expiry = date.fromisoformat(board["rows"][0]["expires"])
     loaded = swing.load_board(actor, tmp_path, on=expiry)
     assert loaded and not loaded["rows"][0]["expired"]
     loaded = swing.load_board(actor, tmp_path, on=expiry + timedelta(days=1))
     assert loaded and loaded["rows"][0]["expired"]
+    assert output.read_bytes() == before
     actor.revoke()
     with pytest.raises(AuthError):
         swing.load_board(actor, tmp_path)
@@ -278,13 +311,14 @@ def test_default_page_is_opportunities_and_stale_click_is_inert(monkeypatch):
         button = next(
             c
             for c in app_controls(page)
-            if isinstance(c, ft.Button)
-            and getattr(c.content, "value", c.content) == "查看条件与反证"
+            if isinstance(c, ft.Button) and getattr(c.content, "value", c.content) == "查看价格参考"
         )
         assert page.navigation_bar is None
         await button.on_click(None)
         assert page.route == "/opportunity/600001.SH"
-        assert any(isinstance(c, ft.Text) and c.value == "什么时候放弃" for c in app_controls(page))
+        assert any(
+            isinstance(c, ft.Text) and c.value == "观察线与失效线" for c in app_controls(page)
+        )
         page.route = "/settings"  # Browser changes the URL before dispatching the event.
         await page.on_route_change(SimpleNamespace(route="/settings"))
         await button.on_click(None)
@@ -341,8 +375,7 @@ def test_disconnected_opportunity_callback_is_inert(monkeypatch):
         button = next(
             c
             for c in app_controls(page)
-            if isinstance(c, ft.Button)
-            and getattr(c.content, "value", c.content) == "查看条件与反证"
+            if isinstance(c, ft.Button) and getattr(c.content, "value", c.content) == "查看价格参考"
         )
         await page.on_disconnect(None)
         await button.on_click(None)

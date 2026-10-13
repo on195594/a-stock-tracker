@@ -248,7 +248,7 @@ def test_owner_login_and_logout(monkeypatch, user_id):
             if user_id in ("12345678", 12345678):
                 assert page.route == "/" and actors[0].is_valid
                 assert any(
-                    isinstance(c, ft.Text) and "还没有经过核验" in c.value
+                    isinstance(c, ft.Text) and "还没有价格参考批次" in c.value
                     for c in app_controls(page.controls[0])
                 )
                 page.route = "/settings"
@@ -384,7 +384,7 @@ def test_retired_page_state_never_restores_workbench(monkeypatch, route):
             assert any(isinstance(c, ft.Text) and c.value == "页面不存在" for c in controls)
             assert page.navigation_bar is None
             back = next(
-                c for c in controls if isinstance(c, ft.TextButton) and c.content == "返回波段观察"
+                c for c in controls if isinstance(c, ft.TextButton) and c.content == "返回研究首页"
             )
             await back.on_click(None)
             assert page.route == "/"
@@ -515,7 +515,7 @@ def test_home_without_published_root_shows_research_and_never_reads_batch(monkey
             )
             text = "\n".join(str(getattr(c, "value", "")) for c in app_controls(page))
             assert "进行中" in text and "最近研究" in text
-            assert "还没有经过核验的机会报告" not in text
+            assert "还没有价格参考批次" not in text
         finally:
             await page.on_close(None)
 

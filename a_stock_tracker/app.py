@@ -1,4 +1,4 @@
-"""Authenticated, read-only Flet Web application for swing opportunities."""
+"""Authenticated, read-only Flet Web application for individual-stock research."""
 
 from __future__ import annotations
 
@@ -73,7 +73,7 @@ def build_app():
     research = DemoResearchClient() if APP_MODE == "demo" else configured_client()
 
     async def main(page: ft.Page):
-        page.title = "波段观察"
+        page.title = "个股研究助手"
         page.theme_mode = ft.ThemeMode.LIGHT
         page.fonts = {"NotoSansSC": CHINESE_FONT}
         page.theme = window_theme()
@@ -203,7 +203,7 @@ def build_app():
                         ),
                         ft.TextButton(
                             icon=ft.Icons.ARROW_BACK,
-                            content="返回波段观察",
+                            content="返回研究首页",
                             on_click=open_route("/", gen, actor),
                             height=48,
                         ),
@@ -346,7 +346,7 @@ def build_app():
                         ),
                         ft.TextButton(
                             icon=ft.Icons.ARROW_BACK,
-                            content="返回波段观察",
+                            content="返回研究首页",
                             on_click=open_route("/", gen, actor),
                             height=48,
                         ),
@@ -511,7 +511,7 @@ def build_app():
                 confirmation.value = False
                 confirmation.label = (
                     "已核对范围、预算与模型，接受模型费用无硬上限"
-                    if mode.value != "screen" and not info["demo"]
+                    if mode.value == "financial" and not info["demo"]
                     else "已核对范围、预算与模型，确认启动"
                 )
                 submit.disabled = True
@@ -520,7 +520,7 @@ def build_app():
                     "合成演示：不调用真实接口，不产生费用。"
                     if info["demo"]
                     else "确认后后台请求行情"
-                    + ("，不调用模型。" if mode.value == "screen" else "并调用模型。"),
+                    + ("并调用模型。" if mode.value == "financial" else "，不调用模型。"),
                     f"上限：{selected['requests']} 次数据请求 · {selected['seconds']} 秒"
                     + (f" · {selected['reports']} 份财报报告" if selected["reports"] else ""),
                 ]
@@ -532,13 +532,11 @@ def build_app():
                             f"总市值≥{screening['total_mv_min_yi']}亿元，不设上限。"
                         )
                     lines.append(
-                        "结果是筛后同业排名（不是完整行业前三），只代表财报资格、不是波段推荐；"
+                        "结果是筛后同业排名（不是完整行业前三），只代表财报资格、不代表投资价值；"
                         "门槛未经收益验证，可能漏选。"
                     )
-                else:
+                elif mode.value == "financial":
                     model_budget = quote(info, mode.value)["model_budget"]
-                    if mode.value == "swing":
-                        lines.append("最多五家，每家解释与复核各一次；不保证入选。")
                     lines.append(
                         f"模型：{info['model']['provider']} / {info['model']['model']}，"
                         f"最多 {model_budget['calls']} 次调用，每次本地等待 ≤"
@@ -547,6 +545,10 @@ def build_app():
                     lines.append(
                         ("真实运行时：" if info["demo"] else "")
                         + "输出 token 与费用无硬上限；本地超时不保证提供方停止计费，失败调用也可能计费。"
+                    )
+                if mode.value == "swing":
+                    lines.append(
+                        "最多五家，仅计算价格纪律参考，不调用模型；不因趋势或距离排除资料完整的公司。"
                     )
                 budget.value = "\n".join(lines)
                 if not selected["available"]:
@@ -627,12 +629,12 @@ def build_app():
             controls = [
                 ft.TextButton(
                     icon=ft.Icons.ARROW_BACK,
-                    content="返回波段观察",
+                    content="返回研究首页",
                     on_click=open_route("/", gen, actor),
                     height=48,
                 ),
                 heading("选股与研究", size=30, level=1),
-                paragraph("选择目标 → 核对预算并启动 → 查看进度与结果。无需终端命令。"),
+                paragraph("选择目标 → 核对预算并启动 → 查看进度与结果。"),
                 heading("这次想做什么", size=18),
                 mode,
                 codes,
@@ -812,7 +814,7 @@ def build_app():
                             heading("页面不存在", size=30, level=1),
                             ft.TextButton(
                                 icon=ft.Icons.ARROW_BACK,
-                                content="返回波段观察",
+                                content="返回研究首页",
                                 on_click=open_route("/", gen, actor),
                                 height=48,
                             ),
@@ -838,7 +840,7 @@ def build_app():
                         ft.Button("重新读取", on_click=retry, height=48),
                         ft.TextButton(
                             icon=ft.Icons.ARROW_BACK,
-                            content="返回波段观察",
+                            content="返回研究首页",
                             on_click=open_route("/", gen, actor),
                             height=48,
                         ),
@@ -866,7 +868,7 @@ def build_app():
         settings_button.on_click = show_settings
         header = ft.Row(
             [
-                ft.Text("波段观察", size=18, weight=ft.FontWeight.BOLD, color=INK, expand=True),
+                ft.Text("个股研究助手", size=18, weight=ft.FontWeight.BOLD, color=INK, expand=True),
                 ft.Container(
                     ft.Text("合成演示", size=13, color=ACCENT),
                     bgcolor=BAND,

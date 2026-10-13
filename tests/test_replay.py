@@ -27,9 +27,10 @@ def test_shared_conditions_match_evaluate(kind):
     original = deepcopy((stock, benchmark))
     result = swing.price_conditions(stock, benchmark)
     evaluated = swing.evaluate(packet)
-    assert evaluated["levels"] == {k: result[k] for k in ("trigger", "stop", "ceiling", "volume")}
-    assert evaluated["reasons"] == result["reasons"]
-    assert f"{result['risk']:.2f}%" in evaluated["facts"]["distance"]
+    assert evaluated["levels"]["trigger"] == result["trigger"]
+    assert evaluated["levels"]["stop"] == result["stop"]
+    assert evaluated["status"] == "reference"
+    assert bool(result["reasons"]) == (kind != "observation")
     assert result["risk"] == pytest.approx(
         (result["ceiling"] - result["stop"]) / result["ceiling"] * 100
     )
@@ -42,7 +43,8 @@ def test_price_rounding_keeps_existing_evaluate_behavior():
     result = swing.price_conditions(packet["bars"], packet["benchmark"])
     assert result["trigger"] == 11.25
     assert result["ceiling"] == 11.47
-    assert swing.evaluate(packet)["levels"]["ceiling"] == 11.47
+    assert swing.RULE == "swing-observation-v1"
+    assert swing.evaluate(packet)["levels"]["trigger"] == 11.25
 
 
 class SyntheticClient:

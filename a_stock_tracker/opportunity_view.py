@@ -7,7 +7,7 @@ from typing import Any
 
 import flet as ft
 
-from a_stock_tracker.opportunities import LIMITS, SECTIONS
+from a_stock_tracker.opportunities import LIMITS, RULE, SECTIONS
 from a_stock_tracker.research import SHANGHAI
 
 BACKGROUND = "#E6EFF0"
@@ -114,6 +114,48 @@ def notice(
     )
 
 
+def price_summary(row: dict[str, Any]) -> str:
+    if row["status"] == "gap":
+        return "资料缺口：" + "；".join(row["reasons"])
+    if row["status"] == "excluded":
+        return "旧规则未入选：" + "；".join(row["reasons"])
+    dates = f"依据截至 {row['as_of']}；有效至 {row['expires']}（后续5个交易日）"
+    if row.get("expired"):
+        return dates + "\n价格参考已过期，观察线、失效线和距离已隐藏。"
+    if row["status"] == "observation":
+        return dates + "\n旧规则批次；请进入详情核查历史条件。"
+    levels = row["levels"]
+    return (
+        f"收盘 {levels['close']:.2f} 元；失效线 {levels['stop']:.2f} 元；"
+        f"收盘至失效线距离 {levels['distance']:.2f}%\n" + dates
+    )
+
+
+def reference_controls(row: dict[str, Any], detail: bool) -> list[ft.Control]:
+    controls: list[ft.Control] = [
+        notice(
+            "价格参考已过期" if row.get("expired") else "价格纪律参考",
+            price_summary(row),
+            caution=bool(row.get("expired")),
+        )
+    ]
+    if detail:
+        facts = row["facts"]
+        controls.extend(
+            [heading("量价事实", size=18), paragraph(facts["trend"]), paragraph(facts["relative"])]
+        )
+        if not row.get("expired"):
+            controls.extend(
+                [
+                    heading("观察线与失效线", size=18),
+                    paragraph(facts["condition"]),
+                    paragraph(facts["invalidation"]),
+                    paragraph(facts["distance"]),
+                ]
+            )
+    return controls
+
+
 def opportunity_view(
     board: dict[str, Any] | None,
     code: str | None,
@@ -127,14 +169,14 @@ def opportunity_view(
     if code:
         controls.append(
             ft.TextButton(
-                icon=ft.Icons.ARROW_BACK, content="返回波段观察", on_click=go_back, height=48
+                icon=ft.Icons.ARROW_BACK, content="返回价格参考", on_click=go_back, height=48
             )
         )
     else:
         controls.extend(
             [
-                heading("波段观察", size=22 if embedded else 30, level=2 if embedded else 1),
-                paragraph("先读解释与反证，再核对价格条件。"),
+                heading("价格纪律参考", size=22 if embedded else 30, level=2 if embedded else 1),
+                paragraph("价格由程序计算；请结合财报反证与资料缺口判断。"),
             ]
         )
         if action:
@@ -143,13 +185,15 @@ def opportunity_view(
         controls.extend(
             [
                 ft.Divider(),
-                heading("还没有经过核验的机会报告", level=1 if code else 2),
+                heading("还没有价格参考批次", level=1 if code else 2),
                 paragraph(
-                    "尚未配置或发布批次。打开页面不会请求行情或模型，也不会把旧财报排名当作波段推荐。"
+                    "尚未配置或发布批次。打开页面不会请求行情或模型，财报排名不代表价格判断。"
                 ),
             ]
         )
     else:
+        if board.get("rule") == RULE:
+            controls.append(notice("旧规则批次", "历史结果只读，按原有效期隐藏过期条件。"))
         source = "来源：" + board["source"]
         if board.get("created_at"):
             source += "\n批次生成：" + local_time(board["created_at"])
@@ -158,25 +202,27 @@ def opportunity_view(
                 "合成演示 · 非真实股票、非AI研究结果"
                 if board.get("demo")
                 else "显式股票池 · 非全市场精选",
-                source if board.get("demo") else source + "\nAI复核不等于投资逻辑正确。",
+                source if board.get("demo") else source + "\n价格参考不代表投资逻辑正确。",
             )
         )
         rows = board["rows"]
         if code:
             rows = [row for row in rows if row["code"] == code]
             if not rows:
-                controls.append(heading("本批次没有该公司的观察记录。", level=1))
-        available = [r for r in rows if r["status"] == "observation" and not r.get("expired")]
+                controls.append(heading("本批次没有该公司的价格参考记录。", level=1))
+        available = [
+            r for r in rows if r["status"] in {"observation", "reference"} and not r.get("expired")
+        ]
         if not code:
             controls.append(
                 ft.Text(
-                    f"{len(available)} 项有效观察 · {len(rows)} 家显式股票池",
+                    f"{len(available)} 项价格参考 · {len(rows)} 家显式股票池",
                     size=14,
                     color=MUTED,
                 )
             )
             if not available:
-                controls.append(heading("本批次没有有效观察候选，不凑推荐。"))
+                controls.append(heading("本批次没有价格参考，请核查资料缺口。"))
         for row in rows:
             controls.extend(
                 [
@@ -192,10 +238,23 @@ def opportunity_view(
                     ),
                 ]
             )
+            if row["status"] == "reference":
+                controls.extend(reference_controls(row, bool(code)))
+                if not code:
+                    controls.append(
+                        ft.Button(
+                            ft.Text(
+                                "查看价格参考", semantics_label="查看价格参考 · " + row["name"]
+                            ),
+                            on_click=open_company(row["code"]),
+                            height=48,
+                        )
+                    )
+                continue
             if row["status"] != "observation":
                 controls.append(
                     notice(
-                        "未入选" if row["status"] == "excluded" else "资料或解读核验失败",
+                        "未入选" if row["status"] == "excluded" else "资料核验失败",
                         "\n".join(row["reasons"]),
                         caution=True,
                     )
@@ -203,7 +262,7 @@ def opportunity_view(
                 if row["status"] == "excluded":
                     controls.append(
                         paragraph(
-                            f"{row.get('facts', {}).get('distance', '实际距离：未记录')}\n规则上限：8%\n依据日期：{row.get('as_of') or '未记录'}\n下一步：本次不满足观察规则，可返回初筛核查其他公司或另行确认财报研究。"
+                            f"{row.get('facts', {}).get('distance', '实际距离：未记录')}\n规则上限：8%\n依据日期：{row.get('as_of') or '未记录'}\n下一步：本次不满足旧规则，可返回初筛核查其他公司或另行确认财报研究。"
                         )
                     )
                 else:
@@ -214,7 +273,7 @@ def opportunity_view(
                     content=ft.Column(
                         [
                             ft.Text(f"依据截至 {row['as_of']}", size=14, color=MUTED),
-                            ft.Text(f"观察有效至 {row['expires']}", size=14, color=MUTED),
+                            ft.Text(f"历史条件有效至 {row['expires']}", size=14, color=MUTED),
                         ],
                         spacing=8,
                         tight=True,
@@ -226,13 +285,13 @@ def opportunity_view(
             if row.get("expired"):
                 controls.append(
                     notice(
-                        "观察已过期 · 仅供历史查看",
+                        "历史条件已过期 · 仅供历史查看",
                         "价格条件已隐藏；历史解释与量价依据不代表当前仍有效。",
                         caution=True,
                     )
                 )
             else:
-                controls.append(ft.Text("等待条件核对 · 不是已触发信号", size=14, color=ACCENT))
+                controls.append(ft.Text("旧规则历史条件，仅供核查", size=14, color=ACCENT))
             explanation = row["explanation"]
             section_level = 2 if code else 3
             for key, title in SECTIONS.items():
@@ -270,11 +329,15 @@ def opportunity_view(
                             border=ft.Border(left=ft.BorderSide(3, ACCENT)),
                         )
                     )
-                controls.append(paragraph("首版仅作量价观察，不含公告催化、财报拐点或资金验证。"))
+                controls.append(paragraph("旧批次仅含量价资料，不含公告催化、财报拐点或资金验证。"))
                 fact_names = {"trend": "趋势", "relative": "相对强弱", "limits": "缺口与执行风险"}
                 if not row.get("expired"):
                     fact_names.update(
-                        {"condition": "触发条件", "invalidation": "失效条件", "distance": "距离"}
+                        {
+                            "condition": "历史价格条件",
+                            "invalidation": "失效条件",
+                            "distance": "距离",
+                        }
                     )
                 evidence: list[ft.Control] = [
                     ft.Semantics(
@@ -325,8 +388,8 @@ def opportunity_view(
                 controls.append(
                     ft.Button(
                         ft.Text(
-                            "查看条件与反证",
-                            semantics_label="查看条件与反证 · " + row["name"],
+                            "查看历史条件与反证",
+                            semantics_label="查看历史条件与反证 · " + row["name"],
                             size=16,
                         ),
                         on_click=open_company(row["code"]),

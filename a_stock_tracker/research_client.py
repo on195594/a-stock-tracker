@@ -9,8 +9,8 @@ from urllib.parse import urlparse
 
 import httpx
 
-from a_stock_tracker.opportunity_demo import demo_board
-from a_stock_tracker.research_service import LIMITS, quote, validate_request
+from a_stock_tracker.opportunity_demo import demo_board, demo_report
+from a_stock_tracker.research_service import LIMITS, quote, result_summary, validate_request
 
 
 class ResearchUnavailable(Exception):
@@ -110,7 +110,8 @@ class DemoResearchClient:
         for identifier in reversed(self.runs):
             if any(s.get("continued_from") == identifier for s in self.runs.values()):
                 continue
-            state = {k: v for k, v in self.status(identifier).items() if k != "result"}
+            state = self.status(identifier)
+            state["summary"] = result_summary(state.pop("result"))
             count, node = 0, state
             while node.get("continued_from"):
                 count += 1
@@ -137,8 +138,8 @@ class DemoResearchClient:
             raise ResearchRejected("来源初筛不存在")
         if payload["mode"] == "swing":
             board = demo_board(
-                {"600002.SH": "excluded", "600003.SH": "gap", "600004.SH": "zero"}.get(
-                    payload["codes"][0], "observation"
+                {"600002.SH": "wide", "600003.SH": "gap", "600004.SH": "zero"}.get(
+                    payload["codes"][0], "reference"
                 )
             )
             for row in board["rows"]:
@@ -175,14 +176,7 @@ class DemoResearchClient:
                 ],
                 "reports": []
                 if payload["mode"] == "screen"
-                else [
-                    {
-                        "code": payload["codes"][0],
-                        "status": "synthetic",
-                        "evidence_review": "not_real",
-                        "text": "合成财报报告 · 非真实研究结果。这里演示业务、财务、估值、最强反证与证据核查阅读；未请求行情、PDF或模型。",
-                    }
-                ],
+                else [demo_report(payload["codes"][0])],
             }
         if payload["mode"] == "screen":
             result["groups"] = [
@@ -205,9 +199,9 @@ class DemoResearchClient:
                 for i, (industry, name) in enumerate(
                     [
                         ("合成银行", "演示公司"),
-                        ("合成制造", "距离排除示例"),
+                        ("合成制造", "较大距离示例"),
                         ("合成能源", "资料缺口示例"),
-                        ("合成消费", "零观察示例"),
+                        ("合成消费", "无资料示例"),
                     ],
                     1,
                 )

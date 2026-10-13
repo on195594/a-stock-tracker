@@ -105,6 +105,15 @@ def serve_ui_cases(case_file: str, uncompressed_assets: bool = False) -> None:
     from a_stock_tracker.research_client import DemoResearchClient, ResearchQuoteChanged
 
     original_submit = DemoResearchClient.submit
+    original_recent = DemoResearchClient.recent
+
+    def recent(client):
+        # Isolate published-batch state cases from the valid research created earlier.
+        if json.loads(Path(case_file).read_text()) not in {"normal", "quote_changed"}:
+            return []
+        return original_recent(client)
+
+    DemoResearchClient.recent = recent
 
     def submit(client, payload):
         if json.loads(Path(case_file).read_text()) == "quote_changed":
@@ -116,7 +125,7 @@ def serve_ui_cases(case_file: str, uncompressed_assets: bool = False) -> None:
     original = opportunity_demo.demo_board
     failed = False
 
-    def board(scenario="observation"):
+    def board(scenario="reference"):
         nonlocal failed
         case = json.loads(Path(case_file).read_text())
         if case == "missing":
@@ -135,8 +144,8 @@ def serve_ui_cases(case_file: str, uncompressed_assets: bool = False) -> None:
             row["expired"] = True
         elif case == "gap":
             result = original("gap")
-        elif case == "excluded":
-            result = original("excluded")
+        elif case == "wide":
+            result = original("wide")
         elif case == "zero":
             result["rows"] = []
         return result
@@ -307,16 +316,11 @@ def main() -> int:
                         )
                         click_settled(
                             page,
-                            page.get_by_role(
-                                "button", name="查看条件与反证 · 演示公司", exact=True
-                            ),
+                            page.get_by_role("button", name="查看价格参考 · 演示公司", exact=True),
                         )
-                        expect(page.get_by_text("什么条件才重新评估", exact=True)).to_be_visible()
+                        expect(page.get_by_text("观察线与失效线", exact=True)).to_be_visible()
                         assert_layout(page, width)
-                        click_settled(
-                            page, page.get_by_role("button", name=re.compile("^核查依据与AI引用"))
-                        )
-                        expect(page.get_by_text("为什么观察依据：trend、relative")).to_be_visible()
+                        expect(page.get_by_text(re.compile("MA20.*MA60"))).to_be_visible()
                         page.mouse.move(width / 2, 200)
                         page.mouse.wheel(0, -5000)
                         click_settled(page, page.get_by_role("button", name="账户", exact=True))
@@ -326,7 +330,7 @@ def main() -> int:
                         )
                         expect(page).to_have_url(base + "/opportunity/600001.SH")
                         click_settled(
-                            page, page.get_by_role("button", name="返回波段观察", exact=True)
+                            page, page.get_by_role("button", name="返回价格参考", exact=True)
                         )
                         expect(page).to_have_url(base + "/")
                         page.mouse.move(width / 2, 200)
@@ -336,7 +340,7 @@ def main() -> int:
                         expect(page.get_by_text("仅本地合成演示")).to_be_visible()
                         click_settled(page, page.get_by_role("button", name="进入演示", exact=True))
                         expect(
-                            page.get_by_role("heading", name="波段观察", exact=True)
+                            page.get_by_role("heading", name="价格纪律参考", exact=True)
                         ).to_be_visible()
                         click_settled(
                             page, page.get_by_role("button", name="开始选股与研究", exact=True)
@@ -385,7 +389,7 @@ def main() -> int:
                         search.press("ControlOrMeta+A")
                         page.keyboard.insert_text("600004")
                         expect(
-                            page.get_by_role("heading", name="零观察示例 · 600004.SH", exact=True)
+                            page.get_by_role("heading", name="无资料示例 · 600004.SH", exact=True)
                         ).to_be_visible()
                         expect(
                             page.get_by_role("heading", name="演示公司 · 600001.SH", exact=True)
@@ -397,15 +401,17 @@ def main() -> int:
                             page.get_by_role("heading", name="演示公司 · 600001.SH", exact=True)
                         ).to_be_visible()
                         click_settled(
-                            page, page.get_by_role("button", name="核对量价条件", exact=True).first
+                            page,
+                            page.get_by_role("button", name="查看价格纪律参考", exact=True).first,
                         )
                         page.get_by_role("textbox", name="股票代码").focus()
                         expect(page.get_by_role("textbox", name="股票代码")).to_have_value(
                             "600001.SH"
                         )
+                        expect(page.get_by_text("不调用模型", exact=False)).to_be_visible()
                         expect(
                             page.get_by_text("输出 token 与费用无硬上限", exact=False)
-                        ).to_be_visible()
+                        ).to_have_count(0)
                         assert_layout(page, width)
                         start = page.get_by_role("button", name="确认启动研究", exact=True)
                         expect(start).to_be_disabled()
@@ -423,23 +429,21 @@ def main() -> int:
                         click_settled(page, page.get_by_role("checkbox"))
                         click_settled(page, start)
                         expect(
-                            page.get_by_role("heading", name="波段观察", exact=True)
+                            page.get_by_role("heading", name="价格纪律参考", exact=True)
                         ).to_be_visible(timeout=10000)
                         click_settled(
                             page,
-                            page.get_by_role(
-                                "button", name="查看条件与反证 · 演示公司", exact=True
-                            ),
+                            page.get_by_role("button", name="查看价格参考 · 演示公司", exact=True),
                         )
                         expect(
-                            page.get_by_role("heading", name="程序价格条件", exact=True)
+                            page.get_by_role("heading", name="量价事实", exact=True)
                         ).to_be_visible()
                         assert_layout(page, width)
                         click_settled(
-                            page, page.get_by_role("button", name="返回波段观察", exact=True)
+                            page, page.get_by_role("button", name="返回价格参考", exact=True)
                         )
                         expect(
-                            page.get_by_role("heading", name="波段观察", exact=True)
+                            page.get_by_role("heading", name="价格纪律参考", exact=True)
                         ).to_be_visible()
                         click_settled(
                             page, page.get_by_role("button", name="返回来源初筛", exact=True)
@@ -464,27 +468,38 @@ def main() -> int:
                         expect(
                             page.get_by_text(re.compile("合成财报报告 · 非真实研究结果"))
                         ).to_be_visible(timeout=10000)
+                        expect(
+                            page.get_by_role("heading", name="最强反证", exact=True)
+                        ).to_be_visible()
                         assert_layout(page, width)
+                        financial_url = page.url
+                        click_settled(page, page.get_by_role("button", name=re.compile(r"^\[F1\]")))
+                        expect(
+                            page.get_by_text(
+                                "来源 URL：https://example.invalid/synthetic.pdf", exact=True
+                            )
+                        ).to_be_visible()
+                        assert page.get_by_role("link").count() == 0
                         click_settled(
                             page, page.get_by_role("button", name="返回来源初筛", exact=True)
                         )
                         expect(page).to_have_url(screen_url)
                         if width == 360:
                             for code, label in (
-                                ("600002", "规则上限：8%"),
-                                ("600003", "资料或解读核验失败"),
-                                ("600004", "没有有效观察候选"),
+                                ("600002", "收盘至失效线距离 28.57%"),
+                                ("600003", "资料核验失败"),
+                                ("600004", "没有价格参考"),
                             ):
                                 search = page.get_by_role("textbox", name="按代码、名称或行业筛选")
                                 click_settled(page, search)
                                 search.press("ControlOrMeta+A")
                                 page.keyboard.insert_text(code)
                                 expect(
-                                    page.get_by_role("button", name="核对量价条件", exact=True)
+                                    page.get_by_role("button", name="查看价格纪律参考", exact=True)
                                 ).to_have_count(1)
                                 click_settled(
                                     page,
-                                    page.get_by_role("button", name="核对量价条件", exact=True),
+                                    page.get_by_role("button", name="查看价格纪律参考", exact=True),
                                 )
                                 click_settled(page, page.get_by_role("checkbox"))
                                 click_settled(
@@ -512,11 +527,10 @@ def main() -> int:
                         expect(page.get_by_text("续跑 1 次", exact=False).first).to_be_visible()
                     for case, label in (
                         ("long", "合成的超长公司名称"),
-                        ("expired", "观察已过期"),
-                        ("gap", "资料或解读核验失败"),
-                        ("excluded", "未入选"),
-                        ("zero", "没有有效观察候选"),
-                        ("missing", "还没有经过核验的机会报告"),
+                        ("expired", "价格参考已过期"),
+                        ("gap", "资料核验失败"),
+                        ("zero", "没有价格参考"),
+                        ("missing", "还没有价格参考批次"),
                         ("error", "报告暂时不可读"),
                     ):
                         case_file.write_text(json.dumps(case))
@@ -532,11 +546,7 @@ def main() -> int:
                             assert page.get_by_text(re.compile("11\\.23|11\\.00")).count() == 0
                         if case == "expired":
                             click_settled(
-                                page, page.get_by_role("button", name=re.compile("^查看条件与反证"))
-                            )
-                            click_settled(
-                                page,
-                                page.get_by_role("button", name=re.compile("^核查依据与AI引用")),
+                                page, page.get_by_role("button", name=re.compile("^查看价格参考"))
                             )
                             assert page.get_by_text(re.compile("11\\.23|11\\.00")).count() == 0
                         elif case == "error":
@@ -551,23 +561,36 @@ def main() -> int:
                     page.wait_for_selector("flt-semantics-placeholder")
                     page.evaluate('document.querySelector("flt-semantics-placeholder").click()')
                     expect(
-                        page.get_by_role("heading", name="本批次没有该公司的观察记录。", exact=True)
+                        page.get_by_role(
+                            "heading", name="本批次没有该公司的价格参考记录。", exact=True
+                        )
                     ).to_be_visible()
                     assert page.get_by_text(re.compile("11\\.23|11\\.00")).count() == 0
                     page.set_viewport_size({"width": 1280, "height": 900})
                     page.goto(base)
                     page.wait_for_selector("flt-semantics-placeholder")
                     page.evaluate('document.querySelector("flt-semantics-placeholder").click()')
-                    expect(page.get_by_role("heading", name="波段观察", exact=True)).to_be_visible()
+                    expect(
+                        page.get_by_role("heading", name="价格纪律参考", exact=True)
+                    ).to_be_visible()
                     assert_layout(page, 1280)
-                    page.get_by_role("button", name="查看条件与反证 · 演示公司", exact=True).focus()
+                    page.get_by_role("button", name="查看价格参考 · 演示公司", exact=True).focus()
                     page.keyboard.press("Enter")
                     expect(
-                        page.get_by_role("heading", name="什么条件才重新评估", exact=True)
+                        page.get_by_role("heading", name="观察线与失效线", exact=True)
                     ).to_be_visible()
-                    page.get_by_role("button", name=re.compile("^核查依据与AI引用")).focus()
+                    page.goto(financial_url)
+                    page.wait_for_selector("flt-semantics-placeholder")
+                    page.evaluate('document.querySelector("flt-semantics-placeholder").click()')
+                    expect(page.get_by_role("heading", name="财报研究", exact=True)).to_be_visible()
+                    assert_layout(page, 1280)
+                    page.get_by_role("button", name=re.compile(r"^\[F1\]")).focus()
                     page.keyboard.press("Enter")
-                    expect(page.get_by_text("为什么观察依据：trend、relative")).to_be_visible()
+                    expect(
+                        page.get_by_text(
+                            "来源 URL：https://example.invalid/synthetic.pdf", exact=True
+                        )
+                    ).to_be_visible()
                     assert 200 in fonts, "local Chinese font was not loaded"
                     browser.close()
                     print(f"External requests blocked: {sorted(blocked)}")

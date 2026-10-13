@@ -2,7 +2,7 @@
 
 from datetime import timedelta
 
-from a_stock_tracker.opportunities import evaluate, today
+from a_stock_tracker.opportunities import REFERENCE_RULE, evaluate, today
 
 
 def demo_packet():
@@ -44,31 +44,13 @@ def demo_packet():
     }
 
 
-def demo_board(scenario="observation"):
-    row = evaluate(demo_packet())
-    row.update(
-        status="observation",
-        expired=False,
-        explanation={
-            "reason": {
-                "text": "这是合成示例：价格趋势向上，且近期相对基准更强，因此值得等待后续确认，而不是立即追涨。",
-                "refs": ["trend", "relative"],
-            },
-            "counter": {
-                "text": "相对强势也可能是假突破；这里只核对了量价，没有公告和板块催化支持，无法确认上涨能否延续。",
-                "refs": ["limits", "relative"],
-            },
-            "wait": {
-                "text": "等待后续完整日线同时满足价格与成交量条件，再核查最新公告；越过区间不追，跌破失效位置放弃。",
-                "refs": ["condition", "invalidation"],
-            },
-        },
-    )
-    if scenario == "excluded":
-        packet = demo_packet()
+def demo_board(scenario="reference"):
+    packet = demo_packet()
+    if scenario == "wide":
         packet["bars"][-5]["low"] = 8.0
-        row = evaluate(packet)
-    elif scenario == "gap":
+    row = evaluate(packet)
+    row["expired"] = scenario == "expired"
+    if scenario == "gap":
         row = {
             "code": row["code"],
             "name": row["name"],
@@ -76,7 +58,54 @@ def demo_board(scenario="observation"):
             "reasons": ["合成日线资料缺失；补齐资料后另行确认研究。"],
         }
     return {
+        "rule": REFERENCE_RULE,
         "demo": True,
         "source": "本地合成日线，未调用行情或模型",
         "rows": [] if scenario == "zero" else [row],
+    }
+
+
+def demo_report(code):
+    return {
+        "code": code,
+        "status": "synthetic",
+        "evidence_review": "not_real",
+        "documents": [{"period": "2025-12-31", "announced": "2026-04-01"}],
+        "clues": {
+            "industry": "合成行业",
+            "valuation_date": "2026-04-01",
+            "pb": 1.0,
+            "roe_mean": 10.0,
+        },
+        "analysis": {
+            "business": {
+                "text": "合成财报报告 · 非真实研究结果。示例业务依赖单一产品。",
+                "facts": ["F1"],
+            },
+            "financial": {"text": "合成推论：仍需核对回款质量。", "facts": ["F1"]},
+            "valuation": {"text": "合成假设：PB 需要结合资产质量理解。", "facts": ["F1"]},
+            "counterevidence": {
+                "text": "合成反证：单一产品收入集中。需求变化可能影响回款，尚缺订单证据。",
+                "facts": ["F1"],
+            },
+            "change_conditions": {
+                "text": "合成条件：补齐订单与回款原文后重新判断。",
+                "facts": ["F1"],
+            },
+        },
+        "facts": [
+            {
+                "id": "F1",
+                "claim": "合成收入集中事实",
+                "title": "合成年报",
+                "page": 12,
+                "period": "2025-12-31",
+                "announced": "2026-04-01",
+                "quote": "合成引文：收入主要来自单一产品。",
+                "url": "https://example.invalid/synthetic.pdf",
+            }
+        ],
+        "gaps": ["合成缺口：未覆盖临时公告", "合成缺口：订单资料缺失"],
+        "omitted_pages": 2,
+        "error": None,
     }
