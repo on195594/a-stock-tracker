@@ -327,3 +327,398 @@ def test_no_valid_windows_and_small_horizon(tmp_path, no_wait, invalid):
     assert result["pass_rates"]["observation"] is None
     assert result["observation_signal_close"] == {"n": 0}
     json.dumps(result, allow_nan=False)
+
+
+class ForwardClient(SyntheticClient):
+    def __init__(self, periods=150, codes=2):
+        super().__init__(periods, codes)
+        self.changes = {}
+        self.empty_days = set()
+
+    def __getattr__(self, endpoint):
+        original = super().__getattr__(endpoint)
+
+        def request(**params):
+            frame = original(**params)
+            if endpoint == "index_daily":
+                frame = frame.loc[
+                    frame.trade_date.between(params["start_date"], params["end_date"])
+                ]
+            if endpoint in {"daily", "index_daily"}:
+                frame = frame.copy()
+                for (day, code), changes in self.changes.items():
+                    for field, value in changes.items():
+                        frame.loc[(frame.trade_date == day) & (frame.ts_code == code), field] = (
+                            value
+                        )
+                frame = frame.loc[~frame.trade_date.isin(self.empty_days)]
+            return frame
+
+        return request
+
+
+def closed(day, hour=18):
+    return replay.datetime.strptime(day, "%Y%m%d").replace(hour=hour, tzinfo=swing.SHANGHAI)
+
+
+def forward_scan(root, client, at=60, budget=100):
+    return replay.scan(root, client.days[at], budget, client, now=closed(client.days[at]))
+
+
+def test_scan_settle_report_chain(tmp_path, no_wait, monkeypatch):
+    client = ForwardClient()
+    root = tmp_path / "forward"
+    event = forward_scan(root, client)
+    assert event["requests"] == 66
+    assert event["valid_stock_days"] == 2
+    assert len(event["observations"]) == len(event["baseline"]) == 2
+    assert no_wait == [0.5] * 66
+    path = root / "ledger/events.jsonl"
+    prefix = path.read_bytes()
+    header = replay.read_ledger(root)[0]
+    assert header["rule"] == swing.RULE and header["rule_hash"] == replay.rule_hash()
+    assert replay.settle(root, 100, client, now=closed(client.days[124])) == {
+        "settled": 0,
+        "requests": 1,
+    }
+    assert path.read_bytes() == prefix
+    result = replay.settle(root, 100, client, now=closed(client.days[125]))
+    assert result == {"settled": 1, "requests": 67}
+    assert path.read_bytes().startswith(prefix)
+    settled = replay.read_ledger(root)[-1]
+    row = settled["observations"][0]
+    assert row["outcome"] == "expired" and row["trigger_date"] is None
+    for horizon in (10, 20, 40, 60):
+        assert row["metrics"]["returns"][str(horizon)] == pytest.approx(horizon * 0.02 / 11.2 * 100)
+    assert row["metrics"]["excess"]["20"] == pytest.approx((0.4 / 11.2 - 0.1 / 10.3) * 100)
+    assert row["metrics"]["mae20"] == pytest.approx(0)
+    assert row["metrics"]["stop20"] == row["metrics"]["returns"]["20"]
+    assert replay.settle(root, 1, client, now=closed(client.days[-1])) == {
+        "settled": 0,
+        "requests": 0,
+    }
+    out = tmp_path / "report.json"
+    monkeypatch.setattr(sys, "argv", ["replay", "report", "--root", str(root), "--out", str(out)])
+    assert replay.main() == 0
+    report = json.loads(out.read_text())
+    assert report["status"] == "insufficient"
+    assert report["observations_deduplicated"] == report["observations_settled"] == 2
+    assert set(report["gates"].values()) == {"insufficient"}
+    json.dumps(report, allow_nan=False)
+
+
+def test_scan_budget_resume_duplicate_and_rule_freeze(tmp_path, no_wait, monkeypatch):
+    client = ForwardClient()
+    root = tmp_path / "forward"
+    client.failures = 1
+    with pytest.raises(BudgetStop):
+        forward_scan(root, client, budget=2)
+    assert len(client.calls) == 2
+    assert len(replay.read_ledger(root)) == 1
+    event = forward_scan(root, client)
+    assert event["requests"] == 65
+    calls = len(client.calls)
+    with pytest.raises(ScreenError, match="不可重复"):
+        forward_scan(root, client)
+    assert len(client.calls) == calls
+    monkeypatch.setattr(replay, "rule_hash", lambda: "changed")
+    with pytest.raises(ScreenError, match="规则已变化须新账本"):
+        forward_scan(root, client, at=61)
+    assert len(client.calls) == calls
+    assert replay.settle(root, 100, client, now=closed(client.days[125]))["settled"] == 1
+
+
+def test_settle_budget_is_hard_and_preserves_scan(tmp_path, no_wait):
+    client = ForwardClient()
+    root = tmp_path / "forward"
+    forward_scan(root, client)
+    prefix = (root / "ledger/events.jsonl").read_bytes()
+    calls = len(client.calls)
+    with pytest.raises(BudgetStop):
+        replay.settle(root, 2, client, now=closed(client.days[125]))
+    assert len(client.calls) - calls == 2
+    assert (root / "ledger/events.jsonl").read_bytes() == prefix
+    assert replay.settle(root, 65, client, now=closed(client.days[125])) == {
+        "settled": 1,
+        "requests": 65,
+    }
+
+
+@pytest.mark.parametrize(
+    "damage", ["tamper", "unlink_middle", "previous", "partial", "missing", "truncate_tail"]
+)
+def test_ledger_tamper_and_break_refused_before_requests(tmp_path, no_wait, damage):
+    client = ForwardClient()
+    root = tmp_path / "forward"
+    forward_scan(root, client)
+    forward_scan(root, client, at=61)
+    path = root / "ledger/events.jsonl"
+    lines = path.read_bytes().splitlines(keepends=True)
+    if damage == "tamper":
+        lines[1] = lines[1].replace(b'"valid_stock_days":2', b'"valid_stock_days":3')
+    elif damage == "unlink_middle":
+        del lines[1]
+    elif damage == "previous":
+        row = json.loads(lines[-1])
+        row["previous"] = "1" * 64
+        lines[-1] = json.dumps(row).encode() + b"\n"
+    elif damage == "partial":
+        lines[-1] = lines[-1][:-10]
+    elif damage == "truncate_tail":
+        lines.pop()
+    if damage == "missing":
+        path.unlink()
+    else:
+        path.write_bytes(b"".join(lines))
+    calls = len(client.calls)
+    for action in (
+        lambda: forward_scan(root, client, at=62),
+        lambda: replay.settle(root, 100, client, now=closed(client.days[125])),
+        lambda: replay.report(root),
+    ):
+        with pytest.raises(ScreenError, match="账本"):
+            action()
+    assert len(client.calls) == calls
+
+
+@pytest.mark.parametrize("outcome", ["triggered", "invalidated_first", "gap_above", "data_gap"])
+def test_forward_outcomes_stop_and_missing(tmp_path, no_wait, outcome):
+    client = ForwardClient()
+    root = tmp_path / "forward"
+    forward_scan(root, client)
+    day, code = client.days[61], client.codes[0]
+    if outcome == "triggered":
+        client.changes[(day, code)] = dict(open=11.25, close=11.25, high=11.3, vol=20000)
+        client.changes[(client.days[62], code)] = dict(open=10.5, low=10.0, pre_close=11.25)
+    elif outcome == "invalidated_first":
+        # Invalidation wins even when the same daily bar also meets the trigger.
+        client.changes[(day, code)] = dict(low=10.0, close=11.25, high=11.3, vol=20000)
+    elif outcome == "gap_above":
+        client.changes[(day, code)] = dict(close=12.0, high=12.0)
+    else:
+        client.empty_days.add(day)
+    replay.settle(root, 100, client, now=closed(client.days[125]))
+    result = replay.read_ledger(root)[-1]
+    row = result["observations"][0]
+    assert row["outcome"] == outcome
+    if outcome == "triggered":
+        assert row["trigger_date"] == day
+        assert row["triggered_metrics"]["stop20"] == pytest.approx((10.5 / 11.25 - 1) * 100)
+        assert row["triggered_metrics"]["stop_date"] == client.days[62]
+        assert set(row["triggered_metrics"]["returns"]) == {"10", "20", "40", "60"}
+    if outcome == "data_gap":
+        for group in ("observations", "baseline"):
+            metrics = result[group][0]["metrics"]
+            assert metrics["returns"] == dict.fromkeys(("10", "20", "40", "60"))
+            assert metrics["excess"]["20"] is metrics["mae20"] is metrics["stop20"] is None
+            assert metrics["data_gaps"] == [day]
+    json.dumps(result, allow_nan=False)
+
+
+def test_forward_split_uses_pre_close_chain_for_stock_and_index(tmp_path, no_wait):
+    client = ForwardClient()
+    root = tmp_path / "forward"
+    forward_scan(root, client)
+    for day in client.days[70:]:
+        for code, step in [(client.codes[0], 0.02), ("000300.SH", 0.005)]:
+            prices = client.price(day, code, step)
+            client.changes[(day, code)] = {
+                k: prices[k] / 2 for k in replay.PRICE_FIELDS if k != "vol"
+            }
+    replay.settle(root, 100, client, now=closed(client.days[125]))
+    metrics = replay.read_ledger(root)[-1]["observations"][0]["metrics"]
+    assert metrics["returns"]["20"] == pytest.approx(0.4 / 11.2 * 100)
+    assert metrics["excess"]["20"] == pytest.approx((0.4 / 11.2 - 0.1 / 10.3) * 100)
+    assert metrics["mae20"] == pytest.approx(0)
+
+
+def test_scan_close_calendar_and_sampling(tmp_path, no_wait):
+    client = ForwardClient(codes=502)
+    day = client.days[60]
+    with pytest.raises(ScreenError, match="18:00"):
+        replay.scan(tmp_path / "early", day, 100, client, now=closed(day, 17))
+    assert not client.calls
+    first = forward_scan(tmp_path / "first", client)
+    second = forward_scan(tmp_path / "second", client)
+    assert first["baseline"] == second["baseline"]
+    assert len(first["baseline"]) == 500
+    assert len({r["code"] for r in first["baseline"]}) == 500
+    assert len(first["observations"]) == 502
+    weekend = "20240330"
+    with pytest.raises(ScreenError, match="不是交易日"):
+        replay.scan(tmp_path / "weekend", weekend, 100, client, now=closed(weekend))
+    historical = replay.scan(tmp_path / "historical", day, 100, client, now=closed(client.days[-1]))
+    assert not historical["prospective"]
+    assert replay.report(tmp_path / "historical")["observations_deduplicated"] == 0
+
+
+def promotion_events(values=(1, 1, 1, 1, 1, 1, 1), *, baseline=-6, mae=-5):
+    events = [{"type": "rule", "rule": swing.RULE, "rule_hash": "synthetic"}]
+    for month, value in enumerate(values, 1):
+        day = f"2024{month:02}15"
+        sessions = pd.bdate_range(end=day, periods=61).strftime("%Y%m%d").tolist()
+        samples = [{"code": f"{600000 + i}.SH"} for i in range(50)]
+        events.append(
+            {
+                "type": "scan",
+                "as_of": day,
+                "prospective": True,
+                "sessions": sessions,
+                "observations": samples,
+            }
+        )
+        events.append(
+            {
+                "type": "settle",
+                "as_of": day,
+                "observations": [
+                    {"code": sample["code"], "metrics": {"excess": {"20": value}, "mae20": mae}}
+                    for sample in samples
+                ],
+                "baseline": [{"metrics": {"mae20": baseline}}],
+            }
+        )
+    return events
+
+
+@pytest.mark.parametrize(
+    "case, status",
+    [
+        ("short", "insufficient"),
+        ("pass", "pass"),
+        ("negative", "fail"),
+        ("ci", "fail"),
+        ("mae", "fail"),
+        ("missing", "insufficient"),
+    ],
+)
+def test_promotion_gates(case, status):
+    events = promotion_events()
+    if case == "short":
+        events = events[:-2]
+    elif case == "negative":
+        events = promotion_events((-1,) * 7)
+    elif case == "ci":
+        events = promotion_events((1, 1, 1, 1, 1, 1, -5))
+    elif case == "mae":
+        events = promotion_events(mae=-7)
+    elif case == "missing":
+        events = promotion_events((None,) * 7)
+    result = replay.promotion_report(events)
+    assert result["status"] == status
+    if case == "pass":
+        assert result["forward_months"] == 6 and result["observations_deduplicated"] == 350
+        assert result["excess20_ci95"] == [1, 1]
+        assert result["positive_month_fraction"] == 1
+        assert set(result["gates"].values()) == {"pass"}
+    if case == "ci":
+        assert result["gates"]["excess_ci"] == "fail"
+        assert result["gates"]["positive_months"] == "pass"
+    json.dumps(result, allow_nan=False)
+
+
+def test_month_cluster_ci_and_ten_session_deduplication():
+    events = promotion_events((1, 2, 3, 4, 5, 6, 7))
+    result = replay.promotion_report(events)
+    se = np.std([1, 2, 3, 4, 5, 6, 7], ddof=1) / np.sqrt(7)
+    assert result["excess20_ci95"] == pytest.approx([4 - 1.96 * se, 4 + 1.96 * se])
+    extra = deepcopy(events[1])
+    extra["as_of"] = "20240126"  # Nine sessions since January 15: exclude.
+    extra["sessions"] = pd.bdate_range(end=extra["as_of"], periods=61).strftime("%Y%m%d").tolist()
+    events.append(extra)
+    assert replay.promotion_report(events)["observations_deduplicated"] == 350
+    extra["as_of"] = "20240129"  # Ten sessions: include, but still unsettled.
+    extra["sessions"] = pd.bdate_range(end=extra["as_of"], periods=61).strftime("%Y%m%d").tolist()
+    result = replay.promotion_report(events)
+    assert result["observations_deduplicated"] == 400
+    assert result["observations_settled"] == result["excess20_count"] == 350
+
+
+def test_missing_later_bar_keeps_only_complete_horizons(tmp_path, no_wait):
+    client = ForwardClient()
+    root = tmp_path / "forward"
+    forward_scan(root, client)
+    day = client.days[75]
+    client.changes[(day, client.codes[0])] = {"vol": 0}
+    replay.settle(root, 100, client, now=closed(client.days[125]))
+    row = replay.read_ledger(root)[-1]["observations"][0]
+    assert row["outcome"] == "expired"
+    assert row["metrics"]["returns"]["10"] is not None
+    assert row["metrics"]["returns"]["20"] is None
+    assert row["metrics"]["excess"]["20"] is None
+    assert row["metrics"]["mae20"] is None
+    assert row["metrics"]["data_gaps"] == [day]
+
+
+def test_ledger_directory_sync_failure_does_not_publish_success(tmp_path, no_wait, monkeypatch):
+    client = ForwardClient()
+    root = tmp_path / "forward"
+    event = forward_scan(root, client)
+    path = root / "ledger/events.jsonl"
+    prefix = path.read_bytes()
+    original = replay.os.fsync
+    failed = False
+
+    def fail_once(fd):
+        nonlocal failed
+        if not failed and replay.stat.S_ISDIR(replay.os.fstat(fd).st_mode):
+            failed = True
+            raise OSError("synthetic directory fsync failure")
+        original(fd)
+
+    monkeypatch.setattr(replay.os, "fsync", fail_once)
+    with replay.ledger_root(root), pytest.raises(OSError, match="fsync"):
+        replay.append_event(root, {**event, "as_of": client.days[61]})
+    assert path.read_bytes() == prefix
+    assert len(replay.read_ledger(root)) == 2
+
+
+def test_interrupted_head_publication_fails_closed(tmp_path, no_wait, monkeypatch):
+    client = ForwardClient()
+    root = tmp_path / "forward"
+    event = forward_scan(root, client)
+    original = replay.save_state
+
+    def fail_marker(path, value):
+        if path.name == "replay.json":
+            raise OSError("synthetic anchor failure")
+        original(path, value)
+
+    monkeypatch.setattr(replay, "save_state", fail_marker)
+    with replay.ledger_root(root), pytest.raises(OSError, match="anchor"):
+        replay.append_event(root, {**event, "as_of": client.days[61]})
+    with pytest.raises(ScreenError, match="末端锚点"):
+        replay.report(root)
+
+
+def test_cached_request_identity_mismatch_refused(tmp_path, no_wait):
+    client = ForwardClient()
+    root = tmp_path / "forward"
+    with pytest.raises(BudgetStop):
+        forward_scan(root, client, budget=6)
+    path = root / "daily" / f"{client.days[0]}.json"
+    cached = read_state(path)
+    cached["params"]["trade_date"] = client.days[1]
+    save_state(path, cached)
+    calls = len(client.calls)
+    with pytest.raises(ScreenError, match="缓存请求身份"):
+        forward_scan(root, client)
+    assert len(client.calls) == calls
+
+
+@pytest.mark.parametrize("invalid", [True, "10000", None])
+def test_scan_rejects_invalid_numeric_evidence_on_first_fetch(tmp_path, no_wait, invalid):
+    client = ForwardClient()
+    price = client.price
+
+    def malformed(day, code, step):
+        row = price(day, code, step)
+        if code != "000300.SH" and day == client.days[0]:
+            row["vol"] = invalid
+        return row
+
+    client.price = malformed
+    event = forward_scan(tmp_path / "forward", client)
+    assert event["valid_stock_days"] == 0
+    assert event["observations"] == event["baseline"] == []
+    assert len(event["gaps"]) == 2
