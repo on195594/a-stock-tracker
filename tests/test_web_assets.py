@@ -102,10 +102,14 @@ def test_startup_manifest_registers_chinese_and_preserves_bundled_families():
     assert response.headers["cache-control"] == "no-cache"
     manifest = response.json()
     upstream = json.loads((Path(get_package_web_dir()) / "assets/FontManifest.json").read_text())
-    assert all(entry in manifest for entry in upstream)
+    assert all(
+        entry in manifest for entry in upstream if entry["family"] not in {"Roboto", "NotoSansSC"}
+    )
     chinese = [entry for entry in manifest if entry["family"] == "NotoSansSC"]
     assert chinese == [{"family": "NotoSansSC", "fonts": [{"asset": "../" + CHINESE_FONT}]}]
-    assert sum(entry["family"] == "Roboto" for entry in manifest) == 1
+    assert [entry for entry in manifest if entry["family"] == "Roboto"] == [
+        {"family": "Roboto", "fonts": [{"asset": "../" + CHINESE_FONT}]}
+    ]
     # Flutter resolves manifest entries under /assets/. Reuse the original URL so
     # startup loading and the existing HTML preload share one cached download.
     path = urljoin("/assets/", chinese[0]["fonts"][0]["asset"])

@@ -25,11 +25,16 @@ class PublicAssetCompression:
         manifest = json.loads(
             (Path(get_package_web_dir()) / "assets/FontManifest.json").read_text()
         )
-        families = {entry["family"] for entry in manifest}
-        if "Roboto" not in families:
-            manifest.append({"family": "Roboto", "fonts": [{"asset": "fonts/roboto.woff2"}]})
-        manifest = [entry for entry in manifest if entry["family"] != "NotoSansSC"]
-        manifest.append({"family": "NotoSansSC", "fonts": [{"asset": "../" + CHINESE_FONT}]})
+        # Flutter also uses Roboto for initial/default text before Flet's remote
+        # theme has reached every frame. Give that default family the same complete
+        # app subset, not a second same-weight face (Skia would keep selecting the
+        # Latin-only face). Latin default text now intentionally matches the app's
+        # Noto typography too; icon/math families remain untouched.
+        manifest = [entry for entry in manifest if entry["family"] not in {"Roboto", "NotoSansSC"}]
+        manifest.extend(
+            {"family": family, "fonts": [{"asset": "../" + CHINESE_FONT}]}
+            for family in ("Roboto", "NotoSansSC")
+        )
         self.font_manifest = JSONResponse(manifest, headers={"Cache-Control": "no-cache"})
         self.compressed = GZipMiddleware(app, minimum_size=1024, compresslevel=4)
 
