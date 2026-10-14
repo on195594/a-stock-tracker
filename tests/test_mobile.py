@@ -41,6 +41,7 @@ def click_settled(page, control):
             raise PlaywrightTimeoutError("Control did not settle inside viewport within 5000ms")
         return remaining
 
+    page._font_step = str(control)
     before = None
     box = None
     scrolls = 0
@@ -267,11 +268,12 @@ def main() -> int:
                     context = browser.new_context(viewport={"width": 390, "height": 844})
                     blocked = set()
                     fonts = []
+                    font_started = time.monotonic()
                     failed_fonts = []
                     font_messages = deque(maxlen=40)
                     font_manifests = []
                     page = context.new_page()
-                    page.on(
+                    context.on(
                         "console",
                         lambda message: (
                             font_messages.append((message.type, message.text[:1200]))
@@ -351,15 +353,26 @@ def main() -> int:
                             else None
                         ),
                     )
-                    context.on(
-                        "response",
-                        lambda response: (
-                            failed_fonts.append((response.status, response.url))
-                            if response.status >= 400
-                            and urlparse(response.url).path.endswith((".woff2", ".ttf", ".otf"))
-                            else None
-                        ),
-                    )
+
+                    def record_failed_font(response):
+                        if response.status < 400 or not urlparse(response.url).path.endswith(
+                            (".woff2", ".ttf", ".otf")
+                        ):
+                            return
+                        source_page = response.frame.page
+                        failure = {
+                            "elapsed_ms": round((time.monotonic() - font_started) * 1000),
+                            "status": response.status,
+                            "font": response.url,
+                            "page": source_page.url,
+                            "last_click": getattr(source_page, "_font_step", "initial navigation"),
+                            "viewport": source_page.viewport_size,
+                            "case": getattr(source_page, "_font_case", "normal"),
+                        }
+                        failed_fonts.append(failure)
+                        print("Synthetic font failure:", failure, flush=True)
+
+                    context.on("response", record_failed_font)
                     for width in (360, 390, 430):
                         page.set_viewport_size({"width": width, "height": 844})
                         timeout = 60000 if "--mobile-network" in sys.argv else 15000
@@ -698,6 +711,7 @@ def main() -> int:
                         # Isolate Flet reconnect state from the previous case's detail route.
                         page.close()
                         page = context.new_page()
+                        page._font_case = case
                         page.set_viewport_size({"width": 360, "height": 844})
                         page.goto(base + "/published")
                         page.wait_for_selector("flt-semantics-placeholder")
