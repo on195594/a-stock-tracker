@@ -10,6 +10,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+from collections import deque
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -259,7 +260,60 @@ def main() -> int:
                     blocked = set()
                     fonts = []
                     failed_fonts = []
+                    font_messages = deque(maxlen=40)
+                    font_manifests = []
                     page = context.new_page()
+                    page.on(
+                        "console",
+                        lambda message: (
+                            font_messages.append((message.type, message.text[:1200]))
+                            if message.type in {"warning", "error"}
+                            or "font" in message.text.lower()
+                            else None
+                        ),
+                    )
+                    page.on(
+                        "pageerror",
+                        lambda error: font_messages.append(("pageerror", str(error)[:1200])),
+                    )
+                    context.on(
+                        "response",
+                        lambda response: (
+                            font_manifests.append(response.json())
+                            if urlparse(response.url).path == "/assets/FontManifest.json"
+                            and response.status == 200
+                            else None
+                        ),
+                    )
+
+                    def assert_fonts():
+                        manifest_families = [
+                            entry
+                            for manifest in font_manifests
+                            for entry in manifest
+                            if entry.get("family") in {"NotoSansSC", "Roboto"}
+                        ]
+                        if failed_fonts or not any(
+                            entry.get("family") == "NotoSansSC" for entry in manifest_families
+                        ):
+                            timings = page.evaluate("""() => performance.getEntriesByType('resource')
+                                .filter(r => /FontManifest|\\.(woff2|ttf|otf)$/.test(r.name))
+                                .map(r => ({url: r.name, start: r.startTime, end: r.responseEnd,
+                                    bytes: r.encodedBodySize, transferred: r.transferSize}))""")
+                            print(
+                                "Synthetic font diagnostics:",
+                                {
+                                    "manifest": manifest_families,
+                                    "console": list(font_messages),
+                                    "resources": timings,
+                                },
+                                flush=True,
+                            )
+                        assert any(
+                            entry.get("family") == "NotoSansSC" for entry in manifest_families
+                        ), "Browser did not receive the augmented startup font manifest"
+                        assert not failed_fonts, f"Font requests failed: {failed_fonts}"
+
                     context.on(
                         "requestfailed",
                         lambda request: (
@@ -334,7 +388,7 @@ def main() -> int:
                             )
                             encoding = "identity" if "--uncompressed-assets" in sys.argv else "gzip"
                             print(f"Synthetic cold entry ({network}, {encoding}): {metrics}")
-                            assert not failed_fonts, f"Font requests failed: {failed_fonts}"
+                            assert_fonts()
                             if "--performance-only" in sys.argv:
                                 browser.close()
                                 return 0
@@ -720,7 +774,7 @@ def main() -> int:
                         )
                     ).to_be_visible()
                     assert 200 in fonts, "local Chinese font was not loaded"
-                    assert not failed_fonts, f"Font requests failed: {failed_fonts}"
+                    assert_fonts()
                     browser.close()
                     print(f"External requests blocked: {sorted(blocked)}")
                 print(
