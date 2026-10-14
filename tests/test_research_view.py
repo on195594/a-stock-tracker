@@ -367,3 +367,69 @@ def test_financial_without_report_artifact_is_not_a_screening_result(status):
     action.on_click(None)
     assert visited == ["/analysis?mode=swing&code=600001.SH"]
     assert run == before
+
+
+@pytest.mark.parametrize("omitted", [{}, {"omitted_pages": None}, {"omitted_pages": ""}])
+@pytest.mark.parametrize("status,error", [("incomplete", "ScreenError"), ("incomplete", None)])
+def test_missing_failed_report_evidence_never_implies_zero_pages_or_known_dates(
+    omitted, status, error
+):
+    import flet as ft
+
+    from a_stock_tracker.research_view import report_controls
+
+    report = {"code": "002236.SZ", "status": status, "error": error, **omitted}
+    before = deepcopy(report)
+    text = "\n".join(text_values(ft.Column(report_controls(report))))
+    assert "未纳入分析的原文：未记录（无法确认页数）" in text
+    assert "未纳入分析的原文：0 页" not in text
+    assert "资料日期：未记录" in text
+    assert "资料截至" not in text
+    assert "范围内完整" not in text
+    assert report == before
+
+
+@pytest.mark.parametrize("count", [0, 2])
+def test_recorded_omitted_page_counts_remain_visible(count):
+    import flet as ft
+
+    from a_stock_tracker.opportunity_demo import demo_report
+    from a_stock_tracker.research_view import report_controls
+
+    report = demo_report("600001.SH")
+    report.update(status="scoped_complete" if count == 0 else "incomplete", omitted_pages=count)
+    text = "\n".join(text_values(ft.Column(report_controls(report))))
+    assert f"未纳入分析的原文：{count} 页" in text
+    assert "无法确认页数" not in text
+
+
+def test_failed_report_explains_safe_diagnostic_and_hides_draft():
+    import flet as ft
+
+    from a_stock_tracker.research_view import report_controls
+
+    message = "原文提取失败，请核查报告文件。"
+    report = {
+        "code": "002236.SZ",
+        "status": "incomplete",
+        "error": message,
+        "diagnostic": {
+            "stage": "document_extraction",
+            "category": "extraction_error",
+            "message": message,
+        },
+        "documents": [],
+        "omitted_pages": None,
+        "analysis": {"business": {"text": "未复核草稿", "facts": []}},
+        "facts": [{"claim": "未复核事实"}],
+    }
+    before = deepcopy(report)
+    text = "\n".join(text_values(ft.Column(report_controls(report))))
+    assert "原文/模型检查失败，没有可读结论" in text
+    assert "失败阶段：提取报告原文" in text
+    assert "失败原因：" + message in text
+    assert text.count(message) == 1
+    assert "未复核草稿" not in text and "未复核事实" not in text
+    assert "资料日期：未记录" in text
+    assert "未纳入分析的原文：未记录" in text
+    assert report == before

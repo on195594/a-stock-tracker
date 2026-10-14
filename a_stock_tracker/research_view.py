@@ -78,7 +78,27 @@ def report_controls(report) -> list[ft.Control]:
     gaps = report.get("gaps", [])
     if gaps:
         summary.extend([heading("主要缺口", size=18), *[paragraph(g) for g in gaps[:3]]])
-    if report.get("error"):
+    diagnostic = report.get("diagnostic")
+    diagnostic_message = None
+    if isinstance(diagnostic, dict):
+        stage_key = diagnostic.get("stage")
+        stage = {
+            "evidence_load": "读取原文证据",
+            "announcements": "获取公告",
+            "document_selection": "选择定期报告",
+            "document_extraction": "提取报告原文",
+            "evidence_selection": "选择原文证据",
+            "report_generation": "生成研究报告",
+            "citation_validation": "校验原文引用",
+            "independent_review": "独立复核",
+            "review_validation": "校验复核结果",
+            "cached_review": "读取既有复核",
+        }.get(stage_key if isinstance(stage_key, str) else "", "未记录")
+        summary.append(paragraph("失败阶段：" + stage))
+        diagnostic_message = diagnostic.get("message")
+        if diagnostic_message:
+            summary.append(paragraph("失败原因：" + diagnostic_message))
+    if report.get("error") and report["error"] != diagnostic_message:
         summary.append(paragraph(report["error"]))
     controls: list[ft.Control] = [notice("报告 · " + report["code"], "财报研究摘要", extra=summary)]
     clues = report.get("clues", {})
@@ -128,10 +148,14 @@ def report_controls(report) -> list[ft.Control]:
                 controls_padding=16,
             )
         )
+    omitted_pages = report.get("omitted_pages")
+    omitted_text = (
+        f"{omitted_pages} 页"
+        if type(omitted_pages) is int and omitted_pages >= 0
+        else "未记录（无法确认页数）"
+    )
     controls.append(
-        paragraph(
-            f"未纳入分析的原文：{report.get('omitted_pages', 0)} 页。仅定期报告范围内研究，不是投资结论保证。"
-        )
+        paragraph(f"未纳入分析的原文：{omitted_text}。仅定期报告范围内研究，不是投资结论保证。")
     )
     return controls
 

@@ -23,7 +23,7 @@ market-research-v1 → 独立私有 root → 财报机器报告 → 结构化摘
 | `app.py` / `auth.py` / `oauth_completion.py` | Flet 研究确认与只读结果、OAuth、会话与 ASGI 安全边界 |
 | `research_client.py` / `research_view.py` | 无行情/模型凭据的研究 API 客户端、合成请求示例及网页进度/结果 |
 | `research_service.py` | 独立宿主接收器：验证确认报价、单次执行互斥、幂等编号、预算子进程与结果校验 |
-| `web_assets.py` | 仅公开 Flutter JS/WASM 的传输压缩、同源裁剪中文字体预加载与 30 天长缓存，位于 Host/路由安全检查之后 |
+| `web_assets.py` | 仅公开 Flutter JS/WASM 的传输压缩、同源裁剪中文字体启动注册、预加载与 30 天长缓存，位于 Host/路由安全检查之后 |
 | `bounded_process.py` | 管道与子进程内存边界、有界输出读取及硬超时管控 |
 | `opportunities.py` | 有界量价采集、程序计算价格参考、批次发布与鉴权读取 |
 | `replay.py` | 独立离线验证：显式预算采集至私有 JSON 缓存，与 `opportunities.py` 共用价格条件纯函数；重放统计与 append-only 前瞻账本不接入 Web、不作为收益证明 |
@@ -44,7 +44,7 @@ OwnerAuthorization 使用 Flet 支持的授权扩展，在成功完成令牌交�
 
 研究页回调检查 actor、页面 generation 和 connected，异步读取不得在切页、退出、断线或撤销/到期后泄露或覆盖内容。读取失败只提供重读与返回研究首页，不引导到旧工作台。保留 OAuth state、数字 ID 白名单、actor 到期/撤销、Host/WS Origin 与 `/upload` 限制；demo 仅 loopback 与合成数据，生产缺配置拒绝启动。
 
-公开 JS/WASM 按客户端能力 gzip 压缩，范围请求保持原样，保留静态资源 ETag 条件读取。不压缩私人页面、OAuth 或研究响应，不增加业务缓存；同源裁剪中文字体不压缩，但配置 30 天长期静态缓存与 HTML 首屏预加载头，其余动态/业务资源不设长期缓存。动态压缩消耗 CPU，局域网与受限网络的耗时须分别测量。
+公开 JS/WASM 按客户端能力 gzip 压缩，范围请求保持原样，保留静态资源 ETag 条件读取。不压缩私人页面、OAuth 或研究响应，不增加业务缓存；同源裁剪中文字体不压缩，但配置 30 天长期静态缓存与 HTML 首屏预加载头，启动字体 manifest 保留 Flet 原字体并加入同一中文字体 URL，让 Flutter 在首帧前完成加载，避免 page.fonts 异步注册触发未打包的回退分片；其余动态/业务资源不设长期缓存。动态压缩消耗 CPU，局域网与受限网络的耗时须分别测量。
 
 ## 网页研究请求合同
 
@@ -80,7 +80,7 @@ Web 只读 `OPPORTUNITY_ROOT`，检查 actor、大小、路径/符号链接、�
 
 `market-research-v1` 的预算与退出语义见 [运维](operations.md#自动选股与机器研究独立批处理)。它不依赖旧业务数据库，也不把财报排名转换为投资建议。共用范围资格、年度选择与平均名次见 [peer-screen-v1](specs/2026-09-22-peer-screen-spec.md)；证券覆盖、原文引用、私有目录锁和恢复检查继续维护。批处理从当次行情日历确定并冻结估值日，不回退到本地日历维护文件。网页初筛由接收器固定传入 `--pb-mv-screen --max-research 0`，前置门槛见财报子规格。门槛进入报价、冻结快照和结果；接收器将已确认门槛的摘要通过 `--screen-contract` 传给子进程，子进程在连接行情前核对当前规则，拒绝服务未重启而磁盘规则已变化的请求。`total_mv` 保留原始万元单位；仅通过前置校验的行请求财报，缺失不填零。旧规则批次仍可读，但不自动续跑或复用为新结果；指定股票研究不应用此门槛。扫描先核验所有已保存记录，再按行业剩余待扫描数量升序推进，无已知缺口的行业优先；不改变冻结范围内的资格、排名公式或原冻结行顺序，也不保证在预算内出现候选。个人参照筛选、关注列表排名、本地日历自动选日及专用测试已移除；这些删除不改变批处理使用的证据校验与排序公式。
 
-财报 API 从 `read_result` 已校验的原始 report JSON 组装结构化投影，不读取未校验 Markdown、不改写旧批次。返回 status、evidence_review、各文档 period/announced、行业/估值日/PB/ROE 线索、五段 analysis（text 与 fact id）、facts（id/claim/title/page/period/announced/quote/url）、scope_gaps + report gaps、omitted_pages 数量和失败 error。只放行 evidence_review=passed 的 analysis/facts，不返回 rejected_draft 或原始页全文。页面使用 Text 与 ExpansionTile，不渲染 Markdown、图片或外链；复核失败与原文/模型失败分别用中文说明。
+财报 API 从 `read_result` 已校验的原始 report JSON 组装结构化投影，不读取未校验 Markdown、不改写旧批次。返回 status、evidence_review、各文档 period/announced、行业/估值日/PB/ROE 线索、五段 analysis（text 与 fact id）、facts（id/claim/title/page/period/announced/quote/url）、scope_gaps + report gaps、omitted_pages 数量和失败 error。只放行 evidence_review=passed 的 analysis/facts，不返回 rejected_draft 或原始页全文。新失败产物保留实际取得的公告日期、结构化线索和证据范围；证据包未完成时不推算已覆盖页数，`omitted_pages=null` 表示未知，只有明确记录的空列表才表示 0 页。`diagnostic` 仅包含固定阶段、类别和程序预定义说明，不回传异常原文、模型/提供方输出、凭据或宿主路径；价格采集/核验缺口同样保留安全类别且不发布价位。旧产物缺失的原因不能凭推测补写，不修改历史批次。页面使用 Text 与 ExpansionTile，不渲染 Markdown、图片或外链；复核失败与原文/模型失败分别用中文说明。
 
 ## 部署与历史隔离
 

@@ -258,6 +258,7 @@ def main() -> int:
                     context = browser.new_context(viewport={"width": 390, "height": 844})
                     blocked = set()
                     fonts = []
+                    failed_fonts = []
                     page = context.new_page()
                     context.on(
                         "requestfailed",
@@ -285,6 +286,15 @@ def main() -> int:
                         lambda response: (
                             fonts.append(response.status)
                             if response.url.endswith("/fonts/NotoSansSC-Subset.woff2")
+                            else None
+                        ),
+                    )
+                    context.on(
+                        "response",
+                        lambda response: (
+                            failed_fonts.append((response.status, response.url))
+                            if response.status >= 400
+                            and urlparse(response.url).path.endswith((".woff2", ".ttf", ".otf"))
                             else None
                         ),
                     )
@@ -324,6 +334,7 @@ def main() -> int:
                             )
                             encoding = "identity" if "--uncompressed-assets" in sys.argv else "gzip"
                             print(f"Synthetic cold entry ({network}, {encoding}): {metrics}")
+                            assert not failed_fonts, f"Font requests failed: {failed_fonts}"
                             if "--performance-only" in sys.argv:
                                 browser.close()
                                 return 0
@@ -709,6 +720,7 @@ def main() -> int:
                         )
                     ).to_be_visible()
                     assert 200 in fonts, "local Chinese font was not loaded"
+                    assert not failed_fonts, f"Font requests failed: {failed_fonts}"
                     browser.close()
                     print(f"External requests blocked: {sorted(blocked)}")
                 print(

@@ -159,7 +159,9 @@ def test_collect_uses_explicit_pool_and_proven_calendar(damage, monkeypatch):
 
     if damage == "identity":
         result = swing.collect(Client(), "mock", [packet["code"]], as_of)
-        assert result == [{"code": packet["code"], "name": "", "collect_error": "ScreenError"}]
+        assert result[0]["code"] == packet["code"]
+        assert result[0]["collect_error"]["category"] == "issuer_scope"
+        assert result[0]["collect_error"]["stage"] == "issuer_collection"
     elif damage == "latest_weekend":
         weekend = as_of + timedelta(days=2)
         result = swing.collect(Client(), "mock", [packet["code"]], weekend, latest=True)

@@ -87,3 +87,36 @@ def test_real_shell_preload_targets_served_font():
     assert "content-encoding" not in font.headers
     assert font.headers["cache-control"] == "public, max-age=2592000"
     assert "cache-control" not in client.get("/main.dart.wasm").headers
+
+
+def test_startup_manifest_registers_chinese_and_preserves_bundled_families():
+    import json
+    from pathlib import Path
+    from urllib.parse import urljoin
+
+    from flet_web import get_package_web_dir
+
+    client = TestClient(get_asgi_app(), base_url="http://127.0.0.1:8550")
+    response = client.get("/assets/FontManifest.json")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-cache"
+    manifest = response.json()
+    upstream = json.loads((Path(get_package_web_dir()) / "assets/FontManifest.json").read_text())
+    assert all(entry in manifest for entry in upstream)
+    chinese = [entry for entry in manifest if entry["family"] == "NotoSansSC"]
+    assert chinese == [{"family": "NotoSansSC", "fonts": [{"asset": "../" + CHINESE_FONT}]}]
+    assert sum(entry["family"] == "Roboto" for entry in manifest) == 1
+    # Flutter resolves manifest entries under /assets/. Reuse the original URL so
+    # startup loading and the existing HTML preload share one cached download.
+    path = urljoin("/assets/", chinese[0]["fonts"][0]["asset"])
+    assert path == "/" + CHINESE_FONT
+    font = client.get(path)
+    assert font.status_code == 200 and font.content.startswith(b"wOF2")
+    assert (
+        client.get("/assets/FontManifest.json", headers={"Host": "evil.example"}).status_code == 403
+    )
+    # A stale conditional header cannot suppress the augmented startup manifest.
+    assert (
+        client.get("/assets/FontManifest.json", headers={"If-None-Match": '"old"'}).json()
+        == manifest
+    )

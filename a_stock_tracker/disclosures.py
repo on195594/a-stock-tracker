@@ -569,6 +569,103 @@ def report_status_text(status: Any) -> str:
     }.get(status, "未记录" if not status else "状态未识别，需核查原始依据")
 
 
+# Exact host-owned messages only: never publish exception text or provider output.
+FAILURE_REASONS = {
+    "PDF security/report-period identity not established": (
+        "document_identity",
+        "原文证券或报告期身份未能确认；核查所选官方报告。",
+    ),
+    "Missing, blank or non-extractable PDF pages": (
+        "pdf_text",
+        "原文存在空白或无法提取的页面；核查 PDF 文本层。",
+    ),
+    "Invalid PDF page count": ("pdf_pages", "无法确认原文页数；核查 PDF 文件与提取工具。"),
+    "Official response is not PDF": ("source_format", "官方来源未返回 PDF；核查来源可用性。"),
+    "Official source unavailable after two attempts": (
+        "source_unavailable",
+        "官方原文来源不可用；核查网络与来源服务。",
+    ),
+    "Official report for required period unavailable": (
+        "report_missing",
+        "未找到所需报告期的官方报告；核查公告日期与报告范围。",
+    ),
+    "Financial API stale versus official disclosure": (
+        "period_conflict",
+        "财务接口与官方公告的最新报告期不一致；核查资料日期。",
+    ),
+    "Ambiguous official report version": (
+        "report_version",
+        "官方报告存在无法判定的版本冲突；核查更正公告。",
+    ),
+    "Unbound/nonverbatim citation": ("citation_mismatch", "生成引用未能逐字匹配原文；未发布草稿。"),
+    "Numeric claim not literal in source quote": (
+        "numeric_mismatch",
+        "生成数字未能匹配引用原文；未发布草稿。",
+    ),
+    "Numeric unit mismatch": ("numeric_mismatch", "生成数字单位与原文不一致；未发布草稿。"),
+    "Tool-free model invocation failed": (
+        "model_failed",
+        "模型调用未成功；核查运行时与用量记录，失败仍可能计费。",
+    ),
+    "Model isolation/identity mismatch": (
+        "model_identity",
+        "模型身份或无工具隔离检查未通过；核查固定运行配置。",
+    ),
+    "Previous model attempt has no verified response; refusing another charge": (
+        "model_response_unknown",
+        "此前模型调用没有已核验响应；为避免重复收费未再次调用，须核查用量。",
+    ),
+}
+FAILURE_MESSAGES = dict(FAILURE_REASONS.values()) | {
+    "numeric_mismatch": "生成数字或单位未能匹配引用原文；未发布草稿。",
+    "validation_failed": "本阶段资料或结构核验未通过；请按阶段核查已保存依据，未发布确定结论。",
+    "timeout": "本阶段处理超时；核查运行时与用量记录，模型失败仍可能计费。",
+    "process_failed": "本阶段处理程序失败；核查提取工具或模型运行时。",
+    "source_unavailable": "原文来源请求失败；核查网络与来源服务。",
+}
+
+FAILURE_STAGES = {
+    "evidence_load",
+    "announcements",
+    "document_selection",
+    "document_extraction",
+    "evidence_selection",
+    "report_generation",
+    "citation_validation",
+    "independent_review",
+    "review_validation",
+    "cached_review",
+}
+
+
+def failure_diagnostic(stage: str, exc: Exception) -> dict[str, str]:
+    category = FAILURE_REASONS.get(str(exc), ("validation_failed", ""))[0]
+    if isinstance(exc, subprocess.TimeoutExpired):
+        category = "timeout"
+    elif isinstance(exc, subprocess.SubprocessError):
+        category = "process_failed"
+    elif isinstance(exc, requests.RequestException):
+        category = "source_unavailable"
+    return {"stage": stage, "category": category, "message": FAILURE_MESSAGES[category]}
+
+
+def public_diagnostic(value: Any) -> dict[str, str] | None:
+    # Reconstruct the message from trusted codes even for existing artifacts.
+    if (
+        not isinstance(value, dict)
+        or not isinstance(value.get("stage"), str)
+        or value["stage"] not in FAILURE_STAGES
+        or not isinstance(value.get("category"), str)
+        or value["category"] not in FAILURE_MESSAGES
+    ):
+        return None
+    return {
+        "stage": value["stage"],
+        "category": value["category"],
+        "message": FAILURE_MESSAGES[value["category"]],
+    }
+
+
 def structured_report(result: dict[str, Any]) -> dict[str, Any]:
     """Project a verified report envelope; never expose rejected drafts or raw pages."""
     packet = result.get("evidence", {})
@@ -590,7 +687,10 @@ def structured_report(result: dict[str, Any]) -> dict[str, Any]:
             for fact in report.get("facts", [])
         ],
         "gaps": packet.get("scope_gaps", []) + report.get("gaps", []),
-        "omitted_pages": len(packet.get("omitted_pages", [])),
+        "omitted_pages": len(packet["omitted_pages"])
+        if isinstance(packet.get("omitted_pages"), list)
+        else None,
+        "diagnostic": public_diagnostic(result.get("diagnostic")),
         "error": result.get("error"),
     }
 
@@ -599,6 +699,8 @@ def report_summary_status(report: dict[str, Any]) -> str:
     if report.get("evidence_review") == "failed":
         return "独立复核未通过，草稿不展示"
     if report.get("evidence_review") == "passed":
+        if report.get("omitted_pages") is None:
+            return "引用已复核；未纳入分析的原文页数未知，结论范围待核查"
         if report["status"] == "scoped_complete" or (
             report["status"] == "unchanged" and not report["omitted_pages"]
         ):
@@ -682,6 +784,9 @@ def research_batch(
         code = state["queue"][state["cursor"]]
         row = rows[code]
         output = directory / f"report-{code}.json"
+        packet = None
+        selected_documents: list[dict[str, Any]] = []
+        stage = "evidence_load"
         try:
             budget.check(60)
             if output.exists():
@@ -696,6 +801,7 @@ def research_batch(
                         raise ScreenError("Evidence/frozen run mismatch")
                     packet = saved_packet["packet"]
                 else:
+                    stage = "announcements"
                     announcements_path = directory / f"announcements-{code}.json"
                     if announcements_path.exists():
                         saved_announcements = read_state(announcements_path)
@@ -718,15 +824,19 @@ def research_batch(
                                 "rows": anns,
                             },
                         )
+                    stage = "document_selection"
+                    selected_documents = select_documents(anns, row, frozen["cutoff"])
+                    stage = "document_extraction"
                     documents = [
-                        extract_document(source, doc, directory)
-                        for doc in select_documents(anns, row, frozen["cutoff"])
+                        extract_document(source, doc, directory) for doc in selected_documents
                     ]
+                    stage = "evidence_selection"
                     packet = evidence_packet(documents, row)
                     save_state(packet_path, {"packet": packet, "freeze": state["freeze"]})
                 key = stable_evidence(packet, state["model"])
                 old = known.get(code)
                 if old and old["evidence_key"] == key:
+                    stage = "cached_review"
                     validate_report(old["report"], packet)
                     if not validate_review(old["review"], old["report"]):
                         raise ScreenError("Cached citation review invalid")
@@ -741,6 +851,7 @@ def research_batch(
                         "previous_report": old["evidence_key"],
                     }
                 else:
+                    stage = "report_generation"
                     report = model_call(
                         directory,
                         f"{code}-generate",
@@ -749,7 +860,9 @@ def research_batch(
                         state,
                         budget,
                     )
+                    stage = "citation_validation"
                     validate_report(report, packet)
+                    stage = "independent_review"
                     review = model_call(
                         directory,
                         f"{code}-verify",
@@ -758,6 +871,7 @@ def research_batch(
                         state,
                         budget,
                     )
+                    stage = "review_validation"
                     passed = validate_review(review, report)
                     result = {
                         "code": code,
@@ -788,11 +902,27 @@ def research_batch(
             subprocess.SubprocessError,
             requests.RequestException,
         ) as exc:
+            diagnostic = failure_diagnostic(stage, exc)
             result = {
                 "code": code,
                 "freeze": state["freeze"],
                 "status": "incomplete",
-                "error": type(exc).__name__ + ": 原文/结构/引用/模型检查失败；未发布确定结论",
+                "diagnostic": diagnostic,
+                "error": diagnostic["message"],
+                "evidence": packet
+                if packet is not None
+                else {
+                    "structured": {
+                        k: row[k]
+                        for k in ("industry", "valuation_date", "pb", "roe_mean")
+                        if k in row
+                    },
+                    "documents": [
+                        {k: doc[k] for k in ("id", "period", "announced")}
+                        for doc in selected_documents
+                    ],
+                    "scope_gaps": ["原文证据整理尚未完成；所列日期仅为已选公告元数据。"],
+                },
             }
             save_state(output, {"result": result})
         # Publish and verify first; commit terminal state AND cursor in one atomic write.

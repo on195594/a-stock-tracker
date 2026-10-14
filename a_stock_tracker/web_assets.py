@@ -1,6 +1,11 @@
 """Compress public Flutter assets, never private pages or research responses."""
 
+import json
+from pathlib import Path
+
+from flet_web import get_package_web_dir  # type: ignore[import-untyped]
 from starlette.middleware.gzip import GZipMiddleware
+from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 CHINESE_FONT = "fonts/NotoSansSC-Subset.woff2"
@@ -13,10 +18,30 @@ FONT_CACHE = (b"cache-control", b"public, max-age=2592000")
 class PublicAssetCompression:
     def __init__(self, app: ASGIApp):
         self.app = app
+        # Flet loads page.fonts asynchronously while building the first page. Register
+        # Chinese with Flutter's startup fonts instead, before any Chinese layout can
+        # trigger its unbundled no-CDN fallback shards. Keep the installed icon/math
+        # families rather than copying a version-specific manifest into our assets.
+        manifest = json.loads(
+            (Path(get_package_web_dir()) / "assets/FontManifest.json").read_text()
+        )
+        families = {entry["family"] for entry in manifest}
+        if "Roboto" not in families:
+            manifest.append({"family": "Roboto", "fonts": [{"asset": "fonts/roboto.woff2"}]})
+        manifest = [entry for entry in manifest if entry["family"] != "NotoSansSC"]
+        manifest.append({"family": "NotoSansSC", "fonts": [{"asset": "../" + CHINESE_FONT}]})
+        self.font_manifest = JSONResponse(manifest, headers={"Cache-Control": "no-cache"})
         self.compressed = GZipMiddleware(app, minimum_size=1024, compresslevel=4)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         path = scope.get("path", "")
+        if (
+            scope["type"] == "http"
+            and scope["method"] in {"GET", "HEAD"}
+            and path == "/assets/FontManifest.json"
+        ):
+            await self.font_manifest(scope, receive, send)
+            return
         public = (
             path
             in {

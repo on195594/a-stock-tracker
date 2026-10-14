@@ -54,7 +54,7 @@ from a_stock_tracker.research_client import (
 )
 from a_stock_tracker.research_service import quote
 from a_stock_tracker.research_view import recent_controls, result_view
-from a_stock_tracker.web_assets import CHINESE_FONT, PublicAssetCompression
+from a_stock_tracker.web_assets import PublicAssetCompression
 
 RAW_MODE = os.getenv("APP_MODE", "demo")
 if RAW_MODE not in ("demo", "production"):
@@ -116,7 +116,6 @@ def build_app():
         session_beacon = ft.Image(src="", width=1, height=1, opacity=0)
         page.title = "个股研究助手"
         page.theme_mode = ft.ThemeMode.LIGHT
-        page.fonts = {"NotoSansSC": CHINESE_FONT}
         page.theme = window_theme()
         page.bgcolor = BACKGROUND
         page.padding = 0

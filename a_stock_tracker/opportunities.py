@@ -174,6 +174,69 @@ def validate_explanation(value: Any, facts: dict[str, str]) -> None:
             raise ScreenError("Unknown evidence reference")
 
 
+PRICE_FAILURE_REASONS = {
+    "Missing trading sessions": (
+        "missing_sessions",
+        "日线数量不足，须核查停牌、缺失交易日或数据覆盖。",
+    ),
+    "Duplicate, stale or missing bars": (
+        "session_mismatch",
+        "日线日期重复、过旧或缺失，须核查交易日覆盖。",
+    ),
+    "Discontinuous price basis; corporate action or source gap": (
+        "price_discontinuity",
+        "未复权价格不连续，可能涉及除权除息或来源缺口；须核查价格依据。",
+    ),
+    "Invalid numeric evidence": ("invalid_number", "价格或成交量不是有效数值；须核查来源字段。"),
+    "Non-positive/non-finite evidence": (
+        "invalid_number",
+        "价格或成交量非正或非有限值；须核查停牌与来源字段。",
+    ),
+    "Invalid OHLC": ("invalid_ohlc", "开高低收价格关系不一致；须核查来源日线。"),
+    "Issuer identity missing or duplicated": (
+        "issuer_identity",
+        "证券身份缺失或重复；须核查证券资料。",
+    ),
+    "Issuer outside supported scope": (
+        "issuer_scope",
+        "证券身份不符合沪深主板上市范围；须核查证券资料。",
+    ),
+    "Invalid issuer or known ST risk": (
+        "issuer_scope",
+        "证券名称无效或存在 ST/退市标记；须核查证券资料。",
+    ),
+    "Mismatched price security": ("price_identity", "日线证券代码与目标不一致；须核查来源。"),
+}
+
+PRICE_FAILURE_MESSAGES = dict(PRICE_FAILURE_REASONS.values()) | {
+    "invalid_number": "价格或成交量数值无效、非正或非有限值；须核查停牌与来源字段。",
+    "issuer_scope": "证券身份不符合支持范围或存在 ST/退市标记；须核查证券资料。",
+    "validation_failed": "资料或结构核验未通过；须核查本阶段来源与字段完整性。",
+}
+
+
+def price_diagnostic(stage: str, exc: Exception) -> dict[str, str]:
+    category = PRICE_FAILURE_REASONS.get(str(exc), ("validation_failed", ""))[0]
+    return {"stage": stage, "category": category, "message": PRICE_FAILURE_MESSAGES[category]}
+
+
+def collected_diagnostic(value: Any) -> dict[str, str]:
+    # Only accept codes we wrote; stored messages are never echoed back.
+    if (
+        isinstance(value, dict)
+        and isinstance(value.get("stage"), str)
+        and value["stage"] in {"issuer_collection", "price_collection"}
+        and isinstance(value.get("category"), str)
+        and value["category"] in PRICE_FAILURE_MESSAGES
+    ):
+        return {
+            "stage": value["stage"],
+            "category": value["category"],
+            "message": PRICE_FAILURE_MESSAGES[value["category"]],
+        }
+    return price_diagnostic("issuer_collection", ScreenError())
+
+
 def collect(
     client: Any, token: str, codes: list[str], as_of: date, *, latest: bool = False
 ) -> list[dict[str, Any]]:
@@ -235,7 +298,11 @@ def collect(
 
     benchmark = prices("index_daily", "000300.SH")
 
+    stage = "issuer_collection"
+
     def one_packet(code: str) -> dict[str, Any]:
+        nonlocal stage
+        stage = "issuer_collection"
         identities = request(
             "stock_basic", "ts_code,name,market,exchange,list_status", ts_code=code
         )
@@ -249,6 +316,7 @@ def collect(
             or identity["exchange"] != ("SSE" if code.endswith(".SH") else "SZSE")
         ):
             raise ScreenError("Issuer outside supported scope")
+        stage = "price_collection"
         return {
             "code": code,
             "name": identity["name"],
@@ -267,7 +335,9 @@ def collect(
         try:
             packets.append(one_packet(code))
         except ScreenError as exc:  # One unsupported issuer must not discard the others.
-            packets.append({"code": code, "name": "", "collect_error": type(exc).__name__})
+            packets.append(
+                {"code": code, "name": "", "collect_error": price_diagnostic(stage, exc)}
+            )
     return packets
 
 
@@ -286,11 +356,17 @@ def publish(directory: Path, packets: list[dict[str, Any]], budget: Budget) -> d
             TypeError,
             OSError,
         ) as exc:
+            diagnostic = (
+                collected_diagnostic(packet["collect_error"])
+                if "collect_error" in packet
+                else price_diagnostic("price_validation", exc)
+            )
             row = {
                 "code": packet.get("code", "unknown"),
                 "name": packet.get("name", ""),
                 "status": "gap",
-                "reasons": [f"资料核验未通过：{type(exc).__name__}；不发布价格参考"],
+                "reasons": [diagnostic["message"] + "不发布价格参考。"],
+                "diagnostic": diagnostic,
             }
         results.append(row)
     result = {
