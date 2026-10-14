@@ -23,6 +23,7 @@ def test_package_has_no_legacy_entrypoints_or_path_injection():
         "workspace.py",
         "manage.py",
         "maintenance.py",
+        "calendar.py",
     ):
         assert not (package / retired).exists()
     for path in package.rglob("*.py"):
@@ -44,6 +45,9 @@ def test_package_has_no_legacy_entrypoints_or_path_injection():
 
 def test_web_has_no_private_workspace_dependency():
     assert not (ROOT / "config/anchors.json").exists()
+    assert not (ROOT / "config/trading_calendar.json").exists()
+    assert "calendar:" not in (ROOT / "Makefile").read_text()
+    assert "trading_calendar.json" not in (ROOT / "Dockerfile").read_text()
     assert not (ROOT / ".worker.env.example").exists()
     assert not (ROOT / "tests/fixtures").exists()
     compose = (ROOT / "docker-compose.yml").read_text()

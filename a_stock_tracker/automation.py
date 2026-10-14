@@ -16,7 +16,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
-from a_stock_tracker.calendar import _atomic_write_bytes
+from a_stock_tracker.atomic_io import _atomic_write_bytes
 from a_stock_tracker.evidence import REPORT_FIELDS, select_latest_report
 from a_stock_tracker.research import (
     BudgetStop,

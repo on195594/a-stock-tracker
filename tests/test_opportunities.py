@@ -300,13 +300,27 @@ def test_invalid_board_artifacts_refused(tmp_path, damage):
         swing.load_board(create_demo_actor(), root)
 
 
-def test_default_page_is_opportunities_and_stale_click_is_inert(monkeypatch):
+def test_archive_page_and_stale_click_is_inert(monkeypatch):
     monkeypatch.setattr(app, "APP_MODE", "demo")
 
     async def run():
         page = AppMockPage()
-        page.route = "/"
+        page.route = "/published"
         await app.build_app()(page)
+        home = next(
+            c
+            for c in app_controls(page)
+            if isinstance(c, ft.TextButton) and c.content == "返回研究首页"
+        )
+        await home.on_click(None)
+        assert page.route == "/"
+        archive = next(
+            c
+            for c in app_controls(page)
+            if isinstance(c, ft.TextButton) and c.content == "历史发布批次"
+        )
+        await archive.on_click(None)
+        assert page.route == "/published"
         button = next(
             c
             for c in app_controls(page)
@@ -343,11 +357,10 @@ def test_late_private_board_cannot_overwrite_navigation(monkeypatch):
     async def run():
         page = AppMockPage(auth=await completed_owner_authorization("12345678"))
         await app.build_app()(page)
-        pending = asyncio.create_task(
-            page.on_login(
-                ft.LoginEvent(name="login", control=None, error=None, error_description=None)
-            )
+        await page.on_login(
+            ft.LoginEvent(name="login", control=None, error=None, error_description=None)
         )
+        pending = asyncio.create_task(page.on_route_change(SimpleNamespace(route="/published")))
         try:
             assert await asyncio.to_thread(started.wait, 3)
             page.route = "/settings"
@@ -369,7 +382,7 @@ def test_disconnected_opportunity_callback_is_inert(monkeypatch):
 
     async def run():
         page = AppMockPage()
-        page.route = "/"
+        page.route = "/published"
         await app.build_app()(page)
         button = next(
             c
@@ -378,7 +391,7 @@ def test_disconnected_opportunity_callback_is_inert(monkeypatch):
         )
         await page.on_disconnect(None)
         await button.on_click(None)
-        assert page.route == "/"
+        assert page.route == "/published"
         await page.on_close(None)
 
     asyncio.run(run())

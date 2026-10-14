@@ -121,7 +121,7 @@ def price_summary(row: dict[str, Any]) -> str:
         return "旧规则未入选：" + "；".join(row["reasons"])
     dates = f"依据截至 {row['as_of']}；有效至 {row['expires']}（后续5个交易日）"
     if row.get("expired"):
-        return dates + "\n价格参考已过期，观察线、失效线和距离已隐藏。"
+        return "已过期 · 仅供历史核查\n" + dates + "\n观察线、失效线和距离已隐藏。"
     if row["status"] == "observation":
         return dates + "\n旧规则批次；请进入详情核查历史条件。"
     levels = row["levels"]
@@ -132,11 +132,17 @@ def price_summary(row: dict[str, Any]) -> str:
 
 
 def reference_controls(row: dict[str, Any], detail: bool) -> list[ft.Control]:
+    expired = bool(row.get("expired"))
+    dates = f"依据截至 {row['as_of']}；有效至 {row['expires']}（后续5个交易日）"
     controls: list[ft.Control] = [
         notice(
-            "价格参考已过期" if row.get("expired") else "价格纪律参考",
-            price_summary(row),
-            caution=bool(row.get("expired")),
+            "已过期 · 仅供历史核查" if expired else "价格纪律参考",
+            dates + "\n观察线、失效线和距离已隐藏。"
+            if expired
+            else dates
+            if detail
+            else price_summary(row),
+            caution=expired,
         )
     ]
     if detail:
@@ -164,6 +170,7 @@ def opportunity_view(
     action: ft.Control | None = None,
     *,
     embedded: bool = False,
+    recheck_route=None,
 ) -> ft.Column:
     controls: list[ft.Control] = []
     if code:
@@ -238,8 +245,19 @@ def opportunity_view(
                     ),
                 ]
             )
+            recheck = (
+                ft.TextButton(
+                    "重新核对价格参考",
+                    on_click=recheck_route(f"/analysis?mode=swing&code={row['code']}"),
+                    height=48,
+                )
+                if row.get("expired") and recheck_route
+                else None
+            )
             if row["status"] == "reference":
                 controls.extend(reference_controls(row, bool(code)))
+                if recheck:
+                    controls.append(recheck)
                 if not code:
                     controls.append(
                         ft.Button(
@@ -285,13 +303,15 @@ def opportunity_view(
             if row.get("expired"):
                 controls.append(
                     notice(
-                        "历史条件已过期 · 仅供历史查看",
+                        "已过期 · 仅供历史核查",
                         "价格条件已隐藏；历史解释与量价依据不代表当前仍有效。",
                         caution=True,
                     )
                 )
             else:
                 controls.append(ft.Text("旧规则历史条件，仅供核查", size=14, color=ACCENT))
+            if recheck:
+                controls.append(recheck)
             explanation = row["explanation"]
             section_level = 2 if code else 3
             for key, title in SECTIONS.items():
@@ -331,14 +351,6 @@ def opportunity_view(
                     )
                 controls.append(paragraph("旧批次仅含量价资料，不含公告催化、财报拐点或资金验证。"))
                 fact_names = {"trend": "趋势", "relative": "相对强弱", "limits": "缺口与执行风险"}
-                if not row.get("expired"):
-                    fact_names.update(
-                        {
-                            "condition": "历史价格条件",
-                            "invalidation": "失效条件",
-                            "distance": "距离",
-                        }
-                    )
                 evidence: list[ft.Control] = [
                     ft.Semantics(
                         label=f"{fact_names[k]}：{v}",

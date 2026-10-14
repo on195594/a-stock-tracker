@@ -129,7 +129,7 @@ def test_three_status_layers_legacy_usage_and_continued_checkpoint():
     run["can_continue"] = False
     routes = []
     text = "\n".join(text_values(result_view(run, lambda r: routes.append(r), None)))
-    assert "执行：已结束" in text and "覆盖：未完成不可继续" in text
+    assert "执行：部分结果" in text and "覆盖：未完成不可继续" in text
     assert "结果：4 家" in text and "本轮用量：未记录" in text
     assert "/analysis/" + "b" * 32 in routes
     assert not any("resume_from" in r for r in routes)
@@ -255,3 +255,115 @@ def test_screen_usage_keeps_progress_and_financial_missing_usage_stays_unknown()
     assert "冻结证券范围背景统计" not in text
     assert usage_text(None, "financial") == "本轮用量：未记录"
     assert "已归类或扫描：未记录；尚未扫描：未记录" in usage_text({"requests": 8}, "financial")
+
+
+def test_screen_candidates_precede_execution_and_usage_with_one_summary():
+    import flet as ft
+
+    from tests.test_app import app_controls
+
+    run = screen_result()
+    view = result_view(run, lambda _: None, None)
+    field_index = next(i for i, c in enumerate(view.controls) if isinstance(c, ft.TextField))
+    prefix = view.controls[:field_index]
+    assert sum(isinstance(c, ft.Container) for c in prefix) == 1
+    prefix_text = "\n".join(text_values(ft.Column(prefix)))
+    assert "可研究 4 家" in prefix_text and "尚未覆盖 1 家" in prefix_text
+    assert "资料缺口 0 家" in prefix_text and "合成日期" in prefix_text
+    assert "不是完整行业前三" in prefix_text
+    assert "执行：" not in prefix_text and "本轮请求：" not in prefix_text
+    evidence = view.controls[-1]
+    assert evidence.title.value == "筛选依据与用量"
+    assert "本轮请求：" in "\n".join(text_values(evidence))
+    assert "PB 名次 " in "\n".join(text_values(evidence))
+    assert not any(
+        isinstance(c, ft.ExpansionTile) and c.title.value == "排名依据" for c in app_controls(view)
+    )
+
+
+@pytest.mark.parametrize("readable", [True, False])
+def test_report_price_navigation_prefills_without_screen_origin_or_submission(readable):
+    import flet as ft
+
+    from a_stock_tracker.opportunity_demo import demo_report
+    from tests.test_app import app_controls
+
+    run = screen_result()
+    run["request"]["mode"] = "financial"
+    report = demo_report("600001.SH")
+    if not readable:
+        report.update(status="incomplete", evidence_review="failed")
+    run["result"]["reports"] = [report]
+    visited = []
+    view = result_view(run, lambda route: lambda _: visited.append(route), None)
+    action = next(
+        c
+        for c in app_controls(view)
+        if isinstance(c, ft.TextButton) and c.content == "核对本公司价格参考"
+    )
+    assert action.height == 48 and not visited
+    action.on_click(None)
+    assert visited == ["/analysis?mode=swing&code=600001.SH"]
+    if not readable:
+        assert "不构成对财报判断的支持" in "\n".join(text_values(view))
+
+
+@pytest.mark.parametrize("status", ["running", "completed", "partial", "failed", "interrupted"])
+def test_recent_groups_and_actions_distinguish_execution_from_result(status):
+    import flet as ft
+
+    from a_stock_tracker.research_view import recent_controls
+    from tests.test_app import app_controls
+
+    run = screen_result()
+    run["status"] = status
+    view = ft.Column(recent_controls([run], lambda _: None))
+    texts = text_values(view)
+    assert ("进行中" in texts) == (status == "running")
+    actions = [c for c in app_controls(view) if isinstance(c, ft.TextButton)]
+    assert actions[0].content.value == ("查看进度" if status == "running" else "查看结果")
+    if status == "partial":
+        assert any("部分结果" in text for text in texts)
+        assert not any("完成" in text or "成功" in text for text in texts)
+
+
+@pytest.mark.parametrize("status", ["completed", "partial"])
+def test_financial_without_report_artifact_is_not_a_screening_result(status):
+    import flet as ft
+
+    from tests.test_app import app_controls
+
+    run = screen_result()
+    run["request"].update(mode="financial", codes=["600001.SH"])
+    run["status"] = status
+    run["result"]["reports"] = []
+    run["result"]["usage"]["stop_reason"] = "request_budget"
+    before = deepcopy(run)
+    visited = []
+    view = result_view(run, lambda route: lambda _: visited.append(route), None)
+    text = "\n".join(text_values(view))
+    assert "没有可读的公司财报报告" in text
+    assert "停止原因：请求预算用尽" in text
+    assert "冻结证券范围背景统计（非本次单家公司研究进度）" in text
+    assert "本次指定范围以外的证券" in text
+    assert "不构成对财报判断的支持" in text
+    assert text.count("执行：") == 1 and text.count("本轮请求：") == 1
+    assert all(
+        label not in text
+        for label in (
+            "选择公司研究财报",
+            "可研究 0 家",
+            "初筛尚未完成",
+            "继续未覆盖初筛",
+            "筛选依据与用量",
+        )
+    )
+    action = next(
+        c
+        for c in app_controls(view)
+        if isinstance(c, ft.TextButton) and c.content == "核对本公司价格参考"
+    )
+    assert not visited
+    action.on_click(None)
+    assert visited == ["/analysis?mode=swing&code=600001.SH"]
+    assert run == before

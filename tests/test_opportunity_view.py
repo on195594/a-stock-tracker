@@ -84,7 +84,7 @@ def test_no_reference_heading_does_not_invent_a_data_gap(status):
         expected = "0 项价格参考 · 0 家显式股票池"
     elif status == "expired":
         row["expired"] = True
-        expected = "历史条件已过期 · 仅供历史查看"
+        expected = "已过期 · 仅供历史核查"
     else:
         row.update(
             status=status, reasons=["合成排除原因" if status == "excluded" else "合成资料缺口"]
@@ -144,3 +144,45 @@ def test_semantic_text_colors_meet_normal_text_contrast(foreground, background):
 def test_common_disclaimer_is_only_rendered_once_in_detail():
     view = ui.opportunity_view(demo_board(), "600001.SH", lambda _: None, None)
     assert sum(ui.LIMITS in text for text in text_values(view)) == 1
+
+
+@pytest.mark.parametrize("detail", [True, False])
+@pytest.mark.parametrize("legacy", [True, False])
+def test_expired_label_once_and_recheck_is_only_navigation(detail, legacy):
+    from tests.test_opportunities import legacy_board
+
+    board = legacy_board() if legacy else demo_board()
+    row = board["rows"][0]
+    row["expired"] = True
+    visited = []
+    view = ui.opportunity_view(
+        board,
+        row["code"] if detail else None,
+        lambda _: None,
+        None,
+        recheck_route=lambda route: lambda _: visited.append(route),
+    )
+    texts = text_values(view)
+    assert texts.count("已过期 · 仅供历史核查") == 1
+    assert row["facts"]["condition"] not in texts
+    assert row["facts"]["invalidation"] not in texts
+    assert row["facts"]["distance"] not in texts
+    if detail:
+        assert any(row["facts"]["trend"] in text for text in texts)
+    action = next(
+        c
+        for c in app_controls(view)
+        if isinstance(c, ft.TextButton) and c.content == "重新核对价格参考"
+    )
+    assert not visited and action.height == 48
+    action.on_click(None)
+    assert visited == ["/analysis?mode=swing&code=" + row["code"]]
+
+
+def test_detail_does_not_duplicate_core_price_facts():
+    board = demo_board()
+    text = "\n".join(text_values(ui.opportunity_view(board, "600001.SH", lambda _: None, None)))
+    assert text.count("11.20") == 1
+    assert text.count("11.00") == 1
+    assert text.count("1.79%") == 1
+    assert text.count("11.23") == 1

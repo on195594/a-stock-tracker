@@ -70,6 +70,11 @@ elif HOST not in ("127.0.0.1", "localhost", "::1"):
     raise ValueError(f"Demo mode only allows loopback host, got: {HOST}")
 
 
+def budget_duration(seconds: int) -> str:
+    minutes, remainder = divmod(seconds, 60)
+    return f"{minutes} 分钟" + (f" {remainder} 秒" if remainder else "")
+
+
 def build_app():
     import flet as ft
 
@@ -267,6 +272,20 @@ def build_app():
             revoke()
             await navigate("/login")
 
+        async def submit_saved(saved, actor):
+            """Submit the frozen request; only definitive outcomes clear its recovery state."""
+            try:
+                accepted = await asyncio.to_thread(research.submit, json.loads(saved["payload"]))
+            except (ResearchQuoteChanged, ResearchRejected, ValueError) as exc:
+                outcome, value = "rejected", exc
+            except ResearchUnavailable as exc:
+                return "unknown", exc
+            else:
+                outcome, value = "accepted", accepted
+            if actor is state["actor"] and state["pending"] is saved:
+                state["pending"] = None
+            return outcome, value
+
         async def research_page(gen: int, actor: Actor, route: str):
             back = open_route("/analysis", gen, actor)
             if research is None:
@@ -417,49 +436,71 @@ def build_app():
             if state["pending"] is not None:
                 saved = state["pending"]
                 payload = json.loads(saved["payload"])
-                feedback = paragraph("原请求受理状态尚未确认；只能核对原编号，不另起一轮收费。")
-                reconcile = ft.Button("核对原请求受理状态", height=48)
+                feedback = paragraph("原请求受理状态尚未确认。")
+                frozen_quote = payload["quote"]
+                frozen_model = frozen_quote.get("model")
+                recovery_details: list[ft.Control] = [
+                    paragraph(f"请求编号：{payload['id']}"),
+                    paragraph(f"预算原值：{frozen_quote['seconds']} 秒"),
+                ]
+                recovery_cost: list[ft.Control] = [
+                    paragraph(f"范围：{','.join(payload['codes']) or '全市场初筛'}"),
+                    paragraph(
+                        f"已确认预算：最多 {frozen_quote['requests']} 次数据请求 / "
+                        f"{budget_duration(frozen_quote['seconds'])}"
+                    ),
+                ]
+                if frozen_model:
+                    model_budget = frozen_quote["model_budget"]
+                    recovery_cost.extend(
+                        [
+                            paragraph(
+                                f"已确认模型：{frozen_model['provider']} / {frozen_model['model']}"
+                            ),
+                            paragraph(
+                                f"最多 {model_budget['calls']} 次调用，每次本地等待 ≤"
+                                f"{model_budget['local_timeout_seconds']} 秒。"
+                                "输出 token 与费用无硬上限；本地超时不保证提供方停止计费，失败调用也可能计费。"
+                            ),
+                        ]
+                    )
+                else:
+                    recovery_cost.append(paragraph("不调用模型。"))
+                reconcile = ft.Button("继续确认原请求", height=48)
 
                 async def reconcile_pending(e):
                     if not current(gen, actor) or reconcile.disabled:
                         return
                     reconcile.disabled = True
                     page.update()
-                    try:
-                        accepted = await asyncio.to_thread(
-                            research.submit, json.loads(saved["payload"])
+                    outcome, value = await submit_saved(saved, actor)
+                    if not current(gen, actor):
+                        return
+                    if outcome == "rejected":
+                        state["request_feedback"] = (
+                            "旧报价已被拒绝；已重新获取报价，请重新核对并勾选确认。"
+                            if isinstance(value, ResearchQuoteChanged)
+                            else str(value)
                         )
-                    except (ResearchQuoteChanged, ResearchRejected, ValueError) as exc:
-                        if actor is state["actor"] and state["pending"] is saved:
-                            state["pending"] = None
-                        if current(gen, actor):
-                            state["request_feedback"] = (
-                                "旧报价已被拒绝；已重新获取报价，请重新核对并勾选确认。"
-                                if isinstance(exc, ResearchQuoteChanged)
-                                else str(exc)
-                            )
-                            await navigate(saved["route"])
-                    except ResearchUnavailable as exc:
-                        if current(gen, actor):
-                            feedback.value = str(exc)
-                            reconcile.disabled = False
-                            page.update()
+                        await navigate(saved["route"])
+                    elif outcome == "unknown":
+                        feedback.value = str(value)
+                        reconcile.disabled = False
+                        page.update()
                     else:
-                        if actor is state["actor"] and state["pending"] is saved:
-                            state["pending"] = None
-                        if current(gen, actor):
-                            await navigate("/analysis/" + accepted["id"])
+                        await navigate("/analysis/" + value["id"])
 
                 reconcile.on_click = reconcile_pending
                 return ft.Column(
                     [
-                        heading("核对原研究请求", level=1),
-                        paragraph(
-                            f"请求编号：{payload['id']}\n范围：{','.join(payload['codes']) or '全市场初筛'}"
+                        heading("继续确认原研究请求", level=1),
+                        notice(
+                            "核对也可能启动原请求",
+                            "将按同一编号重新提交已确认的范围与预算。如果服务此前没有收到请求，此操作会启动研究并可能产生费用；已受理则返回原结果，不创建另一轮请求。",
+                            caution=True,
+                            extra=recovery_cost,
                         ),
-                        paragraph(
-                            f"已确认预算：{payload['quote']['requests']} 次数据请求 / {payload['quote']['seconds']} 秒"
-                        ),
+                        ft.ExpansionTile(title=paragraph("请求详情"), controls=recovery_details),
                         feedback,
                         reconcile,
                         ft.TextButton(
@@ -497,7 +538,7 @@ def build_app():
                 )
             query = parse_qs(urlparse(state["route"]).query)
             resume_id = query.get("resume_from", [""])[0]
-            if not resume_id:
+            if not resume_id and query.get("mode", ["financial"])[0] == "screen":
                 latest_screen = next((r for r in recent if r["request"]["mode"] == "screen"), None)
                 if latest_screen and latest_screen["status"] == "partial":
                     resume_id = latest_screen["id"]
@@ -553,9 +594,9 @@ def build_app():
                     )
                 if not current(gen, actor):
                     return ft.Column([])
-            initial = query.get("mode", ["screen"])[0]
+            initial = query.get("mode", ["financial"])[0]
             if initial not in info["modes"]:
-                initial = "screen"
+                initial = "financial"
             mode = ft.RadioGroup(
                 value=initial,
                 content=ft.Column(
@@ -575,6 +616,7 @@ def build_app():
                 min_lines=1,
                 max_lines=3,
             )
+            task_heading = ft.Container()
             budget = paragraph("")
             continuation_note = paragraph("")
             confirmation = ft.Checkbox(
@@ -641,20 +683,43 @@ def build_app():
                     else "确认启动研究"
                 )
                 selected = {**current_quote(), "available": info["modes"][mode.value]["available"]}
+                task_heading.content = heading(
+                    {
+                        "financial": "研究一家公司",
+                        "screen": "从初筛找公司",
+                        "swing": "核对价格参考",
+                    }[mode.value],
+                    size=30,
+                    level=1,
+                )
                 codes.visible = mode.value != "screen"
+                codes.label = (
+                    "一家公司的股票代码" if mode.value == "financial" else "股票代码（1–5 家）"
+                )
+                codes.hint_text = (
+                    "例如 600519 或 600519.SH"
+                    if mode.value == "financial"
+                    else "例如 600519, 600900；最多 5 家"
+                )
+                codes.multiline = mode.value == "swing"
+                codes.max_lines = 3 if mode.value == "swing" else 1
                 continuation_note.visible = mode.value == "screen" and bool(resume_id)
                 if resume_source and resume_id:
                     coverage = resume_source["result"]["coverage"]
                     continuation_note.value = (
-                        f"继续原初筛 {resume_id}\n冻结依据日期 {coverage['data_date']}，"
+                        f"继续原初筛\n冻结依据日期 {coverage['data_date']}，"
                         f"尚未覆盖 {coverage['counts']['pending']} 家；只扫描未覆盖部分，原批次不变。\n"
-                        f"本次另增最多 {selected['requests']} 次数据请求 / {selected['seconds']} 秒，不调用模型；只覆盖剩余部分，不自动重试缺口。"
+                        "只覆盖剩余部分，不自动重试缺口；以上上限是本次新增预算。"
                     )
                 confirmation.value = False
                 confirmation.label = (
                     "已核对范围、预算与模型，接受模型费用无硬上限"
                     if mode.value == "financial" and not info["demo"]
-                    else "已核对范围、预算与模型，确认启动"
+                    else (
+                        "已核对范围、预算与模型，确认启动"
+                        if mode.value == "financial"
+                        else "已核对范围与预算，确认启动（不调用模型）"
+                    )
                 )
                 submit.disabled = True
                 # Show only the selected mode's limits so the cost being confirmed stays scannable.
@@ -663,7 +728,7 @@ def build_app():
                     if info["demo"]
                     else "确认后后台请求行情"
                     + ("并调用模型。" if mode.value == "financial" else "，不调用模型。"),
-                    f"上限：{selected['requests']} 次数据请求 · {selected['seconds']} 秒"
+                    f"上限：{selected['requests']} 次数据请求 · {budget_duration(selected['seconds'])}"
                     + (f" · {selected['reports']} 份财报报告" if selected["reports"] else ""),
                 ]
                 if mode.value == "screen":
@@ -726,6 +791,18 @@ def build_app():
                         else c
                         for c in raw
                     ]
+                    if mode.value != "screen" and (
+                        not normalized or len(normalized) > (1 if mode.value == "financial" else 5)
+                    ):
+                        confirmation.value = False
+                        submit.disabled = True
+                        feedback.value = (
+                            "请只输入一家公司的股票代码，再重新确认。"
+                            if mode.value == "financial"
+                            else "请输入 1–5 家公司的股票代码，再重新确认。"
+                        )
+                        page.update()
+                        return
                     pending = {
                         "id": request_id,
                         "mode": mode.value,
@@ -753,35 +830,23 @@ def build_app():
                 mode.disabled = codes.disabled = confirmation.disabled = True
                 feedback.value = "正在核对受理状态，请勿重复启动。"
                 page.update()
-                try:
-                    accepted = await asyncio.to_thread(
-                        research.submit, json.loads(saved["payload"])
-                    )
-                except ResearchQuoteChanged:
-                    if actor is state["actor"] and state["pending"] is saved:
-                        state["pending"] = None
-                    if current(gen, actor):
+                outcome, value = await submit_saved(saved, actor)
+                if not current(gen, actor):
+                    return
+                if outcome == "rejected":
+                    if isinstance(value, ResearchQuoteChanged):
                         await reload_quote()
-                except (ValueError, ResearchRejected) as exc:
-                    if actor is state["actor"] and state["pending"] is saved:
-                        state["pending"] = None
-                    if current(gen, actor):
+                    else:
                         pending = None
                         mode.disabled = codes.disabled = confirmation.disabled = False
                         refresh()
-                        feedback.value = str(exc)
+                        feedback.value = str(value)
                         page.update()
-                except ResearchUnavailable as exc:
-                    if current(gen, actor):
-                        submit.content = "核对原请求受理状态"
-                        submit.disabled = False
-                        feedback.value = str(exc)
-                        page.update()
+                elif outcome == "unknown":
+                    # Always show the same frozen scope and fee warning before resubmitting.
+                    await navigate(saved["route"])
                 else:
-                    if actor is state["actor"] and state["pending"] is saved:
-                        state["pending"] = None
-                    if current(gen, actor):
-                        await navigate("/analysis/" + accepted["id"])
+                    await navigate("/analysis/" + value["id"])
 
             mode.on_change = refresh
             codes.on_change = refresh
@@ -790,17 +855,15 @@ def build_app():
             refresh()
             if state.get("request_feedback"):
                 feedback.value = state.pop("request_feedback")
-            controls = [
+            controls: list[ft.Control] = [
                 ft.TextButton(
                     icon=ft.Icons.ARROW_BACK,
                     content="返回研究首页",
                     on_click=open_route("/", gen, actor),
                     height=48,
                 ),
-                heading("选股与研究", size=30, level=1),
-                paragraph("选择目标 → 核对预算并启动 → 查看进度与结果。"),
-                heading("这次想做什么", size=18),
-                mode,
+                task_heading,
+                ft.ExpansionTile(title=paragraph("更换研究类型"), controls=[mode]),
                 codes,
                 notice(
                     "边界与成本",
@@ -811,16 +874,6 @@ def build_app():
                 submit,
                 feedback,
             ]
-            controls.append(
-                live_prices(
-                    recent,
-                    lambda value: ft.Column(
-                        recent_controls(value, lambda r: open_route(r, gen, actor))
-                    ),
-                    gen,
-                    actor,
-                )
-            )
             return ft.Column(
                 controls, spacing=20, horizontal_alignment=ft.CrossAxisAlignment.STRETCH
             )
@@ -829,7 +882,19 @@ def build_app():
             controls = [
                 heading("研究首页", size=30, level=1),
                 ft.Button(
-                    "开始选股与研究", on_click=open_route("/analysis", gen, actor), height=48
+                    "研究一家公司",
+                    on_click=open_route("/analysis?mode=financial", gen, actor),
+                    height=48,
+                ),
+                ft.TextButton(
+                    "从初筛找公司",
+                    on_click=open_route("/analysis?mode=screen", gen, actor),
+                    height=48,
+                ),
+                ft.TextButton(
+                    "独立价格参考（不调用模型）",
+                    on_click=open_route("/analysis?mode=swing", gen, actor),
+                    height=48,
                 ),
             ]
             if research is None:
@@ -877,25 +942,9 @@ def build_app():
                     ft.TextButton("刷新研究进度", on_click=open_route("/", gen, actor), height=48)
                 )
             if OPPORTUNITY_ROOT is not None or APP_MODE == "demo":
-                if APP_MODE == "demo":
-                    from a_stock_tracker.opportunity_demo import demo_board
-
-                    board = demo_board()
-                else:
-                    board = await asyncio.to_thread(load_board, actor, OPPORTUNITY_ROOT)
-                controls.append(heading("已发布批次", size=22))
                 controls.append(
-                    live_prices(
-                        board,
-                        lambda value: opportunity_view(
-                            value,
-                            None,
-                            lambda c: open_route("/opportunity/" + c, gen, actor),
-                            open_route("/", gen, actor),
-                            embedded=True,
-                        ),
-                        gen,
-                        actor,
+                    ft.TextButton(
+                        "历史发布批次", on_click=open_route("/published", gen, actor), height=48
                     )
                 )
             return ft.Column(
@@ -955,7 +1004,7 @@ def build_app():
             try:
                 if route == "/":
                     content = await home_page(gen, actor)
-                elif route.startswith("/opportunity/"):
+                elif route == "/published" or route.startswith("/opportunity/"):
                     if APP_MODE == "demo":
                         from a_stock_tracker.opportunity_demo import demo_board
 
@@ -966,13 +1015,24 @@ def build_app():
                         board,
                         lambda value: opportunity_view(
                             value,
-                            route.rsplit("/", 1)[-1],
+                            None if route == "/published" else route.rsplit("/", 1)[-1],
                             lambda c: open_route("/opportunity/" + c, gen, actor),
-                            open_route("/", gen, actor),
+                            open_route("/" if route == "/published" else "/published", gen, actor),
+                            recheck_route=lambda r: open_route(r, gen, actor),
                         ),
                         gen,
                         actor,
                     )
+                    if route == "/published":
+                        content = ft.Column(
+                            [
+                                ft.TextButton(
+                                    "返回研究首页", on_click=open_route("/", gen, actor), height=48
+                                ),
+                                content,
+                            ],
+                            spacing=20,
+                        )
                 elif route == "/analysis" or route.startswith("/analysis/"):
                     content = await research_page(gen, actor, route)
                 elif route == "/settings":

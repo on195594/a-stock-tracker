@@ -335,6 +335,42 @@ def main() -> int:
                             ).count()
                             == 0
                         )
+                        expect(
+                            page.get_by_role("button", name="研究一家公司", exact=True)
+                        ).to_be_visible()
+                        expect(
+                            page.get_by_role("heading", name="价格纪律参考", exact=True)
+                        ).to_have_count(0)
+                        click_settled(
+                            page, page.get_by_role("button", name="研究一家公司", exact=True)
+                        )
+                        expect(page).to_have_url(base + "/analysis?mode=financial")
+                        expect(
+                            page.get_by_role("textbox", name="一家公司的股票代码")
+                        ).to_be_visible()
+                        expect(page.get_by_text("30 分钟", exact=False)).to_be_visible()
+                        expect(page.get_by_role("checkbox")).not_to_be_checked()
+                        expect(
+                            page.get_by_role("button", name="确认启动研究", exact=True)
+                        ).to_be_disabled()
+                        expect(
+                            page.get_by_role("heading", name="最近研究", exact=True)
+                        ).to_have_count(0)
+                        click_settled(
+                            page, page.get_by_role("button", name="返回研究首页", exact=True)
+                        )
+                        click_settled(
+                            page, page.get_by_role("button", name="历史发布批次", exact=True)
+                        )
+                        expect(page).to_have_url(base + "/published")
+                        click_settled(
+                            page, page.get_by_role("button", name="返回研究首页", exact=True)
+                        )
+                        expect(page).to_have_url(base + "/")
+                        click_settled(
+                            page, page.get_by_role("button", name="历史发布批次", exact=True)
+                        )
+
                         click_settled(
                             page,
                             page.get_by_role("button", name="查看价格参考 · 演示公司", exact=True),
@@ -354,7 +390,7 @@ def main() -> int:
                         click_settled(
                             page, page.get_by_role("button", name="返回价格参考", exact=True)
                         )
-                        expect(page).to_have_url(base + "/")
+                        expect(page).to_have_url(base + "/published")
                         page.mouse.move(width / 2, 200)
                         page.mouse.wheel(0, -5000)
                         click_settled(page, page.get_by_role("button", name="账户", exact=True))
@@ -362,13 +398,13 @@ def main() -> int:
                         expect(page.get_by_text("仅本地合成演示")).to_be_visible()
                         click_settled(page, page.get_by_role("button", name="进入演示", exact=True))
                         expect(
-                            page.get_by_role("heading", name="价格纪律参考", exact=True)
+                            page.get_by_role("heading", name="研究首页", exact=True)
                         ).to_be_visible()
                         click_settled(
-                            page, page.get_by_role("button", name="开始选股与研究", exact=True)
+                            page, page.get_by_role("button", name="从初筛找公司", exact=True)
                         )
                         expect(
-                            page.get_by_role("heading", name="选股与研究", exact=True)
+                            page.get_by_role("heading", name="从初筛找公司", exact=True)
                         ).to_be_visible()
                         start = page.get_by_role("button", name="确认启动研究", exact=True)
                         expect(page.get_by_text("初筛门槛：0＜PB≤3", exact=False)).to_be_visible()
@@ -380,10 +416,12 @@ def main() -> int:
                         expect(start).to_be_enabled()
                         click_settled(page, start)
                         expect(
-                            page.get_by_role("heading", name="财报筛选与研究", exact=True)
+                            page.get_by_role("heading", name="选择公司研究财报", exact=True)
                         ).to_be_visible(timeout=10000)
-                        expect(page.get_by_text("这是筛后同业排名", exact=False)).to_be_visible()
-                        click_settled(page, page.get_by_role("button", name="依据", exact=True))
+                        expect(page.get_by_text("仅筛后同业排名", exact=False)).to_be_visible()
+                        click_settled(
+                            page, page.get_by_role("button", name="筛选依据与用量", exact=True)
+                        )
                         expect(page.get_by_text("冻结门槛：0＜PB≤3", exact=False)).to_be_visible()
                         assert_layout(page, width)
                         click_settled(
@@ -396,14 +434,12 @@ def main() -> int:
                             "button", name="确认新增预算并继续初筛", exact=True
                         )
                         expect(continuation).to_be_disabled()
-                        expect(
-                            page.get_by_text("本次另增最多 21 次数据请求", exact=False)
-                        ).to_be_visible()
+                        expect(page.get_by_text("上限：21 次数据请求", exact=False)).to_be_visible()
                         assert_layout(page, width)
                         click_settled(page, page.get_by_role("checkbox"))
                         click_settled(page, continuation)
                         expect(
-                            page.get_by_role("heading", name="财报筛选与研究", exact=True)
+                            page.get_by_role("heading", name="选择公司研究财报", exact=True)
                         ).to_be_visible(timeout=10000)
                         screen_url = page.url
                         search = page.get_by_role("textbox", name="按代码、名称或行业筛选")
@@ -429,10 +465,10 @@ def main() -> int:
                             page,
                             page.get_by_role("button", name="查看价格纪律参考", exact=True).first,
                         )
-                        page.get_by_role("textbox", name="股票代码").focus()
-                        expect(page.get_by_role("textbox", name="股票代码")).to_have_value(
-                            "600001.SH"
-                        )
+                        page.get_by_role("textbox", name=re.compile("股票代码")).focus()
+                        expect(
+                            page.get_by_role("textbox", name=re.compile("股票代码"))
+                        ).to_have_value("600001.SH")
                         expect(page.get_by_text("不调用模型", exact=False)).to_be_visible()
                         expect(
                             page.get_by_text("输出 token 与费用无硬上限", exact=False)
@@ -446,9 +482,9 @@ def main() -> int:
                         expect(
                             page.get_by_text("报价或模型已变化，已刷新报价", exact=False)
                         ).to_be_visible()
-                        expect(page.get_by_role("textbox", name="股票代码")).to_have_value(
-                            "600001.SH"
-                        )
+                        expect(
+                            page.get_by_role("textbox", name=re.compile("股票代码"))
+                        ).to_have_value("600001.SH")
                         expect(page.get_by_role("checkbox")).not_to_be_checked()
                         expect(start).to_be_disabled()
                         click_settled(page, page.get_by_role("checkbox"))
@@ -478,10 +514,10 @@ def main() -> int:
                             page,
                             page.get_by_role("button", name="研究这家公司财报", exact=True).first,
                         )
-                        page.get_by_role("textbox", name="股票代码").focus()
-                        expect(page.get_by_role("textbox", name="股票代码")).to_have_value(
-                            "600001.SH"
-                        )
+                        page.get_by_role("textbox", name=re.compile("股票代码")).focus()
+                        expect(
+                            page.get_by_role("textbox", name=re.compile("股票代码"))
+                        ).to_have_value("600001.SH")
                         expect(
                             page.get_by_text("输出 token 与费用无硬上限", exact=False)
                         ).to_be_visible()
@@ -498,6 +534,20 @@ def main() -> int:
                         ).to_be_visible()
                         assert_layout(page, width)
                         financial_url = page.url
+                        click_settled(
+                            page, page.get_by_role("button", name="核对本公司价格参考", exact=True)
+                        )
+                        expect(page).to_have_url(base + "/analysis?mode=swing&code=600001.SH")
+                        expect(
+                            page.get_by_role("textbox", name=re.compile("股票代码"))
+                        ).to_have_value("600001.SH")
+                        expect(page.get_by_role("checkbox")).not_to_be_checked()
+                        expect(
+                            page.get_by_role("button", name="确认启动研究", exact=True)
+                        ).to_be_disabled()
+                        page.go_back()
+                        expect(page).to_have_url(financial_url)
+
                         click_settled(page, page.get_by_role("button", name="依据", exact=True))
                         expect(
                             page.get_by_text("冻结证券范围背景统计", exact=False)
@@ -561,7 +611,7 @@ def main() -> int:
                         expect(page.get_by_text("续跑 1 次", exact=False).first).to_be_visible()
                     for case, label in (
                         ("long", "合成的超长公司名称"),
-                        ("expired", "价格参考已过期"),
+                        ("expired", "已过期 · 仅供历史核查"),
                         ("gap", "资料核验失败"),
                         ("excluded", "未入选"),
                         ("zero", "没有价格参考"),
@@ -573,10 +623,10 @@ def main() -> int:
                         page.close()
                         page = context.new_page()
                         page.set_viewport_size({"width": 360, "height": 844})
-                        page.goto(base)
+                        page.goto(base + "/published")
                         page.wait_for_selector("flt-semantics-placeholder")
                         page.evaluate('document.querySelector("flt-semantics-placeholder").click()')
-                        expect(page).to_have_url(base + "/")
+                        expect(page).to_have_url(base + "/published")
                         expect(
                             page.get_by_role("heading", name=re.compile(re.escape(label)))
                         ).to_be_visible()
@@ -600,6 +650,15 @@ def main() -> int:
                                 page, page.get_by_role("button", name=re.compile("^查看价格参考"))
                             )
                             assert page.get_by_text(re.compile("11\\.23|11\\.00")).count() == 0
+                            click_settled(
+                                page,
+                                page.get_by_role("button", name="重新核对价格参考", exact=True),
+                            )
+                            expect(page).to_have_url(base + "/analysis?mode=swing&code=600001.SH")
+                            expect(page.get_by_role("checkbox")).not_to_be_checked()
+                            expect(
+                                page.get_by_role("button", name="确认启动研究", exact=True)
+                            ).to_be_disabled()
                         elif case == "error":
                             click_settled(
                                 page, page.get_by_role("button", name="重新读取", exact=True)
@@ -618,7 +677,7 @@ def main() -> int:
                     ).to_be_visible()
                     assert page.get_by_text(re.compile("11\\.23|11\\.00")).count() == 0
                     page.set_viewport_size({"width": 1280, "height": 900})
-                    page.goto(base)
+                    page.goto(base + "/published")
                     page.wait_for_selector("flt-semantics-placeholder")
                     page.evaluate('document.querySelector("flt-semantics-placeholder").click()')
                     expect(

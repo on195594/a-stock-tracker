@@ -15,6 +15,7 @@ from typing import Any
 
 import requests
 
+from a_stock_tracker.atomic_io import _atomic_write_bytes
 from a_stock_tracker.automation import (
     Budget,
     BudgetStop,
@@ -26,7 +27,6 @@ from a_stock_tracker.automation import (
     save_state,
 )
 from a_stock_tracker.bounded_process import run_bounded
-from a_stock_tracker.calendar import _atomic_write_bytes
 from a_stock_tracker.research import SHANGHAI, ScreenError, now_iso, parse_date
 
 TEMPLATE = "cited-machine-research-v1"

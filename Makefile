@@ -1,4 +1,4 @@
-.PHONY: setup demo check test-mobile calendar
+.PHONY: setup demo check test-mobile
 PYTHON := .venv/bin/python
 
 setup:
@@ -16,6 +16,3 @@ check:
 
 test-mobile:
 	$(PYTHON) -m tests.test_mobile
-
-calendar:
-	$(PYTHON) -m a_stock_tracker.calendar

@@ -206,7 +206,7 @@ def test_web_consent_demo_and_late_callback_are_inert_after_logout(monkeypatch):
             entry = next(
                 c
                 for c in app_controls(page)
-                if isinstance(c, ft.Button) and c.content == "开始选股与研究"
+                if isinstance(c, ft.TextButton) and c.content == "从初筛找公司"
             )
             await entry.on_click(None)
             start = next(
@@ -354,7 +354,7 @@ def test_late_submit_response_cannot_overwrite_logout(monkeypatch):
         entry = next(
             c
             for c in app_controls(page)
-            if isinstance(c, ft.Button) and c.content == "开始选股与研究"
+            if isinstance(c, ft.TextButton) and c.content == "从初筛找公司"
         )
         await entry.on_click(None)
         consent = next(c for c in app_controls(page) if isinstance(c, ft.Checkbox))
@@ -380,7 +380,7 @@ def test_late_submit_response_cannot_overwrite_logout(monkeypatch):
             await pending
             assert page.route == "/login" and len(client.runs) == 1
             assert not any(
-                isinstance(c, ft.Text) and c.value == "财报筛选与研究" for c in app_controls(page)
+                isinstance(c, ft.Text) and c.value == "选择公司研究财报" for c in app_controls(page)
             )
         finally:
             release.set()
@@ -793,7 +793,7 @@ def test_refresh_resets_pending_payload_and_generates_new_nonce(monkeypatch):
         entry = next(
             c
             for c in app_controls(page)
-            if isinstance(c, ft.Button) and c.content == "开始选股与研究"
+            if isinstance(c, ft.TextButton) and c.content == "从初筛找公司"
         )
         await entry.on_click(None)
         radio_group = next(c for c in app_controls(page) if isinstance(c, ft.RadioGroup))
@@ -1037,7 +1037,7 @@ def test_entry_continuation_requires_explicit_new_budget_confirmation(monkeypatc
 
     async def run():
         page = AppMockPage()
-        page.route = "/analysis"
+        page.route = "/analysis?mode=screen"
         try:
             await app.build_app()(page)
             controls = list(app_controls(page))

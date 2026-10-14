@@ -20,7 +20,7 @@ from a_stock_tracker.research import finite_number
 LABELS = {
     "running": "执行中",
     "completed": "已结束",
-    "partial": "已结束",
+    "partial": "部分结果",
     "failed": "失败",
     "interrupted": "中断",
 }
@@ -136,11 +136,40 @@ def report_controls(report) -> list[ft.Control]:
     return controls
 
 
+def recent_result_label(run) -> str:
+    status = run["status"]
+    if status in {"running", "failed", "interrupted"}:
+        return LABELS[status]
+    if status not in {"completed", "partial"}:
+        return "状态待核查"
+    result = run.get("summary", {})
+    rows = result.get("board", {}).get("rows", [])
+    reports = result.get("reports", [])
+    if rows:
+        available = [r for r in rows if r["status"] in {"reference", "observation"}]
+        label = (
+            "历史价格参考"
+            if available and all(r.get("expired") for r in available)
+            else "价格参考可查看"
+            if available
+            else "资料不足"
+        )
+    elif reports:
+        label = "财报可查看" if any(readable_report(r) for r in reports) else "无可读财报结论"
+    elif run.get("request", {}).get("mode") == "screen":
+        label = "初筛结果可查看"
+    else:
+        label = "结果待核查"
+    return "部分结果 · " + label if status == "partial" else label
+
+
 def recent_controls(runs, open_route) -> list[ft.Control]:
     controls: list[ft.Control] = []
     for title, active in (("进行中", True), ("最近研究", False)):
-        controls.append(heading(title, size=22))
         items = [r for r in runs if (r["status"] == "running") == active]
+        if active and not items:
+            continue
+        controls.append(heading(title, size=22))
         if not items:
             controls.append(
                 paragraph("暂无进行中的研究。" if active else "暂无研究记录，可开始选股与研究。")
@@ -170,11 +199,14 @@ def recent_controls(runs, open_route) -> list[ft.Control]:
                     item["limits"]["title"]
                     + " · "
                     + (",".join(item["request"]["codes"]) or "全市场初筛"),
-                    f"{LABELS.get(item['status'], '状态待核查')}{chain} · {local_time(item.get('created_at'))}",
+                    f"{recent_result_label(item)}{chain} · {local_time(item.get('created_at'))}",
                     extra=[
                         *summaries,
                         ft.TextButton(
-                            ft.Text("查看进度与结果", semantics_label="查看研究 · " + item["id"]),
+                            ft.Text(
+                                "查看进度" if active else "查看结果",
+                                semantics_label="查看研究 · " + item["id"],
+                            ),
                             on_click=open_route("/analysis/" + item["id"]),
                             height=48,
                         ),
@@ -229,7 +261,7 @@ def ranking_controls(groups, identifier, open_route, is_current) -> list[ft.Cont
                         if row.get("total_mv") is not None
                         else ""
                     )
-                    + f"平均名次：{row.get('order', '未记录')}；PB 名次：{row.get('pb_rank', '未记录')}；ROE 名次：{row.get('roe_rank', '未记录')}"
+                    + f"平均名次：{row.get('order', '未记录')}"
                 ),
                 ft.Button(
                     "研究这家公司财报",
@@ -319,6 +351,7 @@ def result_view(
                 code,
                 lambda c: open_route("/analysis/" + run["id"] + "/" + c),
                 open_route("/analysis/" + run["id"]),
+                recheck_route=open_route,
             )
         )
         return ft.Column(controls, spacing=20)
@@ -326,13 +359,18 @@ def result_view(
         ft.TextButton(icon=ft.Icons.ARROW_BACK, content="返回选股与研究", on_click=back, height=48)
     )
     status = run["status"]
-    controls.append(
-        notice(
-            "执行：" + LABELS.get(status, "状态待核查"),
-            run["message"],
-            caution=status in {"failed", "interrupted"},
-        )
+    execution = notice(
+        "执行：" + LABELS.get(status, "状态待核查"),
+        run["message"],
+        caution=status in {"failed", "interrupted", "partial"},
     )
+    is_screen_result = (
+        status in {"completed", "partial"}
+        and run.get("request", {}).get("mode") == "screen"
+        and bool(run.get("result"))
+    )
+    if not is_screen_result:
+        controls.append(execution)
     evidence: list[ft.Control] = [
         paragraph(
             f"请求编号：{run['id']}\n发起时间（上海）：{local_time(run.get('created_at'))}\n本次类型：{run['limits']['title']}"
@@ -378,21 +416,72 @@ def result_view(
                     None,
                     lambda c: open_route("/analysis/" + run["id"] + "/" + c),
                     back,
+                    recheck_route=open_route,
                 )
             )
-        elif run["request"]["mode"] == "financial" and result.get("reports"):
+        elif run["request"]["mode"] == "financial":
             controls.append(heading("财报研究", level=1))
-            for report in result["reports"]:
+            reports = result.get("reports", [])
+            if not reports:
+                controls.extend(
+                    [
+                        notice(
+                            "没有可读的公司财报报告",
+                            "本轮未生成可读报告；请核对停止原因和资料缺口。价格参考独立核查，不构成对财报判断的支持。",
+                            caution=True,
+                        ),
+                        paragraph(usage_text(result.get("usage") or run.get("usage"), "financial")),
+                    ]
+                )
+                for requested_code in run["request"].get("codes", []):
+                    controls.append(
+                        ft.TextButton(
+                            "核对本公司价格参考",
+                            on_click=open_route(f"/analysis?mode=swing&code={requested_code}"),
+                            height=48,
+                        )
+                    )
+            for report in reports:
                 controls.extend(report_controls(report))
-            evidence.append(paragraph(usage_text(result.get("usage"), run["request"]["mode"])))
-        else:
+                if not readable_report(report):
+                    controls.append(
+                        paragraph("财报未形成可读结论；价格参考独立核查，不构成对财报判断的支持。")
+                    )
+                controls.append(
+                    ft.TextButton(
+                        "核对本公司价格参考",
+                        on_click=open_route(f"/analysis?mode=swing&code={report['code']}"),
+                        height=48,
+                    )
+                )
+            if reports:
+                evidence.append(paragraph(usage_text(result.get("usage"), "financial")))
+        elif run["request"]["mode"] == "screen":
             summary = result["coverage"]
             counts = summary["counts"]
             pending = counts.get("pending", 0)
             groups = result.get("groups", []) if run["request"]["mode"] == "screen" else []
             candidate_count = sum(len(g["ranking"]) for g in groups)
             reports = result.get("reports", [])
-            controls.append(heading("财报筛选与研究", level=1))
+            controls.append(heading("选择公司研究财报", level=1))
+            controls.append(
+                notice(
+                    f"可研究 {candidate_count} 家 · 资料截至 {summary['data_date']}",
+                    f"尚未覆盖 {pending} 家 · 资料缺口 {counts.get('gap', 0)} 家。"
+                    "仅筛后同业排名，不是完整行业前三；财报资格不代表投资价值。",
+                    caution=bool(pending or counts.get("gap")),
+                )
+            )
+            if result.get("truncated"):
+                controls.append(notice("排名展示已截断", result["truncation_note"], caution=True))
+            if groups:
+                controls.extend(ranking_controls(groups, run["id"], open_route, is_current))
+            else:
+                controls.append(
+                    paragraph(
+                        "尚未形成可比较候选；行业覆盖不足、资料缺口或资格未通过均可能导致零结果。"
+                    )
+                )
             covered = (
                 ("未完成可继续" if run.get("can_continue") else "未完成不可继续")
                 if pending
@@ -400,21 +489,18 @@ def result_view(
                 if counts.get("gap")
                 else "完整"
             )
-            controls.append(
-                paragraph(
-                    f"覆盖：{covered}\n财报资格通过 {counts.get('qualified', 0)}；排除 {counts.get('excluded', 0)}；资料缺口 {counts.get('gap', 0)}；尚未覆盖 {pending}"
-                )
-            )
-            controls.append(
-                paragraph(
-                    f"结果：{candidate_count} 家同业排名候选，{len(reports)} 份报告。"
-                    if candidate_count or reports
-                    else "结果：零候选/报告。尚未形成可比较候选；行业覆盖不足、资料缺口或资格未通过均可能导致零结果。"
-                )
+            evidence.extend(
+                [
+                    execution,
+                    paragraph(
+                        f"覆盖：{covered}\n财报资格通过 {counts.get('qualified', 0)}；排除 {counts.get('excluded', 0)}；资料缺口 {counts.get('gap', 0)}；尚未覆盖 {pending}"
+                    ),
+                    paragraph(f"结果：{candidate_count} 家同业排名候选，{len(reports)} 份报告。"),
+                ]
             )
             if run.get("continued_by"):
                 controls.append(
-                    ft.Button(
+                    ft.TextButton(
                         "已继续 → 打开最新进度",
                         on_click=open_route("/analysis/" + run["continued_by"]),
                         height=48,
@@ -430,7 +516,7 @@ def result_view(
                 )
                 if run.get("can_continue"):
                     controls.append(
-                        ft.Button(
+                        (ft.TextButton if groups else ft.Button)(
                             "继续未覆盖初筛（核对预算）",
                             on_click=open_route("/analysis?mode=screen&resume_from=" + run["id"]),
                             height=48,
@@ -440,8 +526,19 @@ def result_view(
                 controls.append(
                     paragraph("下一步：选择公司研究财报或查看价格纪律参考；资料缺口不会自动重试。")
                 )
-            controls.append(paragraph(usage_text(result.get("usage"), run["request"]["mode"])))
-            controls.append(
+            evidence.extend(
+                paragraph(
+                    group["industry"]
+                    + " · 分项名次\n"
+                    + "\n".join(
+                        f"{row['name']} · {row['code']}：PB 名次 {row.get('pb_rank', '未记录')}；ROE 名次 {row.get('roe_rank', '未记录')}"
+                        for row in group["ranking"]
+                    )
+                )
+                for group in groups
+            )
+            evidence.append(paragraph(usage_text(result.get("usage"), run["request"]["mode"])))
+            evidence.append(
                 paragraph(
                     "组内按 PB 与 ROE 平均名次排序，不是跨行业总榜。仅筛后池资料完整的行业形成候选；这是筛后同业排名，不是完整行业前三。财报资格不代表投资价值。"
                 )
@@ -459,9 +556,11 @@ def result_view(
                         f"冻结门槛：0＜PB≤{screening['pb_max']}；总市值≥{screening['total_mv_min_yi']}亿元，不设上限。\n财报采集前：排除 {initial.get('excluded', 0)} 家；资料缺口 {initial.get('gap', 0)} 家；进入财报采集池 {initial.get('pending', 0)} 家。\n门槛用于控制采集量，未经收益验证，可能漏选。"
                     )
                 )
-            if result.get("truncated"):
-                controls.append(notice("排名展示已截断", result["truncation_note"], caution=True))
-            if groups:
-                controls.extend(ranking_controls(groups, run["id"], open_route, is_current))
-    controls.append(ft.ExpansionTile(title=ft.Text("依据"), controls=evidence, controls_padding=16))
+    controls.append(
+        ft.ExpansionTile(
+            title=ft.Text("筛选依据与用量" if is_screen_result else "依据"),
+            controls=evidence,
+            controls_padding=16,
+        )
+    )
     return ft.Column(controls, spacing=20, horizontal_alignment=ft.CrossAxisAlignment.STRETCH)

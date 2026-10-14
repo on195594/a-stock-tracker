@@ -1,9 +1,7 @@
-"""One project; private research state and calendar evidence have separate paths."""
+"""Project paths used to exclude historical research directories from replay."""
 
 import os
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-CONFIG_DIR = Path(os.getenv("TRACKER_CONFIG_DIR", PROJECT_ROOT / "config")).expanduser().resolve()
 DATA_DIR = Path(os.getenv("TRACKER_DATA_DIR", PROJECT_ROOT / "data")).expanduser().resolve()
-CALENDAR_PATH = DATA_DIR / "calendar" / "trading_calendar.json"

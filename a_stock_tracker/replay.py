@@ -21,8 +21,8 @@ from typing import Any
 import numpy as np
 import pandas as pd  # type: ignore[import-untyped]
 
+from a_stock_tracker.atomic_io import _atomic_write_bytes
 from a_stock_tracker.automation import digest, encoded, read_state, save, save_state
-from a_stock_tracker.calendar import _atomic_write_bytes
 from a_stock_tracker.opportunities import RULE, SHANGHAI, bars, price_conditions
 from a_stock_tracker.paths import DATA_DIR, PROJECT_ROOT
 from a_stock_tracker.research import BudgetStop, ScreenError, now_iso

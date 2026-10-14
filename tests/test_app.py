@@ -270,7 +270,9 @@ def test_owner_login_and_logout(monkeypatch, user_id):
         try:
             await page.on_login(event)
             if user_id in ("12345678", 12345678):
-                assert page.route == "/" and actors[0].is_valid
+                assert page.route == "/" and not actors
+                await page.on_route_change(SimpleNamespace(route="/published"))
+                assert actors[0].is_valid
                 assert any(
                     isinstance(c, ft.Text) and "还没有价格参考批次" in c.value
                     for c in app_controls(page.controls[0])
@@ -342,6 +344,7 @@ def test_reconnect_revokes_expired_actor(monkeypatch):
             await page.on_login(
                 ft.LoginEvent(name="login", control=None, error=None, error_description=None)
             )
+            await page.on_route_change(SimpleNamespace(route="/published"))
             await page.on_disconnect(None)
             clock[0] = actors[0].expires_at + 1
             await page.on_connect(None)
@@ -355,6 +358,7 @@ def test_reconnect_revokes_expired_actor(monkeypatch):
             await page.on_login(
                 ft.LoginEvent(name="login", control=None, error=None, error_description=None)
             )
+            await page.on_route_change(SimpleNamespace(route="/published"))
             assert len(actors) == 2 and actors[-1].is_valid
             await page.on_login(
                 ft.LoginEvent(name="login", control=None, error=None, error_description=None)
@@ -389,6 +393,7 @@ def test_report_read_failure_has_retry_without_legacy_link(monkeypatch):
             await page.on_login(
                 ft.LoginEvent(name="login", control=None, error=None, error_description=None)
             )
+            await page.on_route_change(SimpleNamespace(route="/published"))
             controls = list(app_controls(page.controls[0]))
             retry = next(
                 c for c in controls if isinstance(c, ft.Button) and c.content == "重新读取"
@@ -553,7 +558,7 @@ def test_home_without_published_root_shows_research_and_never_reads_batch(monkey
                 ft.LoginEvent(name="login", control=None, error=None, error_description=None)
             )
             text = "\n".join(str(getattr(c, "value", "")) for c in app_controls(page))
-            assert "进行中" in text and "最近研究" in text
+            assert "进行中" not in text and "最近研究" in text
             assert "还没有价格参考批次" not in text
         finally:
             await page.on_close(None)
@@ -618,7 +623,7 @@ def test_uncertain_financial_request_survives_rerender(monkeypatch, transition):
             await next(
                 c
                 for c in app_controls(page)
-                if isinstance(c, ft.Button) and c.content == "核对原请求受理状态"
+                if isinstance(c, ft.Button) and c.content == "继续确认原请求"
             ).on_click(None)
             assert len(client.runs) == 1
             assert attempts[0] == attempts[1]
@@ -659,7 +664,7 @@ def test_repeated_account_entry_keeps_original_return(monkeypatch):
 
 @pytest.mark.parametrize(
     "route",
-    ["/", "/analysis", "/opportunity/600001.SH", "/analysis/{id}", "/analysis/{id}/600001.SH"],
+    ["/", "/published", "/opportunity/600001.SH", "/analysis/{id}", "/analysis/{id}/600001.SH"],
 )
 def test_open_price_snapshots_expire_locally_at_shanghai_midnight(monkeypatch, route):
     from copy import deepcopy
@@ -785,7 +790,7 @@ def test_pending_request_rejection_and_logout_clear_confirmation(monkeypatch, re
                 await next(
                     c
                     for c in app_controls(page)
-                    if isinstance(c, ft.Button) and c.content == "核对原请求受理状态"
+                    if isinstance(c, ft.Button) and c.content == "继续确认原请求"
                 ).on_click(None)
                 assert attempts[0] == attempts[1]
                 assert (
@@ -820,3 +825,116 @@ def test_pending_request_rejection_and_logout_clear_confirmation(monkeypatch, re
             await page.on_close(None)
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "route, mode, label, multiline",
+    [
+        ("/analysis", "financial", "一家公司的股票代码", False),
+        ("/analysis?mode=swing", "swing", "股票代码（1–5 家）", True),
+        ("/analysis?mode=screen", "screen", "股票代码（1–5 家）", False),
+    ],
+)
+def test_confirmation_is_focused_and_navigation_never_submits(
+    monkeypatch, route, mode, label, multiline
+):
+    from a_stock_tracker.research_client import DemoResearchClient
+    from tests.test_opportunity_view import text_values
+
+    client = DemoResearchClient()
+    monkeypatch.setattr(app, "APP_MODE", "demo")
+    monkeypatch.setattr(app, "DemoResearchClient", lambda: client)
+    monkeypatch.setattr(client, "submit", lambda _: pytest.fail("navigation submitted research"))
+
+    async def run():
+        page = AppMockPage()
+        page.route = route
+        await app.build_app()(page)
+        try:
+            controls = list(app_controls(page))
+            assert next(c for c in controls if isinstance(c, ft.RadioGroup)).value == mode
+            field = next(c for c in controls if isinstance(c, ft.TextField))
+            assert field.label == label
+            assert field.visible is (mode != "screen")
+            if mode != "screen":
+                assert field.multiline is multiline
+            text = "\n".join(text_values(page))
+            assert "最近研究" not in text and "进行中" not in text
+            assert ("输出 token 与费用无硬上限" in text) is (mode == "financial")
+            checkbox = next(c for c in controls if isinstance(c, ft.Checkbox))
+            assert checkbox.value is False
+            if mode != "financial":
+                assert "不调用模型" in checkbox.label
+            assert next(c for c in controls if isinstance(c, ft.Button)).disabled
+            chooser = next(c for c in controls if isinstance(c, ft.ExpansionTile))
+            assert chooser.title.value == "更换研究类型"
+            checkbox.value = True
+            checkbox.on_change(None)
+            selected = next(c for c in controls if isinstance(c, ft.RadioGroup))
+            selected.value = "financial" if mode != "financial" else "swing"
+            selected.on_change(None)
+            assert checkbox.value is False
+            assert next(c for c in controls if isinstance(c, ft.Button)).disabled
+
+        finally:
+            await page.on_close(None)
+
+    asyncio.run(run())
+
+
+def test_unknown_before_receipt_shows_saved_costs_and_only_reuses_original_request(monkeypatch):
+    from copy import deepcopy
+
+    from a_stock_tracker.research_client import DemoResearchClient, ResearchUnavailable
+    from tests.test_opportunity_view import text_values
+
+    client = DemoResearchClient()
+    monkeypatch.setattr(app, "APP_MODE", "demo")
+    monkeypatch.setattr(app, "DemoResearchClient", lambda: client)
+    submit = client.submit
+    attempts = []
+
+    def uncertain(payload):
+        attempts.append(deepcopy(payload))
+        if len(attempts) == 1:
+            raise ResearchUnavailable("synthetic request never received")
+        return submit(payload)
+
+    monkeypatch.setattr(client, "submit", uncertain)
+
+    async def run():
+        page = AppMockPage()
+        page.route = "/analysis?mode=financial&code=600519"
+        await app.build_app()(page)
+        try:
+            checkbox = next(c for c in app_controls(page) if isinstance(c, ft.Checkbox))
+            checkbox.value = True
+            checkbox.on_change(None)
+            await next(c for c in app_controls(page) if isinstance(c, ft.Button)).on_click(None)
+            assert not client.runs
+            text = "\n".join(text_values(page))
+            assert "如果服务此前没有收到请求" in text
+            assert "会启动研究并可能产生费用" in text
+            assert "600519.SH" in text and "100 次数据请求 / 30 分钟" in text
+            assert "输出 token 与费用无硬上限" in text
+            assert attempts[0]["quote"]["model"]["model"] in text
+            detail = next(c for c in app_controls(page) if isinstance(c, ft.ExpansionTile))
+            assert attempts[0]["id"] in "\n".join(text_values(detail))
+            assert not any(isinstance(c, ft.Checkbox) for c in app_controls(page))
+            await next(
+                c
+                for c in app_controls(page)
+                if isinstance(c, ft.Button) and c.content == "继续确认原请求"
+            ).on_click(None)
+            assert attempts[0] == attempts[1] and len(client.runs) == 1
+        finally:
+            await page.on_close(None)
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "seconds, label", [(900, "15 分钟"), (1800, "30 分钟"), (3600, "60 分钟"), (66, "1 分钟 6 秒")]
+)
+def test_budget_duration_preserves_exact_confirmed_limit(seconds, label):
+    assert app.budget_duration(seconds) == label
