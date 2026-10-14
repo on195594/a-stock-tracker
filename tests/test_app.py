@@ -938,3 +938,56 @@ def test_unknown_before_receipt_shows_saved_costs_and_only_reuses_original_reque
 )
 def test_budget_duration_preserves_exact_confirmed_limit(seconds, label):
     assert app.budget_duration(seconds) == label
+
+
+@pytest.mark.parametrize("source", ["financial_report", "expired_price"])
+def test_result_price_navigation_prefills_code_without_submitting(monkeypatch, source):
+    from a_stock_tracker import opportunity_demo
+    from a_stock_tracker.research_client import DemoResearchClient
+
+    client = DemoResearchClient()
+    identifier = "c" * 32
+    client.submit(
+        {
+            "id": identifier,
+            "mode": "financial",
+            "codes": ["600001.SH"],
+            "confirmed": True,
+            "quote": app.quote(client.info(), "financial"),
+        }
+    )
+    board = opportunity_demo.demo_board()
+    board["rows"][0]["expired"] = True
+    monkeypatch.setattr(app, "APP_MODE", "demo")
+    monkeypatch.setattr(app, "DemoResearchClient", lambda: client)
+    monkeypatch.setattr(opportunity_demo, "demo_board", lambda: board)
+    monkeypatch.setattr(client, "submit", lambda _: pytest.fail("navigation submitted research"))
+
+    async def run():
+        page = AppMockPage()
+        page.route = (
+            f"/analysis/{identifier}" if source == "financial_report" else "/opportunity/600001.SH"
+        )
+        await app.build_app()(page)
+        try:
+            label = "核对本公司价格参考" if source == "financial_report" else "重新核对价格参考"
+            await next(
+                c for c in app_controls(page) if isinstance(c, ft.TextButton) and c.content == label
+            ).on_click(None)
+            assert page.route == "/analysis?mode=swing&code=600001.SH"
+            controls = list(app_controls(page))
+            assert next(c for c in controls if isinstance(c, ft.RadioGroup)).value == "swing"
+            field = next(c for c in controls if isinstance(c, ft.TextField))
+            assert field.value == "600001.SH"
+            assert field.label == "股票代码（1–5 家）"
+            assert next(c for c in controls if isinstance(c, ft.Checkbox)).value is False
+            start = next(
+                c for c in controls if isinstance(c, ft.Button) and c.content == "确认启动研究"
+            )
+            assert start.disabled
+            await start.on_click(None)
+            assert len(client.runs) == 1
+        finally:
+            await page.on_close(None)
+
+    asyncio.run(run())

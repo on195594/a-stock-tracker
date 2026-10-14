@@ -538,6 +538,9 @@ def main() -> int:
                             page, page.get_by_role("button", name="核对本公司价格参考", exact=True)
                         )
                         expect(page).to_have_url(base + "/analysis?mode=swing&code=600001.SH")
+                        # Flutter exposes the editing value after this field receives focus,
+                        # as with the candidate-to-research prefill checks above.
+                        page.get_by_role("textbox", name=re.compile("股票代码")).focus()
                         expect(
                             page.get_by_role("textbox", name=re.compile("股票代码"))
                         ).to_have_value("600001.SH")
@@ -655,6 +658,10 @@ def main() -> int:
                                 page.get_by_role("button", name="重新核对价格参考", exact=True),
                             )
                             expect(page).to_have_url(base + "/analysis?mode=swing&code=600001.SH")
+                            page.get_by_role("textbox", name=re.compile("股票代码")).focus()
+                            expect(
+                                page.get_by_role("textbox", name=re.compile("股票代码"))
+                            ).to_have_value("600001.SH")
                             expect(page.get_by_role("checkbox")).not_to_be_checked()
                             expect(
                                 page.get_by_role("button", name="确认启动研究", exact=True)
