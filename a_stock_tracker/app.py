@@ -116,6 +116,9 @@ def build_app():
         session_beacon = ft.Image(src="", width=1, height=1, opacity=0)
         page.title = "个股研究助手"
         page.theme_mode = ft.ThemeMode.LIGHT
+        # The initial remote update replaces Flutter's default Roboto theme. Do not
+        # render Chinese in that old font during AnimatedTheme's transition.
+        page.theme_animation_style = ft.AnimationStyle.no_animation()
         page.theme = window_theme()
         page.bgcolor = BACKGROUND
         page.padding = 0

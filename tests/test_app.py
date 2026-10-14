@@ -1286,3 +1286,25 @@ def test_result_price_navigation_prefills_code_without_submitting(monkeypatch, s
             await page.on_close(None)
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("mode", ["demo", "production"])
+def test_first_page_update_uses_chinese_theme_without_font_transition(monkeypatch, mode):
+    monkeypatch.setattr(app, "APP_MODE", mode)
+
+    class FirstFramePage(AppMockPage):
+        def update(self):
+            assert self.theme.font_family == "NotoSansSC"
+            assert self.theme_animation_style.duration.in_milliseconds == 0
+            assert self.theme_animation_style.reverse_duration.in_milliseconds == 0
+            super().update()
+
+    async def run():
+        page = FirstFramePage()
+        await app.build_app()(page)
+        try:
+            assert page.updated_count > 0
+        finally:
+            await page.on_close(None)
+
+    asyncio.run(run())

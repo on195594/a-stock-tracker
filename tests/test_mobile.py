@@ -174,7 +174,15 @@ def serve_ui_cases(case_file: str, uncompressed_assets: bool = False) -> None:
 
     opportunity_demo.demo_board = board
     if uncompressed_assets:
-        app.PublicAssetCompression = lambda inner: inner
+        asset_wrapper = app.PublicAssetCompression
+
+        def without_compression(inner):
+            # Keep startup font registration/preload/cache identical in both runs.
+            wrapped = asset_wrapper(inner)
+            wrapped.compressed = inner
+            return wrapped
+
+        app.PublicAssetCompression = without_compression
         app.asgi_app = app.get_asgi_app()
     uvicorn.run(app.asgi_app, host=app.HOST, port=app.PORT, access_log=False)
 
