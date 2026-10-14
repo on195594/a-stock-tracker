@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
+import json
+import secrets
 import time
 from dataclasses import dataclass
 from typing import Literal
@@ -19,10 +24,15 @@ class Actor:
     role: Literal["owner", "demo"]
     expires_at: float
     revoked: bool = False
+    sid: str | None = None
 
     @property
     def is_valid(self) -> bool:
-        return not self.revoked and time.monotonic() < self.expires_at
+        if self.revoked or time.monotonic() >= self.expires_at:
+            return False
+        if self.sid is not None and self.sid not in ACTIVE_SESSIONS:
+            return False
+        return True
 
     def revoke(self) -> None:
         self.revoked = True
@@ -83,3 +93,155 @@ def check_production_auth_config(
         raise AuthError("Production mode requires GITHUB_ALLOWED_USER_ID")
     if not allowed_user_id.strip().isdigit():
         raise AuthError("GITHUB_ALLOWED_USER_ID must be numeric")
+
+
+# Active server-side sessions: sid -> (user_id, expires_at)
+ACTIVE_SESSIONS: dict[str, tuple[str, float]] = {}
+# Single-use exchange tickets (60s): ticket -> (user_id, sid, expires_at)
+EXCHANGE_TICKETS: dict[str, tuple[str, str, float]] = {}
+
+
+def purge_expired_sessions() -> None:
+    now = time.time()
+    expired_sids = [sid for sid, (_, exp) in ACTIVE_SESSIONS.items() if exp <= now]
+    for sid in expired_sids:
+        ACTIVE_SESSIONS.pop(sid, None)
+    expired_tickets = [t for t, (_, _, exp) in EXCHANGE_TICKETS.items() if exp <= now]
+    for t in expired_tickets:
+        EXCHANGE_TICKETS.pop(t, None)
+
+
+def register_session(user_id: str, expires_at: float, replace_user: bool = True) -> str:
+    """Register an active server-side session SID for an authenticated user, replacing any prior sessions for that user."""
+    purge_expired_sessions()
+    norm_user = str(user_id).strip()
+    if replace_user:
+        for old_sid in [s for s, (u, _) in list(ACTIVE_SESSIONS.items()) if u == norm_user]:
+            ACTIVE_SESSIONS.pop(old_sid, None)
+    sid = secrets.token_hex(16)
+    ACTIVE_SESSIONS[sid] = (norm_user, expires_at)
+    return sid
+
+
+def create_exchange_ticket(user_id: str, sid: str | None = None) -> str:
+    """Create a short-lived (60s) single-use ticket to establish browser session without exposing token in URL."""
+    purge_expired_sessions()
+    ticket = secrets.token_urlsafe(24)
+    session_sid = sid or secrets.token_hex(16)
+    EXCHANGE_TICKETS[ticket] = (str(user_id).strip(), session_sid, time.time() + 60)
+    return ticket
+
+
+def redeem_exchange_ticket(ticket: str | None) -> tuple[str, str] | None:
+    """Consume a single-use exchange ticket, returning (user_id, sid) or None."""
+    purge_expired_sessions()
+    if not ticket:
+        return None
+    entry = EXCHANGE_TICKETS.pop(ticket, None)
+    if not entry:
+        return None
+    user_id, sid, exp = entry
+    if exp <= time.time():
+        return None
+    return user_id, sid
+
+
+def revoke_exchange_tickets(sid: str | None = None) -> None:
+    """Purge unredeemed tickets for this specific session so late requests cannot establish a session."""
+    if not sid:
+        return
+    for t in [t for t, (_, s, _) in list(EXCHANGE_TICKETS.items()) if s == sid]:
+        EXCHANGE_TICKETS.pop(t, None)
+
+
+def sign_session_token(user_id: str, secret: str, expires_at: float, sid: str | None = None) -> str:
+    """Create an HMAC-SHA256 signed session token for persistent browser authentication."""
+    purge_expired_sessions()
+    norm_user = str(user_id).strip()
+    session_sid = sid or secrets.token_hex(16)
+    ACTIVE_SESSIONS[session_sid] = (norm_user, expires_at)
+    payload = json.dumps(
+        {"u": norm_user, "sid": session_sid, "exp": int(expires_at)}, separators=(",", ":")
+    ).encode("utf-8")
+    b64_payload = base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+    sig = hmac.new(secret.encode("utf-8"), b64_payload.encode("ascii"), hashlib.sha256).hexdigest()
+    return f"{b64_payload}.{sig}"
+
+
+def revoke_session(token_or_sid: str | None) -> None:
+    """Explicitly revoke a session token or sid from active registry."""
+    if not token_or_sid:
+        return
+    sid = None
+    if "." in token_or_sid:
+        try:
+            b64_payload = token_or_sid.rsplit(".", 1)[0]
+            padded = b64_payload + "=" * (-len(b64_payload) % 4)
+            data = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+            raw_sid = data.get("sid")
+            if isinstance(raw_sid, str) and raw_sid.strip():
+                sid = raw_sid.strip()
+        except Exception:
+            pass
+    elif isinstance(token_or_sid, str) and token_or_sid.strip():
+        sid = token_or_sid.strip()
+    if sid:
+        try:
+            ACTIVE_SESSIONS.pop(sid, None)
+            revoke_exchange_tickets(sid)
+        except Exception:
+            pass
+
+
+def verify_session_token(
+    token: str | None, secret: str, allowed_user_id: str | None
+) -> Actor | None:
+    """Verify signed session token against secret, owner whitelist, and active registry; returns valid Actor or None."""
+    purge_expired_sessions()
+    if not token or "." not in token or not secret or not allowed_user_id:
+        return None
+    try:
+        b64_payload, sig = token.rsplit(".", 1)
+        expected_sig = hmac.new(
+            secret.encode("utf-8"), b64_payload.encode("ascii"), hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(sig, expected_sig):
+            return None
+        padded = b64_payload + "=" * (-len(b64_payload) % 4)
+        data = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+        user_id = str(data.get("u", "")).strip()
+        sid = str(data.get("sid", "")).strip()
+        exp = float(data.get("exp", 0))
+        now = time.time()
+        if exp <= now:
+            return None
+        norm_allowed = str(allowed_user_id).strip()
+        if not user_id.isdigit() or user_id != norm_allowed:
+            return None
+        if sid not in ACTIVE_SESSIONS:
+            return None
+        active_user, active_exp = ACTIVE_SESSIONS[sid]
+        if active_user != user_id or active_exp <= now:
+            ACTIVE_SESSIONS.pop(sid, None)
+            return None
+        remaining = exp - now
+        return Actor(
+            user_id=user_id,
+            role="owner",
+            expires_at=time.monotonic() + remaining,
+            sid=sid,
+        )
+    except Exception:
+        return None
+
+
+def parse_cookie_header(cookie_header: str | None) -> dict[str, str]:
+    """Parse HTTP Cookie header string into dictionary."""
+    cookies: dict[str, str] = {}
+    if not cookie_header:
+        return cookies
+    for part in cookie_header.split(";"):
+        if "=" in part:
+            name, value = part.strip().split("=", 1)
+            cookies[name.strip()] = value.strip()
+    return cookies

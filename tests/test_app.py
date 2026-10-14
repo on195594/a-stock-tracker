@@ -374,6 +374,301 @@ def test_reconnect_revokes_expired_actor(monkeypatch):
     asyncio.run(run())
 
 
+def test_persistent_session_cookie_restores_owner_actor(monkeypatch):
+    import time
+    from unittest.mock import MagicMock
+
+    from a_stock_tracker import auth
+
+    monkeypatch.setattr(app, "APP_MODE", "production")
+    monkeypatch.setattr(app, "GITHUB_ALLOWED_USER_ID", "12345678")
+    monkeypatch.setattr(app, "GITHUB_CLIENT_SECRET", "test-secret-12345")
+
+    token = auth.sign_session_token("12345678", "test-secret-12345", time.time() + 3600)
+
+    page = AppMockPage()
+    ws = MagicMock()
+    ws.scope = {}
+    ws.cookies = {"stock_session": token}
+    conn = MagicMock()
+    conn._FletApp__websocket = ws
+    sess = MagicMock()
+    sess.connection = conn
+    page.session = sess
+
+    async def run():
+        await app.build_app()(page)
+        assert not any(
+            isinstance(c, ft.Button) and c.content == "使用 GitHub 登录"
+            for c in app_controls(page.controls[0])
+        )
+        assert any(
+            isinstance(c, ft.Text) and "研究首页" in c.value for c in app_controls(page.controls[0])
+        )
+
+    asyncio.run(run())
+
+
+def test_multipage_session_revocation_and_tab_close(monkeypatch):
+    import time
+    from unittest.mock import MagicMock
+
+    from a_stock_tracker import auth
+
+    monkeypatch.setattr(app, "APP_MODE", "production")
+    monkeypatch.setattr(app, "GITHUB_ALLOWED_USER_ID", "12345678")
+    monkeypatch.setattr(app, "GITHUB_CLIENT_SECRET", "test-secret-12345")
+
+    token = auth.sign_session_token("12345678", "test-secret-12345", time.time() + 3600)
+
+    def make_page():
+        page = AppMockPage()
+        ws = MagicMock()
+        ws.scope = {}
+        ws.cookies = {"stock_session": token}
+        conn = MagicMock()
+        conn._FletApp__websocket = ws
+        sess = MagicMock()
+        sess.connection = conn
+        page.session = sess
+        return page
+
+    async def run():
+        page1 = make_page()
+        page2 = make_page()
+        await app.build_app()(page1)
+        await app.build_app()(page2)
+
+        actor1 = page1.session.connection._FletApp__websocket.scope.get(
+            "actor"
+        ) or auth.verify_session_token(token, "test-secret-12345", "12345678")
+        assert actor1 is not None and actor1.is_valid
+
+        # Tab close on page2 must NOT destroy the shared browser session
+        await page2.on_close(None)
+        assert actor1.is_valid
+        assert auth.verify_session_token(token, "test-secret-12345", "12345678") is not None
+
+        # Create unredeemed ticket for actor1's session, then logout
+        ticket = auth.create_exchange_ticket("12345678", actor1.sid)
+
+        # Explicit logout on page1 must revoke the shared session across all pages
+        settings_route = SimpleNamespace(route="/settings")
+        await page1.on_route_change(settings_route)
+        logout = next(
+            c
+            for c in app_controls(page1.controls[0])
+            if isinstance(c, ft.Button) and c.content == "退出登录"
+        )
+        await logout.on_click(None)
+
+        # Actor 1 and any other actor sharing this sid is now invalid
+        assert not actor1.is_valid
+        assert auth.verify_session_token(token, "test-secret-12345", "12345678") is None
+
+        # Unredeemed ticket was also purged; cannot create a new session
+        assert auth.redeem_exchange_ticket(ticket) is None
+
+        await page1.on_close(None)
+
+    asyncio.run(run())
+
+
+def test_repeated_rejected_callback_purges_ticket_and_sid(monkeypatch):
+    monkeypatch.setattr(app, "APP_MODE", "production")
+    monkeypatch.setattr(app, "GITHUB_ALLOWED_USER_ID", "12345678")
+    monkeypatch.setattr(app, "GITHUB_CLIENT_SECRET", "synthetic-secret")
+
+    async def run():
+        p = AppMockPage(auth=await completed_owner_authorization("12345678"))
+        await app.build_app()(p)
+        e = ft.LoginEvent(name="login", control=None, error=None, error_description=None)
+        await p.on_login(e)
+        ticket = next(
+            c.src.split("ticket=")[1]
+            for c in app_controls(p.controls[0])
+            if isinstance(c, ft.Image) and "ticket=" in c.src
+        )
+
+        # Second login fails (fresh proof already consumed)
+        await p.on_login(e)
+
+        sent = []
+
+        async def send(msg):
+            sent.append(msg)
+
+        middleware = app.SecurityMiddleware(None, False, "http://127.0.0.1:8550")
+        await middleware(
+            {
+                "type": "http",
+                "path": "/api/session",
+                "query_string": f"ticket={ticket}".encode(),
+                "headers": [(b"host", b"127.0.0.1:8550"), (b"sec-fetch-site", b"same-origin")],
+            },
+            None,
+            send,
+        )
+        headers = dict(sent[0]["headers"])
+        assert b"set-cookie" not in headers
+        await p.on_close(None)
+
+    asyncio.run(run())
+
+
+def test_security_middleware_session_cookie_handling(monkeypatch):
+    import time
+    from unittest.mock import AsyncMock
+
+    from a_stock_tracker import auth
+
+    monkeypatch.setattr(app, "GITHUB_ALLOWED_USER_ID", "12345678")
+    monkeypatch.setattr(app, "GITHUB_CLIENT_SECRET", "test-secret-12345")
+
+    token = auth.sign_session_token("12345678", "test-secret-12345", time.time() + 3600)
+
+    inner = AsyncMock()
+    middleware = app.SecurityMiddleware(
+        inner, is_demo=False, public_base_url="https://stock.keyi.win"
+    )
+
+    sent = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    async def run_api():
+        scope = {
+            "type": "http",
+            "path": "/api/session",
+            "query_string": f"token={token}".encode("utf-8"),
+            "headers": [
+                (b"host", b"stock.keyi.win"),
+                (b"origin", b"https://stock.keyi.win"),
+            ],
+        }
+        await middleware(scope, None, send)
+        assert sent[0]["status"] == 200
+        headers = dict(sent[0]["headers"])
+        assert b"stock_session=" in headers[b"set-cookie"]
+        assert b"Max-Age=28800" in headers[b"set-cookie"]
+
+        sent.clear()
+        scope["query_string"] = b"clear=1"
+        scope["headers"] = [
+            (b"host", b"stock.keyi.win"),
+            (b"origin", b"https://stock.keyi.win"),
+        ]
+        await middleware(scope, None, send)
+        assert sent[0]["status"] == 200
+        headers = dict(sent[0]["headers"])
+        assert b"Max-Age=0" in headers[b"set-cookie"]
+
+        # 2c. Exchange ticket single-use redemption
+        sent.clear()
+        sid = auth.register_session("12345678", time.time() + 3600)
+        ticket = auth.create_exchange_ticket("12345678", sid)
+        scope["path"] = "/api/session"
+        scope["query_string"] = f"ticket={ticket}".encode("utf-8")
+        scope["headers"] = [
+            (b"host", b"stock.keyi.win"),
+            (b"origin", b"https://stock.keyi.win"),
+            (b"sec-fetch-site", b"same-origin"),
+        ]
+        await middleware(scope, None, send)
+        assert sent[0]["status"] == 200
+        headers = dict(sent[0]["headers"])
+        assert b"stock_session=" in headers[b"set-cookie"]
+
+        sent.clear()
+        # Redeeming the same ticket again fails (single use)
+        await middleware(scope, None, send)
+        assert sent[0]["status"] == 200
+        headers = dict(sent[0]["headers"])
+        assert b"set-cookie" not in headers
+
+        # Redeeming a ticket whose sid was revoked fails
+        sent.clear()
+        revoked_sid = auth.register_session("12345678", time.time() + 3600)
+        revoked_ticket = auth.create_exchange_ticket("12345678", revoked_sid)
+        auth.ACTIVE_SESSIONS.pop(revoked_sid, None)
+        scope["query_string"] = f"ticket={revoked_ticket}".encode("utf-8")
+        await middleware(scope, None, send)
+        assert sent[0]["status"] == 200
+        headers = dict(sent[0]["headers"])
+        assert b"set-cookie" not in headers
+
+        # 2d. Cross-origin / same-site logout blocked (403) without session destruction
+        sent.clear()
+        cross_token = auth.sign_session_token("12345678", "test-secret-12345", time.time() + 3600)
+        cross_scope = {
+            "type": "http",
+            "path": "/logout",
+            "query_string": b"",
+            "headers": [
+                (b"host", b"stock.keyi.win"),
+                (b"origin", b"https://attacker.example"),
+                (b"sec-fetch-site", b"cross-site"),
+                (b"cookie", f"stock_session={cross_token}".encode("utf-8")),
+            ],
+        }
+        await middleware(cross_scope, None, send)
+        assert sent[0]["status"] == 403
+        assert auth.verify_session_token(cross_token, "test-secret-12345", "12345678") is not None
+
+        # Same-site cross-subdomain logout blocked
+        sent.clear()
+        same_site_scope = {
+            "type": "http",
+            "path": "/logout",
+            "query_string": b"",
+            "headers": [
+                (b"host", b"stock.keyi.win"),
+                (b"origin", b"https://other.keyi.win"),
+                (b"sec-fetch-site", b"same-site"),
+                (b"cookie", f"stock_session={cross_token}".encode("utf-8")),
+            ],
+        }
+        await middleware(same_site_scope, None, send)
+        assert sent[0]["status"] == 403
+        assert auth.verify_session_token(cross_token, "test-secret-12345", "12345678") is not None
+
+        # Same-origin logout succeeds (303)
+        sent.clear()
+        scope["path"] = "/logout"
+        scope["query_string"] = b""
+        scope["headers"] = [
+            (b"host", b"stock.keyi.win"),
+            (b"origin", b"https://stock.keyi.win"),
+            (b"sec-fetch-site", b"same-origin"),
+            (b"cookie", f"stock_session={cross_token}".encode("utf-8")),
+        ]
+        await middleware(scope, None, send)
+        assert sent[0]["status"] == 303
+        headers = dict(sent[0]["headers"])
+        assert headers[b"location"] == b"/login"
+        assert b"Max-Age=0" in headers[b"set-cookie"]
+        assert auth.verify_session_token(cross_token, "test-secret-12345", "12345678") is None
+
+        ws_token = auth.sign_session_token("12345678", "test-secret-12345", time.time() + 3600)
+        ws_scope = {
+            "type": "websocket",
+            "path": "/ws",
+            "headers": [
+                (b"host", b"stock.keyi.win"),
+                (b"origin", b"https://stock.keyi.win"),
+                (b"cookie", f"stock_session={ws_token}".encode("utf-8")),
+            ],
+        }
+        inner.reset_mock()
+        await middleware(ws_scope, None, send)
+        inner.assert_awaited_once()
+        assert "actor" in ws_scope
+        assert ws_scope["actor"].user_id == "12345678"
+
+    asyncio.run(run_api())
+
+
 def test_report_read_failure_has_retry_without_legacy_link(monkeypatch):
     monkeypatch.setattr(app, "APP_MODE", "production")
     monkeypatch.setattr(app, "GITHUB_ALLOWED_USER_ID", "12345678")

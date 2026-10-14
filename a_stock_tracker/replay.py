@@ -1145,18 +1145,23 @@ def auto(
     now = now or datetime.now(SHANGHAI)
     cutoff = closed_cutoff(now)
     isolated_path(report_dir)
-    if report_dir == root or root in report_dir.parents:
+    if report_dir == root or root in report_dir.parents or report_dir in root.parents:
         raise ScreenError("报告目录须与账本分离")
     with ledger_root(root, create=True) as events:
         cache = RequestCache(root, request_budget, client)
         # Same calendar window as scan() so the cached response is reused when as_of == cutoff.
         start = (datetime.strptime(cutoff, "%Y%m%d") - timedelta(days=180)).strftime("%Y%m%d")
         end = (datetime.strptime(cutoff, "%Y%m%d") + timedelta(days=32)).strftime("%Y%m%d")
-        as_of = [day for day in cached_calendar(cache, start, end) if day <= cutoff][-1]
+        closed_days = [day for day in cached_calendar(cache, start, end) if day <= cutoff]
+        if not closed_days:
+            raise ScreenError("范围内没有已收盘交易日")
+        as_of = closed_days[-1]
         scanned = any(e["type"] == "scan" and e["as_of"] == as_of for e in events)
     used = cache.used
     result: dict[str, Any] = {"as_of": as_of, "scanned": False, "settled": 0}
     if not scanned:
+        if request_budget - used < 1:
+            raise BudgetStop("请求预算已耗尽；已完成缓存可在另行授权后续拉")
         used += scan(root, as_of, request_budget - used, client, now=now)["requests"]
         result["scanned"] = True
     if request_budget - used >= 1:

@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import time as time_mod
 import uuid
 from copy import deepcopy
 from datetime import date, datetime, time, timedelta
@@ -15,10 +16,19 @@ from typing import Any, Literal
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from a_stock_tracker.auth import (
+    AUTH_EXPIRY_SECONDS,
     Actor,
     AuthError,
     check_production_auth_config,
     create_demo_actor,
+    create_exchange_ticket,
+    parse_cookie_header,
+    redeem_exchange_ticket,
+    register_session,
+    revoke_exchange_tickets,
+    revoke_session,
+    sign_session_token,
+    verify_session_token,
 )
 from a_stock_tracker.oauth_completion import OwnerAuthorization, consume_owner_actor
 from a_stock_tracker.opportunities import SHANGHAI, load_board
@@ -75,12 +85,35 @@ def budget_duration(seconds: int) -> str:
     return f"{minutes} 分钟" + (f" {remainder} 秒" if remainder else "")
 
 
+TRANSPARENT_PNG = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00"
+    b"\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\x0bIDATx\x9cc`\x00\x02\x00\x00\x05\x00"
+    b"\x01z^\xab?\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+
+
 def build_app():
     import flet as ft
 
     research = DemoResearchClient() if APP_MODE == "demo" else configured_client()
 
     async def main(page: ft.Page):
+        def get_initial_actor(page: ft.Page) -> Actor | None:
+            if APP_MODE == "demo":
+                return create_demo_actor()
+            conn = getattr(getattr(page, "session", None), "connection", None)
+            ws = getattr(conn, "_FletApp__websocket", None)
+            if ws is not None:
+                scope_actor = getattr(ws, "scope", {}).get("actor")
+                if isinstance(scope_actor, Actor) and scope_actor.is_valid:
+                    return scope_actor
+                token = getattr(ws, "cookies", {}).get("stock_session")
+                return verify_session_token(
+                    token, GITHUB_CLIENT_SECRET or "", GITHUB_ALLOWED_USER_ID
+                )
+            return None
+
+        session_beacon = ft.Image(src="", width=1, height=1, opacity=0)
         page.title = "个股研究助手"
         page.theme_mode = ft.ThemeMode.LIGHT
         page.fonts = {"NotoSansSC": CHINESE_FONT}
@@ -90,10 +123,11 @@ def build_app():
         page.scroll = ft.ScrollMode.AUTO
         state: dict[str, Any] = {
             "route": page.route or "/",
-            "actor": create_demo_actor() if APP_MODE == "demo" else None,
+            "actor": get_initial_actor(page),
             "generation": 0,
             "connected": True,
             "closed": False,
+            "revoked": False,
             "settings_return": "/",
             "poll": None,
             "pending": None,
@@ -184,8 +218,11 @@ def build_app():
                 page.logout()
             stop_expiry()
             state["pending"] = None
+            state["revoked"] = True
             state.pop("request_feedback", None)
             if state["actor"]:
+                if state["actor"].sid:
+                    revoke_session(state["actor"].sid)
                 state["actor"].revoke()
             state["actor"] = None
             state["generation"] += 1
@@ -238,16 +275,31 @@ def build_app():
                 revoke(clear_auth=False)
                 if e.error:
                     login_message.value = "登录失败，请重新授权。"
+                    if GITHUB_ALLOWED_USER_ID:
+                        revoke_exchange_tickets(GITHUB_ALLOWED_USER_ID)
                 else:
                     try:
                         state["actor"] = consume_owner_actor(page.auth, GITHUB_ALLOWED_USER_ID)
+                        state["revoked"] = False
                     except AuthError:
                         login_message.value = "登录被拒绝：仅允许配置的所有者。"
+                        if GITHUB_ALLOWED_USER_ID:
+                            revoke_exchange_tickets(GITHUB_ALLOWED_USER_ID)
                     else:
                         login_message.value = ""
+                        if APP_MODE == "production" and GITHUB_CLIENT_SECRET:
+                            sid = register_session(
+                                state["actor"].user_id, time_mod.time() + AUTH_EXPIRY_SECONDS
+                            )
+                            state["actor"].sid = sid
+                            ticket = create_exchange_ticket(state["actor"].user_id, sid)
+                            session_beacon.src = f"{PUBLIC_BASE_URL}/api/session?ticket={ticket}"
+                            page.update()
                         await navigate("/")
                         return
                 page.logout()
+                if GITHUB_ALLOWED_USER_ID:
+                    revoke_exchange_tickets(GITHUB_ALLOWED_USER_ID)
                 await navigate("/login")
 
             page.on_login = on_login
@@ -269,7 +321,12 @@ def build_app():
         async def logout(e):
             if not state["connected"]:
                 return
+            sid_to_clear = state["actor"].sid if state["actor"] else ""
             revoke()
+            if APP_MODE == "production":
+                param = f"clear={sid_to_clear}" if sid_to_clear else "clear=1"
+                session_beacon.src = f"{PUBLIC_BASE_URL}/api/session?{param}"
+                page.update()
             await navigate("/login")
 
         async def submit_saved(saved, actor):
@@ -1138,7 +1195,7 @@ def build_app():
             width=760,
             padding=ft.Padding.only(left=20, right=20, top=16, bottom=32),
             content=ft.Column(
-                [header, ft.Divider(height=16), content_container],
+                [header, ft.Divider(height=16), content_container, session_beacon],
                 spacing=16,
                 horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
             ),
@@ -1153,11 +1210,18 @@ def build_app():
 
         async def watchdog():
             try:
+                ticks = 0
                 while True:
                     await asyncio.sleep(5)
+                    ticks += 1
                     if state["actor"] and not state["actor"].is_valid:
                         revoke()
                         await navigate("/login")
+                    elif state["connected"] and ticks % 5 == 0:
+                        try:
+                            page.update()
+                        except Exception:
+                            pass
             except asyncio.CancelledError:
                 pass
 
@@ -1181,8 +1245,8 @@ def build_app():
                 watchdog_task = asyncio.create_task(watchdog())
             if state["actor"] and not state["actor"].is_valid:
                 revoke()
-            if APP_MODE == "demo" and state["actor"] is None:
-                state["actor"] = create_demo_actor()
+            if state["actor"] is None and not state["revoked"]:
+                state["actor"] = get_initial_actor(page)
             await render()
             page.update()
 
@@ -1190,7 +1254,12 @@ def build_app():
             state["closed"] = True
             stop_poll()
             state["connected"] = False
-            revoke()
+            stop_expiry()
+            state["pending"] = None
+            state.pop("request_feedback", None)
+            if state["actor"]:
+                state["actor"].revoke()
+                state["actor"] = None
             watchdog_task.cancel()
 
         page.on_disconnect = on_disconnect
@@ -1300,6 +1369,33 @@ class SecurityMiddleware:
             and origin_port == self.expected_port
         )
 
+    def _is_same_origin_http(self, headers: dict[bytes, bytes]) -> bool:
+        sec_fetch_site = headers.get(b"sec-fetch-site", b"").decode("utf-8").lower().strip()
+        if sec_fetch_site and sec_fetch_site != "same-origin":
+            return False
+        origin = headers.get(b"origin", b"").decode("utf-8").strip()
+        if origin:
+            return self._validate_origin(origin)
+        referer = headers.get(b"referer", b"").decode("utf-8").strip()
+        if referer:
+            try:
+                parsed = urlparse(referer)
+                parsed_hp = self._parse_host_port(parsed.netloc.lower())
+                if not parsed_hp:
+                    return False
+                hostname, port = parsed_hp
+                origin_port = (
+                    port if port is not None else (443 if parsed.scheme == "https" else 80)
+                )
+                return (
+                    parsed.scheme.lower() == self.expected_scheme
+                    and hostname == self.expected_hostname
+                    and origin_port == self.expected_port
+                )
+            except Exception:
+                return False
+        return sec_fetch_site == "same-origin"
+
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any):
         if scope["type"] == "lifespan":
             return await self.app(scope, receive, send)
@@ -1364,6 +1460,142 @@ class SecurityMiddleware:
                 if callable(send):
                     await send({"type": "websocket.close", "code": 4403})
                 return
+            cookie_header = headers.get(b"cookie", b"").decode("utf-8")
+            cookies = parse_cookie_header(cookie_header)
+            session_cookie = cookies.get("stock_session")
+            if session_cookie and not self.is_demo:
+                actor = verify_session_token(
+                    session_cookie, GITHUB_CLIENT_SECRET or "", GITHUB_ALLOWED_USER_ID
+                )
+                if actor:
+                    scope["actor"] = actor
+
+        if scope["type"] == "http":
+            if path == "/api/session":
+                query_string = scope.get("query_string", b"").decode("utf-8")
+                params = parse_qs(query_string)
+                resp_headers: list[tuple[bytes, bytes]] = [
+                    (b"content-type", b"image/png"),
+                    (b"cache-control", b"no-store, no-cache, must-revalidate"),
+                ]
+                cookie_header = headers.get(b"cookie", b"").decode("utf-8")
+                cookies = parse_cookie_header(cookie_header)
+                if "clear" in params:
+                    if self._is_same_origin_http(headers):
+                        clear_val = params["clear"][0]
+                        token = cookies.get("stock_session")
+                        cookie_sid = None
+                        if token and not self.is_demo:
+                            actor = verify_session_token(
+                                token, GITHUB_CLIENT_SECRET or "", GITHUB_ALLOWED_USER_ID
+                            )
+                            if actor:
+                                cookie_sid = actor.sid
+                        if clear_val and clear_val != "1":
+                            revoke_session(clear_val)
+                        elif cookie_sid:
+                            revoke_session(cookie_sid)
+                        if (
+                            not cookie_sid
+                            or not clear_val
+                            or clear_val == "1"
+                            or cookie_sid == clear_val
+                        ):
+                            cookie_val = (
+                                b"stock_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"
+                                + (b"; Secure" if self.expected_scheme == "https" else b"")
+                            )
+                            resp_headers.append((b"set-cookie", cookie_val))
+                elif "ticket" in params and not self.is_demo:
+                    if self._is_same_origin_http(headers):
+                        redeemed = redeem_exchange_ticket(params["ticket"][0])
+                        if redeemed:
+                            user_id, sid = redeemed
+                            from a_stock_tracker import auth as auth_mod
+
+                            active_entry = auth_mod.ACTIVE_SESSIONS.get(sid)
+                            if (
+                                active_entry
+                                and active_entry[0] == user_id
+                                and active_entry[1] > time_mod.time()
+                            ):
+                                expires_at = active_entry[1]
+                                old_token = cookies.get("stock_session")
+                                if old_token:
+                                    revoke_session(old_token)
+                                token = sign_session_token(
+                                    user_id,
+                                    GITHUB_CLIENT_SECRET or "",
+                                    expires_at,
+                                    sid=sid,
+                                )
+                                remaining = max(0, int(expires_at - time_mod.time()))
+                                cookie_val = (
+                                    f"stock_session={token}; Path=/; Max-Age={remaining}; "
+                                    f"HttpOnly; SameSite=Lax"
+                                    + ("; Secure" if self.expected_scheme == "https" else "")
+                                ).encode("utf-8")
+                                resp_headers.append((b"set-cookie", cookie_val))
+                elif "token" in params and not self.is_demo:
+                    if self._is_same_origin_http(headers):
+                        token = params["token"][0]
+                        actor = verify_session_token(
+                            token, GITHUB_CLIENT_SECRET or "", GITHUB_ALLOWED_USER_ID
+                        )
+                        if actor:
+                            cookie_val = (
+                                f"stock_session={token}; Path=/; Max-Age={AUTH_EXPIRY_SECONDS}; "
+                                f"HttpOnly; SameSite=Lax"
+                                + ("; Secure" if self.expected_scheme == "https" else "")
+                            ).encode("utf-8")
+                            resp_headers.append((b"set-cookie", cookie_val))
+                if callable(send):
+                    await send(
+                        {"type": "http.response.start", "status": 200, "headers": resp_headers}
+                    )
+                    await send({"type": "http.response.body", "body": TRANSPARENT_PNG})
+                return
+
+            if path == "/logout":
+                if not self._is_same_origin_http(headers):
+                    if callable(send):
+                        await send(
+                            {
+                                "type": "http.response.start",
+                                "status": 403,
+                                "headers": [(b"content-type", b"text/plain; charset=utf-8")],
+                            }
+                        )
+                        await send(
+                            {
+                                "type": "http.response.body",
+                                "body": b"Forbidden: Cross-origin logout",
+                            }
+                        )
+                    return
+                cookie_header = headers.get(b"cookie", b"").decode("utf-8")
+                cookies = parse_cookie_header(cookie_header)
+                token = cookies.get("stock_session")
+                if token and not self.is_demo:
+                    actor = verify_session_token(
+                        token, GITHUB_CLIENT_SECRET or "", GITHUB_ALLOWED_USER_ID
+                    )
+                    if actor:
+                        revoke_session(token)
+                        revoke_exchange_tickets(actor.user_id)
+                cookie_val = b"stock_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax" + (
+                    b"; Secure" if self.expected_scheme == "https" else b""
+                )
+                if callable(send):
+                    await send(
+                        {
+                            "type": "http.response.start",
+                            "status": 303,
+                            "headers": [(b"location", b"/login"), (b"set-cookie", cookie_val)],
+                        }
+                    )
+                    await send({"type": "http.response.body", "body": b""})
+                return
 
         return await self.app(scope, receive, send)
 
@@ -1372,7 +1604,9 @@ def get_asgi_app():
     import flet.fastapi as flet_fastapi
 
     inner_app = flet_fastapi.app(
-        build_app(), assets_dir=str(Path(__file__).resolve().parents[1] / "assets")
+        build_app(),
+        assets_dir=str(Path(__file__).resolve().parents[1] / "assets"),
+        session_timeout_seconds=FLET_SESSION_TIMEOUT,
     )
 
     return SecurityMiddleware(

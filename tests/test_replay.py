@@ -418,8 +418,12 @@ def test_auto_scans_latest_day_once_and_writes_report(tmp_path, no_wait):
     again = replay.auto(root, 100, client, reports, now=closed(client.days[60]))
     assert again == {"as_of": client.days[60], "scanned": False, "settled": 0, "requests": 0}
     assert sum(e["type"] == "scan" for e in replay.read_ledger(root)) == 1
-    with pytest.raises(replay.ScreenError):
+    with pytest.raises(replay.ScreenError, match="分离"):
         replay.auto(root, 100, client, root, now=closed(client.days[60]))
+    with pytest.raises(replay.ScreenError, match="分离"):
+        replay.auto(root, 100, client, root.parent, now=closed(client.days[60]))
+    with pytest.raises(replay.BudgetStop):
+        replay.auto(tmp_path / "budget_root", 1, client, reports, now=closed(client.days[60]))
 
 
 def test_scan_budget_resume_duplicate_and_rule_freeze(tmp_path, no_wait, monkeypatch):
