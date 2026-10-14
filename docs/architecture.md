@@ -74,7 +74,7 @@ Web 只读 `OPPORTUNITY_ROOT`，检查 actor、大小、路径/符号链接、�
 
 ## 离线验证边界
 
-`replay.py` 独立运行，不接入 Web、研究服务、通知或模型。冻结规则、历史 `fetch/run`、前瞻 `scan/settle/report`、私有缓存与追加账本完整性、晋升合同及历史证据统一维护在 [离线验证](offline-validation.md)。真实拉取和续拉逐次授权；旧口径结果尚未按 `historical-replay-v2` 重算，验证通过也不自动发布到首页。
+`replay.py` 独立运行，不接入 Web、研究服务、通知或模型。冻结规则、历史 `fetch/run`、前瞻 `scan/settle/auto/report`（含周无人值守定时器）、私有缓存与追加账本完整性、晋升合同及历史证据统一维护在 [离线验证](offline-validation.md)。真实拉取和续拉逐次授权；旧口径结果尚未按 `historical-replay-v2` 重算，验证通过也不自动发布到首页。
 
 ## 独立财报研究
 

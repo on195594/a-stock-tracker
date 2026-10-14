@@ -103,6 +103,42 @@ systemctl --user disable --now a-stock-tracker-research.service
 - **异常重启策略**：服务异常退出后等待 10 秒重启，5 分钟内最多重启 3 次（`StartLimitBurst=3`）。**重启仅恢复请求接收器监听**，不自动恢复、重试或新建研究批次；
 - **进程组安全清理**：停止或异常退出时通过 `KillMode=control-group` 清理全部子进程组，超时 90 秒后硬清理（`TimeoutStopSec=90`），释放执行锁。
 
+### 宿主前瞻验证周定时器运维（systemd 用户单元）
+
+持久单元模板位于 [config/a-stock-tracker-swing-forward.service](../config/a-stock-tracker-swing-forward.service) 与 [config/a-stock-tracker-swing-forward.timer](../config/a-stock-tracker-swing-forward.timer)，适用于项目位于 `~/a-stock-tracker` 的宿主。用于在每周五上海时间 18:30（收盘资料就绪后）无人值守执行 `replay auto`，扫描最新收盘交易日、结算到期样本并输出不可变报告。
+
+#### 安装与启动
+```bash
+# 1. 复制服务与定时器模板至用户 systemd 目录
+mkdir -p ~/.config/systemd/user
+cp config/a-stock-tracker-swing-forward.service config/a-stock-tracker-swing-forward.timer ~/.config/systemd/user/
+
+# 2. 重载用户 systemd 并启用定时器（须先启用 linger，见上文）
+systemctl --user daemon-reload
+systemctl --user enable --now a-stock-tracker-swing-forward.timer
+```
+
+#### 生命周期与检查
+```bash
+# 查看定时器下次触发时间与状态
+systemctl --user list-timers a-stock-tracker-swing-forward.timer
+systemctl --user status a-stock-tracker-swing-forward.timer
+
+# 查看单次执行日志
+journalctl --user -u a-stock-tracker-swing-forward.service -n 50 --no-pager
+
+# 手动触发一次测试运行
+systemctl --user start a-stock-tracker-swing-forward.service
+
+# 停用周定时器
+systemctl --user disable --now a-stock-tracker-swing-forward.timer
+```
+
+#### 安全与预算边界
+- **环境变量与凭据**：通过 `EnvironmentFile=%h/a-stock-tracker/.env` 读取 `TUSHARE_TOKEN`，不暴露给外部；
+- **单一请求硬预算**：单次任务共享 100 次请求预算（`--request-budget 100`），未用完的预算才结转至后续结算，不超额请求；
+- **隔离与权限约束**：`UMask=0077` 限制生成文件权限为私有；账本目录（`data/swing-forward`）与报告目录（`data/swing-forward-reports`）物理分离，报告以原子不可变方式保存；`TimeoutStartSec=30min` 超时硬终止；不接入 Web、不调用模型。
+
 ### 日常维护与健康巡检
 
 #### 磁盘空间与配额监控
