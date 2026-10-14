@@ -345,6 +345,7 @@ def main() -> int:
                         page.mouse.move(width / 2, 200)
                         page.mouse.wheel(0, -5000)
                         click_settled(page, page.get_by_role("button", name="账户", exact=True))
+                        click_settled(page, page.get_by_role("button", name="账户", exact=True))
                         expect(page.get_by_text("当前模式: demo")).to_be_visible()
                         click_settled(
                             page, page.get_by_role("button", name="返回上一页", exact=True)

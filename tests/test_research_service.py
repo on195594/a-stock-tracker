@@ -520,19 +520,26 @@ def test_execute_pins_cwd_to_repo_root(tmp_path, monkeypatch):
     assert store.status(p["id"])["result"] == {"coverage": {"status": "complete"}}
 
 
-def test_dead_leader_descendant_is_stopped_before_next_run(tmp_path, monkeypatch):
+@pytest.mark.parametrize("stop_reason", ["leader_exit", "timeout"])
+def test_descendant_is_stopped_before_next_run(tmp_path, monkeypatch, stop_reason):
     store = ResearchStore(tmp_path / "service")
     p = payload("screen")
     directory = store.directory(p["id"])
     directory.mkdir(mode=0o700)
     pid_path = directory / "child.pid"
     script = (
-        "import subprocess,sys,pathlib; "
+        "import subprocess,sys,pathlib,time; "
         "p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)']); "
-        "pathlib.Path(sys.argv[1]).write_text(str(p.pid)); sys.exit(1)"
+        "pathlib.Path(sys.argv[1]).write_text(str(p.pid)); "
+        + ("sys.exit(1)" if stop_reason == "leader_exit" else "time.sleep(30)")
     )
     monkeypatch.setattr(store, "command", lambda *_: [sys.executable, "-c", script, str(pid_path)])
-    state = {"id": p["id"], "request": p, "status": "running", "limits": {"seconds": 5}}
+    state = {
+        "id": p["id"],
+        "request": p,
+        "status": "running",
+        "limits": {"seconds": 5 if stop_reason == "leader_exit" else -29},
+    }
     store.execute(directory, state, store.lease())
     child = int(pid_path.read_text())
     for _ in range(100):
@@ -1468,3 +1475,103 @@ def test_recent_revalidates_price_expiry_without_persisting_summaries(tmp_path, 
     output = batch / ("swing-" + "a" * 32) / "result.json"
     output.write_text("{}")
     assert store.recent() == []
+
+
+def test_receiver_and_batch_death_keep_model_lease_until_child_exits(tmp_path):
+    """Real subprocesses, no model/provider calls; also exercise restarted status reads."""
+    import os
+    import signal
+    import subprocess
+
+    from a_stock_tracker.research_service import REPO_ROOT
+
+    root = tmp_path / "service"
+    leader_path = tmp_path / "leader.pid"
+    child_path = tmp_path / "child.pid"
+    stop_path = tmp_path / "stop"
+    child_script = """
+import os, pathlib, sys, time
+pathlib.Path(sys.argv[1]).write_text(str(os.getpid()))
+deadline = time.monotonic() + 15
+while not pathlib.Path(sys.argv[2]).exists() and time.monotonic() < deadline:
+    time.sleep(.01)
+"""
+    leader_script = """
+import os, pathlib, sys
+from a_stock_tracker.bounded_process import run_bounded
+pathlib.Path(sys.argv[1]).write_text(str(os.getpid()))
+run_bounded([sys.executable, '-c', sys.argv[2], sys.argv[3], sys.argv[4]], timeout=20)
+"""
+    receiver_script = """
+import pathlib, sys
+from a_stock_tracker.automation import save_state
+from a_stock_tracker.research_service import ResearchStore
+store = ResearchStore(pathlib.Path(sys.argv[1]))
+directory = store.directory('a' * 32)
+directory.mkdir(mode=0o700)
+state = {'id': 'a' * 32, 'request': {'mode': 'swing'}, 'status': 'running', 'limits': {'seconds': 20}}
+save_state(directory / 'request.json', state)
+store.command = lambda *_: [sys.executable, '-c', sys.argv[2], *sys.argv[3:]]
+store.execute(directory, state, store.lease())
+"""
+    receiver = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            receiver_script,
+            str(root),
+            leader_script,
+            str(leader_path),
+            child_script,
+            str(child_path),
+            str(stop_path),
+        ],
+        cwd=REPO_ROOT,
+    )
+    try:
+        deadline = time.monotonic() + 10
+        while not child_path.exists():
+            assert receiver.poll() is None, "synthetic receiver exited before child started"
+            assert time.monotonic() < deadline, "synthetic child failed to start"
+            time.sleep(0.01)
+        child = int(child_path.read_text())
+        leader = int(leader_path.read_text())
+        receiver.kill()
+        receiver.wait(timeout=3)
+        restarted = ResearchStore(root)
+        with pytest.raises(BlockingIOError):
+            restarted.lease()
+        os.kill(leader, signal.SIGKILL)
+        # Observe the lease after the leader is truly dead, not while its FD is still open.
+        deadline = time.monotonic() + 3
+        while True:
+            try:
+                if Path(f"/proc/{leader}/stat").read_text().split()[2] == "Z":
+                    break
+            except (FileNotFoundError, ProcessLookupError):
+                break
+            assert time.monotonic() < deadline, "synthetic leader did not exit"
+            time.sleep(0.01)
+        assert Path(f"/proc/{child}/stat").read_text().split()[2] != "Z"
+        with pytest.raises(BlockingIOError):
+            restarted.lease()
+        assert restarted.status("a" * 32)["status"] == "running"
+        stop_path.touch()
+        deadline = time.monotonic() + 3
+        while True:
+            try:
+                restarted.lease().close()
+                break
+            except BlockingIOError:
+                assert time.monotonic() < deadline, "exited child retained execution lease"
+                time.sleep(0.01)
+        assert restarted.status("a" * 32)["status"] == "interrupted"
+    finally:
+        if receiver.poll() is None:
+            receiver.kill()
+        receiver.wait(timeout=3)
+        if leader_path.exists():
+            try:
+                os.killpg(int(leader_path.read_text()), signal.SIGKILL)
+            except ProcessLookupError:
+                pass

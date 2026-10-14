@@ -31,6 +31,7 @@ LOG = logging.getLogger(__name__)
 PRICE_FIELDS = ("open", "high", "low", "close", "pre_close", "vol")
 PRICE_COLUMNS = "ts_code,trade_date," + ",".join(PRICE_FIELDS)
 OWNER = "a-stock-tracker.replay-v1"
+HISTORICAL_METHOD = "historical-replay-v2"
 
 
 def safe_path(path: Path) -> None:
@@ -220,11 +221,18 @@ def fetch(root: Path, start: str, end: str, request_budget: int, client: Any) ->
     return cache.used
 
 
-def valid_windows(values: dict[str, Any]) -> Any:
-    """Vectorize bars() evidence checks, not the price-condition formulas."""
+def valid_bars(values: dict[str, Any]) -> Any:
+    """Vectorize individual bars() evidence checks, allowing price-basis resets."""
     o, h, low, c, p, v = (values[k] for k in PRICE_FIELDS)
     good = np.logical_and.reduce([np.isfinite(x) & (x > 0) for x in (o, h, low, c, p, v)])
     good &= (low <= np.minimum(o, c)) & (np.maximum(o, c) <= h)
+    return good
+
+
+def valid_windows(values: dict[str, Any]) -> Any:
+    """Validate complete 61-session windows and adjacent price bases."""
+    good = valid_bars(values)
+    p, c = values["pre_close"], values["close"]
     breaks = np.zeros_like(good, dtype=int)
     breaks[1:] = ~(np.abs(p[1:] - c[:-1]) <= 0.011)
     invalid = np.vstack([np.zeros(good.shape[1], dtype=int), np.cumsum(~good, axis=0)])
@@ -297,23 +305,22 @@ def replay(
             ):
                 target[t, j] = result[key]
     momentum = trend & rs
-    ratios = close / pre_close
-    ratios[np.isnan(ratios)] = 1.0
-    adjusted = np.cumprod(ratios, axis=0)
-    adjusted[np.isnan(close)] = np.nan
-    factor = adjusted / close
+    good = valid_bars(values)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ratios = np.where(good, close / pre_close, np.nan)
     horizons = sorted(set([h for h in (10, 20, 40, 60) if h <= horizon] + [horizon]))
 
     def event_stats(events: list[tuple[int, int, int]]) -> dict[str, Any]:
         if not events:
             return {"n": 0}
         entry, js, signal = np.array(events).T
-        base = adjusted[entry, js]
+        future = entry[:, None] + np.arange(1, max(20, horizon) + 1)
+        chain = np.cumprod(ratios[future, js[:, None]], axis=1)
         result: dict[str, Any] = {"n": len(events), "unique_stocks": len(set(js.tolist()))}
         returns = {}
         excess = {}
         for h in sorted(set(horizons + [20])):
-            x = adjusted[entry + h, js] / base - 1
+            x = chain[:, h - 1] - 1
             ex = x - (b[entry + h] / b[entry] - 1)
             returns[h], excess[h] = x, ex
             if h in horizons:
@@ -327,14 +334,22 @@ def replay(
                 }
                 for key in ("mean", "median", "excess_mean"):
                     result[f"h{h}"][key] = round(float(result[f"h{h}"][key]), 2)
-        future = entry[:, None] + np.arange(1, 21)
-        lows = low[future, js[:, None]] * factor[future, js[:, None]]
-        mae = pd.DataFrame(lows).min(axis=1).to_numpy() / base - 1
-        stop_adjusted = stop[signal, js] * factor[signal, js]
+        future20 = future[:, :20]
+        factor = chain[:, :20] / close[future20, js[:, None]]
+        lows = low[future20, js[:, None]] * factor
+        complete20 = np.isfinite(chain[:, 19])
+        mae = np.minimum(1.0, np.min(lows, axis=1)) - 1
+        signal_to_entry = np.ones(len(events))
+        for offset in range(1, 6):
+            signal_to_entry *= np.where(signal + offset <= entry, ratios[signal + offset, js], 1.0)
+        stop_adjusted = stop[signal, js] / close[signal, js] / signal_to_entry
         hits = lows < stop_adjusted[:, None]
         first = hits.argmax(axis=1)
-        opens = o[entry + first + 1, js] * factor[entry + first + 1, js]
-        sr = np.where(hits.any(axis=1), np.minimum(opens, stop_adjusted) / base - 1, returns[20])
+        opens = o[entry + first + 1, js] * factor[np.arange(len(events)), first]
+        sr = np.where(hits.any(axis=1), np.minimum(opens, stop_adjusted) - 1, returns[20])
+        sr[~complete20] = np.nan
+        result["mae20_missing"] = int((~complete20).sum())
+        result["stop_rule_20d_missing"] = int((~complete20).sum())
         result["mae20_median"] = round(float(pd.Series(mae).median() * 100), 2)
         result["stop_rule_20d_mean"] = round(float(pd.Series(sr).mean() * 100), 2)
         years = pd.DataFrame({"year": [days[t][:4] for t in signal], "excess": excess[20]})
@@ -354,20 +369,26 @@ def replay(
 
     signals = dedupe(obs)
     triggered = []
-    outcomes = dict.fromkeys(("triggered", "invalidated_first", "gap_above", "expired"), 0)
+    outcomes = dict.fromkeys(
+        ("triggered", "invalidated_first", "gap_above", "expired", "data_gap"), 0
+    )
     for t, j, _ in signals:
-        state = "expired"
-        for u in range(t + 1, t + 6):
-            if low[u, j] < stop[t, j]:
-                state = "invalidated_first"
-                break
-            if trigger[t, j] <= close[u, j] <= ceiling[t, j] and vol[u, j] >= volume[t, j]:
-                state = "triggered"
-                triggered.append((u, j, t))
-                break
-            if close[u, j] > ceiling[t, j]:
-                state = "gap_above"
-                break
+        rows = [
+            {key: values[key][u, j] for key in PRICE_FIELDS} if good[u, j] else None
+            for u in range(t + 1, t + 6)
+        ]
+        state, offset = observation_outcome(
+            rows,
+            dict(
+                close=close[t, j],
+                stop=stop[t, j],
+                trigger=trigger[t, j],
+                ceiling=ceiling[t, j],
+                volume=volume[t, j],
+            ),
+        )
+        if offset is not None:
+            triggered.append((t + offset + 1, j, t))
         outcomes[state] += 1
     vt, vj = np.nonzero(valid[span])
     sampled = np.random.default_rng(0).choice(len(vt), size=min(20000, len(vt)), replace=False)
@@ -378,6 +399,7 @@ def replay(
     per_momentum = momentum[span].sum(axis=1)
     return {
         "rule": RULE,
+        "methodology": HISTORICAL_METHOD,
         "horizon": horizon,
         "dates": [days[0], days[-1]],
         "trading_days": t_count,
@@ -417,7 +439,7 @@ def replay(
         "observation_signal_close": event_stats(signals),
         "observation_5d_outcome": outcomes,
         "triggered_entry_close": event_stats(triggered),
-        "limits": "仅离线验证，不作为收益证明；当前名称筛查 ST，未含逐日风险名单、ROE、交易成本、T+1或涨停成交约束。收益按 pre_close 链计算；缺失远期收益不填零，胜率分母保留全部事件；停牌缺日的观察窗口沿用参考口径，可能记为过期。",
+        "limits": "仅离线验证，不作为收益证明；当前名称筛查 ST，未含逐日风险名单、ROE、交易成本、T+1或涨停成交约束。收益按 pre_close 链计算；缺失远期收益不填零，胜率分母保留全部事件；收益、MAE与止损须完整前瞻链；观察窗口缺失、无效或价格基准断裂记data_gap。",
     }
 
 
@@ -447,7 +469,9 @@ def run(root: Path, horizon: int = 60) -> dict[str, Any]:
 LEDGER_OWNER = {"owner": OWNER, "mode": "prospective-v1"}
 
 
-def frozen_forward_contract(version: str | None) -> dict[str, Any]:
+def frozen_forward_contract(
+    version: str | None, *, eligibility: str | None = None
+) -> dict[str, Any]:
     # Version meanings are literals, independent of the mutable default for new ledgers.
     contract = {
         "dedupe_sessions": 10,
@@ -459,6 +483,15 @@ def frozen_forward_contract(version: str | None) -> dict[str, Any]:
         "entry": "observation_close",
         "outcome_order": ["invalidated_first", "triggered", "gap_above", "expired"],
     }
+    if eligibility is not None:
+        if eligibility != "before-next-session-v1":
+            raise ScreenError("账本晋升统计合同前瞻资格版本未知")
+        contract["eligibility"] = {
+            "version": eligibility,
+            "deadline": "next_session_09:15_Asia/Shanghai",
+            "timestamp": "scan_completed_at",
+            "calendar_lookahead_days": 32,
+        }
     if version is None:
         return contract
     if version == "simple-promotion-v1":
@@ -483,7 +516,9 @@ def frozen_forward_contract(version: str | None) -> dict[str, Any]:
     return contract
 
 
-FORWARD_CONTRACT = frozen_forward_contract("simple-promotion-v2")
+FORWARD_CONTRACT = frozen_forward_contract(
+    "simple-promotion-v2", eligibility="before-next-session-v1"
+)
 
 
 def frozen_promotion(header: dict[str, Any]) -> dict[str, Any] | None:
@@ -495,7 +530,15 @@ def frozen_promotion(header: dict[str, Any]) -> dict[str, Any] | None:
         not isinstance(promotion, dict) or not isinstance(promotion.get("version"), str)
     ):
         raise ScreenError("账本晋升统计合同格式无效")
-    expected = frozen_forward_contract(promotion["version"] if promotion is not None else None)
+    eligibility = contract.get("eligibility")
+    if "eligibility" in contract and (
+        not isinstance(eligibility, dict) or not isinstance(eligibility.get("version"), str)
+    ):
+        raise ScreenError("账本晋升统计合同前瞻资格格式无效")
+    expected = frozen_forward_contract(
+        promotion["version"] if promotion is not None else None,
+        eligibility=eligibility["version"] if eligibility is not None else None,
+    )
     if encoded(contract) != encoded(expected):
         raise ScreenError("账本晋升统计合同参数缺失、矛盾或不受支持")
     return expected.get("promotion")
@@ -512,6 +555,34 @@ def rule_hash() -> str:
     return digest(
         {"rule": RULE, "source": inspect.getsource(price_conditions), "constants": constants}
     )
+
+
+def validated_scan_eligibility(event: dict[str, Any]) -> bool:
+    """Check new-contract frozen timing evidence; legacy flags remain diagnostic only."""
+    try:
+        as_of = compact_date(event["as_of"])
+        next_session = compact_date(event["next_session"])
+        expected = datetime.strptime(next_session, "%Y%m%d").replace(
+            hour=9, minute=15, tzinfo=SHANGHAI
+        )
+        deadline = datetime.fromisoformat(event["prospective_deadline"])
+        completed = datetime.fromisoformat(event["recorded_at"])
+        started = datetime.fromisoformat(event["started_at"])
+        if (
+            next_session <= as_of
+            or next_session
+            > (datetime.strptime(as_of, "%Y%m%d") + timedelta(days=32)).strftime("%Y%m%d")
+            or any(t.tzinfo is None for t in (deadline, completed, started))
+            or deadline != expected
+            or completed < started
+            or as_of > closed_cutoff(started)
+            or type(event["prospective"]) is not bool
+            or event["prospective"] != (completed < deadline)
+        ):
+            raise ValueError("inconsistent eligibility")
+        return event["prospective"]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ScreenError("账本前瞻资格时间证据缺失或矛盾") from exc
 
 
 def read_ledger(root: Path) -> list[dict[str, Any]]:
@@ -540,6 +611,8 @@ def read_ledger(root: Path) -> list[dict[str, Any]]:
                 day = compact_date(event["as_of"])
                 if day in scans:
                     raise ScreenError("账本扫描日期重复")
+                if events[0].get("contract", {}).get("eligibility") is not None:
+                    validated_scan_eligibility(event)
                 scans.add(day)
             elif event["type"] == "settle":
                 day = event["as_of"]
@@ -650,6 +723,8 @@ def scan(
     root: Path, as_of: str, request_budget: int, client: Any, *, now: datetime | None = None
 ) -> dict[str, Any]:
     compact_date(as_of)
+    started = time.monotonic()
+    injected_now = now is not None
     now = now or datetime.now(SHANGHAI)
     if as_of > closed_cutoff(now):
         raise ScreenError("as_of 必须是已收盘交易日；当日须上海时间18:00后")
@@ -663,7 +738,14 @@ def scan(
             raise ScreenError("同一 as_of 不可重复 scan")
         cache = RequestCache(root, request_budget, client)
         start = (datetime.strptime(as_of, "%Y%m%d") - timedelta(days=180)).strftime("%Y%m%d")
-        calendar = cached_calendar(cache, start, closed_cutoff(now))
+        end = (datetime.strptime(as_of, "%Y%m%d") + timedelta(days=32)).strftime("%Y%m%d")
+        calendar = cached_calendar(cache, start, end)
+        future = [day for day in calendar if day > as_of]
+        if not future:
+            raise ScreenError("日历未覆盖下一交易日，无法冻结前瞻资格")
+        deadline = datetime.strptime(future[0], "%Y%m%d").replace(
+            hour=9, minute=15, tzinfo=SHANGHAI
+        )
         history = [day for day in calendar if day <= as_of]
         if not history or history[-1] != as_of or len(history) < 61:
             raise ScreenError("as_of 不是交易日或不足61个交易日")
@@ -713,10 +795,18 @@ def scan(
         selected = np.random.default_rng(seed).choice(
             len(valid), size=min(500, len(valid)), replace=False
         )
+        completed = (
+            now + timedelta(seconds=max(0, time.monotonic() - started))
+            if injected_now
+            else datetime.now(SHANGHAI)
+        )
         event = {
             "type": "scan",
             "as_of": as_of,
-            "recorded_at": now.isoformat(),
+            "recorded_at": completed.isoformat(),
+            "started_at": now.isoformat(),
+            "next_session": future[0],
+            "prospective_deadline": deadline.isoformat(),
             "sessions": days,
             "requests": cache.used,
             "valid_stock_days": len(valid),
@@ -724,7 +814,7 @@ def scan(
             "baseline": [valid[i] for i in sorted(selected.tolist())],
             "gaps": gaps,
             # Historical backfills remain auditable but cannot count toward promotion.
-            "prospective": as_of == calendar[-1],
+            "prospective": completed < deadline,
         }
         append_event(root, event)
         LOG.info(
@@ -798,6 +888,33 @@ def forward_metrics(
     }
 
 
+def observation_outcome(
+    stock: list[dict[str, float] | None], conditions: dict[str, Any]
+) -> tuple[str, int | None]:
+    """Evaluate validated rows against frozen nominal levels until the first outcome."""
+    outcome, triggered, previous = "expired", None, conditions["close"]
+    for i, row in enumerate(stock[:5]):
+        if row is None or abs(row["pre_close"] - previous) > 0.011:
+            outcome = "data_gap"
+            break
+        if row["low"] < conditions["stop"]:
+            outcome = "invalidated_first"
+            break
+        if (
+            conditions["trigger"] <= row["close"] <= conditions["ceiling"]
+            and row["vol"] >= conditions["volume"]
+        ):
+            outcome, triggered = "triggered", i
+            break
+        if row["close"] > conditions["ceiling"]:
+            outcome = "gap_above"
+            break
+        previous = row["close"]
+    if outcome == "expired" and len(stock) < 5:
+        outcome = "data_gap"
+    return outcome, triggered
+
+
 def settle_sample(
     sample: dict[str, Any],
     daily: pd.DataFrame,
@@ -817,24 +934,7 @@ def settle_sample(
     }
     if not observation:
         return result
-    outcome, triggered, previous = "expired", None, conditions["close"]
-    for i, row in enumerate(stock[:5]):
-        if row is None or abs(row["pre_close"] - previous) > 0.011:
-            outcome = "data_gap"
-            break
-        if row["low"] < conditions["stop"]:
-            outcome = "invalidated_first"
-            break
-        if (
-            conditions["trigger"] <= row["close"] <= conditions["ceiling"]
-            and row["vol"] >= conditions["volume"]
-        ):
-            outcome, triggered = "triggered", i
-            break
-        if row["close"] > conditions["ceiling"]:
-            outcome = "gap_above"
-            break
-        previous = row["close"]
+    outcome, triggered = observation_outcome(stock[:5], conditions)
     result.update(
         outcome=outcome,
         trigger_date=days[triggered] if triggered is not None else None,
@@ -911,8 +1011,15 @@ def settle(
 
 def promotion_report(events: list[dict[str, Any]]) -> dict[str, Any]:
     promotion = frozen_promotion(events[0])
+    eligibility = events[0]["contract"].get("eligibility")
     scans = sorted(
-        [e for e in events if e["type"] == "scan" and e["prospective"]], key=lambda e: e["as_of"]
+        [
+            e
+            for e in events
+            if e["type"] == "scan"
+            and (validated_scan_eligibility(e) if eligibility is not None else e["prospective"])
+        ],
+        key=lambda e: e["as_of"],
     )
     settlements = {e["as_of"]: e for e in events if e["type"] == "settle"}
     last: dict[str, str] = {}
@@ -959,7 +1066,7 @@ def promotion_report(events: list[dict[str, Any]]) -> dict[str, Any]:
             / n
         )
         ci95 = [mean - 1.96 * se, mean + 1.96 * se]
-        if promotion is not None:
+        if promotion is not None and eligibility is not None:
             ci = [mean - promotion["z"] * se, mean + promotion["z"] * se]
     span = 0
     if scans:
@@ -971,6 +1078,7 @@ def promotion_report(events: list[dict[str, Any]]) -> dict[str, Any]:
     # Data sufficiency is a precondition, not a gate: short or thin history cannot be judged.
     sufficient = (
         promotion is not None
+        and eligibility is not None
         and span >= promotion["min_complete_calendar_months"]
         and len(values) >= promotion["min_valid_observations"]
         and len(months) >= promotion["min_month_clusters"]
@@ -988,9 +1096,12 @@ def promotion_report(events: list[dict[str, Any]]) -> dict[str, Any]:
         "rule": events[0]["rule"],
         "rule_hash": events[0]["rule_hash"],
         "status": status,
+        "eligibility_contract": eligibility,
         "status_reason": (
             "legacy_unfrozen_promotion_contract"
             if promotion is None
+            else "legacy_unverified_forward_eligibility"
+            if eligibility is None
             else "insufficient_data"
             if status == "insufficient"
             else None
@@ -1015,6 +1126,11 @@ def promotion_report(events: list[dict[str, Any]]) -> dict[str, Any]:
         "baseline_mae20_count": len(baseline),
         "limits": "单位为百分比；"
         + interval_limit
+        + (
+            "旧账本未冻结收集完成时的前瞻资格；原统计仅供诊断，不可晋升。"
+            if eligibility is None
+            else ""
+        )
         + "excess20_ci95仅为正态近似95%双侧月聚类诊断区间，不一定是晋升区间。未结算及缺失值不填零；历史回填不计晋升。通过仅支持进一步讨论，不自动进入首页，不作为收益证明。",
     }
 

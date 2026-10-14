@@ -6,33 +6,66 @@ nginx_dir="${NGINX_DIR:-/home/lin/nginx}"
 site="$nginx_dir/sites-enabled/stock.conf"
 source_conf=docker/nginx-stock.conf
 command -v docker >/dev/null
-# Omission may never silently remove a bridge from an existing (even stopped) web.
-# Inspect only presence markers: never print the container environment or its token.
-research_enabled="${RESEARCH_WEB_ENABLED-}"
-if [[ "${RESEARCH_WEB_ENABLED+x}" ]]; then
-    if [[ "$research_enabled" != 0 && "$research_enabled" != 1 ]]; then
-        echo 'RESEARCH_WEB_ENABLED must be exactly 0 (disable) or 1 (enable).' >&2
+# Validate both choices before any Docker commands or deployment changes.
+if (( $# )); then
+    echo 'deploy.sh accepts no arguments; use RESEARCH_WEB_ENABLED and PUBLICATION_WEB_ENABLED.' >&2
+    exit 1
+fi
+for flag in RESEARCH_WEB_ENABLED PUBLICATION_WEB_ENABLED; do
+    if [[ -v "$flag" && "${!flag}" != 0 && "${!flag}" != 1 ]]; then
+        echo "$flag must be exactly 0 (disable) or 1 (enable)." >&2
         exit 1
     fi
-else
-    existing=$(docker ps -a --filter name=^/a-stock-tracker-web$ --format '{{.ID}}')
-    if [[ -n "$existing" ]]; then
-        bridge=$(docker inspect --format '{{range .Config.Env}}{{if or (eq (index (split . "=") 0) "RESEARCH_SERVICE_URL") (eq (index (split . "=") 0) "RESEARCH_SERVICE_SOCKET") (eq (index (split . "=") 0) "RESEARCH_SERVICE_TOKEN")}}bridge{{end}}{{end}}{{range .Mounts}}{{if eq .Destination "/research-bridge"}}bridge{{end}}{{end}}' "$existing")
-        if [[ -n "$bridge" ]]; then
-            echo 'Existing web has a research bridge. No changes made. Use RESEARCH_WEB_ENABLED=1 ./deploy.sh to keep it, or RESEARCH_WEB_ENABLED=0 ./deploy.sh to explicitly disable it.' >&2
-            exit 1
-        fi
-    fi
-    research_enabled=0
+done
+research_enabled="${RESEARCH_WEB_ENABLED-}"
+publication_enabled="${PUBLICATION_WEB_ENABLED-}"
+# Explicit opt-in only; config-file presence alone never enables either feature.
+compose=(docker compose)
+# Keep the ordinary interpolation environment when adding the bridge env file.
+# Compose loads these in order; exported environment variables still take precedence.
+if [[ -f .env ]]; then
+    compose+=(--env-file .env)
 fi
-compose=(docker compose -f docker-compose.yml)
-# Explicit opt-in only; config-file presence alone never enables research.
 if [[ "$research_enabled" == 1 ]]; then
     if [[ ! -f .research-web.env || ! -f docker-compose.research.yml ]]; then
         echo 'Missing .research-web.env or docker-compose.research.yml bridge configuration.' >&2
         exit 1
     fi
-    compose=(docker compose --env-file .research-web.env -f docker-compose.yml -f docker-compose.research.yml)
+    compose+=(--env-file .research-web.env)
+fi
+if [[ "$publication_enabled" == 1 && ! -f docker-compose.opportunities.yml ]]; then
+    echo 'Missing docker-compose.opportunities.yml publication configuration.' >&2
+    exit 1
+fi
+# Omission may never silently remove either feature from an existing (even stopped) web.
+# Inspect only presence markers: never print the container environment or its token.
+if [[ ! -v RESEARCH_WEB_ENABLED || ! -v PUBLICATION_WEB_ENABLED ]]; then
+    existing=$(docker ps -a --filter name=^/a-stock-tracker-web$ --format '{{.ID}}')
+    if [[ -n "$existing" ]]; then
+        if [[ ! -v RESEARCH_WEB_ENABLED ]]; then
+            bridge=$(docker inspect --format '{{range .Config.Env}}{{if or (eq (index (split . "=") 0) "RESEARCH_SERVICE_URL") (eq (index (split . "=") 0) "RESEARCH_SERVICE_SOCKET") (eq (index (split . "=") 0) "RESEARCH_SERVICE_TOKEN")}}bridge{{end}}{{end}}{{range .Mounts}}{{if eq .Destination "/research-bridge"}}bridge{{end}}{{end}}' "$existing")
+            if [[ -n "$bridge" ]]; then
+                echo 'Existing web has a research bridge. No changes made. Use RESEARCH_WEB_ENABLED=1 ./deploy.sh to keep it, or RESEARCH_WEB_ENABLED=0 ./deploy.sh to explicitly disable it.' >&2
+                exit 1
+            fi
+        fi
+        if [[ ! -v PUBLICATION_WEB_ENABLED ]]; then
+            publication=$(docker inspect --format '{{range .Config.Env}}{{if eq (index (split . "=") 0) "OPPORTUNITY_ROOT"}}publication{{end}}{{end}}{{range .Mounts}}{{if eq .Destination "/app/opportunities"}}publication{{end}}{{end}}' "$existing")
+            if [[ -n "$publication" ]]; then
+                echo 'Existing web has published price references. No changes made. Use PUBLICATION_WEB_ENABLED=1 ./deploy.sh to keep them, or PUBLICATION_WEB_ENABLED=0 ./deploy.sh to explicitly disable them.' >&2
+                exit 1
+            fi
+        fi
+    fi
+fi
+research_enabled="${research_enabled:-0}"
+publication_enabled="${publication_enabled:-0}"
+compose+=(-f docker-compose.yml)
+if [[ "$research_enabled" == 1 ]]; then
+    compose+=(-f docker-compose.research.yml)
+fi
+if [[ "$publication_enabled" == 1 ]]; then
+    compose+=(-f docker-compose.opportunities.yml)
 fi
 
 for file in .web.env docker-compose.yml "$source_conf" "$site"; do

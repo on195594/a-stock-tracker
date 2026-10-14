@@ -34,6 +34,7 @@ from a_stock_tracker.automation import (
     save,
     save_state,
 )
+from a_stock_tracker.bounded_process import execution_lease_environment
 from a_stock_tracker.disclosures import model_command, structured_report
 from a_stock_tracker.opportunities import load_board
 from a_stock_tracker.research import SHANGHAI, ScreenError, parse_date
@@ -652,7 +653,8 @@ class ResearchStore:
     def execute(self, directory: Path, state: dict[str, Any], handle) -> None:
         process = None
         try:
-            # Child inherits the lease: a service crash cannot permit a concurrent second spend.
+            # Pass one identified lease to the batch and its bounded model/PDF children.
+            # They retain it even if both the receiver and batch leader die.
             with (directory / "execution.log").open("x") as log:
                 process = subprocess.Popen(
                     self.command(directory, state["request"]),
@@ -661,6 +663,7 @@ class ResearchStore:
                     stderr=log,
                     start_new_session=True,
                     pass_fds=(handle.fileno(),),
+                    env=execution_lease_environment(handle.fileno()),
                 )
                 try:
                     deadline = time.monotonic() + state["limits"]["seconds"] + 30

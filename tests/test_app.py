@@ -215,6 +215,7 @@ class AppMockPage:
 
     def logout(self):
         self.logged_out = True
+        self.auth = None
 
 
 def app_controls(control):
@@ -224,6 +225,29 @@ def app_controls(control):
     content = getattr(control, "content", None)
     if isinstance(content, ft.Control):
         yield from app_controls(content)
+
+
+async def completed_owner_authorization(user_id):
+    from unittest.mock import patch
+
+    from flet.auth.authorization_service import AuthorizationService
+    from flet.auth.providers import GitHubOAuthProvider
+    from flet.auth.user import User
+
+    from a_stock_tracker.oauth_completion import OwnerAuthorization
+
+    authorization = OwnerAuthorization(
+        GitHubOAuthProvider("test-client", "test-secret", "http://localhost/callback"),
+        fetch_user=True,
+        fetch_groups=False,
+    )
+
+    async def fetch_user(code):
+        authorization.user = User({"id": user_id}, user_id)
+
+    with patch.object(AuthorizationService, "request_token", side_effect=fetch_user):
+        await authorization.request_token("synthetic-code")
+    return authorization
 
 
 @pytest.mark.parametrize("user_id", ["12345678", 12345678, "other", "999", None, True])
@@ -240,7 +264,7 @@ def test_owner_login_and_logout(monkeypatch, user_id):
     monkeypatch.setattr(app, "load_board", read)
 
     async def run():
-        page = AppMockPage(auth=MagicMock(user={"id": user_id}))
+        page = AppMockPage(auth=await completed_owner_authorization(user_id))
         await app.build_app()(page)
         event = ft.LoginEvent(name="login", control=None, error=None, error_description=None)
         try:
@@ -287,6 +311,7 @@ def test_oauth_uses_same_tab_authorization(monkeypatch):
             )
             await login.on_click(None)
             assert page.login.call_args.kwargs.get("redirect_to_page") is True
+            assert page.login.call_args.kwargs["authorization"] is app.OwnerAuthorization
             callback = page.login.call_args.kwargs["on_open_authorization_url"]
             await callback("https://github.com/login/oauth/authorize?state=synthetic")
             launcher.launch_url.assert_awaited_once_with(
@@ -311,7 +336,7 @@ def test_reconnect_revokes_expired_actor(monkeypatch):
     monkeypatch.setattr(app, "load_board", lambda actor, root: actors.append(actor))
 
     async def run():
-        page = AppMockPage(auth=MagicMock(user={"id": "12345678"}))
+        page = AppMockPage(auth=await completed_owner_authorization("12345678"))
         await app.build_app()(page)
         try:
             await page.on_login(
@@ -321,6 +346,20 @@ def test_reconnect_revokes_expired_actor(monkeypatch):
             clock[0] = actors[0].expires_at + 1
             await page.on_connect(None)
             assert len(actors) == 1 and not actors[0].is_valid
+            assert page.auth is None and page.logged_out
+            await page.on_login(
+                ft.LoginEvent(name="login", control=None, error=None, error_description=None)
+            )
+            assert len(actors) == 1
+            page.auth = await completed_owner_authorization("12345678")
+            await page.on_login(
+                ft.LoginEvent(name="login", control=None, error=None, error_description=None)
+            )
+            assert len(actors) == 2 and actors[-1].is_valid
+            await page.on_login(
+                ft.LoginEvent(name="login", control=None, error=None, error_description=None)
+            )
+            assert len(actors) == 2 and not actors[-1].is_valid
             assert any(
                 isinstance(c, ft.Button) and c.content == "使用 GitHub 登录"
                 for c in app_controls(page.controls[0])
@@ -344,7 +383,7 @@ def test_report_read_failure_has_retry_without_legacy_link(monkeypatch):
     monkeypatch.setattr(app, "load_board", broken)
 
     async def run():
-        page = AppMockPage(auth=MagicMock(user={"id": "12345678"}))
+        page = AppMockPage(auth=await completed_owner_authorization("12345678"))
         await app.build_app()(page)
         try:
             await page.on_login(
@@ -507,7 +546,7 @@ def test_home_without_published_root_shows_research_and_never_reads_batch(monkey
     monkeypatch.setattr(app, "load_board", lambda *a: pytest.fail("unconfigured batch read"))
 
     async def run():
-        page = AppMockPage(auth=MagicMock(user={"id": "12345678"}))
+        page = AppMockPage(auth=await completed_owner_authorization("12345678"))
         try:
             await app.build_app()(page)
             await page.on_login(
@@ -516,6 +555,267 @@ def test_home_without_published_root_shows_research_and_never_reads_batch(monkey
             text = "\n".join(str(getattr(c, "value", "")) for c in app_controls(page))
             assert "进行中" in text and "最近研究" in text
             assert "还没有价格参考批次" not in text
+        finally:
+            await page.on_close(None)
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("transition", ["reconnect", "settings", "home"])
+def test_uncertain_financial_request_survives_rerender(monkeypatch, transition):
+    from copy import deepcopy
+
+    from a_stock_tracker.research_client import DemoResearchClient, ResearchUnavailable
+
+    client = DemoResearchClient()
+    monkeypatch.setattr(app, "APP_MODE", "demo")
+    monkeypatch.setattr(app, "DemoResearchClient", lambda: client)
+    original_submit = client.submit
+    attempts = []
+
+    def submit(payload):
+        attempts.append(deepcopy(payload))
+        accepted = original_submit(payload)
+        if len(attempts) == 1:
+            raise ResearchUnavailable("受理未知")
+        return accepted
+
+    monkeypatch.setattr(client, "submit", submit)
+
+    async def run():
+        page = AppMockPage()
+        page.route = "/analysis?mode=financial&code=600519"
+        await app.build_app()(page)
+        try:
+            consent = next(c for c in app_controls(page) if isinstance(c, ft.Checkbox))
+            consent.value = True
+            consent.on_change(None)
+            await next(
+                c
+                for c in app_controls(page)
+                if isinstance(c, ft.Button) and c.content == "确认启动研究"
+            ).on_click(None)
+            if transition == "reconnect":
+                await page.on_disconnect(None)
+                await page.on_connect(None)
+            elif transition == "settings":
+                await next(
+                    c
+                    for c in app_controls(page)
+                    if isinstance(c, ft.TextButton) and c.content == "账户"
+                ).on_click(None)
+                await next(
+                    c
+                    for c in app_controls(page)
+                    if isinstance(c, ft.TextButton) and c.content == "返回上一页"
+                ).on_click(None)
+            else:
+                await page.on_route_change(SimpleNamespace(route="/"))
+                await page.on_route_change(
+                    SimpleNamespace(route="/analysis?mode=financial&code=600900")
+                )
+            assert not any(isinstance(c, ft.Checkbox) for c in app_controls(page))
+            await next(
+                c
+                for c in app_controls(page)
+                if isinstance(c, ft.Button) and c.content == "核对原请求受理状态"
+            ).on_click(None)
+            assert len(client.runs) == 1
+            assert attempts[0] == attempts[1]
+            assert page.route == "/analysis/" + attempts[0]["id"]
+        finally:
+            await page.on_close(None)
+
+    asyncio.run(run())
+
+
+def test_repeated_account_entry_keeps_original_return(monkeypatch):
+    monkeypatch.setattr(app, "APP_MODE", "demo")
+
+    async def run():
+        page = AppMockPage()
+        page.route = "/analysis?mode=financial&code=600519"
+        original = page.route
+        await app.build_app()(page)
+        try:
+            account = next(
+                c
+                for c in app_controls(page)
+                if isinstance(c, ft.TextButton) and c.content == "账户"
+            )
+            await account.on_click(None)
+            await account.on_click(None)
+            await next(
+                c
+                for c in app_controls(page)
+                if isinstance(c, ft.TextButton) and c.content == "返回上一页"
+            ).on_click(None)
+            assert page.route == original
+        finally:
+            await page.on_close(None)
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "route",
+    ["/", "/analysis", "/opportunity/600001.SH", "/analysis/{id}", "/analysis/{id}/600001.SH"],
+)
+def test_open_price_snapshots_expire_locally_at_shanghai_midnight(monkeypatch, route):
+    from copy import deepcopy
+    from datetime import datetime, timedelta
+
+    from a_stock_tracker import opportunity_demo
+    from a_stock_tracker.research_client import DemoResearchClient
+    from a_stock_tracker.research_service import quote
+    from tests.test_opportunity_view import text_values
+
+    client = DemoResearchClient()
+    identifier = "a" * 32
+    client.submit(
+        dict(
+            id=identifier,
+            mode="swing",
+            codes=["600001.SH"],
+            confirmed=True,
+            quote=quote(client.info(), "swing"),
+        )
+    )
+    board = opportunity_demo.demo_board()
+    expiry = board["rows"][0]["expires"]
+    now = datetime.fromisoformat(expiry + "T23:59:59").replace(tzinfo=app.SHANGHAI)
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now.astimezone(tz)
+
+    monkeypatch.setattr(app, "datetime", Clock)
+    monkeypatch.setattr(app, "APP_MODE", "demo")
+    monkeypatch.setattr(app, "DemoResearchClient", lambda: client)
+    monkeypatch.setattr(opportunity_demo, "demo_board", lambda: deepcopy(board))
+    status = client.status
+    reads = []
+
+    def read(i):
+        reads.append(i)
+        return status(i)
+
+    monkeypatch.setattr(client, "status", read)
+    sleep = asyncio.sleep
+
+    async def run():
+        nonlocal now
+        wake = asyncio.Event()
+        ready = asyncio.Event()
+
+        async def timer(delay):
+            if delay != 5:
+                ready.set()
+                await wake.wait()
+            else:
+                await sleep(delay)
+
+        monkeypatch.setattr(app.asyncio, "sleep", timer)
+        page = AppMockPage()
+        page.route = route.format(id=identifier)
+        await app.build_app()(page)
+        try:
+            await asyncio.wait_for(ready.wait(), 2)
+            before = text_values(page)
+            assert "已过期" not in "\n".join(before)
+            read_count = len(reads)
+            now += timedelta(seconds=1)
+            wake.set()
+            for _ in range(5):
+                await sleep(0)
+            after = "\n".join(text_values(page))
+            assert "已过期" in after
+            assert "观察线与失效线" not in after
+            assert "距离失效线" not in after
+            assert len(reads) == read_count
+            if route.endswith("600001.SH"):
+                assert "均线" in after or "MA20" in after
+        finally:
+            await page.on_close(None)
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("resolution", ["quote_changed", "logout"])
+def test_pending_request_rejection_and_logout_clear_confirmation(monkeypatch, resolution):
+    from a_stock_tracker.research_client import (
+        DemoResearchClient,
+        ResearchQuoteChanged,
+        ResearchUnavailable,
+    )
+
+    client = DemoResearchClient()
+    monkeypatch.setattr(app, "APP_MODE", "demo")
+    monkeypatch.setattr(app, "DemoResearchClient", lambda: client)
+    attempts = []
+
+    def submit(payload):
+        attempts.append(payload)
+        if len(attempts) == 1:
+            raise ResearchUnavailable("受理未知")
+        raise ResearchQuoteChanged("报价变化")
+
+    monkeypatch.setattr(client, "submit", submit)
+
+    async def run():
+        page = AppMockPage()
+        page.route = "/analysis?mode=financial"
+        await app.build_app()(page)
+        try:
+            field = next(c for c in app_controls(page) if isinstance(c, ft.TextField))
+            field.value = "600519"
+            field.on_change(None)
+            consent = next(c for c in app_controls(page) if isinstance(c, ft.Checkbox))
+            consent.value = True
+            consent.on_change(None)
+            await next(
+                c
+                for c in app_controls(page)
+                if isinstance(c, ft.Button) and c.content == "确认启动研究"
+            ).on_click(None)
+            await page.on_disconnect(None)
+            await page.on_connect(None)
+            if resolution == "quote_changed":
+                await next(
+                    c
+                    for c in app_controls(page)
+                    if isinstance(c, ft.Button) and c.content == "核对原请求受理状态"
+                ).on_click(None)
+                assert attempts[0] == attempts[1]
+                assert (
+                    next(c for c in app_controls(page) if isinstance(c, ft.TextField)).value
+                    == "600519"
+                )
+            else:
+                await next(
+                    c
+                    for c in app_controls(page)
+                    if isinstance(c, ft.TextButton) and c.content == "账户"
+                ).on_click(None)
+                await next(
+                    c
+                    for c in app_controls(page)
+                    if isinstance(c, ft.Button) and c.content == "退出登录"
+                ).on_click(None)
+                await next(
+                    c
+                    for c in app_controls(page)
+                    if isinstance(c, ft.Button) and c.content == "进入演示"
+                ).on_click(None)
+                await page.on_route_change(SimpleNamespace(route="/analysis"))
+                assert len(attempts) == 1
+            assert next(c for c in app_controls(page) if isinstance(c, ft.Checkbox)).value is False
+            assert next(
+                c
+                for c in app_controls(page)
+                if isinstance(c, ft.Button) and c.content == "确认启动研究"
+            ).disabled
         finally:
             await page.on_close(None)
 

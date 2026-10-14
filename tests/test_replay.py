@@ -237,6 +237,7 @@ def test_run_uses_shared_formula_and_correct_forward_statistics(tmp_path, no_wai
         "invalidated_first": 0,
         "gap_above": 0,
         "expired": 3,
+        "data_gap": 0,
     }
     signals = result["observation_signal_close"]
     assert signals["n"] == 3
@@ -552,6 +553,18 @@ def test_scan_close_calendar_and_sampling(tmp_path, no_wait):
     assert replay.report(tmp_path / "historical")["observations_deduplicated"] == 0
 
 
+def scan_timing(day, *, prospective=True):
+    next_session = (pd.Timestamp(day) + pd.offsets.BDay()).strftime("%Y%m%d")
+    deadline = closed(next_session, 9).replace(minute=15)
+    completed = closed(day) if prospective else deadline
+    return {
+        "started_at": completed.isoformat(),
+        "recorded_at": completed.isoformat(),
+        "next_session": next_session,
+        "prospective_deadline": deadline.isoformat(),
+    }
+
+
 def promotion_events(
     values=(1, 1, 1, 1, 1, 1, 1),
     *,
@@ -560,13 +573,14 @@ def promotion_events(
     dates=None,
     baseline=-6,
     mae=-5,
+    eligibility="before-next-session-v1",
 ):
     events = [
         {
             "type": "rule",
             "rule": swing.RULE,
             "rule_hash": "synthetic",
-            "contract": replay.frozen_forward_contract(version),
+            "contract": replay.frozen_forward_contract(version, eligibility=eligibility),
         }
     ]
     for month, value in enumerate(values, 1):
@@ -578,6 +592,7 @@ def promotion_events(
             {
                 "type": "scan",
                 "as_of": day,
+                **scan_timing(day),
                 "prospective": True,
                 "sessions": sessions,
                 "observations": samples,
@@ -637,10 +652,12 @@ def test_month_cluster_ci_and_ten_session_deduplication():
     assert result["excess20_ci95"] == pytest.approx([4 - 1.96 * se, 4 + 1.96 * se])
     extra = deepcopy(events[1])
     extra["as_of"] = "20240126"  # Nine sessions since January 15: exclude.
+    extra.update(scan_timing(extra["as_of"]))
     extra["sessions"] = pd.bdate_range(end=extra["as_of"], periods=61).strftime("%Y%m%d").tolist()
     events.append(extra)
     assert replay.promotion_report(events)["observations_deduplicated"] == 350
     extra["as_of"] = "20240129"  # Ten sessions: include, but still unsettled.
+    extra.update(scan_timing(extra["as_of"]))
     extra["sessions"] = pd.bdate_range(end=extra["as_of"], periods=61).strftime("%Y%m%d").tolist()
     result = replay.promotion_report(events)
     assert result["observations_deduplicated"] == 400
@@ -730,6 +747,7 @@ def test_historical_backfill_cannot_change_forward_statistics(version):
             (1000,), version=version, dates=[day], baseline=1000, mae=1000
         )[1:]
         historical[0]["prospective"] = False
+        historical[0].update(scan_timing(day, prospective=False))
         events.extend(historical)
     assert replay.promotion_report(events) == expected
 
@@ -746,7 +764,11 @@ def test_hash_linked_report_uses_header_across_default_changes(tmp_path, monkeyp
     original = [path.read_bytes() for path in paths]
     expected = replay.report(root)
     for default in ("simple-promotion-v1", "simple-promotion-v2"):
-        monkeypatch.setattr(replay, "FORWARD_CONTRACT", replay.frozen_forward_contract(default))
+        monkeypatch.setattr(
+            replay,
+            "FORWARD_CONTRACT",
+            replay.frozen_forward_contract(default, eligibility="before-next-session-v1"),
+        )
         assert replay.report(root) == expected
         replay.FORWARD_CONTRACT["promotion"].update(version="future", min_valid_observations=1, z=0)
         assert replay.report(root) == expected
@@ -881,7 +903,9 @@ def test_ledger_directory_sync_failure_does_not_publish_success(tmp_path, no_wai
 
     monkeypatch.setattr(replay.os, "fsync", fail_once)
     with replay.ledger_root(root), pytest.raises(OSError, match="fsync"):
-        replay.append_event(root, {**event, "as_of": client.days[61]})
+        replay.append_event(
+            root, {**event, "as_of": client.days[61], **scan_timing(client.days[61])}
+        )
     assert path.read_bytes() == prefix
     assert len(replay.read_ledger(root)) == 2
 
@@ -899,7 +923,9 @@ def test_interrupted_head_publication_fails_closed(tmp_path, no_wait, monkeypatc
 
     monkeypatch.setattr(replay, "save_state", fail_marker)
     with replay.ledger_root(root), pytest.raises(OSError, match="anchor"):
-        replay.append_event(root, {**event, "as_of": client.days[61]})
+        replay.append_event(
+            root, {**event, "as_of": client.days[61], **scan_timing(client.days[61])}
+        )
     with pytest.raises(ScreenError, match="末端锚点"):
         replay.report(root)
 
@@ -935,3 +961,163 @@ def test_scan_rejects_invalid_numeric_evidence_on_first_fetch(tmp_path, no_wait,
     assert event["valid_stock_days"] == 0
     assert event["observations"] == event["baseline"] == []
     assert len(event["gaps"]) == 2
+
+
+def historical_fixture(periods=90):
+    client = SyntheticClient(periods)
+    daily = pd.DataFrame([client.price(d, client.codes[0], 0.02) for d in client.days])
+    basic = client.stock_basic(fields="ts_code,name,list_date,delist_date,market", list_status="L")
+    return client, daily, basic, client.index_daily()
+
+
+@pytest.mark.parametrize("damage", ["missing", "zero", "bad_low", "zero_volume"])
+@pytest.mark.parametrize("offset", [5, 15])
+def test_historical_forward_chain_requires_every_bar(damage, offset):
+    client, daily, basic, benchmark = historical_fixture()
+    index = 60 + offset
+    daily.loc[62, "low"] = 10.0
+    if damage == "missing":
+        daily = daily.drop(index)
+    else:
+        field, value = {"zero": ("close", 0), "bad_low": ("low", 100), "zero_volume": ("vol", 0)}[
+            damage
+        ]
+        daily.loc[index, field] = value
+    result = replay.replay(daily, basic, benchmark, client.days, 20)
+    stats = result["observation_signal_close"]
+    assert stats["n"] == 1
+    assert stats["h10"]["missing"] == int(offset <= 10)
+    assert stats["h20"]["missing"] == 1
+    assert stats["mae20_missing"] == stats["stop_rule_20d_missing"] == 1
+    assert np.isnan(stats["mae20_median"])
+    assert np.isnan(stats["stop_rule_20d_mean"])
+    assert result["methodology"] == "historical-replay-v2"
+
+
+def test_historical_pre_entry_bad_bar_cannot_poison_later_returns():
+    client, daily, basic, benchmark = historical_fixture(180)
+    daily.loc[0, "close"] = 0
+    result = replay.replay(daily, basic, benchmark, client.days, 20)
+    stats = result["observation_signal_close"]
+    assert stats["n"] > 0
+    assert stats["h20"]["missing"] == stats["mae20_missing"] == 0
+    assert stats["h20"]["mean"] > 0
+
+
+@pytest.mark.parametrize("damage", ["split", "missing", "invalid"])
+def test_historical_and_forward_observation_gap_outcomes_agree(damage):
+    client, daily, basic, benchmark = historical_fixture()
+    conditions = replay.price_conditions(
+        replay.dated_bars(daily.iloc[:61], client.days[:61]),
+        replay.dated_bars(benchmark.iloc[:61], client.days[:61]),
+    )
+    if damage == "split":
+        for field in replay.PRICE_FIELDS[:-1]:
+            daily.loc[61:, field] /= 2
+    elif damage == "missing":
+        daily = daily.drop(61)
+    else:
+        daily.loc[61, "vol"] = 0
+    historical = replay.replay(daily, basic, benchmark, client.days, 20)
+    prospective = replay.settle_sample(
+        {"code": client.codes[0], "conditions": conditions},
+        daily,
+        benchmark,
+        client.days[61:],
+        observation=True,
+    )
+    assert historical["observation_5d_outcome"]["data_gap"] == 1
+    assert prospective["outcome"] == "data_gap"
+    if damage == "split":
+        assert historical["observation_signal_close"]["h20"]["mean"] == 3.57
+
+
+@pytest.mark.parametrize(
+    "hour,minute,expected", [(9, 14, True), (9, 15, False), (10, 0, False), (17, 0, False)]
+)
+def test_scan_next_session_open_boundary(tmp_path, no_wait, hour, minute, expected):
+    client = ForwardClient()
+    now = closed(client.days[61], hour).replace(minute=minute)
+    event = replay.scan(tmp_path / "forward", client.days[60], 100, client, now=now)
+    assert event["prospective"] is expected
+    assert event["next_session"] == client.days[61]
+    assert (
+        event["prospective_deadline"] == closed(client.days[61], 9).replace(minute=15).isoformat()
+    )
+    assert replay.datetime.fromisoformat(event["recorded_at"]) >= now
+
+
+def test_scan_crossing_open_uses_completion_not_start(tmp_path, no_wait, monkeypatch):
+    client = ForwardClient()
+    ticks = iter([100.0, 102.0])
+    monkeypatch.setattr(replay.time, "monotonic", lambda: next(ticks))
+    now = closed(client.days[61], 9).replace(minute=14, second=59)
+    event = replay.scan(tmp_path / "forward", client.days[60], 100, client, now=now)
+    assert not event["prospective"]
+    assert event["started_at"] == now.isoformat()
+    assert event["recorded_at"] == (now + replay.timedelta(seconds=2)).isoformat()
+
+
+@pytest.mark.parametrize("holiday", [False, True])
+def test_scan_weekend_and_holiday_calendar_eligibility(tmp_path, no_wait, holiday):
+    client = ForwardClient()
+    friday = client.days.index("20240329")
+    if holiday:
+        client.days.remove("20240401")
+    event = replay.scan(
+        tmp_path / "forward", client.days[friday], 100, client, now=closed("20240331")
+    )
+    assert event["prospective"]
+    assert event["next_session"] == ("20240402" if holiday else "20240401")
+
+
+def test_scan_requires_verified_future_session(tmp_path, no_wait):
+    client = ForwardClient(periods=61)
+    with pytest.raises(ScreenError, match="下一交易日"):
+        forward_scan(tmp_path / "forward", client)
+    assert [endpoint for endpoint, _ in client.calls] == ["trade_cal"]
+    assert len(replay.read_ledger(tmp_path / "forward")) == 1
+
+
+@pytest.mark.parametrize("version", ["simple-promotion-v1", "simple-promotion-v2"])
+def test_legacy_eligibility_never_promotes_or_rewrites(tmp_path, monkeypatch, version):
+    events = promotion_events(version=version, eligibility=None)
+    monkeypatch.setattr(replay, "FORWARD_CONTRACT", events[0]["contract"])
+    root = tmp_path / "forward"
+    with replay.ledger_root(root, create=True):
+        for event in events[1:]:
+            replay.append_event(root, event)
+    paths = [root / "ledger/events.jsonl", root / "replay.json"]
+    before = [path.read_bytes() for path in paths]
+    result = replay.report(root)
+    assert result["status"] == "insufficient"
+    assert result["status_reason"] == "legacy_unverified_forward_eligibility"
+    assert result["excess20_count"] == 350
+    assert result["excess20_ci"] is result["eligibility_contract"] is None
+    assert result["excess20_ci95"] == [1, 1]
+    assert result["promotion_contract"] == events[0]["contract"]["promotion"]
+    assert [path.read_bytes() for path in paths] == before
+
+
+@pytest.mark.parametrize(
+    "damage", ["missing", "naive", "late", "deadline", "next_session", "flag", "started"]
+)
+def test_new_eligibility_evidence_must_agree(damage):
+    events = promotion_events()
+    event = events[1]
+    if damage == "missing":
+        del event["recorded_at"]
+    elif damage == "naive":
+        event["recorded_at"] = "2024-01-15T18:00:00"
+    elif damage == "late":
+        event["recorded_at"] = event["prospective_deadline"]
+    elif damage == "deadline":
+        event["prospective_deadline"] = "2024-01-16T09:30:00+08:00"
+    elif damage == "next_session":
+        event["next_session"] = event["as_of"]
+    elif damage == "flag":
+        event["prospective"] = False
+    else:
+        event["started_at"] = event["prospective_deadline"]
+    with pytest.raises(ScreenError, match="前瞻资格"):
+        replay.promotion_report(events)

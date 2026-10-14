@@ -3,22 +3,25 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
 import uuid
+from copy import deepcopy
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from a_stock_tracker.auth import (
     Actor,
     AuthError,
     check_production_auth_config,
     create_demo_actor,
-    create_owner_actor,
 )
-from a_stock_tracker.opportunities import load_board
+from a_stock_tracker.oauth_completion import OwnerAuthorization, consume_owner_actor
+from a_stock_tracker.opportunities import SHANGHAI, load_board
 from a_stock_tracker.opportunity_view import (
     ACCENT,
     BACKGROUND,
@@ -88,6 +91,8 @@ def build_app():
             "closed": False,
             "settings_return": "/",
             "poll": None,
+            "pending": None,
+            "expiry_tasks": set(),
         }
         login_message = ft.Text("", color=ERROR, size=16)
         content_container = ft.Container()
@@ -102,7 +107,79 @@ def build_app():
                 and actor.is_valid
             )
 
-        def revoke():
+        def stop_expiry():
+            for task in state["expiry_tasks"]:
+                task.cancel()
+            state["expiry_tasks"].clear()
+
+        def live_prices(data, renderer, gen, actor):
+            """Expire a read-only snapshot locally; never poll a completed batch."""
+            rows = []
+
+            def collect(value):
+                if isinstance(value, dict):
+                    if value.get("status") in {"reference", "observation"} and "expires" in value:
+                        rows.append(value)
+                    for child in value.values():
+                        collect(child)
+                elif isinstance(value, list):
+                    for child in value:
+                        collect(child)
+
+            collect(data)
+            if not rows:
+                return renderer(data)
+            snapshot = deepcopy(data)
+            rows = []
+            collect(snapshot)
+            deadlines = [
+                (
+                    row,
+                    datetime.combine(
+                        date.fromisoformat(row["expires"]) + timedelta(days=1), time(), SHANGHAI
+                    ),
+                )
+                for row in rows
+                if not row.get("expired")
+            ]
+
+            def expire():
+                now = datetime.now(SHANGHAI)
+                for row, deadline in deadlines:
+                    if now >= deadline:
+                        row["expired"] = True
+                return [deadline for row, deadline in deadlines if not row.get("expired")]
+
+            remaining = expire()
+            container = ft.Container(content=renderer(snapshot))
+
+            async def watch_expiry():
+                try:
+                    pending_dates = remaining
+                    while pending_dates and current(gen, actor):
+                        await asyncio.sleep(
+                            max(0, (min(pending_dates) - datetime.now(SHANGHAI)).total_seconds())
+                        )
+                        if not current(gen, actor):
+                            return
+                        pending_dates = expire()
+                        container.content = renderer(snapshot)
+                        page.update()
+                except asyncio.CancelledError:
+                    pass
+
+            if remaining and current(gen, actor):
+                task = asyncio.create_task(watch_expiry())
+                state["expiry_tasks"].add(task)
+                task.add_done_callback(state["expiry_tasks"].discard)
+            return container
+
+        def revoke(*, clear_auth: bool = True):
+            if clear_auth:
+                page.logout()
+            stop_expiry()
+            state["pending"] = None
+            state.pop("request_feedback", None)
             if state["actor"]:
                 state["actor"].revoke()
             state["actor"] = None
@@ -115,6 +192,7 @@ def build_app():
 
         async def navigate(route: str, *, from_browser: bool = False):
             stop_poll()
+            stop_expiry()
             state["generation"] += 1
             state["route"] = route
             if not from_browser:
@@ -152,20 +230,19 @@ def build_app():
             async def on_login(e: ft.LoginEvent):
                 if not state["connected"]:
                     return
-                revoke()
+                revoke(clear_auth=False)
                 if e.error:
                     login_message.value = "登录失败，请重新授权。"
                 else:
-                    user = getattr(page.auth, "user", None)
-                    raw_id = user.get("id") if isinstance(user, dict) else getattr(user, "id", None)
                     try:
-                        state["actor"] = create_owner_actor(raw_id, GITHUB_ALLOWED_USER_ID)
+                        state["actor"] = consume_owner_actor(page.auth, GITHUB_ALLOWED_USER_ID)
                     except AuthError:
                         login_message.value = "登录被拒绝：仅允许配置的所有者。"
                     else:
                         login_message.value = ""
                         await navigate("/")
                         return
+                page.logout()
                 await navigate("/login")
 
             page.on_login = on_login
@@ -181,13 +258,13 @@ def build_app():
                     provider,
                     on_open_authorization_url=on_open_auth_url,
                     redirect_to_page=True,
+                    authorization=OwnerAuthorization,
                 )
 
         async def logout(e):
             if not state["connected"]:
                 return
             revoke()
-            page.logout()
             await navigate("/login")
 
         async def research_page(gen: int, actor: Actor, route: str):
@@ -273,12 +350,18 @@ def build_app():
                             if updated == last_run:
                                 continue
                             last_run = updated
-                            content_container.content = result_view(
+                            stop_expiry()
+                            content_container.content = live_prices(
                                 updated,
-                                lambda r: open_route(r, gen, actor),
-                                back,
-                                code,
-                                lambda: current(gen, actor),
+                                lambda value: result_view(
+                                    value,
+                                    lambda r: open_route(r, gen, actor),
+                                    back,
+                                    code,
+                                    lambda: current(gen, actor),
+                                ),
+                                gen,
+                                actor,
                             )
                             if state["connected"]:
                                 try:
@@ -319,12 +402,71 @@ def build_app():
                 if current(gen, actor) and run["status"] == "running":
                     stop_poll()
                     state["poll"] = asyncio.create_task(poll())
-                return result_view(
+                return live_prices(
                     run,
-                    lambda r: open_route(r, gen, actor),
-                    back,
-                    code,
-                    lambda: current(gen, actor),
+                    lambda value: result_view(
+                        value,
+                        lambda r: open_route(r, gen, actor),
+                        back,
+                        code,
+                        lambda: current(gen, actor),
+                    ),
+                    gen,
+                    actor,
+                )
+            if state["pending"] is not None:
+                saved = state["pending"]
+                payload = json.loads(saved["payload"])
+                feedback = paragraph("原请求受理状态尚未确认；只能核对原编号，不另起一轮收费。")
+                reconcile = ft.Button("核对原请求受理状态", height=48)
+
+                async def reconcile_pending(e):
+                    if not current(gen, actor) or reconcile.disabled:
+                        return
+                    reconcile.disabled = True
+                    page.update()
+                    try:
+                        accepted = await asyncio.to_thread(
+                            research.submit, json.loads(saved["payload"])
+                        )
+                    except (ResearchQuoteChanged, ResearchRejected, ValueError) as exc:
+                        if actor is state["actor"] and state["pending"] is saved:
+                            state["pending"] = None
+                        if current(gen, actor):
+                            state["request_feedback"] = (
+                                "旧报价已被拒绝；已重新获取报价，请重新核对并勾选确认。"
+                                if isinstance(exc, ResearchQuoteChanged)
+                                else str(exc)
+                            )
+                            await navigate(saved["route"])
+                    except ResearchUnavailable as exc:
+                        if current(gen, actor):
+                            feedback.value = str(exc)
+                            reconcile.disabled = False
+                            page.update()
+                    else:
+                        if actor is state["actor"] and state["pending"] is saved:
+                            state["pending"] = None
+                        if current(gen, actor):
+                            await navigate("/analysis/" + accepted["id"])
+
+                reconcile.on_click = reconcile_pending
+                return ft.Column(
+                    [
+                        heading("核对原研究请求", level=1),
+                        paragraph(
+                            f"请求编号：{payload['id']}\n范围：{','.join(payload['codes']) or '全市场初筛'}"
+                        ),
+                        paragraph(
+                            f"已确认预算：{payload['quote']['requests']} 次数据请求 / {payload['quote']['seconds']} 秒"
+                        ),
+                        feedback,
+                        reconcile,
+                        ft.TextButton(
+                            "返回研究首页", on_click=open_route("/", gen, actor), height=48
+                        ),
+                    ],
+                    spacing=20,
                 )
             try:
                 info, recent = await asyncio.gather(
@@ -595,16 +737,34 @@ def build_app():
                     pending["resume_from"] = resume_id
                 if mode.value != "screen" and query.get("from") and pending is not None:
                     pending["from"] = query["from"][0]
+                saved = {
+                    "payload": json.dumps(pending),
+                    "route": "/analysis?"
+                    + urlencode(
+                        {
+                            **{key: value[0] for key, value in query.items()},
+                            "mode": mode.value,
+                            "code": codes.value or "",
+                        }
+                    ),
+                }
+                state["pending"] = saved
                 submit.disabled = True
                 mode.disabled = codes.disabled = confirmation.disabled = True
                 feedback.value = "正在核对受理状态，请勿重复启动。"
                 page.update()
                 try:
-                    accepted = await asyncio.to_thread(research.submit, pending)
+                    accepted = await asyncio.to_thread(
+                        research.submit, json.loads(saved["payload"])
+                    )
                 except ResearchQuoteChanged:
+                    if actor is state["actor"] and state["pending"] is saved:
+                        state["pending"] = None
                     if current(gen, actor):
                         await reload_quote()
                 except (ValueError, ResearchRejected) as exc:
+                    if actor is state["actor"] and state["pending"] is saved:
+                        state["pending"] = None
                     if current(gen, actor):
                         pending = None
                         mode.disabled = codes.disabled = confirmation.disabled = False
@@ -618,6 +778,8 @@ def build_app():
                         feedback.value = str(exc)
                         page.update()
                 else:
+                    if actor is state["actor"] and state["pending"] is saved:
+                        state["pending"] = None
                     if current(gen, actor):
                         await navigate("/analysis/" + accepted["id"])
 
@@ -626,6 +788,8 @@ def build_app():
             confirmation.on_change = consent
             submit.on_click = start
             refresh()
+            if state.get("request_feedback"):
+                feedback.value = state.pop("request_feedback")
             controls = [
                 ft.TextButton(
                     icon=ft.Icons.ARROW_BACK,
@@ -647,7 +811,16 @@ def build_app():
                 submit,
                 feedback,
             ]
-            controls.extend(recent_controls(recent, lambda r: open_route(r, gen, actor)))
+            controls.append(
+                live_prices(
+                    recent,
+                    lambda value: ft.Column(
+                        recent_controls(value, lambda r: open_route(r, gen, actor))
+                    ),
+                    gen,
+                    actor,
+                )
+            )
             return ft.Column(
                 controls, spacing=20, horizontal_alignment=ft.CrossAxisAlignment.STRETCH
             )
@@ -682,7 +855,16 @@ def build_app():
                                 caution=True,
                             )
                         )
-                    controls.extend(recent_controls(recent, lambda r: open_route(r, gen, actor)))
+                    controls.append(
+                        live_prices(
+                            recent,
+                            lambda value: ft.Column(
+                                recent_controls(value, lambda r: open_route(r, gen, actor))
+                            ),
+                            gen,
+                            actor,
+                        )
+                    )
                 except ResearchUnavailable:
                     controls.append(
                         notice(
@@ -703,12 +885,17 @@ def build_app():
                     board = await asyncio.to_thread(load_board, actor, OPPORTUNITY_ROOT)
                 controls.append(heading("已发布批次", size=22))
                 controls.append(
-                    opportunity_view(
+                    live_prices(
                         board,
-                        None,
-                        lambda c: open_route("/opportunity/" + c, gen, actor),
-                        open_route("/", gen, actor),
-                        embedded=True,
+                        lambda value: opportunity_view(
+                            value,
+                            None,
+                            lambda c: open_route("/opportunity/" + c, gen, actor),
+                            open_route("/", gen, actor),
+                            embedded=True,
+                        ),
+                        gen,
+                        actor,
                     )
                 )
             return ft.Column(
@@ -716,6 +903,7 @@ def build_app():
             )
 
         async def render():
+            stop_expiry()
             if not state["connected"]:
                 return
             gen, actor = state["generation"], state["actor"]
@@ -774,11 +962,16 @@ def build_app():
                         board = demo_board()
                     else:
                         board = await asyncio.to_thread(load_board, actor, OPPORTUNITY_ROOT)
-                    content = opportunity_view(
+                    content = live_prices(
                         board,
-                        route.rsplit("/", 1)[-1],
-                        lambda c: open_route("/opportunity/" + c, gen, actor),
-                        open_route("/", gen, actor),
+                        lambda value: opportunity_view(
+                            value,
+                            route.rsplit("/", 1)[-1],
+                            lambda c: open_route("/opportunity/" + c, gen, actor),
+                            open_route("/", gen, actor),
+                        ),
+                        gen,
+                        actor,
                     )
                 elif route == "/analysis" or route.startswith("/analysis/"):
                     content = await research_page(gen, actor, route)
@@ -862,7 +1055,8 @@ def build_app():
 
         async def show_settings(e):
             if state["actor"] and state["actor"].is_valid and state["connected"]:
-                state["settings_return"] = state["route"]
+                if urlparse(state["route"]).path != "/settings":
+                    state["settings_return"] = state["route"]
                 await navigate("/settings")
 
         settings_button.on_click = show_settings
@@ -913,6 +1107,7 @@ def build_app():
             nonlocal watchdog_task
             state["connected"] = False
             stop_poll()
+            stop_expiry()
             state["generation"] += 1
             watchdog_task.cancel()
 

@@ -6,7 +6,6 @@ from datetime import date, timedelta
 from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import flet as ft
 import pytest
@@ -17,7 +16,7 @@ from a_stock_tracker.auth import AuthError, create_demo_actor
 from a_stock_tracker.automation import Budget, digest, save_state
 from a_stock_tracker.opportunity_demo import demo_board, demo_packet
 from a_stock_tracker.research import ScreenError
-from tests.test_app import AppMockPage, app_controls
+from tests.test_app import AppMockPage, app_controls, completed_owner_authorization
 
 
 def test_conditions_are_computed_and_not_claimed_triggered():
@@ -342,7 +341,7 @@ def test_late_private_board_cannot_overwrite_navigation(monkeypatch):
     monkeypatch.setattr(app, "load_board", delayed_board)
 
     async def run():
-        page = AppMockPage(auth=MagicMock(user={"id": "12345678"}))
+        page = AppMockPage(auth=await completed_owner_authorization("12345678"))
         await app.build_app()(page)
         pending = asyncio.create_task(
             page.on_login(
