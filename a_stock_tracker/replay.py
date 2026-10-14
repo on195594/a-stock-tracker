@@ -1135,6 +1135,38 @@ def promotion_report(events: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def auto(
+    root: Path, request_budget: int, client: Any, report_dir: Path, *, now: datetime | None = None
+) -> dict[str, Any]:
+    """Unattended entry: scan the latest closed trading day once, settle matured scans, report.
+
+    One request budget covers every step; each step receives only what the previous one left.
+    """
+    now = now or datetime.now(SHANGHAI)
+    cutoff = closed_cutoff(now)
+    isolated_path(report_dir)
+    if report_dir == root or root in report_dir.parents:
+        raise ScreenError("报告目录须与账本分离")
+    with ledger_root(root, create=True) as events:
+        cache = RequestCache(root, request_budget, client)
+        start = (datetime.strptime(cutoff, "%Y%m%d") - timedelta(days=180)).strftime("%Y%m%d")
+        as_of = cached_calendar(cache, start, cutoff)[-1]
+        scanned = any(e["type"] == "scan" and e["as_of"] == as_of for e in events)
+    used = cache.used
+    result: dict[str, Any] = {"as_of": as_of, "scanned": False, "settled": 0}
+    if not scanned:
+        used += scan(root, as_of, request_budget - used, client, now=now)["requests"]
+        result["scanned"] = True
+    if request_budget - used >= 1:
+        settled = settle(root, request_budget - used, client, now=now)
+        used += settled["requests"]
+        result["settled"] = settled["settled"]
+    report_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    save(report_dir / f"{cutoff}.json", report(root), immutable=True)
+    result["requests"] = used
+    return result
+
+
 def report(root: Path) -> dict[str, Any]:
     with ledger_root(root) as events:
         return promotion_report(events)
@@ -1152,6 +1184,12 @@ def main() -> int:
     offline.add_argument("--root", type=Path, required=True)
     offline.add_argument("--horizon", type=int, default=60)
     offline.add_argument("--out", type=Path, required=True)
+    unattended = sub.add_parser(
+        "auto", help="无人值守：扫描最近已收盘交易日、结算到期样本并输出报告"
+    )
+    unattended.add_argument("--root", type=Path, required=True)
+    unattended.add_argument("--request-budget", type=int, required=True)
+    unattended.add_argument("--report-dir", type=Path, required=True)
     for command in ("scan", "settle", "report"):
         child = sub.add_parser(
             command,
@@ -1169,7 +1207,7 @@ def main() -> int:
         if command == "scan":
             child.add_argument("--as-of", type=compact_date, required=True)
     args = parser.parse_args()
-    if args.command in {"fetch", "scan", "settle"}:
+    if args.command in {"fetch", "scan", "settle", "auto"}:
         token = os.getenv("TUSHARE_TOKEN")
         if not token:
             parser.error("须显式提供环境变量 TUSHARE_TOKEN")
@@ -1180,6 +1218,9 @@ def main() -> int:
             fetch(args.root, args.start, args.end, args.request_budget, client)
         elif args.command == "scan":
             scan(args.root, args.as_of, args.request_budget, client)
+        elif args.command == "auto":
+            result = auto(args.root, args.request_budget, client, args.report_dir)
+            LOG.info("自动前瞻完成：%s", result)
         else:
             settle(args.root, args.request_budget, client)
     else:

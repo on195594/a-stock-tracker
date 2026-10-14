@@ -408,6 +408,20 @@ def test_scan_settle_report_chain(tmp_path, no_wait, monkeypatch):
     json.dumps(report, allow_nan=False)
 
 
+def test_auto_scans_latest_day_once_and_writes_report(tmp_path, no_wait):
+    client = ForwardClient()
+    root = tmp_path / "forward"
+    reports = tmp_path / "reports"
+    first = replay.auto(root, 100, client, reports, now=closed(client.days[60]))
+    assert first == {"as_of": client.days[60], "scanned": True, "settled": 0, "requests": 66}
+    assert json.loads((reports / f"{client.days[60]}.json").read_text())["status"] == "insufficient"
+    again = replay.auto(root, 100, client, reports, now=closed(client.days[60]))
+    assert again == {"as_of": client.days[60], "scanned": False, "settled": 0, "requests": 0}
+    assert sum(e["type"] == "scan" for e in replay.read_ledger(root)) == 1
+    with pytest.raises(replay.ScreenError):
+        replay.auto(root, 100, client, root, now=closed(client.days[60]))
+
+
 def test_scan_budget_resume_duplicate_and_rule_freeze(tmp_path, no_wait, monkeypatch):
     client = ForwardClient()
     root = tmp_path / "forward"

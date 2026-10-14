@@ -1,0 +1,10 @@
+[Unit]
+Description=A-stock swing forward validation: unattended scan and settle (private ledger)
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/a-stock-tracker
+EnvironmentFile=%h/a-stock-tracker/.env
+ExecStart=%h/a-stock-tracker/.venv/bin/python -m a_stock_tracker.replay auto --root %h/a-stock-tracker/data/swing-forward --request-budget 100 --report-dir %h/a-stock-tracker/data/swing-forward-reports
+UMask=0077
+TimeoutStartSec=30min
