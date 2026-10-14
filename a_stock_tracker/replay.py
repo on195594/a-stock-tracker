@@ -1149,8 +1149,10 @@ def auto(
         raise ScreenError("报告目录须与账本分离")
     with ledger_root(root, create=True) as events:
         cache = RequestCache(root, request_budget, client)
+        # Same calendar window as scan() so the cached response is reused when as_of == cutoff.
         start = (datetime.strptime(cutoff, "%Y%m%d") - timedelta(days=180)).strftime("%Y%m%d")
-        as_of = cached_calendar(cache, start, cutoff)[-1]
+        end = (datetime.strptime(cutoff, "%Y%m%d") + timedelta(days=32)).strftime("%Y%m%d")
+        as_of = [day for day in cached_calendar(cache, start, end) if day <= cutoff][-1]
         scanned = any(e["type"] == "scan" and e["as_of"] == as_of for e in events)
     used = cache.used
     result: dict[str, Any] = {"as_of": as_of, "scanned": False, "settled": 0}
