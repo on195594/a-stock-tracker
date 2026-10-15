@@ -136,9 +136,10 @@ def result_summary(result: dict[str, Any]) -> dict[str, Any]:
                 )
             }
             | {
+                "quality": report.get("quality"),
                 "analysis": {"counterevidence": report["analysis"]["counterevidence"]}
                 if "counterevidence" in report["analysis"]
-                else {}
+                else {},
             }
             for report in result.get("reports", [])
         ]

@@ -1530,7 +1530,8 @@ store.execute(directory, state, store.lease())
     )
     try:
         deadline = time.monotonic() + 10
-        while not child_path.exists():
+        # write_text creates the file before writing; wait for the pid itself.
+        while not (child_path.exists() and child_path.read_text().strip()):
             assert receiver.poll() is None, "synthetic receiver exited before child started"
             assert time.monotonic() < deadline, "synthetic child failed to start"
             time.sleep(0.01)

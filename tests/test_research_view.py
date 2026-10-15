@@ -189,6 +189,75 @@ def test_structured_report_hierarchy_and_failed_draft_is_hidden(status, review, 
     assert not any(isinstance(c, (ft.Markdown, ft.Image)) for c in app_controls(view))
 
 
+@pytest.mark.parametrize(
+    "quality,line",
+    [
+        ({"repair": "repaired"}, "质量：修复 1 次"),
+        ({"repair": "failed"}, "质量：修复 1 次未成功"),
+        ({"repair": "skipped_budget"}, "质量：调用预算不足，未修复"),
+        ({"repair": "none", "dropped": [1]}, "质量：剔除 1 条未通过校验的事实"),
+        (
+            {"repair": "none", "unformed": {"valuation": True, "change_conditions": True}},
+            "质量：未形成：估值方法、改变判断的条件",
+        ),
+    ],
+)
+def test_report_quality_line(quality, line):
+    import flet as ft
+
+    from a_stock_tracker.opportunity_demo import demo_report
+    from a_stock_tracker.research_view import report_controls
+
+    report = demo_report("600001.SH")
+    report["quality"] = quality
+    text = "\n".join(text_values(ft.Column(report_controls(report))))
+    assert line in text
+
+
+@pytest.mark.parametrize(
+    "quality",
+    [None, "bad", [], 1, {"repair": "none"}, {"repair": [], "dropped": 1, "unformed": []}],
+)
+def test_report_quality_line_omitted_for_empty_or_malformed_quality(quality):
+    import flet as ft
+
+    from a_stock_tracker.opportunity_demo import demo_report
+    from a_stock_tracker.research_view import report_controls
+
+    report = demo_report("600001.SH")
+    report["quality"] = quality
+    text = "\n".join(text_values(ft.Column(report_controls(report))))
+    assert "质量：" not in text
+
+
+def test_report_quality_line_omitted_for_old_report_without_quality():
+    import flet as ft
+
+    from a_stock_tracker.opportunity_demo import demo_report
+    from a_stock_tracker.research_view import report_controls
+
+    report = demo_report("600001.SH")
+    del report["quality"]
+    text = "\n".join(text_values(ft.Column(report_controls(report))))
+    assert "质量：" not in text
+
+
+def test_unformed_valuation_placeholder_has_no_empty_citation():
+    import flet as ft
+
+    from a_stock_tracker.opportunity_demo import demo_report
+    from a_stock_tracker.research_view import report_controls
+
+    report = demo_report("600001.SH")
+    report["analysis"]["valuation"] = {"text": "事实不足，未形成", "facts": []}
+    texts = text_values(ft.Column(report_controls(report)))
+    text = "\n".join(texts)
+    assert "事实不足，未形成" in text
+    valuation = texts.index("估值方法")
+    next_section = texts.index("改变判断的条件")
+    assert not any(t.startswith("引用：") for t in texts[valuation + 1 : next_section])
+
+
 def test_recent_summaries_show_counter_first_sentence_and_hide_expired_prices():
     import flet as ft
 

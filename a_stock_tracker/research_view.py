@@ -6,7 +6,7 @@ from typing import Any
 
 import flet as ft
 
-from a_stock_tracker.disclosures import report_summary_status
+from a_stock_tracker.disclosures import quality_text, report_summary_status
 from a_stock_tracker.opportunity_view import (
     heading,
     local_time,
@@ -65,14 +65,21 @@ def report_controls(report) -> list[ft.Control]:
     counter = analysis.get("counterevidence", {})
     summary: list[ft.Control] = [
         paragraph(report_summary_status(report)),
-        paragraph(report_dates(report)),
     ]
+    quality = quality_text(report.get("quality"))
+    if quality is not None:
+        summary.append(paragraph(quality))
+    summary.append(paragraph(report_dates(report)))
     if counter:
         summary.extend(
             [
                 heading("最强反证", size=18),
                 paragraph(counter["text"]),
-                paragraph("引用：" + "、".join(counter["facts"])),
+                *(
+                    [paragraph("引用：" + "、".join(counter["facts"]))]
+                    if counter.get("facts")
+                    else []
+                ),
             ]
         )
     gaps = report.get("gaps", [])
@@ -121,7 +128,11 @@ def report_controls(report) -> list[ft.Control]:
                 [
                     heading(title, size=18),
                     paragraph(item["text"]),
-                    paragraph("引用：" + "、".join(item["facts"])),
+                    *(
+                        [paragraph("引用：" + "、".join(item["facts"]))]
+                        if item.get("facts")
+                        else []
+                    ),
                 ]
             )
     if readable and report.get("facts"):

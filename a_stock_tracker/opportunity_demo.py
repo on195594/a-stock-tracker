@@ -70,6 +70,13 @@ def demo_report(code):
         "code": code,
         "status": "synthetic",
         "evidence_review": "not_real",
+        "quality": {
+            "generated": 2,
+            "repair": "repaired",
+            "dropped": [{"id": "F2", "reason": "citation_mismatch"}],
+            "unformed": {},
+            "passed": 1,
+        },
         "documents": [{"period": "2025-12-31", "announced": "2026-04-01"}],
         "clues": {
             "industry": "合成行业",
