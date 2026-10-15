@@ -55,16 +55,6 @@ def test_session_token_malformed_inputs():
         assert auth.verify_session_token(bad, secret, "12345678") is None
 
 
-def test_parse_cookie_header():
-    assert auth.parse_cookie_header(None) == {}
-    assert auth.parse_cookie_header("") == {}
-    header = "flet_oauth_state=xyz; stock_session=token123; other=val=ue"
-    cookies = auth.parse_cookie_header(header)
-    assert cookies["flet_oauth_state"] == "xyz"
-    assert cookies["stock_session"] == "token123"
-    assert cookies["other"] == "val=ue"
-
-
 def test_session_revocation_invalidates_token():
     secret = "test-secret-key-12345"
     user_id = "12345678"
@@ -92,33 +82,6 @@ def test_revoke_session_explicitly():
     # Malformed unhashable sid payload does not raise TypeError
     bad = base64.urlsafe_b64encode(b'{"sid":["unhashable"]}').decode() + ".fake"
     auth.revoke_session(bad)
-
-
-def test_exchange_ticket_lifecycle():
-    user_id = "12345678"
-    sid = "test-session-id"
-    ticket = auth.create_exchange_ticket(user_id, sid)
-    assert isinstance(ticket, str) and len(ticket) >= 16
-
-    # Redeem once succeeds, returning (user_id, sid)
-    assert auth.redeem_exchange_ticket(ticket) == (user_id, sid)
-
-    # Second redemption fails (single-use)
-    assert auth.redeem_exchange_ticket(ticket) is None
-
-    # Invalid / empty tickets
-    assert auth.redeem_exchange_ticket(None) is None
-    assert auth.redeem_exchange_ticket("nonexistent") is None
-
-    # Test revoke_exchange_tickets by sid
-    t2 = auth.create_exchange_ticket(user_id, sid)
-    # Anonymous flush refused (does not purge)
-    auth.revoke_exchange_tickets(None)
-    assert t2 in auth.EXCHANGE_TICKETS
-
-    # Specific sid flush purges tickets
-    auth.revoke_exchange_tickets(sid)
-    assert auth.redeem_exchange_ticket(t2) is None
 
 
 def test_fresh_login_replaces_prior_user_sessions():

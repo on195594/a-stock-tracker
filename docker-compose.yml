@@ -12,8 +12,6 @@ services:
       PUBLIC_BASE_URL: https://stock.keyi.win
       HOST: 0.0.0.0
       PORT: 8550
-      # Serve CanvasKit and Flutter fallback fonts from this origin, not gstatic/Google Fonts.
-      FLET_WEB_NO_CDN: "true"
 networks:
   nginx-network:
     external: true

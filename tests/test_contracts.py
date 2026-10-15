@@ -373,43 +373,6 @@ def test_client_error_mapping(monkeypatch, status, body, exception, message):
     )
 
 
-@pytest.mark.parametrize("models", [True, False])
-def test_app_adapter_preserves_plain_data(monkeypatch, models):
-    from types import SimpleNamespace
-
-    from a_stock_tracker import app
-    from a_stock_tracker.contracts import RunState, ServiceInfo
-
-    info = deepcopy(GOLDEN["info"])
-    state = {"id": "a" * 32, "status": "running", "unknown": True}
-    offered_info = ServiceInfo.model_validate(info) if models else info
-    offered_state = RunState.model_validate(state) if models else state
-    offered_recent = [offered_state]
-    calls = []
-    client = SimpleNamespace(
-        info=lambda: offered_info,
-        recent=lambda: offered_recent,
-        submit=lambda value: calls.append(value) or offered_state,
-        status=lambda identifier: calls.append(identifier) or offered_state,
-    )
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-    monkeypatch.setattr(app, "DemoResearchClient", lambda: client)
-    main = app.build_app()
-    adapter = dict(
-        zip(main.__code__.co_freevars, (cell.cell_contents for cell in main.__closure__))
-    )["research"]
-    assert adapter.info() == info
-    assert adapter.recent() == [state]
-    value = request()
-    assert adapter.submit(value) == state
-    assert adapter.status(state["id"]) == state
-    assert calls == [value, state["id"]]
-    if not models:
-        assert adapter.info() is info
-        assert adapter.recent() is offered_recent
-        assert adapter.status(state["id"]) is state
-
-
 def test_demo_returns_models_and_keeps_mutable_dict_storage():
     from a_stock_tracker.contracts import RunState, ServiceInfo
     from a_stock_tracker.research_client import DemoResearchClient

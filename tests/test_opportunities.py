@@ -1,22 +1,15 @@
 """Synthetic-only rule, evidence, publication and page regressions."""
 
-import asyncio
 from copy import deepcopy
 from datetime import date, timedelta
-from pathlib import Path
-from threading import Event
-from types import SimpleNamespace
 
-import flet as ft
 import pytest
 
-from a_stock_tracker import app
 from a_stock_tracker import opportunities as swing
 from a_stock_tracker.auth import AuthError, create_demo_actor
 from a_stock_tracker.automation import Budget, digest, save_state
 from a_stock_tracker.opportunity_demo import demo_board, demo_packet
 from a_stock_tracker.research import ScreenError
-from tests.test_app import AppMockPage, app_controls, completed_owner_authorization
 
 
 def test_conditions_are_computed_and_not_claimed_triggered():
@@ -300,100 +293,3 @@ def test_invalid_board_artifacts_refused(tmp_path, damage):
         save_state(tmp_path / "latest.json", {"run": "../secret", "digest": "x"})
     with pytest.raises(ScreenError):
         swing.load_board(create_demo_actor(), root)
-
-
-def test_archive_page_and_stale_click_is_inert(monkeypatch):
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-
-    async def run():
-        page = AppMockPage()
-        page.route = "/published"
-        await app.build_app()(page)
-        home = next(
-            c
-            for c in app_controls(page)
-            if isinstance(c, ft.TextButton) and c.content == "返回研究首页"
-        )
-        await home.on_click(None)
-        assert page.route == "/"
-        archive = next(
-            c
-            for c in app_controls(page)
-            if isinstance(c, ft.TextButton) and c.content == "历史发布批次"
-        )
-        await archive.on_click(None)
-        assert page.route == "/published"
-        button = next(
-            c
-            for c in app_controls(page)
-            if isinstance(c, ft.Button) and getattr(c.content, "value", c.content) == "查看价格参考"
-        )
-        assert page.navigation_bar is None
-        await button.on_click(None)
-        assert page.route == "/opportunity/600001.SH"
-        assert any(
-            isinstance(c, ft.Text) and c.value == "观察线与失效线" for c in app_controls(page)
-        )
-        page.route = "/settings"  # Browser changes the URL before dispatching the event.
-        await page.on_route_change(SimpleNamespace(route="/settings"))
-        await button.on_click(None)
-        assert page.route == "/settings"
-        await page.on_close(None)
-
-    asyncio.run(run())
-
-
-def test_late_private_board_cannot_overwrite_navigation(monkeypatch):
-    monkeypatch.setattr(app, "APP_MODE", "production")
-    monkeypatch.setattr(app, "GITHUB_ALLOWED_USER_ID", "12345678")
-    started, release = Event(), Event()
-
-    def delayed_board(actor, root):
-        started.set()
-        assert release.wait(5)
-        return demo_board()
-
-    monkeypatch.setattr(app, "OPPORTUNITY_ROOT", Path("/synthetic"))
-    monkeypatch.setattr(app, "load_board", delayed_board)
-
-    async def run():
-        page = AppMockPage(auth=await completed_owner_authorization("12345678"))
-        await app.build_app()(page)
-        await page.on_login(
-            ft.LoginEvent(name="login", control=None, error=None, error_description=None)
-        )
-        pending = asyncio.create_task(page.on_route_change(SimpleNamespace(route="/published")))
-        try:
-            assert await asyncio.to_thread(started.wait, 3)
-            page.route = "/settings"
-            await page.on_route_change(SimpleNamespace(route="/settings"))
-        finally:
-            release.set()
-            await pending
-        assert not any(
-            isinstance(c, ft.Text) and "演示公司" in (c.value or "") for c in app_controls(page)
-        )
-        assert page.route == "/settings"
-        await page.on_close(None)
-
-    asyncio.run(run())
-
-
-def test_disconnected_opportunity_callback_is_inert(monkeypatch):
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-
-    async def run():
-        page = AppMockPage()
-        page.route = "/published"
-        await app.build_app()(page)
-        button = next(
-            c
-            for c in app_controls(page)
-            if isinstance(c, ft.Button) and getattr(c.content, "value", c.content) == "查看价格参考"
-        )
-        await page.on_disconnect(None)
-        await button.on_click(None)
-        assert page.route == "/published"
-        await page.on_close(None)
-
-    asyncio.run(run())

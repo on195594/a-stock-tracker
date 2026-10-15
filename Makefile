@@ -5,7 +5,7 @@ setup:
 	uv sync --frozen --all-extras
 
 demo:
-	APP_MODE=demo PUBLIC_BASE_URL=http://127.0.0.1:8550 FLET_WEB_NO_CDN=true $(PYTHON) -m a_stock_tracker.app
+	APP_MODE=demo PORT=8551 PUBLIC_BASE_URL=http://127.0.0.1:8551 $(PYTHON) -m a_stock_tracker.web
 
 check:
 	$(PYTHON) -m pytest tests -o addopts='' -q

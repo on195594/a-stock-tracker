@@ -9,15 +9,13 @@ from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import flet as ft
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from a_stock_tracker import app
 from a_stock_tracker.automation import read_state, save_state
 from a_stock_tracker.research import ScreenError
-from a_stock_tracker.research_client import DemoResearchClient, ResearchClient, ResearchUnavailable
+from a_stock_tracker.research_client import ResearchClient, ResearchUnavailable
 from a_stock_tracker.research_service import (
     ResearchStore,
     create_service,
@@ -25,7 +23,6 @@ from a_stock_tracker.research_service import (
     request_info,
     validate_request,
 )
-from tests.test_app import AppMockPage, app_controls
 
 
 def payload(mode="swing"):
@@ -192,202 +189,6 @@ def test_client_redacts_backend_errors_and_reuses_same_request(monkeypatch):
     with pytest.raises(ResearchUnavailable) as error:
         ResearchClient("http://research", "x" * 32).submit(payload())
     assert "credentials" not in str(error.value)
-
-
-def test_web_consent_demo_and_late_callback_are_inert_after_logout(monkeypatch):
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-    client = DemoResearchClient()
-    monkeypatch.setattr(app, "DemoResearchClient", lambda: client)
-
-    async def run():
-        page = AppMockPage()
-        await app.build_app()(page)
-        try:
-            entry = next(
-                c
-                for c in app_controls(page)
-                if isinstance(c, ft.TextButton) and c.content == "从初筛找公司"
-            )
-            await entry.on_click(None)
-            start = next(
-                c
-                for c in app_controls(page)
-                if isinstance(c, ft.Button) and c.content == "确认启动研究"
-            )
-            assert start.disabled and not client.runs
-            consent = next(c for c in app_controls(page) if isinstance(c, ft.Checkbox))
-            consent.value = True
-            consent.on_change(None)
-            await start.on_click(None)
-            assert len(client.runs) == 1 and page.route.startswith("/analysis/")
-            await entry.on_click(None)
-            assert len(client.runs) == 1  # stale generation
-            await page.on_disconnect(None)
-            await start.on_click(None)
-            assert len(client.runs) == 1
-        finally:
-            await page.on_close(None)
-
-    asyncio.run(run())
-
-
-def test_research_entry_loads_independent_reads_concurrently(monkeypatch):
-    import threading
-
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-    client = DemoResearchClient()
-    monkeypatch.setattr(app, "DemoResearchClient", lambda: client)
-    barrier = threading.Barrier(2)
-
-    def concurrent(method):
-        def read():
-            barrier.wait(timeout=3)
-            return method()
-
-        return read
-
-    monkeypatch.setattr(client, "info", concurrent(client.info))
-    monkeypatch.setattr(client, "recent", concurrent(client.recent))
-
-    async def run():
-        page = AppMockPage()
-        page.route = "/analysis"
-        try:
-            await app.build_app()(page)
-            assert any(
-                isinstance(c, ft.Button) and c.content == "确认启动研究" for c in app_controls(page)
-            )
-        finally:
-            await page.on_close(None)
-
-    asyncio.run(run())
-
-
-def test_research_poll_only_renders_changed_data(monkeypatch):
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-    client = DemoResearchClient()
-    monkeypatch.setattr(app, "DemoResearchClient", lambda: client)
-    identifier = "a" * 32
-    initial = {
-        "id": identifier,
-        "status": "running",
-        "message": "采集中",
-        "created_at": "2026-09-22T10:00:00+08:00",
-        "limits": {"title": "合成研究"},
-    }
-    snapshots = iter(
-        [
-            initial,
-            dict(initial),
-            dict(initial, message="解释中"),
-            dict(initial, status="completed", message="完成"),
-        ]
-    )
-    monkeypatch.setattr(client, "status", lambda _: next(snapshots))
-    rendered = []
-    original_view = app.result_view
-
-    def result_view(run, *args, **kwargs):
-        rendered.append(run)
-        return original_view(run, *args, **kwargs)
-
-    monkeypatch.setattr(app, "result_view", result_view)
-    original_sleep = asyncio.sleep
-
-    async def run():
-        ready = asyncio.Event()
-        ticks = asyncio.Queue()
-
-        async def sleep(delay):
-            if delay == 2:
-                ready.set()
-                await ticks.get()
-            else:
-                await original_sleep(delay)
-
-        monkeypatch.setattr(app.asyncio, "sleep", sleep)
-        page = AppMockPage()
-        page.route = f"/analysis/{identifier}"
-        try:
-            await app.build_app()(page)
-            await asyncio.wait_for(ready.wait(), 3)
-            poll = next(t for t in asyncio.all_tasks() if t.get_coro().__name__ == "poll")
-            initial_updates = page.updated_count
-            for expected_renders in (1, 2):
-                ready.clear()
-                ticks.put_nowait(None)
-                await asyncio.wait_for(ready.wait(), 3)
-                assert len(rendered) == expected_renders
-                assert page.updated_count == initial_updates + expected_renders - 1
-            ticks.put_nowait(None)
-            await asyncio.wait_for(poll, 3)
-            assert len(rendered) == 3
-            assert rendered[-1]["status"] == "completed"
-            assert page.updated_count == initial_updates + 2
-        finally:
-            await page.on_close(None)
-
-    asyncio.run(run())
-
-
-def test_late_submit_response_cannot_overwrite_logout(monkeypatch):
-    import threading
-    from types import SimpleNamespace
-
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-    client = DemoResearchClient()
-    original = client.submit
-    started, release = threading.Event(), threading.Event()
-
-    def delayed(value):
-        accepted = original(value)
-        started.set()
-        assert release.wait(5)
-        return accepted
-
-    monkeypatch.setattr(client, "submit", delayed)
-    monkeypatch.setattr(app, "DemoResearchClient", lambda: client)
-
-    async def run():
-        page = AppMockPage()
-        await app.build_app()(page)
-        entry = next(
-            c
-            for c in app_controls(page)
-            if isinstance(c, ft.TextButton) and c.content == "从初筛找公司"
-        )
-        await entry.on_click(None)
-        consent = next(c for c in app_controls(page) if isinstance(c, ft.Checkbox))
-        consent.value = True
-        consent.on_change(None)
-        start = next(
-            c
-            for c in app_controls(page)
-            if isinstance(c, ft.Button) and c.content == "确认启动研究"
-        )
-        pending = asyncio.create_task(start.on_click(None))
-        try:
-            assert await asyncio.to_thread(started.wait, 3)
-            page.route = "/settings"
-            await page.on_route_change(SimpleNamespace(route=page.route))
-            logout = next(
-                c
-                for c in app_controls(page)
-                if isinstance(c, ft.Button) and c.content == "退出登录"
-            )
-            await logout.on_click(None)
-            release.set()
-            await pending
-            assert page.route == "/login" and len(client.runs) == 1
-            assert not any(
-                isinstance(c, ft.Text) and c.value == "选择公司研究财报" for c in app_controls(page)
-            )
-        finally:
-            release.set()
-            await pending
-            await page.on_close(None)
-
-    asyncio.run(run())
 
 
 def test_financial_result_reads_verified_envelopes_not_unchecked_markdown(tmp_path):
@@ -782,113 +583,6 @@ def test_configured_client_graceful_on_bad_env(monkeypatch):
     assert configured_client() is None
 
 
-def test_refresh_resets_pending_payload_and_generates_new_nonce(monkeypatch):
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-    client = DemoResearchClient()
-    monkeypatch.setattr(app, "DemoResearchClient", lambda: client)
-
-    async def run():
-        page = AppMockPage()
-        await app.build_app()(page)
-        entry = next(
-            c
-            for c in app_controls(page)
-            if isinstance(c, ft.TextButton) and c.content == "从初筛找公司"
-        )
-        await entry.on_click(None)
-        radio_group = next(c for c in app_controls(page) if isinstance(c, ft.RadioGroup))
-        radio_group.value = "swing"
-        radio_group.on_change(None)
-        codes_input = next(c for c in app_controls(page) if isinstance(c, ft.TextField))
-        codes_input.value = "600519"
-        consent = next(c for c in app_controls(page) if isinstance(c, ft.Checkbox))
-        consent.value = True
-        consent.on_change(None)
-        start = next(
-            c
-            for c in app_controls(page)
-            if isinstance(c, ft.Button) and c.content == "确认启动研究"
-        )
-        assert not start.disabled
-        codes_input.value = "000001"
-        codes_input.on_change(None)
-        assert consent.value is False
-        assert start.disabled is True
-        assert start.content == "确认启动研究"
-        await page.on_close(None)
-
-    asyncio.run(run())
-
-
-def test_analysis_invalid_route_and_unreachable_service_handled_cleanly(monkeypatch):
-    from types import SimpleNamespace
-
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-    client = ResearchClient("http://127.0.0.1:54321", "x" * 32)
-    monkeypatch.setattr(app, "DemoResearchClient", lambda: client)
-
-    async def run():
-        page = AppMockPage()
-        await app.build_app()(page)
-        page.route = "/analysis"
-        await page.on_route_change(SimpleNamespace(route="/analysis"))
-        assert any(
-            isinstance(c, ft.Text) and "研究服务暂时无法连接" in str(c.value)
-            for c in app_controls(page)
-        )
-
-        page.route = "/analysis/not-32-hex"
-        await page.on_route_change(SimpleNamespace(route="/analysis/not-32-hex"))
-        assert any(
-            isinstance(c, ft.Text) and "请求编号不正确" in str(c.value) for c in app_controls(page)
-        )
-        await page.on_close(None)
-
-    asyncio.run(run())
-
-
-def test_real_cost_notice_consent_resets_when_mode_changes(monkeypatch):
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-    client = DemoResearchClient()
-    info = {**client.info().model_dump(by_alias=True, exclude_unset=True), "demo": False}
-    monkeypatch.setattr(client, "info", lambda: info)
-    monkeypatch.setattr(app, "DemoResearchClient", lambda: client)
-
-    async def run():
-        page = AppMockPage()
-        page.route = "/analysis?mode=financial&code=600519.SH"
-        try:
-            await app.build_app()(page)
-            controls = list(app_controls(page))
-            consent = next(c for c in controls if isinstance(c, ft.Checkbox))
-            start = next(
-                c for c in controls if isinstance(c, ft.Button) and c.content == "确认启动研究"
-            )
-            mode = next(c for c in controls if isinstance(c, ft.RadioGroup))
-            assert "接受模型费用无硬上限" in consent.label
-            assert any(
-                isinstance(c, ft.Text) and "不保证提供方停止计费" in (c.value or "")
-                for c in controls
-            )
-            assert start.disabled and not consent.value
-            consent.value = True
-            consent.on_change(None)
-            assert not start.disabled
-            mode.value = "screen"
-            mode.on_change(None)
-            assert start.disabled and not consent.value
-            assert "费用无硬上限" not in consent.label
-            mode.value = "financial"
-            mode.on_change(None)
-            assert start.disabled and not consent.value
-            assert "接受模型费用无硬上限" in consent.label
-            assert not client.runs
-        finally:
-            await page.on_close(None)
-
-    asyncio.run(run())
-
-
 def screen_checkpoint_fixture(tmp_path):
     from a_stock_tracker import automation
     from tests.test_automation import basic, fixture, records
@@ -1025,43 +719,6 @@ def test_continuation_refuses_invalid_checkpoints_before_spend(tmp_path, monkeyp
         store.submit(request)
     assert not store.directory(request["id"]).exists()
     store.lease().close()
-
-
-def test_entry_continuation_requires_explicit_new_budget_confirmation(monkeypatch):
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-    client = DemoResearchClient()
-    original = payload("screen")
-    original["quote"] = quote(client.info(), "screen")
-    client.submit(original)
-    monkeypatch.setattr(app, "DemoResearchClient", lambda: client)
-
-    async def run():
-        page = AppMockPage()
-        page.route = "/analysis?mode=screen"
-        try:
-            await app.build_app()(page)
-            controls = list(app_controls(page))
-            start = next(
-                c
-                for c in controls
-                if isinstance(c, ft.Button) and c.content == "确认新增预算并继续初筛"
-            )
-            assert start.disabled and len(client.runs) == 1
-            await start.on_click(None)
-            assert len(client.runs) == 1
-            consent = next(c for c in controls if isinstance(c, ft.Checkbox))
-            consent.value = True
-            consent.on_change(None)
-            await start.on_click(None)
-            assert len(client.runs) == 2
-            new = list(client.runs.values())[-1]
-            assert new["request"]["resume_from"] == original["id"]
-            assert new["request"]["quote"]["requests"] == 21
-            assert "model_budget" not in new["request"]["quote"]
-        finally:
-            await page.on_close(None)
-
-    asyncio.run(run())
 
 
 @pytest.mark.parametrize("change", ["missing", "threshold"])
@@ -1282,97 +939,6 @@ def test_client_distinguishes_explicit_rejection(monkeypatch, response_code, err
     )
     with pytest.raises(getattr(research_client, error_type)):
         ResearchClient("http://research", "x" * 32).submit(payload())
-
-
-@pytest.mark.parametrize("refresh_fails", [False, True])
-def test_quote_rejection_preserves_input_and_requires_fresh_consent(monkeypatch, refresh_fails):
-    from a_stock_tracker.research_client import ResearchQuoteChanged
-
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-    client = DemoResearchClient()
-    monkeypatch.setattr(app, "DemoResearchClient", lambda: client)
-    submitted = []
-    original_submit, original_info = client.submit, client.info
-
-    def reject_once(request):
-        submitted.append(deepcopy(request))
-        if len(submitted) == 1:
-            raise ResearchQuoteChanged("报价已变化")
-        return original_submit(request)
-
-    monkeypatch.setattr(client, "submit", reject_once)
-
-    async def run():
-        page = AppMockPage()
-        page.route = "/analysis?mode=swing&code=600519"
-        try:
-            await app.build_app()(page)
-            field = next(c for c in app_controls(page) if isinstance(c, ft.TextField))
-            consent = next(c for c in app_controls(page) if isinstance(c, ft.Checkbox))
-            start = next(
-                c
-                for c in app_controls(page)
-                if isinstance(c, ft.Button) and c.content == "确认启动研究"
-            )
-            if refresh_fails:
-                monkeypatch.setattr(
-                    client, "info", lambda: (_ for _ in ()).throw(ResearchUnavailable("离线"))
-                )
-            consent.value = True
-            consent.on_change(None)
-            await start.on_click(None)
-            assert field.value == "600519" and not consent.value and not client.runs
-            if refresh_fails:
-                assert start.content == "重新获取报价"
-                monkeypatch.setattr(client, "info", original_info)
-                await start.on_click(None)
-            assert start.disabled and start.content == "确认启动研究"
-            await start.on_click(None)
-            assert len(submitted) == 1
-            consent.value = True
-            consent.on_change(None)
-            await start.on_click(None)
-            assert len(client.runs) == 1 and len(submitted) == 2
-            assert submitted[0]["id"] != submitted[1]["id"]
-        finally:
-            await page.on_close(None)
-
-    asyncio.run(run())
-
-
-def test_late_home_research_response_cannot_replace_new_page(monkeypatch):
-    from threading import Event
-    from types import SimpleNamespace
-
-    monkeypatch.setattr(app, "APP_MODE", "demo")
-    client = DemoResearchClient()
-    started, release = Event(), Event()
-
-    def delayed_recent():
-        started.set()
-        assert release.wait(5)
-        return []
-
-    monkeypatch.setattr(client, "recent", delayed_recent)
-    monkeypatch.setattr(app, "DemoResearchClient", lambda: client)
-
-    async def run():
-        page = AppMockPage()
-        pending = asyncio.create_task(app.build_app()(page))
-        try:
-            assert await asyncio.to_thread(started.wait, 3)
-            page.route = "/settings"
-            await page.on_route_change(SimpleNamespace(route="/settings"))
-        finally:
-            release.set()
-            await pending
-        try:
-            text = "\n".join(str(getattr(c, "value", "")) for c in app_controls(page))
-            assert "账户与运行信息" in text and "研究首页" not in text
-        finally:
-            await page.on_close(None)
-
-    asyncio.run(run())
 
 
 def test_price_quote_has_no_model_and_rejects_old_model_consent(tmp_path, monkeypatch):

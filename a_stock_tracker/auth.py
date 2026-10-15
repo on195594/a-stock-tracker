@@ -97,8 +97,6 @@ def check_production_auth_config(
 
 # Active server-side sessions: sid -> (user_id, expires_at)
 ACTIVE_SESSIONS: dict[str, tuple[str, float]] = {}
-# Single-use exchange tickets (60s): ticket -> (user_id, sid, expires_at)
-EXCHANGE_TICKETS: dict[str, tuple[str, str, float]] = {}
 
 
 def purge_expired_sessions() -> None:
@@ -106,9 +104,6 @@ def purge_expired_sessions() -> None:
     expired_sids = [sid for sid, (_, exp) in ACTIVE_SESSIONS.items() if exp <= now]
     for sid in expired_sids:
         ACTIVE_SESSIONS.pop(sid, None)
-    expired_tickets = [t for t, (_, _, exp) in EXCHANGE_TICKETS.items() if exp <= now]
-    for t in expired_tickets:
-        EXCHANGE_TICKETS.pop(t, None)
 
 
 def register_session(user_id: str, expires_at: float, replace_user: bool = True) -> str:
@@ -121,37 +116,6 @@ def register_session(user_id: str, expires_at: float, replace_user: bool = True)
     sid = secrets.token_hex(16)
     ACTIVE_SESSIONS[sid] = (norm_user, expires_at)
     return sid
-
-
-def create_exchange_ticket(user_id: str, sid: str | None = None) -> str:
-    """Create a short-lived (60s) single-use ticket to establish browser session without exposing token in URL."""
-    purge_expired_sessions()
-    ticket = secrets.token_urlsafe(24)
-    session_sid = sid or secrets.token_hex(16)
-    EXCHANGE_TICKETS[ticket] = (str(user_id).strip(), session_sid, time.time() + 60)
-    return ticket
-
-
-def redeem_exchange_ticket(ticket: str | None) -> tuple[str, str] | None:
-    """Consume a single-use exchange ticket, returning (user_id, sid) or None."""
-    purge_expired_sessions()
-    if not ticket:
-        return None
-    entry = EXCHANGE_TICKETS.pop(ticket, None)
-    if not entry:
-        return None
-    user_id, sid, exp = entry
-    if exp <= time.time():
-        return None
-    return user_id, sid
-
-
-def revoke_exchange_tickets(sid: str | None = None) -> None:
-    """Purge unredeemed tickets for this specific session so late requests cannot establish a session."""
-    if not sid:
-        return
-    for t in [t for t, (_, s, _) in list(EXCHANGE_TICKETS.items()) if s == sid]:
-        EXCHANGE_TICKETS.pop(t, None)
 
 
 def sign_session_token(user_id: str, secret: str, expires_at: float, sid: str | None = None) -> str:
@@ -188,7 +152,6 @@ def revoke_session(token_or_sid: str | None) -> None:
     if sid:
         try:
             ACTIVE_SESSIONS.pop(sid, None)
-            revoke_exchange_tickets(sid)
         except Exception:
             pass
 
@@ -233,15 +196,3 @@ def verify_session_token(
         )
     except Exception:
         return None
-
-
-def parse_cookie_header(cookie_header: str | None) -> dict[str, str]:
-    """Parse HTTP Cookie header string into dictionary."""
-    cookies: dict[str, str] = {}
-    if not cookie_header:
-        return cookies
-    for part in cookie_header.split(";"):
-        if "=" in part:
-            name, value = part.strip().split("=", 1)
-            cookies[name.strip()] = value.strip()
-    return cookies

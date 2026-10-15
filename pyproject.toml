@@ -5,7 +5,6 @@ description = "A-share company research: financial evidence, counterevidence and
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "flet[web]==1.0.1",
     "uvicorn>=0.30.0",
     "fastapi>=0.115.0",
     "pydantic>=2.9.0",
