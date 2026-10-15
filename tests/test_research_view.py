@@ -20,7 +20,7 @@ def screen_result():
         "quote": quote(client.info(), "screen"),
     }
     client.submit(request)
-    return client.status(request["id"])
+    return client.status(request["id"]).model_dump(by_alias=True, exclude_unset=True)
 
 
 def test_source_times_are_labeled_and_preserve_original_timestamps():

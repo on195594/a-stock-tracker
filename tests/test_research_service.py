@@ -620,7 +620,7 @@ def test_slow_store_does_not_block_service_event_loop(tmp_path, monkeypatch, ope
     def slow(*args):
         started.set()
         assert release.wait(5)
-        return [] if operation == "recent" else {"status": "running"}
+        return [] if operation == "recent" else {"id": "a" * 32, "status": "running"}
 
     monkeypatch.setattr(ResearchStore, operation, slow)
     service = create_service(tmp_path / "service", "x" * 32)
@@ -850,7 +850,7 @@ def test_analysis_invalid_route_and_unreachable_service_handled_cleanly(monkeypa
 def test_real_cost_notice_consent_resets_when_mode_changes(monkeypatch):
     monkeypatch.setattr(app, "APP_MODE", "demo")
     client = DemoResearchClient()
-    info = dict(client.info(), demo=False)
+    info = {**client.info().model_dump(by_alias=True, exclude_unset=True), "demo": False}
     monkeypatch.setattr(client, "info", lambda: info)
     monkeypatch.setattr(app, "DemoResearchClient", lambda: client)
 

@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import parse_qs, urlencode, urlparse
 
+from pydantic import BaseModel
+
 from a_stock_tracker.auth import (
     AUTH_EXPIRY_SECONDS,
     Actor,
@@ -96,6 +98,34 @@ def build_app():
     import flet as ft
 
     research = DemoResearchClient() if APP_MODE == "demo" else configured_client()
+
+    # Remove this adapter together with app.py in refactor phase 4.
+    class ResearchAdapter:
+        def __init__(self, client):
+            self.client = client
+
+        @staticmethod
+        def plain(value):
+            if isinstance(value, BaseModel):
+                return value.model_dump(by_alias=True, exclude_unset=True)
+            if isinstance(value, list) and any(isinstance(item, BaseModel) for item in value):
+                return [ResearchAdapter.plain(item) for item in value]
+            return value
+
+        def info(self):
+            return self.plain(self.client.info())
+
+        def recent(self):
+            return self.plain(self.client.recent())
+
+        def submit(self, payload):
+            return self.plain(self.client.submit(payload))
+
+        def status(self, identifier):
+            return self.plain(self.client.status(identifier))
+
+    if research is not None:
+        research = ResearchAdapter(research)
 
     async def main(page: ft.Page):
         def get_initial_actor(page: ft.Page) -> Actor | None:

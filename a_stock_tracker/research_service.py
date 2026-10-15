@@ -20,6 +20,7 @@ from threading import Thread
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
+from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse
 
@@ -35,6 +36,15 @@ from a_stock_tracker.automation import (
     save_state,
 )
 from a_stock_tracker.bounded_process import execution_lease_environment
+from a_stock_tracker.contracts import (
+    ErrorBody,
+    ErrorCode,
+    Quote,
+    RunList,
+    RunRequest,
+    RunState,
+    ServiceInfo,
+)
 from a_stock_tracker.disclosures import model_command, structured_report
 from a_stock_tracker.opportunities import load_board
 from a_stock_tracker.research import SHANGHAI, ScreenError, parse_date
@@ -64,7 +74,11 @@ class QuoteChanged(ValueError):
     pass
 
 
-def quote(info: dict[str, Any], mode: str, remaining: int | None = None) -> dict[str, Any]:
+def quote(
+    info: dict[str, Any] | ServiceInfo, mode: str, remaining: int | None = None
+) -> dict[str, Any]:
+    if isinstance(info, ServiceInfo):
+        info = info.model_dump(by_alias=True, exclude_unset=True)
     value = {**info["modes"][mode], "model": info["model"] if mode == "financial" else None}
     value.pop("available", None)
     if mode == "screen" and remaining is not None:
@@ -81,7 +95,7 @@ def quote(info: dict[str, Any], mode: str, remaining: int | None = None) -> dict
             "cost_hard_limit": None,
             "timeout_guarantees_billing_stop": False,
         }
-    return value
+    return Quote.model_validate(value).model_dump(by_alias=True, exclude_unset=True)
 
 
 def result_summary(result: dict[str, Any]) -> dict[str, Any]:
@@ -132,43 +146,11 @@ def result_summary(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def validate_request(value: Any) -> dict[str, Any]:
-    required = {"id", "mode", "codes", "confirmed", "quote"}
-    if (
-        not isinstance(value, dict)
-        or not required <= set(value)
-        or set(value) - required - {"resume_from", "from"}
-    ):
-        raise ValueError("请求格式不正确")
-    if "from" in value and (
-        not isinstance(value["from"], str)
-        or not re.fullmatch(r"[a-f0-9]{32}", value["from"])
-        or value["mode"] == "screen"
-    ):
-        raise ValueError("来源初筛编号不正确")
-    if not isinstance(value["id"], str) or not re.fullmatch(r"[a-f0-9]{32}", value["id"]):
-        raise ValueError("请求编号不正确")
-    mode, codes = value["mode"], value["codes"]
-    if "resume_from" in value and (
-        mode != "screen"
-        or not isinstance(value["resume_from"], str)
-        or not re.fullmatch(r"[a-f0-9]{32}", value["resume_from"])
-    ):
-        raise ValueError("继续初筛必须指定有效的原请求编号")
-    if not isinstance(mode, str) or mode not in LIMITS or value["confirmed"] is not True:
-        raise ValueError("必须明确确认研究类型与预算")
-    if not isinstance(codes, list) or any(
-        not isinstance(c, str) or not re.fullmatch(r"(?:60\d{4}\.SH|00\d{4}\.SZ)", c) for c in codes
-    ):
-        raise ValueError("仅支持沪深主板代码，如 600519.SH 或 000001.SZ")
-    if len(set(codes)) != len(codes) or not (
-        (mode == "screen" and not codes)
-        or (mode == "swing" and 1 <= len(codes) <= 5)
-        or (mode == "financial" and len(codes) == 1)
-    ):
-        raise ValueError("量价研究限一至五家；财报研究限一家；初筛不填代码")
-    if not isinstance(value["quote"], dict):
-        raise ValueError("必须核对本次预算与模型")
-    return value
+    try:
+        return RunRequest.model_validate(value).model_dump(by_alias=True, exclude_unset=True)
+    except ValidationError as exc:
+        error = exc.errors()[0].get("ctx", {}).get("error")
+        raise ValueError(str(error) if error is not None else "请求格式不正确") from None
 
 
 def request_info() -> dict[str, Any]:
@@ -236,7 +218,9 @@ class ResearchStore:
             path = self.directory(identifier) / "request.json"
             if not path.is_file():
                 raise FileNotFoundError(identifier)
-            state = read_state(path)
+            state = RunState.model_validate(read_state(path)).model_dump(
+                by_alias=True, exclude_unset=True
+            )
             if state["status"] == "running":
                 try:
                     handle = self.lease()
@@ -751,7 +735,7 @@ def create_service(root: Path, token: str) -> FastAPI:
 
     @app.exception_handler(HTTPException)
     async def http_error(request, exc):
-        codes = {
+        codes: dict[int, ErrorCode] = {
             400: "invalid_request",
             403: "unauthorized",
             404: "not_found",
@@ -760,7 +744,9 @@ def create_service(root: Path, token: str) -> FastAPI:
             503: "acceptance_unknown",
         }
         return JSONResponse(
-            {"detail": exc.detail, "code": codes.get(exc.status_code, "service_error")},
+            ErrorBody(
+                detail=exc.detail, code=codes.get(exc.status_code, "service_error")
+            ).model_dump(by_alias=True, exclude_unset=True),
             status_code=exc.status_code,
         )
 
@@ -773,22 +759,37 @@ def create_service(root: Path, token: str) -> FastAPI:
         try:
             if request.method == "GET":
                 if path == "info":
-                    return await run_in_threadpool(request_info)
+                    return ServiceInfo.model_validate(
+                        await run_in_threadpool(request_info)
+                    ).model_dump(by_alias=True, exclude_unset=True)
                 if path == "runs":
-                    return {"runs": await run_in_threadpool(store.recent)}
+                    return RunList.model_validate(
+                        {"runs": await run_in_threadpool(store.recent)}
+                    ).model_dump(by_alias=True, exclude_unset=True)
                 if path.startswith("runs/"):
-                    return await run_in_threadpool(store.status, path.removeprefix("runs/"))
+                    return RunState.model_validate(
+                        await run_in_threadpool(store.status, path.removeprefix("runs/"))
+                    ).model_dump(by_alias=True, exclude_unset=True)
             elif path == "runs":
                 body = bytearray()
                 async for chunk in request.stream():
                     body.extend(chunk)
                     if len(body) > 4096:
                         raise HTTPException(413, "请求过大")
-                return await run_in_threadpool(store.submit, json.loads(body))
+                state = await run_in_threadpool(store.submit, json.loads(body))
+                try:
+                    return RunState.model_validate(state).model_dump(
+                        by_alias=True, exclude_unset=True
+                    )
+                except ValidationError:
+                    # The run may already be accepted and billed; never report it as rejected.
+                    raise HTTPException(503, "研究状态未确认，请稍后核对原请求编号。") from None
             raise HTTPException(404, "没有该研究入口")
         except QuoteChanged:
             return JSONResponse(
-                {"detail": "服务预算或模型已变化，请重新确认", "code": "quote_changed"},
+                ErrorBody(
+                    detail="服务预算或模型已变化，请重新确认", code="quote_changed"
+                ).model_dump(by_alias=True, exclude_unset=True),
                 status_code=409,
             )
         except FileNotFoundError:

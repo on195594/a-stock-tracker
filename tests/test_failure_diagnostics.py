@@ -142,3 +142,61 @@ def test_passed_summary_with_unknown_page_count_is_not_complete():
     assert "未知" in d.report_summary_status(
         {"evidence_review": "passed", "status": "scoped_complete", "omitted_pages": None}
     )
+
+
+def test_render_passed_report_uses_review_status_with_omitted_pages():
+    result = {
+        "code": "600001.SH",
+        "status": "unchanged",
+        "evidence_review": "passed",
+        "evidence": {
+            "documents": [],
+            "structured": {
+                "industry": "银行",
+                "valuation_date": "2026-10-14",
+                "pb": 0.8,
+                "roe_mean": 10,
+            },
+            "scope_gaps": [],
+            "omitted_pages": [1, 2],
+        },
+        "report": {
+            "facts": [],
+            "analysis": {
+                field: {"text": "合成判断", "facts": []}
+                for field in (
+                    "business",
+                    "financial",
+                    "valuation",
+                    "counterevidence",
+                    "change_conditions",
+                )
+            },
+            "gaps": [],
+        },
+    }
+
+    rendered = d.render(result)
+
+    assert "引用已复核" in rendered and "2 页原文未纳入分析" in rendered
+    assert "补齐后再研究" not in rendered
+
+
+def test_render_failed_result_uses_summary_failure_status_and_gap_line():
+    result = {
+        "code": "600001.SH",
+        "status": "incomplete",
+        "error": "原文/模型验证未完成",
+        "diagnostic": {"stage": "document_extraction", "category": "document_identity"},
+        "evidence": {
+            "documents": [],
+            "structured": {},
+            "scope_gaps": ["缺少原文"],
+            "omitted_pages": [],
+        },
+    }
+
+    rendered = d.render(result)
+
+    assert "状态：原文/模型检查失败，没有可读结论" in rendered
+    assert "缺口：原文/模型验证未完成" in rendered

@@ -715,7 +715,7 @@ def render(result: dict[str, Any]) -> str:
     lines = [
         f"# {result['code']} 自动研究",
         "",
-        f"状态：{report_status_text(result['status'])}；规则：{TEMPLATE}；非交易建议、非个人研究状态。",
+        f"状态：{report_summary_status(structured_report(result))}；规则：{TEMPLATE}；非交易建议、非个人研究状态。",
         f"报告版本：{result.get('evidence_key', 'none')}",
         "",
     ]

@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, get_args
 from urllib.parse import urlparse
 
 import httpx
 
+from a_stock_tracker.contracts import ErrorBody, ErrorCode, RunList, RunState, ServiceInfo
 from a_stock_tracker.opportunity_demo import demo_board, demo_report
 from a_stock_tracker.research_service import LIMITS, quote, result_summary, validate_request
 
@@ -54,16 +55,24 @@ class ResearchClient:
                 if response.status_code in {400, 403, 404, 409, 413, 503}:
                     try:
                         data = response.json()
-                        detail = data.get("detail")
-                        if isinstance(detail, str) and len(detail) <= 100:
+                        # Older receivers may omit the machine-readable code.
+                        body = ErrorBody.model_validate(
+                            {
+                                "detail": data.get("detail"),
+                                "code": data.get("code")
+                                if data.get("code") in get_args(ErrorCode)
+                                else "service_error",
+                            }
+                        )
+                        if len(body.detail) <= 100:
                             error = (
                                 ResearchQuoteChanged
-                                if data.get("code") == "quote_changed"
+                                if body.code == "quote_changed"
                                 else ResearchUnavailable
                                 if response.status_code == 503
                                 else ResearchRejected
                             )
-                            raise error(detail)
+                            raise error(body.detail)
                     except (ValueError, AttributeError):
                         pass
                 response.raise_for_status()
@@ -76,20 +85,20 @@ class ResearchClient:
                 "研究服务或受理状态暂不可确认。核对原请求，不自动重新收费。"
             ) from exc
 
-    def info(self) -> dict[str, Any]:
-        return self.call("GET", "/info")
+    def info(self) -> ServiceInfo:
+        return ServiceInfo.model_validate(self.call("GET", "/info"))
 
-    def recent(self) -> list[dict[str, Any]]:
-        return self.call("GET", "/runs")["runs"]
+    def recent(self) -> list[RunState]:
+        return RunList.model_validate(self.call("GET", "/runs")).runs
 
-    def submit(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def submit(self, payload: dict[str, Any]) -> RunState:
         validate_request(payload)
-        return self.call("POST", "/runs", payload)
+        return RunState.model_validate(self.call("POST", "/runs", payload))
 
-    def status(self, identifier: str) -> dict[str, Any]:
+    def status(self, identifier: str) -> RunState:
         if len(identifier) != 32 or any(c not in "0123456789abcdef" for c in identifier):
             raise ResearchUnavailable("请求编号不正确")
-        return self.call("GET", "/runs/" + identifier)
+        return RunState.model_validate(self.call("GET", "/runs/" + identifier))
 
 
 class DemoResearchClient:
@@ -98,31 +107,33 @@ class DemoResearchClient:
     def __init__(self) -> None:
         self.runs: dict[str, dict[str, Any]] = {}
 
-    def info(self) -> dict[str, Any]:
-        return {
-            "demo": True,
-            "modes": {k: {**v, "available": True} for k, v in LIMITS.items()},
-            "model": {"provider": "synthetic", "model": "no-real-calls"},
-        }
+    def info(self) -> ServiceInfo:
+        return ServiceInfo.model_validate(
+            {
+                "demo": True,
+                "modes": {k: {**v, "available": True} for k, v in LIMITS.items()},
+                "model": {"provider": "synthetic", "model": "no-real-calls"},
+            }
+        )
 
-    def recent(self) -> list[dict[str, Any]]:
+    def recent(self) -> list[RunState]:
         runs = []
         for identifier in reversed(self.runs):
             if any(s.get("continued_from") == identifier for s in self.runs.values()):
                 continue
-            state = self.status(identifier)
+            state = self.status(identifier).model_dump(by_alias=True, exclude_unset=True)
             state["summary"] = result_summary(state.pop("result"))
             count, node = 0, state
             while node.get("continued_from"):
                 count += 1
                 node = self.runs[node["continued_from"]]
             state["continuations"] = count
-            runs.append(state)
+            runs.append(RunState.model_validate(state))
             if len(runs) == 10:
                 break
         return runs
 
-    def submit(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def submit(self, payload: dict[str, Any]) -> RunState:
         validate_request(payload)
         if payload["id"] in self.runs:
             if self.runs[payload["id"]]["request"] != payload:
@@ -240,9 +251,9 @@ class DemoResearchClient:
         if payload.get("resume_from"):
             value["continued_from"] = payload["resume_from"]
         self.runs[payload["id"]] = value
-        return {k: v for k, v in value.items() if k != "result"}
+        return RunState.model_validate({k: v for k, v in value.items() if k != "result"})
 
-    def status(self, identifier: str) -> dict[str, Any]:
+    def status(self, identifier: str) -> RunState:
         if identifier not in self.runs:
             raise ResearchUnavailable("没有该合成研究记录")
         value = self.runs[identifier]
@@ -250,12 +261,14 @@ class DemoResearchClient:
         successor = next(
             (r["id"] for r in self.runs.values() if r.get("continued_from") == identifier), None
         )
-        return dict(
-            value,
-            status="partial" if pending else "completed",
-            can_continue=bool(pending) and not successor,
-            continued_by=successor,
-            continuation_quote=quote(self.info(), "screen", pending) if pending else None,
+        return RunState.model_validate(
+            dict(
+                value,
+                status="partial" if pending else "completed",
+                can_continue=bool(pending) and not successor,
+                continued_by=successor,
+                continuation_quote=quote(self.info(), "screen", pending) if pending else None,
+            )
         )
 
 
@@ -276,10 +289,10 @@ def check_bridge() -> int:
         if client is None or not client.socket:
             raise ValueError("Missing private bridge")
         info = client.info()
-        if info.get("demo") is not False or not isinstance(info.get("modes"), dict):
+        if info.demo is not False or info.modes is None:
             raise ValueError("Invalid bridge response")
         for mode in LIMITS:
-            if not isinstance(info["modes"].get(mode, {}).get("available"), bool):
+            if mode not in info.modes or not isinstance(info.modes[mode].available, bool):
                 raise ValueError("Invalid bridge mode")
     except Exception:
         print("Research bridge unavailable; check receiver, socket mount and shared token.")
