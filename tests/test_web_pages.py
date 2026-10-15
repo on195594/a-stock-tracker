@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from a_stock_tracker.opportunity_demo import demo_board, demo_report
-from a_stock_tracker.research_client import ResearchUnavailable
+from a_stock_tracker.research_client import ResearchRejected, ResearchUnavailable
 from a_stock_tracker.research_service import result_summary
 from a_stock_tracker.web.routes import create_app
 from tests.web_support import (
@@ -371,3 +371,30 @@ def test_account_page_has_back_link_and_logout_form(owner):
     visible = text(page)
     assert "已登录：GitHub 用户 424242" in visible and "会话有效至（上海）" in visible
     assert 'href="/"' in page.text and 'action="/logout"' in page.text
+
+
+def test_quote_refresh_failure_keeps_inputs_in_a_get_retry(owner):
+    client, browser = owner
+    fields = request_form(browser, "financial", "600519")
+    fields["from"] = RUN
+
+    def reject(payload):
+        client.fail["info"] = ResearchUnavailable("down")
+        raise ResearchRejected("被拒")
+
+    client.submit = reject
+    page = browser.post("/analysis", data=fields, headers=SAME)
+    assert page.status_code == 503
+    retry = re.search(r'class="btn" href="([^"]+)"', page.text).group(1).replace("&amp;", "&")
+    assert retry.startswith("/analysis?") and "mode=financial" in retry
+    assert "code=600519" in retry and f"from={RUN}" in retry
+
+
+def test_ranking_retry_keeps_filters(owner):
+    client, browser = owner
+    run = submit(browser, "screen")
+    client.fail["ranking"] = ResearchUnavailable("down")
+    page = browser.get(run + "/ranking?industry=合成制造&query=示例")
+    assert page.status_code == 503
+    retry = re.search(r'class="btn" href="([^"]+)"', page.text).group(1).replace("&amp;", "&")
+    assert "industry=" in retry and "query=" in retry

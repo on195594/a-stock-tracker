@@ -524,7 +524,8 @@ def create_app(
                 "排名暂不可读取",
                 "研究服务暂时无法连接；未启动新请求。",
                 503,
-                retry=str(request.url.path),
+                retry=str(request.url.path)
+                + ("?" + request.url.query if request.url.query else ""),
                 back="/analysis/" + identifier,
             )
         return render(

@@ -78,7 +78,10 @@ class Origin:
             return False
         host, port = hp
         effective = port if port is not None else (443 if self.scheme == "https" else 80)
-        return host == self.hostname and effective == self.port
+        if effective != self.port:
+            return False
+        # Demo accepts the same loopback aliases as its Host check.
+        return host in LOOPBACK if self.demo else host == self.hostname
 
     def same_origin(self, headers: dict[str, str]) -> bool:
         """POST provenance: Sec-Fetch-Site, then Origin, then Referer; absence fails closed."""

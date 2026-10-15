@@ -39,7 +39,9 @@ def wait_for_server(url: str, timeout: float = 20) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            with urllib.request.urlopen(url + "/login", timeout=2):
+            # Never route the loopback probe through a host-wide HTTP proxy.
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            with opener.open(url + "/login", timeout=2):
                 return
         except OSError:
             time.sleep(0.2)

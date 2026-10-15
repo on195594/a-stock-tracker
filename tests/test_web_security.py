@@ -436,3 +436,18 @@ def test_in_flight_revocation_hides_late_results():
     page = outcome["page"]
     assert page.status_code == 303 and page.headers["location"] == "/login"
     assert "最强反证" not in page.text
+
+
+def test_demo_accepts_loopback_alias_origins_only():
+    settings = Settings(mode="demo", public_base_url="http://127.0.0.1:8551", port=8551).validate()
+    app = create_app(settings, FakeClient())
+    for host in ("localhost:8551", "127.0.0.1:8551", "[::1]:8551"):
+        browser = TestClient(app, base_url=f"http://{host}")
+        ok = browser.post(
+            "/login/demo", headers={"origin": f"http://{host}"}, follow_redirects=False
+        )
+        assert ok.status_code == 303, host
+    browser = TestClient(app, base_url="http://localhost:8551")
+    for origin in ("http://localhost:8550", "http://evil.example:8551", "https://localhost:8551"):
+        refused = browser.post("/login/demo", headers={"origin": origin}, follow_redirects=False)
+        assert refused.status_code == 403, origin
