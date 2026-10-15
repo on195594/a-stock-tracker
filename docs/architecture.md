@@ -26,15 +26,14 @@ market-research-v1 → 独立私有 root → 财报机器报告 → 结构化摘
 | `web_assets.py` | 仅公开 Flutter JS/WASM 的传输压缩、同源裁剪中文字体启动注册、预加载与 30 天长缓存，位于 Host/路由安全检查之后 |
 | `bounded_process.py` | 管道与子进程内存边界、有界输出读取及硬超时管控 |
 | `opportunities.py` | 有界量价采集、程序计算价格参考、批次发布与鉴权读取 |
-| `replay.py` | 独立离线验证：显式预算采集至私有 JSON 缓存，与 `opportunities.py` 共用价格条件纯函数；重放统计与 append-only 前瞻账本不接入 Web、不作为收益证明 |
 | `opportunity_view.py` / `opportunity_demo.py` | 价格参考列表/详情；仅 loopback demo 与离线测试使用合成示例 |
 | `automation.py` | 独立财报全市场冻结、覆盖/排名、文件锁、预算与恢复 |
 | `research.py` | 共用行情/财报采集、年报版本选择、资格数值校验与平均名次公式 |
 | `evidence.py` | 最新定期财报的日期/版本校验、证据选择与来源字段格式化 |
 | `disclosures.py` / `scripts/automation_model.py` / `scripts/automation_model_pi.mjs` | 正式原文证据、Hermes/pi 无工具生成、逐字校验与另一次语义复核 |
-| `atomic_io.py` / `paths.py` | 共用原子文件发布；保留离线重放使用的项目/数据路径，不保留独立日历维护或种子日历 |
+| `atomic_io.py` | 共用原子文件安全发布 |
 
-Web 不打开业务 SQLite、不持行情或模型凭据。当前新增本人授权研究请求网关，只把显式确认的范围/预算/模型交给独立接收器；不恢复个人更新任务或旧工作台。旧 `config.py`、`services.py`、`watch.py`、`worker.py`、`workspace.py`、`manage.py`、`maintenance.py`、参照 JSON 与专用合成快照已移除，不留兼容启动器。
+Web 不打开业务数据库、不持行情或模型凭据，仅把本人显式确认的范围/预算/模型交给独立接收器执行。
 
 ## 页面与安全边界
 
@@ -68,17 +67,17 @@ OwnerAuthorization 使用 Flet 支持的授权扩展，在成功完成令牌交�
 
 每批最多5家公司；单股采集 `ScreenError` 记为 gap，其余公司继续。共用日历/基准错误或采集预算耗尽不发布新指针。无模型调用、隐式重试或恢复。采集后创建 `swing-*` 目录保存证据与结果，先原子落盘结果再切换带哈希的 `latest.json`，文件及目录同步失败不能报告成功。
 
-读取同时接受 `swing-observation-v1` 和 `price-reference-v1`，按规则校验行状态。旧规则仍核验原解释与复核、标明“旧规则批次”，过期隐藏原条件，不改写文件。`RULE`、`price_conditions()` 继续冻结供离线重放与后续验证使用。
+读取同时接受 `swing-observation-v1` 和 `price-reference-v1`，按规则校验行状态。旧规则仍核验原解释与复核、标明“旧规则批次”，过期隐藏原条件，不改写文件。
 
 Web 只读 `OPPORTUNITY_ROOT`，检查 actor、大小、路径/符号链接、校验和、规则与日期。过期隐藏观察线、失效线和距离，历史非行动事实保留；首页过期摘要隐藏价格。已渲染完成的研究详情、近期摘要及发布批次使用有限本地到期定时器，在上海时间有效期结束后重绘并隐藏可行动价位和距离，不为完成任务持续轮询；导航、断线与撤权取消旧定时器。完整性哈希不防止目录写入者同时篡改结果与指针，不代表来源真实性保证。
 
-## 离线验证边界
+## 离线验证归档
 
-`replay.py` 独立运行，不接入 Web、研究服务、通知或模型。冻结规则、历史 `fetch/run`、前瞻 `scan/settle/auto/report`（含周无人值守定时器）、私有缓存与追加账本完整性、晋升合同及历史证据统一维护在 [离线验证](offline-validation.md)。真实拉取和续拉逐次授权；旧口径结果尚未按 `historical-replay-v2` 重算，验证通过也不自动发布到首页。
+历史 `swing-observation-v1` 离线重放已有结论，前瞻账本验证未积累样本即放弃（见[离线验证](offline-validation.md)），二者均不在主业务代码中。量价计算仅作为单股研究后的风险纪律参考纯函数保留。
 
 ## 独立财报研究
 
-`market-research-v1` 的预算与退出语义见 [运维](operations.md#自动选股与机器研究独立批处理)。它不依赖旧业务数据库，也不把财报排名转换为投资建议。共用范围资格、年度选择与平均名次见 [peer-screen-v1](specs/2026-09-22-peer-screen-spec.md)；证券覆盖、原文引用、私有目录锁和恢复检查继续维护。批处理从当次行情日历确定并冻结估值日，不回退到本地日历维护文件。网页初筛由接收器固定传入 `--pb-mv-screen --max-research 0`，前置门槛见财报子规格。门槛进入报价、冻结快照和结果；接收器将已确认门槛的摘要通过 `--screen-contract` 传给子进程，子进程在连接行情前核对当前规则，拒绝服务未重启而磁盘规则已变化的请求。`total_mv` 保留原始万元单位；仅通过前置校验的行请求财报，缺失不填零。旧规则批次仍可读，但不自动续跑或复用为新结果；指定股票研究不应用此门槛。扫描先核验所有已保存记录，再按行业剩余待扫描数量升序推进，无已知缺口的行业优先；不改变冻结范围内的资格、排名公式或原冻结行顺序，也不保证在预算内出现候选。个人参照筛选、关注列表排名、本地日历自动选日及专用测试已移除；这些删除不改变批处理使用的证据校验与排序公式。
+`market-research-v1` 的预算与退出语义见 [运维](operations.md#自动选股与机器研究独立批处理)。它不依赖旧业务数据库，也不把财报排名转换为投资建议。共用范围资格、年度选择与平均名次见 [peer-screen-v1](specs/2026-09-22-peer-screen-spec.md)；证券覆盖、原文引用、私有目录锁和恢复检查继续维护。批处理从当次行情日历确定并冻结估值日，不回退到本地日历维护文件。网页初筛由接收器固定传入 `--pb-mv-screen --max-research 0`，前置门槛见财报子规格。门槛进入报价、冻结快照和结果；接收器将已确认门槛的摘要通过 `--screen-contract` 传给子进程，子进程在连接行情前核对当前规则，拒绝服务未重启而磁盘规则已变化的请求。`total_mv` 保留原始万元单位；仅通过前置校验的行请求财报，缺失不填零。旧规则批次仍可读，但不自动续跑或复用为新结果；指定股票研究不应用此门槛。扫描先核验所有已保存记录，再按行业剩余待扫描数量升序推进，无已知缺口的行业优先；不改变冻结范围内的资格、排名公式或原冻结行顺序，也不保证在预算内出现候选。
 
 财报 API 从 `read_result` 已校验的原始 report JSON 组装结构化投影，不读取未校验 Markdown、不改写旧批次。返回 status、evidence_review、各文档 period/announced、行业/估值日/PB/ROE 线索、五段 analysis（text 与 fact id）、facts（id/claim/title/page/period/announced/quote/url）、scope_gaps + report gaps、omitted_pages 数量和失败 error。只放行 evidence_review=passed 的 analysis/facts，不返回 rejected_draft 或原始页全文。新失败产物保留实际取得的公告日期、结构化线索和证据范围；证据包未完成时不推算已覆盖页数，`omitted_pages=null` 表示未知，只有明确记录的空列表才表示 0 页。`diagnostic` 仅包含固定阶段、类别和程序预定义说明，不回传异常原文、模型/提供方输出、凭据或宿主路径；价格采集/核验缺口同样保留安全类别且不发布价位。旧产物缺失的原因不能凭推测补写，不修改历史批次。页面使用 Text 与 ExpansionTile，不渲染 Markdown、图片或外链；复核失败与原文/模型失败分别用中文说明。
 
@@ -88,6 +87,4 @@ Web 只读 `OPPORTUNITY_ROOT`，检查 actor、大小、路径/符号链接、�
 
 管理员配置、资源限制、健康探针、故障恢复与部署开关由 [运维](operations.md) 维护。`RESEARCH_WEB_ENABLED` 与 `PUBLICATION_WEB_ENABLED` 是两项独立的显式保留/停用选择；已有配置时省略相应开关必须在修改前失败。停用 Web 入口不删除宿主文件或停止接收器。接收器重启不恢复/重试研究；cgroup 负责外部运行时后代清理。部署及旧容器清理必须另行授权，不把源码退役等同于线上容器或 cron 已停用。
 
-历史私人数据库、笔记、快照、日志与备份原样留在宿主目录，不进 Git、镜像或静态资源。旧三表/schema、快照身份与数据不迁移或重算。旧工作台源码和维护方法在 `fb408f4` 保存，只能从 Git 历史查阅，不提供当前入口。
-
-更早恢复入口：`9ea2f45`（合并前 tracker）、`7468568`（早期评分/CLI）、`refs/archive/a-stock-screen`（`7be4ffd`，未保证远端保全）。使用 `git show <提交或ref>:<原路径>` 读取。[CHANGELOG](../CHANGELOG.md) 保存时点记录，不证明当前运行健康或授权未来部署。Framework A 保持 `CLOSED_UNPROVEN`，不续期收样或恢复评分实验。
+历史私人数据库、笔记、快照、日志与备份原样留在宿主目录，不进 Git、镜像或静态资源；不提供在线读写入口。旧工作台源码和维护记录可在 Git 历史中查阅。

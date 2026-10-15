@@ -6,7 +6,7 @@
 
 帮助用户回答：为什么值得继续研究？最强反证和资料缺口是什么？依据截至何时？价格到哪里说明判断失效？证据不足时明确说明，不凑结论。不承诺收益，不提供仓位管理或自动交易，不要求维护笔记、关注列表或已阅状态。
 
-本 README 维护产品目标、网页主流程与验收。模块、数据和安全合同见 [架构](docs/architecture.md)；管理员配置、部署和高级 CLI 见 [运维](docs/operations.md)；冻结规则、前瞻合同及历史证据见 [离线验证](docs/offline-validation.md)。[peer-screen-v1](docs/specs/2026-09-22-peer-screen-spec.md) 只维护财报研究规则。UI 场景和表达分别见 [PRODUCT](PRODUCT.md)、[DESIGN](DESIGN.md)。
+本 README 维护产品目标、网页主流程与验收。模块、数据和安全合同见 [架构](docs/architecture.md)；管理员配置、部署和高级 CLI 见 [运维](docs/operations.md)；历史验证结论见 [离线验证](docs/offline-validation.md)。[peer-screen-v1](docs/specs/2026-09-22-peer-screen-spec.md) 只维护财报研究规则。UI 场景和表达分别见 [PRODUCT](PRODUCT.md)、[DESIGN](DESIGN.md)。
 
 ## 本地演示与验证
 
@@ -44,8 +44,8 @@ make test-mobile             # 真实浏览器点击，含 360/390/430px
 
 - Web 只转发本人已确认的请求，不持行情/模型凭据、不打开私人数据库。独立接收器使用已授权的 Hermes 或 pi 运行时，固定 provider/model；没有自动排队、恢复、收费重试或定时研究。
 - `market-research-v1` 财报资格、排名及复核通过都不等于投资建议或效果证明。
-- 旧工作台 `/research`、`/discover`、`/company/*`、`/jobs/*` 已退役并返回 404；不恢复个人笔记、关注、主动更新、已阅或私人 worker。历史文件留在宿主，不挂载给 Web。
-- 2023-10 至 2026-10 的旧口径全市场重放未证明稳定超额，且尚未按 `historical-replay-v2` 重算，不能当作修正版验证。量价只作风险纪律参考。冻结 `swing-observation-v1` 仅供独立离线重放/前瞻验证，晋升门槛未满足前不进入首页，通过也不自动发布；不恢复 QFQ、分红物化、交易账户、Framework A 或 Agent 调度平台。
+- 价格参考仅由程序离线计算，量价只作风险纪律参考；历史 `swing-observation-v1` 仅有离线重放结论（未证明稳定超额），前瞻验证未积累样本即放弃，相关代码不再维护。
+- 不做多用户、个人笔记、自选关注或自动交易系统。
 
 <a id="当前阶段与下一步"></a>
 
