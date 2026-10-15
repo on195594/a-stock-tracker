@@ -58,7 +58,7 @@ components:
 
 ## Overview
 
-**Creative North Star: 窗口索引。** 用户已选择冷矿蓝色域、深墨文字、固定颜色角色与精确日期标记；代码优先，沿用 Flet 和本地中文字体。帮助核查，不制造交易紧迫感；没有图像或装饰行情图槽位。
+**Creative North Star: 窗口索引。** 用户已选择冷矿蓝色域、深墨文字、固定颜色角色与精确日期标记；代码优先；当前沿用 Flet 和本地中文字体，迁移到服务端 HTML 后改用系统中文字体栈（已确认，见[重构方案](docs/architecture.md#web-与-agent-接口重构方案)）。帮助核查，不制造交易紧迫感；没有图像或装饰行情图槽位。
 
 本文件维护全局视觉系统，token 实现位于 `a_stock_tracker/opportunity_view.py` 的常量及 `window_theme()`。用户与场景见 [PRODUCT.md](PRODUCT.md)，产品目标与验收由 [README](README.md) 维护；页面阅读顺序和状态见 [surface brief](.impeccable/surfaces/a-stock-tracker-opportunity-view-py.md)。不另立产品路线。
 
