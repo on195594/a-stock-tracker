@@ -852,6 +852,7 @@ def test_model_subprocess_success_and_response_resume(tmp_path, monkeypatch, eng
         monkeypatch.delenv("AUTOMATION_PI_RUNTIME", raising=False)
     monkeypatch.setenv("TUSHARE_TOKEN", "not-a-secret")
     monkeypatch.setenv("RESEARCH_SERVICE_TOKEN", "private-bridge-token")
+    monkeypatch.setenv("RESEARCH_SERVICE_MCP_TOKEN", "private-mcp-token")
     monkeypatch.setenv("STATE_DIR", "/must-not-be-used")
     calls = []
 
@@ -859,6 +860,7 @@ def test_model_subprocess_success_and_response_resume(tmp_path, monkeypatch, eng
         calls.append(args)
         assert "TUSHARE_TOKEN" not in kwargs["env"] and "STATE_DIR" not in kwargs["env"]
         assert "RESEARCH_SERVICE_TOKEN" not in kwargs["env"]
+        assert "RESEARCH_SERVICE_MCP_TOKEN" not in kwargs["env"]
         assert any(f"automation_model{('_pi.mjs' if engine == 'pi' else '.py')}" in a for a in args)
         return SimpleNamespace(
             returncode=0,

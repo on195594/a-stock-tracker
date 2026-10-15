@@ -1,4 +1,4 @@
-"""Shared outer research API contracts; report internals remain unmodelled."""
+"""Shared research API contracts for receivers and clients."""
 
 from __future__ import annotations
 
@@ -17,6 +17,8 @@ ErrorCode = Literal[
     "acceptance_unknown",
     "service_error",
     "quote_changed",
+    "quote_expired",
+    "channel_limit",
 ]
 
 
@@ -66,6 +68,10 @@ class ServiceInfo(BaseModel):
     demo: bool | None = None
     modes: dict[str, ModeInfo] | None = None
     model: ModelRef | None = None
+    channel: str | None = None
+    channel_remaining: int | None = None
+    busy: bool | None = None
+    rule: str | None = None
 
 
 class RunRequest(BaseModel):
@@ -145,6 +151,7 @@ class RunState(BaseModel):
 
     id: str
     status: str
+    channel: str | None = None
     request: StoredRequest | None = None
     result: dict[str, Any] | None = None
     summary: dict[str, Any] | None = None
@@ -167,6 +174,101 @@ class RunList(BaseModel):
     model_config = ConfigDict(extra="allow", strict=True)
 
     runs: list[RunState]
+
+
+class Fact(BaseModel):
+    model_config = ConfigDict(extra="allow", strict=True)
+
+    id: str
+    claim: str
+    title: str
+    page: int
+    period: str
+    announced: str
+    quote: str
+    url: str
+
+
+class Section(BaseModel):
+    model_config = ConfigDict(extra="allow", strict=True)
+
+    text: str
+    facts: list[str]
+
+
+class Quality(BaseModel):
+    model_config = ConfigDict(extra="allow", strict=True)
+
+    generated: int | None = None
+    repair: str | None = None
+    dropped: list[dict[str, Any]] | None = None
+    unformed: dict[str, str] | None = None
+    passed: int | None = None
+
+
+class ReportView(BaseModel):
+    model_config = ConfigDict(extra="allow", strict=True)
+
+    code: str
+    status: str
+    evidence_review: str | None = None
+    rule: str | None = None
+    quality: Quality | None = None
+    documents: list[dict[str, str | None]] = Field(default_factory=list)
+    clues: dict[str, Any] = Field(default_factory=dict)
+    analysis: dict[str, Section] = Field(default_factory=dict)
+    facts: list[Fact] = Field(default_factory=list)
+    gaps: list[str] = Field(default_factory=list)
+    omitted_pages: int | None = None
+    diagnostic: dict[str, Any] | None = None
+    error: str | None = None
+
+
+class ReportSummary(BaseModel):
+    model_config = ConfigDict(extra="allow", strict=True)
+
+    run_id: str
+    code: str
+    finished_at: str | None = None
+    status: str
+    rule: str | None = None
+    documents: list[dict[str, str | None]] = Field(default_factory=list)
+    omitted_pages: int | None = None
+    gap_count: int
+    quality: Quality | None = None
+
+
+class ReportList(BaseModel):
+    model_config = ConfigDict(extra="allow", strict=True)
+
+    code: str
+    reports: list[ReportSummary]
+
+
+class PriceReference(BaseModel):
+    model_config = ConfigDict(extra="allow", strict=True)
+
+    code: str
+    status: str
+    as_of: str | None = None
+    expires: str | None = None
+    expired: bool | None = None
+    levels: dict[str, Any] | None = None
+    reasons: list[str] | None = None
+
+
+class RankingPage(BaseModel):
+    model_config = ConfigDict(extra="allow", strict=True)
+
+    run_id: str
+    total: int
+    offset: int
+    items: list[dict[str, Any]]
+    next_cursor: str | None
+    is_last: bool
+    prefilter: dict[str, Any] | None
+    coverage: dict[str, Any]
+    industries: list[str]
 
 
 class ErrorBody(BaseModel):

@@ -751,6 +751,7 @@ def structured_report(result: dict[str, Any]) -> dict[str, Any]:
         "code": result["code"],
         "status": result["status"],
         "evidence_review": result.get("evidence_review"),
+        "rule": packet.get("template"),
         "quality": result.get("quality"),
         "documents": [{k: d[k] for k in ("period", "announced")} for d in docs.values()],
         "clues": {

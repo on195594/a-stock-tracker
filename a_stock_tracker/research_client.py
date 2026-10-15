@@ -9,13 +9,23 @@ from urllib.parse import urlparse
 
 import httpx
 
-from a_stock_tracker.contracts import ErrorBody, ErrorCode, RunList, RunState, ServiceInfo
+from a_stock_tracker.contracts import (
+    ErrorBody,
+    ErrorCode,
+    RankingPage,
+    ReportList,
+    RunList,
+    RunState,
+    ServiceInfo,
+)
 from a_stock_tracker.opportunity_demo import demo_board, demo_report
 from a_stock_tracker.research_service import LIMITS, quote, result_summary, validate_request
 
 
 class ResearchUnavailable(Exception):
-    pass
+    def __init__(self, *args: object, code: ErrorCode | None = None):
+        super().__init__(*args)
+        self.code = code
 
 
 class ResearchRejected(ResearchUnavailable):
@@ -40,7 +50,13 @@ class ResearchClient:
             raise ValueError("Invalid research service configuration")
         self.url, self.token, self.socket = url.rstrip("/"), token, socket
 
-    def call(self, method: str, path: str, payload: dict | None = None) -> dict[str, Any]:
+    def call(
+        self,
+        method: str,
+        path: str,
+        payload: dict | None = None,
+        params: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         try:
             transport = httpx.HTTPTransport(uds=self.socket) if self.socket else None
             with httpx.Client(timeout=10, trust_env=False, transport=transport) as client:
@@ -49,10 +65,11 @@ class ResearchClient:
                     self.url + path,
                     headers={"Authorization": "Bearer " + self.token},
                     json=payload,
+                    params=params,
                 )
                 if len(response.content) > 4_000_000:
                     raise ValueError("Oversized research response")
-                if response.status_code in {400, 403, 404, 409, 413, 503}:
+                if response.status_code in {400, 403, 404, 409, 413, 429, 503}:
                     try:
                         data = response.json()
                         # Older receivers may omit the machine-readable code.
@@ -72,7 +89,7 @@ class ResearchClient:
                                 if response.status_code == 503
                                 else ResearchRejected
                             )
-                            raise error(body.detail)
+                            raise error(body.detail, code=body.code)
                     except (ValueError, AttributeError):
                         pass
                 response.raise_for_status()
@@ -99,6 +116,27 @@ class ResearchClient:
         if len(identifier) != 32 or any(c not in "0123456789abcdef" for c in identifier):
             raise ResearchUnavailable("请求编号不正确")
         return RunState.model_validate(self.call("GET", "/runs/" + identifier))
+
+    def find_reports(self, code: str) -> ReportList:
+        return ReportList.model_validate(self.call("GET", "/reports", params={"code": code}))
+
+    def ranking(
+        self,
+        run_id: str,
+        industry: str | None = None,
+        query: str | None = None,
+        cursor: str | None = None,
+    ) -> RankingPage:
+        if len(run_id) != 32 or any(c not in "0123456789abcdef" for c in run_id):
+            raise ResearchUnavailable("请求编号不正确")
+        params = {
+            key: value
+            for key, value in {"industry": industry, "query": query, "cursor": cursor}.items()
+            if value is not None
+        }
+        return RankingPage.model_validate(
+            self.call("GET", "/runs/" + run_id + "/ranking", params=params)
+        )
 
 
 class DemoResearchClient:

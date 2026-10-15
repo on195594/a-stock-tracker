@@ -8,7 +8,7 @@
 
 本 README 维护产品目标、网页主流程与验收。模块、数据和安全合同见 [架构](docs/architecture.md)；管理员配置、部署和高级 CLI 见 [运维](docs/operations.md)；历史验证结论见 [离线验证](docs/offline-validation.md)。[peer-screen-v1](docs/specs/2026-09-22-peer-screen-spec.md) 只维护财报研究规则。UI 场景和表达分别见 [PRODUCT](PRODUCT.md)、[DESIGN](DESIGN.md)。
 
-技术重构见 [Web 与 Agent 接口重构方案](docs/architecture.md#web-与-agent-接口重构方案)：先建立统一接口模型，再提供供 AI Agent 与 Skill 调用的本机 MCP 服务、以服务端 HTML 替换 Flet，并修正报告状态与研究成功率。该方案尚未实施，当前仍使用 Flet；它不新增产品功能，也不构成执行授权。
+技术重构见 [Web 与 Agent 接口重构方案](docs/architecture.md#web-与-agent-接口重构方案)：先建立统一接口模型，再提供供 AI Agent 与 Skill 调用的本机 MCP 服务、以服务端 HTML 替换 Flet，并修正报告状态与研究成功率。接口模型、研究质量 v2 与本机 MCP 服务（`python -m a_stock_tracker.mcp_server`，配置见[运维](docs/operations.md)）已在代码中实现，宿主接收器升级与 MCP 注册须另行授权；网页仍是 Flet，界面重写尚未开始。它不新增产品功能，也不构成执行授权。
 
 ## 本地演示与验证
 

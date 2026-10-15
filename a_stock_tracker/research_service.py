@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import fcntl
 import heapq
 import hmac
@@ -40,12 +42,14 @@ from a_stock_tracker.contracts import (
     ErrorBody,
     ErrorCode,
     Quote,
+    RankingPage,
+    ReportList,
     RunList,
     RunRequest,
     RunState,
     ServiceInfo,
 )
-from a_stock_tracker.disclosures import model_command, structured_report
+from a_stock_tracker.disclosures import TEMPLATE, model_command, structured_report
 from a_stock_tracker.opportunities import load_board
 from a_stock_tracker.research import SHANGHAI, ScreenError, parse_date
 
@@ -64,6 +68,7 @@ LIMITS: dict[str, dict[str, Any]] = {
 OWNER = {"owner": "explicit-research-requests-v1"}
 MAX_ROOT_BYTES = 2_000_000_000
 MAX_RUN_BYTES = 256_000_000
+MCP_DAILY_LIMIT = 3
 
 
 def disk_bytes(root: Path) -> int:
@@ -71,6 +76,10 @@ def disk_bytes(root: Path) -> int:
 
 
 class QuoteChanged(ValueError):
+    pass
+
+
+class ChannelLimit(ValueError):
     pass
 
 
@@ -351,7 +360,20 @@ class ResearchStore:
                 continue
         return runs
 
-    def submit(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def channel_used(self) -> int:
+        today = datetime.now(SHANGHAI).date()
+        used = 0
+        for _, state in self.metadata():
+            if state.get("channel", "web") != "mcp":
+                continue
+            try:
+                created = datetime.fromisoformat(state["created_at"]).astimezone(SHANGHAI).date()
+            except (KeyError, TypeError, ValueError):
+                continue
+            used += created == today
+        return used
+
+    def submit(self, payload: dict[str, Any], channel: str = "web") -> dict[str, Any]:
         payload = validate_request(payload)
         directory = self.directory(payload["id"])
         with locked_root(self.root, blocking=True):
@@ -372,6 +394,10 @@ class ResearchStore:
                     raise ValueError("来源必须是本研究目录内的初筛请求")
             if payload["quote"] != quote(info, payload["mode"], remaining):
                 raise QuoteChanged("服务预算或模型已变化，请重新确认")
+            if channel == "mcp" and self.channel_used() >= MCP_DAILY_LIMIT:
+                raise ChannelLimit(
+                    "MCP 渠道今日提交次数已用完（每日 3 次），明日再试或在网页提交。"
+                )
             if not info["modes"][payload["mode"]]["available"]:
                 raise ValueError("该研究类型尚未配置行情或模型服务，请联系管理员")
             handle = self.lease()
@@ -412,6 +438,7 @@ class ResearchStore:
                                 **old,
                                 "id": payload["id"],
                                 "request": payload,
+                                "channel": channel,
                                 "created_at": datetime.now(timezone.utc).isoformat(),
                                 "finished_at": datetime.now(timezone.utc).isoformat(),
                                 "reused_from": old["id"],
@@ -424,6 +451,7 @@ class ResearchStore:
                 state = {
                     "id": payload["id"],
                     "request": payload,
+                    "channel": channel,
                     "status": "running",
                     "created_at": datetime.now(timezone.utc).isoformat(),
                     "limits": payload["quote"],
@@ -546,6 +574,35 @@ class ResearchStore:
             if board is None:
                 raise ScreenError("No verified board")
             return {"board": board}
+        result, _ = self.batch_result(directory, mode)
+        result["truncated"] = False
+        # Leave room for request metadata under the client's 4 MB response ceiling.
+        if len(json.dumps(result, ensure_ascii=False).encode()) > 3_800_000:
+            result["truncated"] = True
+            result["truncation_note"] = (
+                "排名超过响应大小上限，仅展示部分行业/排名；不代表完整结果。"
+            )
+            groups = result["groups"]
+            result["groups"] = []
+            used = len(json.dumps(result, ensure_ascii=False).encode())
+            for group in groups:
+                kept = {**group, "ranking": []}
+                used += len(json.dumps(kept, ensure_ascii=False).encode()) + 2
+                for row in group["ranking"]:
+                    size = len(json.dumps(row, ensure_ascii=False).encode()) + 2
+                    if used + size > 3_800_000:
+                        break
+                    kept["ranking"].append(row)
+                    used += size
+                if kept["ranking"]:
+                    result["groups"].append(kept)
+                if len(kept["ranking"]) != len(group["ranking"]):
+                    break
+        return result
+
+    def batch_result(self, directory: Path, mode: str) -> tuple[dict[str, Any], str]:
+        """Verify and project the full batch before response-size truncation."""
+        root = directory / "batch"
         runs = list(root.glob("run-*"))
         if len(runs) != 1:
             raise ScreenError("Ambiguous financial batch")
@@ -610,30 +667,103 @@ class ResearchStore:
             for group in summary["groups"]
         ]
         result["usage"] = state.get("usage")
-        result["truncated"] = False
-        # Leave room for request metadata under the client's 4 MB response ceiling.
-        if len(json.dumps(result, ensure_ascii=False).encode()) > 3_800_000:
-            result["truncated"] = True
-            result["truncation_note"] = (
-                "排名超过响应大小上限，仅展示部分行业/排名；不代表完整结果。"
-            )
-            groups = result["groups"]
-            result["groups"] = []
-            used = len(json.dumps(result, ensure_ascii=False).encode())
-            for group in groups:
-                kept = {**group, "ranking": []}
-                used += len(json.dumps(kept, ensure_ascii=False).encode()) + 2
-                for row in group["ranking"]:
-                    size = len(json.dumps(row, ensure_ascii=False).encode()) + 2
-                    if used + size > 3_800_000:
-                        break
-                    kept["ranking"].append(row)
-                    used += size
-                if kept["ranking"]:
-                    result["groups"].append(kept)
-                if len(kept["ranking"]) != len(group["ranking"]):
-                    break
-        return result
+        return result, state["freeze"]
+
+    def find_reports(self, code: str) -> dict[str, Any]:
+        if not re.fullmatch(r"(?:60\d{4}\.SH|00\d{4}\.SZ)", code):
+            raise HTTPException(400, "仅支持沪深主板代码，如 600519.SH 或 000001.SZ")
+        reports = []
+        for path, state in self.metadata():
+            request = state.get("request", {})
+            if (
+                request.get("mode") != "financial"
+                or state.get("status") not in {"completed", "partial"}
+                or code not in request.get("codes", [])
+            ):
+                continue
+            try:
+                result = self.result(self.directory(path.parent.name), "financial")
+                finished_at = state.get("finished_at") or state.get("created_at")
+                timestamp = datetime.fromisoformat(finished_at).timestamp() if finished_at else 0
+                for report in result.get("reports", []):
+                    if report["code"] == code and report.get("evidence_review") == "passed":
+                        reports.append(
+                            (
+                                timestamp,
+                                {
+                                    "run_id": path.parent.name,
+                                    "code": code,
+                                    "finished_at": finished_at,
+                                    "status": report["status"],
+                                    "rule": report.get("rule"),
+                                    "documents": report.get("documents", []),
+                                    "omitted_pages": report.get("omitted_pages"),
+                                    "gap_count": len(report.get("gaps", [])),
+                                    "quality": report.get("quality"),
+                                },
+                            )
+                        )
+            except (OSError, ValueError, ScreenError):
+                continue
+        reports.sort(key=lambda item: item[0], reverse=True)
+        return {"code": code, "reports": [report for _, report in reports[:20]]}
+
+    def ranking(
+        self,
+        identifier: str,
+        industry: str | None = None,
+        query: str | None = None,
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        state = self.status(identifier, include_result=False)
+        if state.get("request", {}).get("mode") != "screen" or state["status"] not in {
+            "completed",
+            "partial",
+        }:
+            raise HTTPException(400, "该研究没有可分页的初筛排名")
+        if query is not None and len(query) > 20:
+            raise HTTPException(400, "搜索条件最多 20 个字符")
+        result, freeze = self.batch_result(
+            self.directory(state.get("reused_from", identifier)), "screen"
+        )
+        rows = [
+            {"industry": group["industry"], **rank}
+            for group in result["groups"]
+            if not industry or industry == group["industry"]
+            for rank in group["ranking"]
+            if not query or query in rank["code"] or query in (rank.get("name") or "")
+        ]
+        binding = {"freeze": freeze, "industry": industry, "query": query}
+        offset = 0
+        if cursor is not None:
+            try:
+                decoded = json.loads(base64.b64decode(cursor, altchars=b"-_", validate=True))
+                offset = decoded["offset"]
+                if (
+                    decoded != {**binding, "offset": offset}
+                    or type(offset) is not int
+                    or not 0 <= offset <= len(rows)
+                ):
+                    raise ValueError("Invalid cursor")
+            except (ValueError, TypeError, KeyError, binascii.Error):
+                raise HTTPException(400, "分页游标与当前批次或过滤条件不符") from None
+        next_offset = offset + 50
+        is_last = next_offset >= len(rows)
+        return {
+            "run_id": identifier,
+            "total": len(rows),
+            "offset": offset,
+            "items": rows[offset:next_offset],
+            "next_cursor": None
+            if is_last
+            else base64.urlsafe_b64encode(
+                json.dumps({**binding, "offset": next_offset}, separators=(",", ":")).encode()
+            ).decode(),
+            "is_last": is_last,
+            "prefilter": result["coverage"]["prefilter"],
+            "coverage": result["coverage"],
+            "industries": [group["industry"] for group in result["groups"]],
+        }
 
     def execute(self, directory: Path, state: dict[str, Any], handle) -> None:
         process = None
@@ -728,10 +858,35 @@ class ResearchStore:
                 handle.close()
 
 
-def create_service(root: Path, token: str) -> FastAPI:
-    if len(token) < 32 or token.startswith("REPLACE_"):
+def create_service(root: Path, tokens: dict[str, str]) -> FastAPI:
+    tokens = dict(tokens)
+    if "web" not in tokens or any(
+        len(token) < 32 or token.startswith("REPLACE_") for token in tokens.values()
+    ):
         raise ValueError("Research service requires a private token of at least 32 characters")
+    if len(set(tokens.values())) != len(tokens):
+        raise ValueError("Research service channel tokens must be distinct")
     store = ResearchStore(root)
+
+    def channel_info(channel: str) -> dict[str, Any]:
+        info = request_info()
+        # Probe under the root lock so the probe never races a submit for the lease.
+        with locked_root(store.root, blocking=True):
+            try:
+                store.lease().close()
+                busy = False
+            except BlockingIOError:
+                busy = True
+        return {
+            **info,
+            "channel": channel,
+            "channel_remaining": max(0, MCP_DAILY_LIMIT - store.channel_used())
+            if channel == "mcp"
+            else None,
+            "busy": busy,
+            "rule": TEMPLATE,
+        }
+
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
     @app.exception_handler(HTTPException)
@@ -742,6 +897,7 @@ def create_service(root: Path, token: str) -> FastAPI:
             404: "not_found",
             409: "busy",
             413: "too_large",
+            429: "channel_limit",
             503: "acceptance_unknown",
         }
         return JSONResponse(
@@ -753,19 +909,39 @@ def create_service(root: Path, token: str) -> FastAPI:
 
     @app.api_route("/{path:path}", methods=["GET", "POST"])
     async def dispatch(request: Request, path: str):
-        if not hmac.compare_digest(
-            request.headers.get("authorization", "").encode(), ("Bearer " + token).encode()
-        ):
+        channel = None
+        for key, token in tokens.items():
+            if hmac.compare_digest(
+                request.headers.get("authorization", "").encode(), ("Bearer " + token).encode()
+            ):
+                channel = key
+        if channel is None:
             raise HTTPException(403, "研究服务授权失败")
         try:
             if request.method == "GET":
                 if path == "info":
                     return ServiceInfo.model_validate(
-                        await run_in_threadpool(request_info)
+                        await run_in_threadpool(channel_info, channel)
                     ).model_dump(by_alias=True, exclude_unset=True)
                 if path == "runs":
                     return RunList.model_validate(
                         {"runs": await run_in_threadpool(store.recent)}
+                    ).model_dump(by_alias=True, exclude_unset=True)
+                if path == "reports":
+                    return ReportList.model_validate(
+                        await run_in_threadpool(
+                            store.find_reports, request.query_params.get("code", "")
+                        )
+                    ).model_dump(by_alias=True, exclude_unset=True)
+                if path.startswith("runs/") and path.endswith("/ranking"):
+                    return RankingPage.model_validate(
+                        await run_in_threadpool(
+                            store.ranking,
+                            path.removeprefix("runs/").removesuffix("/ranking"),
+                            request.query_params.get("industry"),
+                            request.query_params.get("query"),
+                            request.query_params.get("cursor"),
+                        )
                     ).model_dump(by_alias=True, exclude_unset=True)
                 if path.startswith("runs/"):
                     return RunState.model_validate(
@@ -777,7 +953,7 @@ def create_service(root: Path, token: str) -> FastAPI:
                     body.extend(chunk)
                     if len(body) > 4096:
                         raise HTTPException(413, "请求过大")
-                state = await run_in_threadpool(store.submit, json.loads(body))
+                state = await run_in_threadpool(store.submit, json.loads(body), channel)
                 try:
                     return RunState.model_validate(state).model_dump(
                         by_alias=True, exclude_unset=True
@@ -793,6 +969,8 @@ def create_service(root: Path, token: str) -> FastAPI:
                 ).model_dump(by_alias=True, exclude_unset=True),
                 status_code=409,
             )
+        except ChannelLimit as exc:
+            raise HTTPException(429, str(exc)) from None
         except FileNotFoundError:
             raise HTTPException(404, "没有该研究记录") from None
         except (ValueError, ScreenError):
@@ -816,7 +994,10 @@ def main() -> None:
         )
     os.umask(0o077)
     root = Path(os.environ["RESEARCH_SERVICE_ROOT"])
-    app = create_service(root, os.environ["RESEARCH_SERVICE_TOKEN"])
+    tokens = {"web": os.environ["RESEARCH_SERVICE_TOKEN"]}
+    if "RESEARCH_SERVICE_MCP_TOKEN" in os.environ:
+        tokens["mcp"] = os.environ["RESEARCH_SERVICE_MCP_TOKEN"]
+    app = create_service(root, tokens)
     socket = os.getenv("RESEARCH_SERVICE_SOCKET")
     if socket:
         path = Path(socket)

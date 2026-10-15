@@ -10,6 +10,7 @@
 - 模型运行时可选已安装的 Hermes 或 pi。pi 配置 `AUTOMATION_PI_RUNTIME`（安装包目录）、`AUTOMATION_PI_AGENT_DIR`（凭据目录）及 `AUTOMATION_PI_EXTENSION`（仅模型提供方入口），并将其默认 provider/model 明确写入 `RESEARCH_PROVIDER` / `RESEARCH_MODEL`；不会随 pi 默认设置变化而静默换模型。仅直接调用提供方推理，不启动编码会话、不加载技能、个人上下文或工具；每次本地最多等待 240 秒，向运行时请求 6000 输出 token；已安装 pi 的 openai-codex 提供方不会把该上限传给服务端，因此不能把它当作 token 或费用硬上限。pi 固定 SSE、关闭传输重试，无模型调用回退。提供方扩展若注册工具或事件回调则拒绝执行。pi 与 Hermes 的原始调用缓存分开核验。
 - 明确授权后，在宿主启动一次 `.venv/bin/python -m a_stock_tracker.research_service`（仅启动接收器，不主动研究），启动前用 `set -a; source .research.env; set +a` 加载宿主环境，勿将此文件传给 Web。默认仅 loopback；配置 socket 时通过私有 Unix socket 通信。此源码不安装 cron、定时或进程管理器。
 - 根据 `.research-web.env.example` 配置 `.research-web.env`，仅包含同一桥目录与共享令牌。生产 Web 显式使用 `docker-compose.research.yml` 覆盖文件。已授权部署时可运行 `RESEARCH_WEB_ENABLED=1 ./deploy.sh`；脚本不启动宿主研究进程、不请求行情或模型。首次部署默认不启用该桥；现有容器已有桥时，省略开关会在修改前中止并要求明确选择。
+- 本机 Agent 接入（可选，见[架构](architecture.md#mcp-与-agent)）：另用 `secrets.token_urlsafe(32)` 生成一个与 Web 不同的令牌，写入宿主 `.research.env` 的 `RESEARCH_SERVICE_MCP_TOKEN`；按 `.research-mcp.env.example` 创建 Git 忽略、权限 `0600` 的 `.research-mcp.env`（同一 socket 与该令牌）。接收器重启后 `mcp` 渠道生效，未配置则该渠道关闭；撤销时删除该令牌并重启接收器。MCP 服务由本机客户端按需以 stdio 拉起，例如 `claude mcp add a-stock-tracker -e PYTHONPATH=$HOME/a-stock-tracker -- $HOME/a-stock-tracker/.venv/bin/python -m a_stock_tracker.mcp_server`（注册属本机配置变更，须授权）。`submit_run` 不得加入客户端自动放行列表；`mcp` 渠道每日最多受理 3 次（全部研究类型，含当日初筛复用，失败不退还，按上海日期计）。
 - 服务一次只接受一个执行请求；无队列、无自动恢复、无自动收费重试。进程异常后记录未确认/中断，不能冒充成功；原始产物保留供核查。正常监护路径下，异常/正常退出均清理工作进程组后才释放执行锁；接收器与批处理主进程先后退出时，支持的直接模型/PDF进程继续持有执行租约直至退出。生产仍使用 systemd 的整个 cgroup 清理与资源约束，不依靠租约终止任意外部运行时的脱离后代。失败调用保留 `.usage.json`；`usage: null` 表示未知而非零费用，已有调用记录但无合格响应时禁止自动再次调用。基础设施配置/启动/部署不授权任何实际研究请求。
 
 接收器启动时将单文件写入上限设为 32 MB；PDF 提取和模型子进程的 stdout/stderr 合计最多读取 8 MB。每批目录超过 256 MB 则停止（每两秒检查，可能短暂超出），新批次须在研究根目录 2 GB 预算内预留 256 MB；不会自动删除历史产物。持久用户服务模板为 [config/a-stock-tracker-research.service](../config/a-stock-tracker-research.service)，适用于项目位于 `~/a-stock-tracker` 的宿主，包含 cgroup 资源隔离与有限异常重启。下文列出部署流程、systemd 服务生命周期与排障。
@@ -25,9 +26,10 @@
 | **Web 界面** (`web`) | Docker 容器 (`a-stock-tracker-web`) | 监听宿主 `127.0.0.1:8550`；仅接受已验证的 Host 与 WS Origin | `.web.env`（GitHub OAuth、白名单用户 ID） | 无行情/模型凭据，不打开业务数据库，只读挂载价格参考目录；缺配置拒绝启动 |
 | **研究网关桥**（可选） | Docker 挂载 (`docker-compose.research.yml`) | 仅挂载专用私有 Unix socket 目录（只读） | `.research-web.env`（socket 路径与共享令牌） | 仅转发经用户显式确认的研究请求，无法读取宿主模型/行情凭据 |
 | **宿主研究服务** (`research_service`) | 宿主 systemd 用户单元 | 私有 Unix socket（目录权限 `0700`），仅监听本地 | `.research.env`（TuShare Token、模型运行时凭据、私有根目录） | 持有凭据执行有界子进程，绝不进入 Docker 镜像或挂载给 Web；单次执行互斥 |
+| **本机 MCP 服务**（可选） | 本机客户端按需拉起的 stdio 进程 (`mcp_server`) | 经私有 Unix socket 调用接收器，不监听端口 | `.research-mcp.env`（socket 路径与独立的 MCP 令牌，`0600`） | 无行情/模型凭据，不读研究根目录；只读工具无法触达提交接口；接收器按令牌识别渠道并单独限额 |
 | **反向代理** (`nginx`) | 现有 `nginx` 容器 | 暴露 80/443，反向代理至 `127.0.0.1:8550` | `docker/nginx-stock.conf`（HTTPS 证书、静态资产 gzip/ETag） | 阻断非法 Host 与外部直接访问容器端口 |
 
-所有环境变量模板见 `.web.env.example`、`.research-web.env.example` 和 `.research.env.example`。敏感配置文件权限须设为 `0600`，宿主数据根目录设为 `0700`，禁止提交至 Git。
+所有环境变量模板见 `.web.env.example`、`.research-web.env.example`、`.research.env.example` 和 `.research-mcp.env.example`。敏感配置文件权限须设为 `0600`，宿主数据根目录设为 `0700`，禁止提交至 Git。
 
 ### 生产 Web 部署流程（deploy.sh）
 

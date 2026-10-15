@@ -59,7 +59,7 @@ def test_invalid_request_refused_before_execution(change):
 
 def test_private_service_auth_budget_confirmation_and_same_nonce(tmp_path, monkeypatch):
     monkeypatch.setenv("TUSHARE_TOKEN", "synthetic")
-    api = create_service(tmp_path / "service", "x" * 32)
+    api = create_service(tmp_path / "service", {"web": "x" * 32})
     held = []
 
     class DeferredThread:
@@ -119,7 +119,7 @@ def test_service_rejects_old_private_workspaces_symlinks_and_bad_tokens(tmp_path
     with pytest.raises(ScreenError):
         ResearchStore(linked)
     with pytest.raises(ValueError):
-        create_service(tmp_path / "new", "short")
+        create_service(tmp_path / "new", {"web": "short"})
     assert (root / "history.sqlite").read_text() == "historical data"
 
 
@@ -623,7 +623,7 @@ def test_slow_store_does_not_block_service_event_loop(tmp_path, monkeypatch, ope
         return [] if operation == "recent" else {"id": "a" * 32, "status": "running"}
 
     monkeypatch.setattr(ResearchStore, operation, slow)
-    service = create_service(tmp_path / "service", "x" * 32)
+    service = create_service(tmp_path / "service", {"web": "x" * 32})
 
     async def run():
         async with httpx.AsyncClient(

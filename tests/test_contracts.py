@@ -250,6 +250,7 @@ def test_receiver_and_client_round_trip(tmp_path, monkeypatch, service_info):
     from fastapi.testclient import TestClient
 
     from a_stock_tracker.contracts import ErrorBody, RunState, ServiceInfo
+    from a_stock_tracker.disclosures import TEMPLATE
     from a_stock_tracker.research_client import ResearchClient
     from a_stock_tracker.research_service import ResearchStore, create_service
 
@@ -264,21 +265,33 @@ def test_receiver_and_client_round_trip(tmp_path, monkeypatch, service_info):
 
     monkeypatch.setattr("a_stock_tracker.research_service.Thread", DeferredThread)
     try:
-        with TestClient(create_service(tmp_path / "service", "x" * 32)) as receiver:
+        with TestClient(create_service(tmp_path / "service", {"web": "x" * 32})) as receiver:
             receiver.headers["Authorization"] = "Bearer " + "x" * 32
             original = httpx.Client
+
+            def forward(r):
+                # TestClient may be backed by httpx2; hand back a plain httpx response.
+                answer = receiver.request(r.method, r.url.path, content=r.content)
+                return httpx.Response(
+                    answer.status_code,
+                    content=answer.content,
+                    headers={"content-type": answer.headers.get("content-type", "")},
+                )
+
             monkeypatch.setattr(
                 httpx,
                 "Client",
-                lambda **kw: original(
-                    transport=httpx.MockTransport(
-                        lambda r: receiver.request(r.method, r.url.path, content=r.content)
-                    )
-                ),
+                lambda **kw: original(transport=httpx.MockTransport(forward)),
             )
             client = ResearchClient("http://research", "x" * 32)
             assert isinstance(client.info(), ServiceInfo)
-            assert client.info().model_dump(by_alias=True, exclude_unset=True) == service_info
+            assert client.info().model_dump(by_alias=True, exclude_unset=True) == {
+                **service_info,
+                "channel": "web",
+                "channel_remaining": None,
+                "busy": False,
+                "rule": TEMPLATE,
+            }
             value = request("screen")
             submitted = client.submit(value)
             assert isinstance(submitted, RunState)
@@ -464,8 +477,10 @@ def test_submit_response_validation_failure_is_acceptance_unknown(tmp_path, monk
     from a_stock_tracker.research_service import ResearchStore, create_service
 
     # The store may already have started a billed run when the response shape is wrong.
-    monkeypatch.setattr(ResearchStore, "submit", lambda self, payload: {"status": "running"})
-    with TestClient(create_service(tmp_path / "service", "x" * 32)) as receiver:
+    monkeypatch.setattr(
+        ResearchStore, "submit", lambda self, payload, channel="web": {"status": "running"}
+    )
+    with TestClient(create_service(tmp_path / "service", {"web": "x" * 32})) as receiver:
         response = receiver.post(
             "/runs", json={"id": "a" * 32}, headers={"Authorization": "Bearer " + "x" * 32}
         )

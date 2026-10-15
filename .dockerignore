@@ -24,6 +24,8 @@ data/
 **/.research.env*
 .research-web.env*
 **/.research-web.env*
+.research-mcp.env*
+**/.research-mcp.env*
 .web.env*
 **/.web.env*
 tracker.db*
