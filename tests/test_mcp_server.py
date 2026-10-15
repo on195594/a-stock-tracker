@@ -397,6 +397,12 @@ def test_price_reference_and_swing_overview(bridge, expired):
             assert price["expired"] is expired and price["expires"] == board["rows"][0]["expires"]
             if expired:
                 assert price["levels"] and all(v is None for v in price["levels"].values())
+                row = board["rows"][0]
+                assert all(price["facts"][k] is None for k in ("condition", "invalidation"))
+                assert price["facts"]["distance"] is None
+                text = json.dumps(price, ensure_ascii=False)
+                for level in ("trigger", "stop", "distance"):
+                    assert f"{row['levels'][level]:.2f}" not in text
             else:
                 assert price["levels"] == board["rows"][0]["levels"]
             error(

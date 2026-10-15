@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import uuid
@@ -201,8 +202,8 @@ def create_app(
         context: dict[str, Any] = {"connected": client is not None}
         if client is not None:
             try:
-                info = await read(client.info)
-                recent = await read(client.recent)
+                # Independent reads run concurrently, as the Flet home page did.
+                info, recent = await asyncio.gather(read(client.info), read(client.recent))
             except ResearchUnavailable:
                 context["unreachable"] = True
             else:

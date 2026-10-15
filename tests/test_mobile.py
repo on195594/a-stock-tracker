@@ -1,816 +1,279 @@
-"""Real browser clicks for the read-only app; loopback, synthetic, no private data."""
+"""Real-browser regression for the server-rendered Web on a synthetic demo server.
 
-import json
+Run with `make test-mobile` (python -m tests.test_mobile). Synthetic data only; external
+requests are blocked. This is not a real-device or production acceptance test.
+"""
+
+from __future__ import annotations
+
 import os
-import re
 import socket
 import subprocess
 import sys
-import tempfile
 import time
-import urllib.error
 import urllib.request
-from collections import deque
+from contextlib import closing
 from pathlib import Path
-from urllib.parse import urlparse
 
-from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
-from playwright.sync_api import expect, sync_playwright
+from playwright.sync_api import Page, expect, sync_playwright
+
+ROOT = Path(__file__).resolve().parents[1]
+WIDTHS = (360, 390, 430, 1280)
+COLD_START_BUDGET_MS = 2000
+# 10 Mbps down / 1 Mbps up / 80 ms latency, in DevTools units (bytes per second).
+MOBILE_NETWORK = {
+    "offline": False,
+    "latency": 80,
+    "downloadThroughput": 10_000_000 / 8,
+    "uploadThroughput": 1_000_000 / 8,
+}
+FUTURE_CLOCK = """
+(() => {
+  const Real = Date, offset = 30 * 864e5;
+  class Shifted extends Real {
+    constructor(...args) { args.length ? super(...args) : super(Real.now() + offset); }
+    static now() { return Real.now() + offset; }
+  }
+  Date = Shifted;
+})();
+"""
 
 
-def wait_for_server(url: str, timeout_sec: int = 20) -> bool:
-    deadline = time.monotonic() + timeout_sec
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+def free_port() -> int:
+    with closing(socket.socket()) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def wait_for_server(url: str, timeout: float = 20) -> None:
+    deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            with opener.open(url, timeout=1) as response:
-                if response.status == 200:
-                    return True
-        except (urllib.error.URLError, OSError):
-            time.sleep(0.2)
-    return False
-
-
-def click_settled(page, control):
-    """Scroll the painted Flutter canvas, not just its invisible semantics."""
-    deadline = time.monotonic() + 5
-
-    def remaining_ms():
-        remaining = (deadline - time.monotonic()) * 1000
-        if remaining <= 0:
-            raise PlaywrightTimeoutError("Control did not settle inside viewport within 5000ms")
-        return remaining
-
-    page._font_step = str(control)
-    before = None
-    box = None
-    scrolls = 0
-    try:
-        control.wait_for(state="visible", timeout=remaining_ms())
-        while time.monotonic() < deadline:
-            element = control.element_handle(timeout=remaining_ms())
-            page.wait_for_function(
-                """el => {
-                    if (!el.isConnected) return true;
-                    const r = el.getBoundingClientRect();
-                    const geometry = [r.x, r.y, r.width, r.height].join(',');
-                    if (el._testGeometry !== geometry) {
-                        el._testGeometry = geometry;
-                        el._testStableSince = performance.now();
-                    }
-                    return performance.now() - el._testStableSince >= 250;
-                }""",
-                arg=element,
-                timeout=remaining_ms(),
-            )
-            if not element.evaluate("el => el.isConnected"):
-                continue  # Flutter may replace semantics while laying out the page.
-            box = element.bounding_box()
-            if before is None:
-                before = box
-            assert box and box["width"] > 0 and box["height"] > 0
-            height = page.viewport_size["height"]
-            if box["y"] >= 0 and box["y"] + box["height"] <= height:
-                element.click(timeout=remaining_ms())
-                if element.evaluate("el => el.matches('input, textarea')"):
-                    # Flutter's editing connection settles after the canvas click.
-                    element.evaluate("el => { el._testFocusedSince = null; }")
-                    page.wait_for_function(
-                        """el => {
-                            if (!el.isConnected || el !== document.activeElement) {
-                                el._testFocusedSince = null;
-                                return false;
-                            }
-                            el._testFocusedSince ??= performance.now();
-                            return performance.now() - el._testFocusedSince >= 250;
-                        }""",
-                        arg=element,
-                        timeout=remaining_ms(),
-                    )
+            with urllib.request.urlopen(url + "/login", timeout=2):
                 return
-            # Flutter can consume less than the requested wheel delta. Re-measure
-            # after it settles instead of waiting forever on an offscreen target.
-            center = height / 2
-            page.mouse.move(page.viewport_size["width"] / 2, center)
-            page.mouse.wheel(0, box["y"] + box["height"] / 2 - center)
-            scrolls += 1
-            element.evaluate("el => { el._testStableSince = performance.now(); }")
-        raise PlaywrightTimeoutError("Control did not settle inside viewport within 5000ms")
-    except PlaywrightTimeoutError:
-        print(
-            "Unsettled synthetic control:",
-            {
-                "url": page.url,
-                "viewport": page.viewport_size,
-                "before": before,
-                "current": box,
-                "scrolls": scrolls,
-            },
-            flush=True,
-        )
-        raise
+        except OSError:
+            time.sleep(0.2)
+    raise RuntimeError("synthetic demo server did not start")
 
 
-def serve_ui_cases(case_file: str, uncompressed_assets: bool = False) -> None:
-    """Test-only data substitution; use the real app, routes and actor checks."""
-    import uvicorn
-
-    from a_stock_tracker import app, opportunity_demo
-    from a_stock_tracker.research import ScreenError
-
-    assert app.APP_MODE == "demo" and app.HOST == "127.0.0.1"
-    from a_stock_tracker.research_client import DemoResearchClient, ResearchQuoteChanged
-
-    original_submit = DemoResearchClient.submit
-    original_recent = DemoResearchClient.recent
-
-    def recent(client):
-        # Isolate published-batch state cases from the valid research created earlier.
-        if json.loads(Path(case_file).read_text()) not in {"normal", "quote_changed"}:
-            return []
-        return original_recent(client)
-
-    DemoResearchClient.recent = recent
-
-    def submit(client, payload):
-        if json.loads(Path(case_file).read_text()) == "quote_changed":
-            Path(case_file).write_text(json.dumps("normal"))
-            raise ResearchQuoteChanged("预算或模型已变化，请重新确认")
-        return original_submit(client, payload)
-
-    DemoResearchClient.submit = submit
-    original = opportunity_demo.demo_board
-    failed = False
-
-    def board(scenario="reference"):
-        nonlocal failed
-        case = json.loads(Path(case_file).read_text())
-        if case == "missing":
-            return None
-        if case == "error" and not failed:
-            failed = True
-            raise ScreenError("synthetic read failure")
-        result = original(scenario)
-        if not result["rows"]:
-            return result
-        row = result["rows"][0]
-        if case == "long":
-            row["name"] = "合成的超长公司名称用于验证完整身份换行" * 3
-            result["source"] = "仅本地合成资料，未请求行情或模型。" * 8
-        elif case == "expired":
-            row["expired"] = True
-        elif case == "gap":
-            result = original("gap")
-        elif case == "excluded":
-            from tests.test_opportunities import legacy_board
-
-            result = legacy_board()
-            result["rows"][0].update(status="excluded", reasons=["旧规则距离超过8%"])
-            result["rows"][0]["facts"]["distance"] = "旧规则距离 9.26%"
-        elif case == "wide":
-            result = original("wide")
-        elif case == "zero":
-            result["rows"] = []
-        return result
-
-    opportunity_demo.demo_board = board
-    if uncompressed_assets:
-        asset_wrapper = app.PublicAssetCompression
-
-        def without_compression(inner):
-            # Keep startup font registration/preload/cache identical in both runs.
-            wrapped = asset_wrapper(inner)
-            wrapped.compressed = inner
-            return wrapped
-
-        app.PublicAssetCompression = without_compression
-        app.asgi_app = app.get_asgi_app()
-    uvicorn.run(app.asgi_app, host=app.HOST, port=app.PORT, access_log=False)
+def assert_layout(page: Page, width: int, where: str) -> None:
+    overflow = page.evaluate("document.documentElement.scrollWidth - window.innerWidth")
+    assert overflow <= 0, f"{where}@{width}: horizontal overflow {overflow}px"
+    small = page.evaluate(
+        """() => [...document.querySelectorAll('main .btn, main .link, summary, .check, .shell .nav')]
+            .filter(el => el.offsetParent !== null)
+            .map(el => [el.textContent.trim().slice(0, 20), el.getBoundingClientRect().height])
+            .filter(([, h]) => h < 47.5)"""
+    )
+    assert not small, f"{where}@{width}: touch targets under 48px {small}"
+    body = page.evaluate("parseFloat(getComputedStyle(document.body).fontSize)")
+    assert body >= 16, f"{where}@{width}: body text {body}px"
 
 
-def assert_layout(page, width):
-    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-    for control in page.get_by_role("heading").all() + page.get_by_role("button").all():
-        box = control.bounding_box()
-        if box and box["width"]:
-            assert box["x"] >= -1 and box["x"] + box["width"] <= width + 1, box
-    for button in page.get_by_role("button").all():
-        box = button.bounding_box()
-        # Flutter clips semantics at the viewport edge; measure complete touch targets.
-        if (
-            box
-            and box["height"]
-            and 0 < box["y"]
-            and box["y"] + box["height"] < page.viewport_size["height"]
-        ):
-            assert box["height"] >= 47, box
+def confirm_and_submit(page: Page) -> None:
+    # Keyboard consent: focus the checkbox and toggle it with Space.
+    page.focus("input[name=confirmed]")
+    page.keyboard.press("Space")
+    expect(page.locator("input[name=confirmed]")).to_be_checked()
+    page.click("button[type=submit]")
+    page.wait_for_load_state()
+
+
+def main_flow(page: Page, base: str, width: int) -> None:
+    page.goto(base + "/login")
+    page.click("text=进入合成演示")
+    expect(page.locator("h1")).to_have_text("研究首页")
+    assert_layout(page, width, "home")
+    entries = page.locator("nav.entries a")
+    expect(entries).to_have_text(["研究一家公司", "从初筛找公司", "独立价格参考（不调用模型）"])
+
+    # Financial: unconfirmed is refused and nothing runs; confirmed starts once.
+    entries.first.click()
+    page.fill("input[name=codes]", "600519")
+    assert_layout(page, width, "form")
+    page.click("button[type=submit]")
+    expect(page.locator(".feedback")).to_contain_text("请先勾选确认")
+    page.fill("input[name=codes]", "600519")
+    confirm_and_submit(page)
+    expect(page.locator("h1")).to_have_text("财报研究")
+    expect(page.locator("main")).to_contain_text("最强反证")
+    summary = page.locator("summary", has_text="原文事实")
+    summary.focus()
+    page.keyboard.press("Enter")
+    expect(page.locator(".fact").first).to_contain_text("PDF 第 12 页")
+    assert_layout(page, width, "report")
+
+    # Price reference is a separate confirmation, prefilled but never auto-submitted.
+    page.click("text=核对本公司价格参考")
+    expect(page.locator("textarea[name=codes]")).to_have_value("600519.SH")
+    expect(page.locator("input[name=confirmed]")).not_to_be_checked()
+    page.fill("textarea[name=codes]", "600001")
+    confirm_and_submit(page)
+    expect(page.locator("main")).to_contain_text("1 项价格参考 · 1 家显式股票池")
+    page.click("text=查看价格参考")
+    expect(page.locator("main")).to_contain_text("观察线与失效线")
+    assert_layout(page, width, "price")
+
+    # Screen: candidates first, then the paged ranking with a filter.
+    page.goto(base + "/analysis?mode=screen")
+    confirm_and_submit(page)
+    expect(page.locator("h1")).to_have_text("选择公司研究财报")
+    assert_layout(page, width, "screen")
+    page.fill("input[name=query]", "演示")
+    page.click("text=筛选完整排名")
+    expect(page.locator("article.candidate")).to_have_count(1)
+    assert_layout(page, width, "ranking")
+
+    # Gap and empty price states stay distinct.
+    for code, text in (("600003", "资料核验失败"), ("600004", "0 项价格参考")):
+        page.goto(base + "/analysis?mode=swing&code=" + code)
+        confirm_and_submit(page)
+        expect(page.locator("main")).to_contain_text(text)
+
+    # Read failure offers a retry without inventing a result.
+    page.goto(base + "/analysis/" + "f" * 32)
+    expect(page.locator("h1")).to_have_text("研究状态暂不可确认")
+    expect(page.locator("a.btn", has_text="重新查看")).to_be_visible()
+
+    # Logout isolates content: back navigation and direct URLs land on login.
+    page.goto(base + "/settings")
+    assert_layout(page, width, "settings")
+    page.click("text=退出登录")
+    expect(page.locator("h1")).to_have_text("登录")
+    page.go_back()
+    page.reload()
+    expect(page.locator("h1")).to_have_text("登录")
+    for retired in ("/published", "/opportunity/600001.SH", "/api/session"):
+        response = page.goto(base + retired)
+        assert response is not None and response.status == 404, retired
+
+
+def expiry_and_polling(browser, base: str) -> None:
+    # Expiry: the same open page hides levels once the Shanghai date passes the expiry.
+    context = browser.new_context(viewport={"width": 390, "height": 844})
+    page = context.new_page()
+    page.goto(base + "/login")
+    page.click("text=进入合成演示")
+    page.goto(base + "/analysis?mode=swing&code=600001")
+    confirm_and_submit(page)
+    detail = page.url + "/600001.SH"
+    page.goto(detail)
+    expect(page.locator("[data-levels]").first).to_be_visible()
+    context.add_init_script(FUTURE_CLOCK)
+    page.goto(detail)
+    expect(page.locator("[data-levels]").first).to_be_hidden()
+    expect(page.locator("[data-expired]").first).to_be_visible()
+
+    # Polling: a revoked session stops and clears progress; a status change reloads.
+    run = "/analysis/" + "e" * 32
+    running = (
+        '<!doctype html><html><head><script src="/static/app.js" defer></script></head><body>'
+        f'<section data-poll="{run}/state.json" data-status="running"><h1>后台研究中</h1>'
+        "<p>私有进度</p></section></body></html>"
+    )
+    state = {"status": 401, "served": 0}
+
+    def serve_run(route):
+        state["served"] += 1
+        route.fulfill(status=200, content_type="text/html; charset=utf-8", body=running)
+
+    def serve_state(route):
+        if state["status"] == 401:
+            route.fulfill(status=401, json={"error": "unauthorized"})
+        else:
+            route.fulfill(status=200, json={"status": "completed"})
+
+    page.route(base + run, serve_run)
+    page.route(base + run + "/state.json", serve_state)
+    page.goto(base + run)
+    expect(page.locator("section")).to_contain_text("登录已失效", timeout=8000)
+    expect(page.locator("section")).not_to_contain_text("私有进度")
+    state.update(status=200, served=0)
+    page.goto(base + run)
+    deadline = time.monotonic() + 8
+    while state["served"] < 2 and time.monotonic() < deadline:
+        page.wait_for_timeout(200)
+    assert state["served"] >= 2, "status change did not reload the page"
+    context.close()
+
+
+def cold_start(browser, base: str) -> dict:
+    context = browser.new_context(viewport={"width": 390, "height": 844})
+    login = context.request.post(base + "/login/demo", headers={"Origin": base})
+    assert login.ok
+    page = context.new_page()
+    cdp = context.new_cdp_session(page)
+    cdp.send("Network.enable")
+    cdp.send("Network.setCacheDisabled", {"cacheDisabled": True})
+    cdp.send("Network.emulateNetworkConditions", MOBILE_NETWORK)
+    page.goto(base + "/")
+    page.locator("a.btn", has_text="研究一家公司").wait_for()
+    metrics = page.evaluate(
+        """() => {
+            const nav = performance.getEntriesByType('navigation')[0];
+            const resources = performance.getEntriesByType('resource');
+            return {
+              ready_ms: Math.round(performance.now()),
+              transfer_bytes: nav.transferSize + resources.reduce((s, r) => s + r.transferSize, 0),
+              resources: resources.length,
+            };
+        }"""
+    )
+    context.close()
+    assert metrics["ready_ms"] <= COLD_START_BUDGET_MS, metrics
+    return metrics
 
 
 def main() -> int:
-    with tempfile.TemporaryDirectory(prefix="stock_opportunities_mobile_") as tmp:
-        with socket.socket() as sock:
-            sock.bind(("127.0.0.1", 0))
-            port = sock.getsockname()[1]
-        base = f"http://127.0.0.1:{port}"
-        env = {
-            **{
-                k: v
-                for k, v in os.environ.items()
-                if not k.startswith(("TUSHARE", "GITHUB_", "OPPORTUNITY_"))
-            },
-            "APP_MODE": "demo",
-            "HOST": "127.0.0.1",
-            "PORT": str(port),
-            "PUBLIC_BASE_URL": base,
-            "FLET_WEB_NO_CDN": "true",
-        }
-        case_file = Path(tmp) / "case.json"
-        case_file.write_text(json.dumps("normal"))
-        with (Path(tmp) / "server.log").open("w") as log:
-            server = subprocess.Popen(
-                [
-                    sys.executable,
-                    "-c",
-                    "from tests.test_mobile import serve_ui_cases; import sys; serve_ui_cases(sys.argv[1], sys.argv[2] == 'identity')",
-                    str(case_file),
-                    "identity" if "--uncompressed-assets" in sys.argv else "gzip",
-                ],
-                cwd=Path(__file__).resolve().parents[1],
-                env=env,
-                stdout=log,
-                stderr=log,
-            )
-            try:
-                assert wait_for_server(base), "demo server did not start"
-                opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-                for path in (
-                    "/research",
-                    "/discover",
-                    "/company/600001.SH",
-                    "/jobs/old",
-                    "/upload",
-                ):
-                    try:
-                        opener.open(base + path, timeout=3)
-                    except urllib.error.HTTPError as exc:
-                        assert exc.code == 404
-                    else:
-                        raise AssertionError(f"Retired endpoint still accessible: {path}")
-                with sync_playwright() as p:
-                    # Block external hosts at DNS level: Playwright routing would disable the
-                    # HTTP cache that lets the client reuse the preloaded font.
-                    browser = p.chromium.launch(
-                        headless=True,
-                        args=[
-                            "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1"
-                        ],
-                    )
-                    context = browser.new_context(viewport={"width": 390, "height": 844})
-                    blocked = set()
-                    fonts = []
-                    font_started = time.monotonic()
-                    failed_fonts = []
-                    font_messages = deque(maxlen=40)
-                    font_manifests = []
-                    page = context.new_page()
-                    context.on(
-                        "console",
-                        lambda message: (
-                            font_messages.append((message.type, message.text[:1200]))
-                            if message.type in {"warning", "error"}
-                            or "font" in message.text.lower()
-                            else None
-                        ),
-                    )
-                    page.on(
-                        "pageerror",
-                        lambda error: font_messages.append(("pageerror", str(error)[:1200])),
-                    )
-                    context.on(
-                        "response",
-                        lambda response: (
-                            font_manifests.append(response.json())
-                            if urlparse(response.url).path == "/assets/FontManifest.json"
-                            and response.status == 200
-                            else None
-                        ),
-                    )
+    port = free_port()
+    base = f"http://127.0.0.1:{port}"
+    env = {
+        **os.environ,
+        "APP_MODE": "demo",
+        "PORT": str(port),
+        "HOST": "127.0.0.1",
+        "PUBLIC_BASE_URL": base,
+    }
+    server = subprocess.Popen(
+        [sys.executable, "-m", "a_stock_tracker.web"],
+        cwd=ROOT,
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    external: list[str] = []
+    try:
+        wait_for_server(base)
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch()
 
-                    def assert_fonts():
-                        manifest_families = [
-                            entry
-                            for manifest in font_manifests
-                            for entry in manifest
-                            if entry.get("family") in {"NotoSansSC", "Roboto"}
-                        ]
-                        if failed_fonts or not any(
-                            entry.get("family") == "NotoSansSC" for entry in manifest_families
-                        ):
-                            timings = page.evaluate("""() => performance.getEntriesByType('resource')
-                                .filter(r => /FontManifest|\\.(woff2|ttf|otf)$/.test(r.name))
-                                .map(r => ({url: r.name, start: r.startTime, end: r.responseEnd,
-                                    bytes: r.encodedBodySize, transferred: r.transferSize}))""")
-                            print(
-                                "Synthetic font diagnostics:",
-                                {
-                                    "manifest": manifest_families,
-                                    "console": list(font_messages),
-                                    "resources": timings,
-                                },
-                                flush=True,
-                            )
-                        assert any(
-                            entry.get("family") == "NotoSansSC" for entry in manifest_families
-                        ), "Browser did not receive the augmented startup font manifest"
-                        assert not failed_fonts, f"Font requests failed: {failed_fonts}"
+            def block(route):
+                external.append(route.request.url)
+                route.abort()
 
-                    context.on(
-                        "requestfailed",
-                        lambda request: (
-                            blocked.add(host)
-                            if (host := urlparse(request.url).hostname)
-                            not in ("127.0.0.1", "localhost")
-                            else None
-                        ),
-                    )
-                    if "--mobile-network" in sys.argv:
-                        cdp = context.new_cdp_session(page)
-                        cdp.send("Network.enable")
-                        cdp.send(
-                            "Network.emulateNetworkConditions",
-                            {
-                                "offline": False,
-                                "latency": 80,
-                                "downloadThroughput": 10_000_000 / 8,
-                                "uploadThroughput": 1_000_000 / 8,
-                            },
-                        )
-                    context.on(
-                        "response",
-                        lambda response: (
-                            fonts.append(response.status)
-                            if response.url.endswith("/fonts/NotoSansSC-Subset.woff2")
-                            else None
-                        ),
-                    )
-
-                    def record_failed_font(response):
-                        if response.status < 400 or not urlparse(response.url).path.endswith(
-                            (".woff2", ".ttf", ".otf")
-                        ):
-                            return
-                        source_page = response.frame.page
-                        failure = {
-                            "elapsed_ms": round((time.monotonic() - font_started) * 1000),
-                            "status": response.status,
-                            "font": response.url,
-                            "page": source_page.url,
-                            "last_click": getattr(source_page, "_font_step", "initial navigation"),
-                            "viewport": source_page.viewport_size,
-                            "case": getattr(source_page, "_font_case", "normal"),
-                        }
-                        failed_fonts.append(failure)
-                        print("Synthetic font failure:", failure, flush=True)
-
-                    context.on("response", record_failed_font)
-                    for width in (360, 390, 430):
-                        page.set_viewport_size({"width": width, "height": 844})
-                        timeout = 60000 if "--mobile-network" in sys.argv else 15000
-                        page.goto(base, timeout=timeout)
-                        page.wait_for_selector("flt-semantics-placeholder", timeout=timeout)
-                        page.evaluate('document.querySelector("flt-semantics-placeholder").click()')
-                        # Flet renders content only after page fonts load; allow the cold font.
-                        expect(
-                            page.get_by_role("heading", name="研究首页", exact=True)
-                        ).to_be_visible(timeout=timeout)
-                        expect(
-                            page.get_by_role("heading", name="最近研究", exact=True)
-                        ).to_be_visible()
-                        assert_layout(page, width)
-                        if width == 360:
-                            page.wait_for_function(
-                                """() => performance.getEntriesByType('resource')
-                                .some(r => r.name.endsWith('/fonts/NotoSansSC-Subset.woff2'))""",
-                                timeout=timeout,
-                            )
-                            metrics = page.evaluate("""() => {
-                                const resources = performance.getEntriesByType('resource')
-                                    .filter(r => r.name.startsWith(location.origin));
-                                return {
-                                    ready_ms: Math.round(performance.now()),
-                                    encoded_bytes: resources.reduce((n, r) => n + r.encodedBodySize, 0),
-                                    // Cache hits report a body size but cost no network bytes.
-                                    transfer_bytes: resources.reduce((n, r) => n + r.transferSize, 0),
-                                    decoded_bytes: resources.reduce((n, r) => n + r.decodedBodySize, 0),
-                                };
-                            }""")
-                            network = (
-                                "10Mbps/80ms" if "--mobile-network" in sys.argv else "unthrottled"
-                            )
-                            encoding = "identity" if "--uncompressed-assets" in sys.argv else "gzip"
-                            print(f"Synthetic cold entry ({network}, {encoding}): {metrics}")
-                            assert_fonts()
-                            if "--performance-only" in sys.argv:
-                                browser.close()
-                                return 0
-                        assert page.get_by_role("heading", level=1).count() == 1
-                        assert page.get_by_role("tablist").count() == 0
-                        assert (
-                            page.get_by_role(
-                                "button", name=re.compile("历史研究|兼容入口|我的研究|发现候选")
-                            ).count()
-                            == 0
-                        )
-                        expect(
-                            page.get_by_role("button", name="研究一家公司", exact=True)
-                        ).to_be_visible()
-                        expect(
-                            page.get_by_role("heading", name="价格纪律参考", exact=True)
-                        ).to_have_count(0)
-                        click_settled(
-                            page, page.get_by_role("button", name="研究一家公司", exact=True)
-                        )
-                        expect(page).to_have_url(base + "/analysis?mode=financial")
-                        expect(
-                            page.get_by_role("textbox", name="一家公司的股票代码")
-                        ).to_be_visible()
-                        expect(page.get_by_text("30 分钟", exact=False)).to_be_visible()
-                        expect(page.get_by_role("checkbox")).not_to_be_checked()
-                        expect(
-                            page.get_by_role("button", name="确认启动研究", exact=True)
-                        ).to_be_disabled()
-                        expect(
-                            page.get_by_role("heading", name="最近研究", exact=True)
-                        ).to_have_count(0)
-                        click_settled(
-                            page, page.get_by_role("button", name="返回研究首页", exact=True)
-                        )
-                        click_settled(
-                            page, page.get_by_role("button", name="历史发布批次", exact=True)
-                        )
-                        expect(page).to_have_url(base + "/published")
-                        click_settled(
-                            page, page.get_by_role("button", name="返回研究首页", exact=True)
-                        )
-                        expect(page).to_have_url(base + "/")
-                        click_settled(
-                            page, page.get_by_role("button", name="历史发布批次", exact=True)
-                        )
-
-                        click_settled(
-                            page,
-                            page.get_by_role("button", name="查看价格参考 · 演示公司", exact=True),
-                        )
-                        expect(page.get_by_text("观察线与失效线", exact=True)).to_be_visible()
-                        assert_layout(page, width)
-                        expect(page.get_by_text(re.compile("MA20.*MA60"))).to_be_visible()
-                        page.mouse.move(width / 2, 200)
-                        page.mouse.wheel(0, -5000)
-                        click_settled(page, page.get_by_role("button", name="账户", exact=True))
-                        click_settled(page, page.get_by_role("button", name="账户", exact=True))
-                        expect(page.get_by_text("当前模式: demo")).to_be_visible()
-                        click_settled(
-                            page, page.get_by_role("button", name="返回上一页", exact=True)
-                        )
-                        expect(page).to_have_url(base + "/opportunity/600001.SH")
-                        click_settled(
-                            page, page.get_by_role("button", name="返回价格参考", exact=True)
-                        )
-                        expect(page).to_have_url(base + "/published")
-                        page.mouse.move(width / 2, 200)
-                        page.mouse.wheel(0, -5000)
-                        click_settled(page, page.get_by_role("button", name="账户", exact=True))
-                        click_settled(page, page.get_by_role("button", name="退出登录", exact=True))
-                        expect(page.get_by_text("仅本地合成演示")).to_be_visible()
-                        click_settled(page, page.get_by_role("button", name="进入演示", exact=True))
-                        expect(
-                            page.get_by_role("heading", name="研究首页", exact=True)
-                        ).to_be_visible()
-                        click_settled(
-                            page, page.get_by_role("button", name="从初筛找公司", exact=True)
-                        )
-                        expect(
-                            page.get_by_role("heading", name="从初筛找公司", exact=True)
-                        ).to_be_visible()
-                        start = page.get_by_role("button", name="确认启动研究", exact=True)
-                        expect(page.get_by_text("初筛门槛：0＜PB≤3", exact=False)).to_be_visible()
-                        expect(
-                            page.get_by_text("总市值≥50亿元，不设上限", exact=False)
-                        ).to_be_visible()
-                        expect(start).to_be_disabled()
-                        click_settled(page, page.get_by_role("checkbox"))
-                        expect(start).to_be_enabled()
-                        click_settled(page, start)
-                        expect(
-                            page.get_by_role("heading", name="选择公司研究财报", exact=True)
-                        ).to_be_visible(timeout=10000)
-                        expect(page.get_by_text("仅筛后同业排名", exact=False)).to_be_visible()
-                        click_settled(
-                            page, page.get_by_role("button", name="筛选依据与用量", exact=True)
-                        )
-                        expect(page.get_by_text("冻结门槛：0＜PB≤3", exact=False)).to_be_visible()
-                        assert_layout(page, width)
-                        click_settled(
-                            page,
-                            page.get_by_role(
-                                "button", name="继续未覆盖初筛（核对预算）", exact=True
-                            ),
-                        )
-                        continuation = page.get_by_role(
-                            "button", name="确认新增预算并继续初筛", exact=True
-                        )
-                        expect(continuation).to_be_disabled()
-                        expect(page.get_by_text("上限：21 次数据请求", exact=False)).to_be_visible()
-                        assert_layout(page, width)
-                        click_settled(page, page.get_by_role("checkbox"))
-                        click_settled(page, continuation)
-                        expect(
-                            page.get_by_role("heading", name="选择公司研究财报", exact=True)
-                        ).to_be_visible(timeout=10000)
-                        screen_url = page.url
-                        search = page.get_by_role("textbox", name="按代码、名称或行业筛选")
-                        click_settled(page, search)
-                        search.press("ControlOrMeta+A")
-                        # Target the editable field rather than whichever canvas control has focus.
-                        search.press_sequentially("600004")
-                        expect(search).to_have_value("600004")
-                        expect(
-                            page.get_by_role("heading", name="无资料示例 · 600004.SH", exact=True)
-                        ).to_be_visible()
-                        expect(
-                            page.get_by_role("heading", name="演示公司 · 600001.SH", exact=True)
-                        ).to_have_count(0)
-                        click_settled(page, search)
-                        search.press("ControlOrMeta+A")
-                        search.press_sequentially("合成银行")
-                        expect(search).to_have_value("合成银行")
-                        expect(
-                            page.get_by_role("heading", name="演示公司 · 600001.SH", exact=True)
-                        ).to_be_visible()
-                        click_settled(
-                            page,
-                            page.get_by_role("button", name="查看价格纪律参考", exact=True).first,
-                        )
-                        page.get_by_role("textbox", name=re.compile("股票代码")).focus()
-                        expect(
-                            page.get_by_role("textbox", name=re.compile("股票代码"))
-                        ).to_have_value("600001.SH")
-                        expect(page.get_by_text("不调用模型", exact=False)).to_be_visible()
-                        expect(
-                            page.get_by_text("输出 token 与费用无硬上限", exact=False)
-                        ).to_have_count(0)
-                        assert_layout(page, width)
-                        start = page.get_by_role("button", name="确认启动研究", exact=True)
-                        expect(start).to_be_disabled()
-                        case_file.write_text(json.dumps("quote_changed"))
-                        click_settled(page, page.get_by_role("checkbox"))
-                        click_settled(page, start)
-                        expect(
-                            page.get_by_text("报价或模型已变化，已刷新报价", exact=False)
-                        ).to_be_visible()
-                        expect(
-                            page.get_by_role("textbox", name=re.compile("股票代码"))
-                        ).to_have_value("600001.SH")
-                        expect(page.get_by_role("checkbox")).not_to_be_checked()
-                        expect(start).to_be_disabled()
-                        click_settled(page, page.get_by_role("checkbox"))
-                        click_settled(page, start)
-                        expect(
-                            page.get_by_role("heading", name="价格纪律参考", exact=True)
-                        ).to_be_visible(timeout=10000)
-                        click_settled(
-                            page,
-                            page.get_by_role("button", name="查看价格参考 · 演示公司", exact=True),
-                        )
-                        expect(
-                            page.get_by_role("heading", name="量价事实", exact=True)
-                        ).to_be_visible()
-                        assert_layout(page, width)
-                        click_settled(
-                            page, page.get_by_role("button", name="返回价格参考", exact=True)
-                        )
-                        expect(
-                            page.get_by_role("heading", name="价格纪律参考", exact=True)
-                        ).to_be_visible()
-                        click_settled(
-                            page, page.get_by_role("button", name="返回来源初筛", exact=True)
-                        )
-                        expect(page).to_have_url(screen_url)
-                        click_settled(
-                            page,
-                            page.get_by_role("button", name="研究这家公司财报", exact=True).first,
-                        )
-                        page.get_by_role("textbox", name=re.compile("股票代码")).focus()
-                        expect(
-                            page.get_by_role("textbox", name=re.compile("股票代码"))
-                        ).to_have_value("600001.SH")
-                        expect(
-                            page.get_by_text("输出 token 与费用无硬上限", exact=False)
-                        ).to_be_visible()
-                        assert_layout(page, width)
-                        start = page.get_by_role("button", name="确认启动研究", exact=True)
-                        expect(start).to_be_disabled()
-                        click_settled(page, page.get_by_role("checkbox"))
-                        click_settled(page, start)
-                        expect(
-                            page.get_by_text(re.compile("合成财报报告 · 非真实研究结果"))
-                        ).to_be_visible(timeout=10000)
-                        expect(
-                            page.get_by_role("heading", name="最强反证", exact=True)
-                        ).to_be_visible()
-                        assert_layout(page, width)
-                        financial_url = page.url
-                        click_settled(
-                            page, page.get_by_role("button", name="核对本公司价格参考", exact=True)
-                        )
-                        expect(page).to_have_url(base + "/analysis?mode=swing&code=600001.SH")
-                        # Flutter exposes the editing value after this field receives focus,
-                        # as with the candidate-to-research prefill checks above.
-                        page.get_by_role("textbox", name=re.compile("股票代码")).focus()
-                        expect(
-                            page.get_by_role("textbox", name=re.compile("股票代码"))
-                        ).to_have_value("600001.SH")
-                        expect(page.get_by_role("checkbox")).not_to_be_checked()
-                        expect(
-                            page.get_by_role("button", name="确认启动研究", exact=True)
-                        ).to_be_disabled()
-                        page.go_back()
-                        expect(page).to_have_url(financial_url)
-
-                        click_settled(page, page.get_by_role("button", name="依据", exact=True))
-                        expect(
-                            page.get_by_text("冻结证券范围背景统计", exact=False)
-                        ).to_be_visible()
-                        expect(
-                            page.get_by_text("已归类或扫描：5；尚未扫描：1", exact=False)
-                        ).to_be_visible()
-                        assert_layout(page, width)
-                        click_settled(page, page.get_by_role("button", name=re.compile(r"^\[F1\]")))
-                        expect(
-                            page.get_by_text(
-                                "来源 URL：https://example.invalid/synthetic.pdf", exact=True
-                            )
-                        ).to_be_visible()
-                        assert page.get_by_role("link").count() == 0
-                        click_settled(
-                            page, page.get_by_role("button", name="返回来源初筛", exact=True)
-                        )
-                        expect(page).to_have_url(screen_url)
-                        if width == 360:
-                            for code, label in (
-                                ("600002", "收盘至失效线距离 28.57%"),
-                                ("600003", "资料核验失败"),
-                                ("600004", "没有价格参考"),
-                            ):
-                                search = page.get_by_role("textbox", name="按代码、名称或行业筛选")
-                                click_settled(page, search)
-                                search.press("ControlOrMeta+A")
-                                search.press_sequentially(code)
-                                expect(search).to_have_value(code)
-                                expect(
-                                    page.get_by_role("button", name="查看价格纪律参考", exact=True)
-                                ).to_have_count(1)
-                                click_settled(
-                                    page,
-                                    page.get_by_role("button", name="查看价格纪律参考", exact=True),
-                                )
-                                click_settled(page, page.get_by_role("checkbox"))
-                                click_settled(
-                                    page,
-                                    page.get_by_role("button", name="确认启动研究", exact=True),
-                                )
-                                expect(page.get_by_text(label, exact=False)).to_be_visible(
-                                    timeout=10000
-                                )
-                                assert (
-                                    page.get_by_text("后续完整交易日收盘在", exact=False).count()
-                                    == 0
-                                )
-                                assert_layout(page, width)
-                                click_settled(
-                                    page,
-                                    page.get_by_role("button", name="返回来源初筛", exact=True),
-                                )
-                        page.goto(base)
-                        page.wait_for_selector("flt-semantics-placeholder")
-                        page.evaluate('document.querySelector("flt-semantics-placeholder").click()')
-                        expect(
-                            page.get_by_role("heading", name="最近研究", exact=True)
-                        ).to_be_visible()
-                        expect(page.get_by_text("续跑 1 次", exact=False).first).to_be_visible()
-                    for case, label in (
-                        ("long", "合成的超长公司名称"),
-                        ("expired", "已过期 · 仅供历史核查"),
-                        ("gap", "资料核验失败"),
-                        ("excluded", "未入选"),
-                        ("zero", "没有价格参考"),
-                        ("missing", "还没有价格参考批次"),
-                        ("error", "报告暂时不可读"),
-                    ):
-                        case_file.write_text(json.dumps(case))
-                        # Isolate Flet reconnect state from the previous case's detail route.
-                        page.close()
-                        page = context.new_page()
-                        page._font_case = case
-                        page.set_viewport_size({"width": 360, "height": 844})
-                        page.goto(base + "/published")
-                        page.wait_for_selector("flt-semantics-placeholder")
-                        page.evaluate('document.querySelector("flt-semantics-placeholder").click()')
-                        expect(page).to_have_url(base + "/published")
-                        expect(
-                            page.get_by_role("heading", name=re.compile(re.escape(label)))
-                        ).to_be_visible()
-                        assert_layout(page, 360)
-                        if case in ("expired", "gap", "excluded", "zero"):
-                            expect(
-                                page.get_by_role("heading", name="本批次没有价格参考。", exact=True)
-                            ).to_be_visible()
-                            expect(
-                                page.get_by_text("本批次没有价格参考，请核查资料缺口。", exact=True)
-                            ).to_have_count(0)
-                        if case == "excluded":
-                            expect(page.get_by_text("旧规则距离超过8%", exact=True)).to_be_visible()
-                            expect(
-                                page.get_by_text("旧规则距离 9.26%", exact=False)
-                            ).to_be_visible()
-                        if case in ("expired", "gap", "zero", "missing"):
-                            assert page.get_by_text(re.compile("11\\.23|11\\.00")).count() == 0
-                        if case == "expired":
-                            click_settled(
-                                page, page.get_by_role("button", name=re.compile("^查看价格参考"))
-                            )
-                            assert page.get_by_text(re.compile("11\\.23|11\\.00")).count() == 0
-                            click_settled(
-                                page,
-                                page.get_by_role("button", name="重新核对价格参考", exact=True),
-                            )
-                            expect(page).to_have_url(base + "/analysis?mode=swing&code=600001.SH")
-                            page.get_by_role("textbox", name=re.compile("股票代码")).focus()
-                            expect(
-                                page.get_by_role("textbox", name=re.compile("股票代码"))
-                            ).to_have_value("600001.SH")
-                            expect(page.get_by_role("checkbox")).not_to_be_checked()
-                            expect(
-                                page.get_by_role("button", name="确认启动研究", exact=True)
-                            ).to_be_disabled()
-                        elif case == "error":
-                            click_settled(
-                                page, page.get_by_role("button", name="重新读取", exact=True)
-                            )
-                            expect(
-                                page.get_by_role("heading", name="演示公司", exact=True)
-                            ).to_be_visible()
-                    case_file.write_text(json.dumps("normal"))
-                    page.goto(base + "/opportunity/600002.SH")
-                    page.wait_for_selector("flt-semantics-placeholder")
-                    page.evaluate('document.querySelector("flt-semantics-placeholder").click()')
-                    expect(
-                        page.get_by_role(
-                            "heading", name="本批次没有该公司的价格参考记录。", exact=True
-                        )
-                    ).to_be_visible()
-                    assert page.get_by_text(re.compile("11\\.23|11\\.00")).count() == 0
-                    page.set_viewport_size({"width": 1280, "height": 900})
-                    page.goto(base + "/published")
-                    page.wait_for_selector("flt-semantics-placeholder")
-                    page.evaluate('document.querySelector("flt-semantics-placeholder").click()')
-                    expect(
-                        page.get_by_role("heading", name="价格纪律参考", exact=True)
-                    ).to_be_visible()
-                    assert_layout(page, 1280)
-                    page.get_by_role("button", name="查看价格参考 · 演示公司", exact=True).focus()
-                    page.keyboard.press("Enter")
-                    expect(
-                        page.get_by_role("heading", name="观察线与失效线", exact=True)
-                    ).to_be_visible()
-                    page.goto(financial_url)
-                    page.wait_for_selector("flt-semantics-placeholder")
-                    page.evaluate('document.querySelector("flt-semantics-placeholder").click()')
-                    expect(page.get_by_role("heading", name="财报研究", exact=True)).to_be_visible()
-                    assert_layout(page, 1280)
-                    page.get_by_role("button", name=re.compile(r"^\[F1\]")).focus()
-                    page.keyboard.press("Enter")
-                    expect(
-                        page.get_by_text(
-                            "来源 URL：https://example.invalid/synthetic.pdf", exact=True
-                        )
-                    ).to_be_visible()
-                    assert 200 in fonts, "local Chinese font was not loaded"
-                    assert_fonts()
-                    browser.close()
-                    print(f"External requests blocked: {sorted(blocked)}")
-                print(
-                    "Browser passed: 360/390/430px + desktop, list/detail/evidence/settings/logout; long text, expired/gap/empty/missing/read-retry states; keyboard detail/evidence; retired URLs return 404. Synthetic, not a real device."
-                )
-                return 0
-            except Exception:
-                print(
-                    "Synthetic server diagnostics:", (Path(tmp) / "server.log").read_text()[-5000:]
-                )
-                raise
-            finally:
-                server.terminate()
-                server.wait(timeout=15)
+            metrics = cold_start(browser, base)
+            print(f"Synthetic cold entry (10Mbps/80ms, cache disabled): {metrics}")
+            for width in WIDTHS:
+                context = browser.new_context(viewport={"width": width, "height": 900})
+                context.route(lambda url: not url.startswith(base), block)
+                main_flow(context.new_page(), base, width)
+                context.close()
+            expiry_and_polling(browser, base)
+            browser.close()
+    finally:
+        server.terminate()
+        try:
+            server.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            server.kill()
+    assert not external, f"external requests attempted: {external}"
+    print(
+        "Browser passed: 360/390/430px + desktop; home, consent refusal, financial report, "
+        "citations by keyboard, price reference prefill and detail, screen ranking filter, "
+        "gap/empty/read-failure states, logout isolation, retired URLs 404, local expiry "
+        "hiding, polling stop on 401 and reload on change. Synthetic, not a real device."
+    )
+    return 0
 
 
 if __name__ == "__main__":

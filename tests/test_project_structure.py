@@ -24,6 +24,11 @@ def test_package_has_no_legacy_entrypoints_or_path_injection():
         "manage.py",
         "maintenance.py",
         "calendar.py",
+        "app.py",
+        "research_view.py",
+        "opportunity_view.py",
+        "web_assets.py",
+        "oauth_completion.py",
     ):
         assert not (package / retired).exists()
     for path in package.rglob("*.py"):
@@ -56,9 +61,14 @@ def test_web_has_no_private_workspace_dependency():
     assert "manage" not in (ROOT / "docker/entrypoint.sh").read_text()
     assert "worker" not in (ROOT / "Makefile").read_text()
     assert "tests/fixtures" not in (ROOT / "Dockerfile").read_text()
-    tree = ast.parse((ROOT / "a_stock_tracker/app.py").read_text())
-    imports = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
-    assert not imports & {"sqlite3", "a_stock_tracker.workspace", "a_stock_tracker.services"}
+    for path in (ROOT / "a_stock_tracker/web").glob("*.py"):
+        tree = ast.parse(path.read_text())
+        imports = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
+        imports |= {a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
+        assert not imports & {"sqlite3", "a_stock_tracker.workspace", "a_stock_tracker.services"}
+    # Flet and its bundled font are retired with the server-rendered web.
+    assert "flet" not in (ROOT / "pyproject.toml").read_text()
+    assert not (ROOT / "assets").exists()
 
 
 def test_private_runtime_files_and_keys_are_not_tracked():

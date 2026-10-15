@@ -52,7 +52,6 @@ def test_deploy_success_and_config_rollback(tmp_path: Path, research_bridge: boo
         "COMMAND_LOG": str(log),
         "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
         "RESEARCH_WEB_ENABLED": "1" if research_bridge else "0",
-        "PUBLICATION_WEB_ENABLED": "0",
     }
 
     def run() -> subprocess.CompletedProcess[str]:
@@ -103,7 +102,6 @@ def deployment(tmp_path: Path):
         "docker-compose.yml",
         ".research-web.env",
         "docker-compose.research.yml",
-        "docker-compose.opportunities.yml",
     ):
         (root / name).write_text("# synthetic configuration\n")
     (root / "docker/nginx-stock.conf").write_text("new config\n")
@@ -130,12 +128,7 @@ case "$1" in
       *RestartCount*) echo 'true 0' ;;
       *)
         [ "${INSPECT_FAIL:-0}" = 1 ] && exit 1
-        case "$3" in
-          *OPPORTUNITY_ROOT*)
-            case "${EXISTING:-none}" in publication|both) echo publication ;; esac ;;
-          *)
-            case "${EXISTING:-none}" in bridge|both) echo bridge ;; esac ;;
-        esac
+        case "${EXISTING:-none}" in bridge|both) echo bridge ;; esac
         ;;
     esac
     exit 0 ;;
@@ -253,16 +246,11 @@ def test_probe_failure_does_not_reload_or_report_success(deployment):
 
 @pytest.mark.parametrize("dotenv", [False, True])
 @pytest.mark.parametrize("research", ["0", "1"])
-@pytest.mark.parametrize("publication", ["0", "1"])
-def test_all_feature_combinations_preserve_environment(deployment, research, publication, dotenv):
+def test_all_feature_combinations_preserve_environment(deployment, research, dotenv):
     root, _, log, run = deployment
     if dotenv:
-        (root / ".env").write_text("OPPORTUNITY_HOST_ROOT=/synthetic/published\n")
-    result = run(
-        RESEARCH_WEB_ENABLED=research,
-        PUBLICATION_WEB_ENABLED=publication,
-        **({} if dotenv else {"OPPORTUNITY_HOST_ROOT": "/synthetic/published"}),
-    )
+        (root / ".env").write_text("SYNTHETIC_SETTING=1\n")
+    result = run(RESEARCH_WEB_ENABLED=research)
     assert result.returncode == 0, result.stderr
     calls = log.read_text().splitlines()
     compose = [line for line in calls if line.startswith("docker compose ")]
@@ -275,66 +263,11 @@ def test_all_feature_combinations_preserve_environment(deployment, research, pub
     expected += " -f docker-compose.yml"
     if research == "1":
         expected += " -f docker-compose.research.yml"
-    if publication == "1":
-        expected += " -f docker-compose.opportunities.yml"
     assert compose == [
         expected + " config --quiet",
         expected + " build web",
         expected + " up -d --no-deps --force-recreate --remove-orphans web",
     ]
-
-
-@pytest.mark.parametrize("existing", ["publication", "both"])
-@pytest.mark.parametrize("research", ["0", "1"])
-def test_omitted_publication_refuses_to_remove_existing_mount(deployment, existing, research):
-    _, site, log, run = deployment
-    result = run(EXISTING=existing, RESEARCH_WEB_ENABLED=research)
-    assert result.returncode != 0
-    assert "PUBLICATION_WEB_ENABLED=1 ./deploy.sh" in result.stderr
-    assert "PUBLICATION_WEB_ENABLED=0 ./deploy.sh" in result.stderr
-    assert site.read_text() == "old config\n"
-    calls = log.read_text()
-    assert "ps -a --filter name=^/a-stock-tracker-web$" in calls
-    assert "OPPORTUNITY_ROOT" in calls and ".Mounts" in calls
-    assert "compose" not in calls and "make" not in calls and "exec" not in calls
-
-
-@pytest.mark.parametrize("flag", ["", "true", "false", "2", "01", " 1"])
-def test_invalid_publication_flag_fails_before_docker_commands(deployment, flag):
-    _, site, log, run = deployment
-    result = run(PUBLICATION_WEB_ENABLED=flag)
-    assert result.returncode != 0
-    assert "PUBLICATION_WEB_ENABLED must be exactly 0" in result.stderr
-    assert log.read_text() == ""
-    assert site.read_text() == "old config\n"
-
-
-@pytest.mark.parametrize("flag", ["0", "1"])
-def test_explicit_publication_choice_overrides_existing_mount(deployment, flag):
-    _, _, log, run = deployment
-    result = run(PUBLICATION_WEB_ENABLED=flag, EXISTING="publication")
-    assert result.returncode == 0, result.stderr
-    assert ("-f docker-compose.opportunities.yml" in log.read_text()) is (flag == "1")
-    assert "a_stock_tracker.research_client" not in log.read_text()
-
-
-def test_enabled_publication_missing_configuration_stops_before_changes(deployment):
-    root, site, log, run = deployment
-    (root / "docker-compose.opportunities.yml").unlink()
-    result = run(PUBLICATION_WEB_ENABLED="1")
-    assert result.returncode != 0
-    assert "Missing docker-compose.opportunities.yml" in result.stderr
-    assert log.read_text() == ""
-    assert site.read_text() == "old config\n"
-
-
-@pytest.mark.parametrize("failure", ["PS_FAIL", "INSPECT_FAIL"])
-def test_unknown_existing_publication_state_fails_closed(deployment, failure):
-    _, site, log, run = deployment
-    result = run(RESEARCH_WEB_ENABLED="0", EXISTING="publication", **{failure: "1"})
-    assert result.returncode != 0
-    assert "compose" not in log.read_text()
-    assert site.read_text() == "old config\n"
 
 
 def test_arbitrary_compose_arguments_are_rejected(deployment):
@@ -344,3 +277,20 @@ def test_arbitrary_compose_arguments_are_rejected(deployment):
     assert "accepts no arguments" in result.stderr
     assert log.read_text() == ""
     assert site.read_text() == "old config\n"
+
+
+@pytest.mark.parametrize("flag", ["0", "1", ""])
+def test_retired_publication_flag_fails_before_docker_commands(deployment, flag):
+    _, site, log, run = deployment
+    result = run(PUBLICATION_WEB_ENABLED=flag, RESEARCH_WEB_ENABLED="0")
+    assert result.returncode != 0
+    assert "PUBLICATION_WEB_ENABLED was retired" in result.stderr
+    assert log.read_text() == ""
+    assert site.read_text() == "old config\n"
+
+
+def test_existing_publication_mount_is_not_carried_forward(deployment):
+    _, _, log, run = deployment
+    result = run(RESEARCH_WEB_ENABLED="0", EXISTING="publication")
+    assert result.returncode == 0, result.stderr
+    assert "opportunities" not in log.read_text()
