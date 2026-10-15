@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="same-origin">
+<title>{% block title %}个股研究{% endblock %} · a-stock-tracker</title>
+<link rel="stylesheet" href="{{ static('app.css') }}">
+<script src="{{ static('app.js') }}" defer></script>
+</head>
+<body>
+<header class="shell">
+  <a class="brand" href="/">个股研究</a>
+  {% if demo %}<span class="badge">合成演示 · 非真实研究</span>{% endif %}
+  {% if actor %}<a class="nav" href="/settings">账户</a>{% endif %}
+</header>
+<main id="main">
+{% block main %}{% endblock %}
+</main>
+</body>
+</html>

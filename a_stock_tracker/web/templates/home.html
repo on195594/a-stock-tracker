@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% from "_macros.html" import levels_block %}
+{% block title %}研究首页{% endblock %}
+{% block main %}
+<h1>研究首页</h1>
+<nav class="entries" aria-label="开始研究">
+  <a class="btn" href="/analysis?mode=financial">研究一家公司</a>
+  <a class="link" href="/analysis?mode=screen">从初筛找公司</a>
+  <a class="link" href="/analysis?mode=swing">独立价格参考（不调用模型）</a>
+</nav>
+{% if not connected %}
+<section class="notice caution">
+  <h2 class="notice-title">研究服务尚未连接</h2>
+  <p>管理员需一次配置独立研究服务；可进入选股与研究查看连接说明。</p>
+</section>
+{% elif unreachable %}
+<section class="notice caution">
+  <h2 class="notice-title">研究服务暂时无法连接</h2>
+  <p>请稍后刷新；未启动新请求。</p>
+</section>
+{% else %}
+  {% if not configured %}
+  <section class="notice caution">
+    <h2 class="notice-title">研究服务尚未配置</h2>
+    <p>管理员需连接行情或模型服务，完成后再确认研究。</p>
+  </section>
+  {% endif %}
+  {% for group in groups %}
+  <section class="recent" aria-labelledby="g{{ loop.index }}">
+    <h2 id="g{{ loop.index }}">{{ group.title }}</h2>
+    {% for item in group["items"] %}
+    <article class="notice">
+      <h3 class="notice-title">{{ item.title }}</h3>
+      <p class="muted">{{ item.meta }}</p>
+      {% for summary in item.summaries %}
+      <div class="summary">
+        <p class="lines">{{ summary.text }}</p>
+        {% if summary.levels %}{{ levels_block(summary.levels, summary.expires) }}{% endif %}
+      </div>
+      {% endfor %}
+      <a class="link" href="/analysis/{{ item.id }}" aria-label="{{ '查看进度' if item.active else '查看结果' }} · {{ item.title }}">{{ '查看进度' if item.active else '查看结果' }}</a>
+    </article>
+    {% else %}
+    <p>{{ group.empty }}</p>
+    {% endfor %}
+  </section>
+  {% endfor %}
+  <a class="link" href="/">刷新研究进度</a>
+{% endif %}
+{% endblock %}

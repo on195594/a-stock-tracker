@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}初筛排名{% endblock %}
+{% block main %}
+<a class="link" href="/analysis/{{ run_id }}">返回初筛结果</a>
+<h1>{{ industry or '完整初筛排名' }}</h1>
+<form method="get" action="/analysis/{{ run_id }}/ranking" class="search">
+  <label class="field"><span>行业</span>
+    <select name="industry">
+      <option value="">全部行业</option>
+      {% for name in page.industries %}<option value="{{ name }}"{% if name == industry %} selected{% endif %}>{{ name }}</option>{% endfor %}
+    </select>
+  </label>
+  <label class="field"><span>代码或名称</span><input name="query" value="{{ query }}" maxlength="20" autocomplete="off"></label>
+  <button class="btn quiet" type="submit">筛选</button>
+</form>
+<p class="muted">共 {{ page.total }} 家 · 第 {{ page.offset + 1 if page.total else 0 }}–{{ page.offset + rows|length }} 家 · 资料截至 {{ page.coverage.data_date }}</p>
+{% for row in rows %}
+<article class="candidate">
+  <h2 class="name">{{ row.name }} · {{ row.code }}</h2>
+  <p class="muted">{{ row.industry }}</p>
+  <p class="lines">{{ row.facts }}</p>
+  <a class="btn" href="/analysis?mode=financial&amp;code={{ row.code }}&amp;from={{ run_id }}">研究这家公司财报</a>
+  <a class="link" href="/analysis?mode=swing&amp;code={{ row.code }}&amp;from={{ run_id }}">查看价格纪律参考</a>
+</article>
+{% else %}
+<p>没有匹配的公司或行业，请调整筛选。</p>
+{% endfor %}
+{% if page.next_cursor %}
+<a class="btn quiet" href="/analysis/{{ run_id }}/ranking?cursor={{ page.next_cursor|urlencode }}{% if industry %}&amp;industry={{ industry|urlencode }}{% endif %}{% if query %}&amp;query={{ query|urlencode }}{% endif %}">下一页</a>
+{% endif %}
+<p class="muted">组内按 PB 与 ROE 平均名次排序，不是跨行业总榜；财报资格不代表投资价值。</p>
+{% endblock %}

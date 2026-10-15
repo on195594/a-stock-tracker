@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}继续确认原研究请求{% endblock %}
+{% block main %}
+<h1>继续确认原研究请求</h1>
+<p class="feedback" role="alert">原请求受理状态尚未确认。{{ feedback }}</p>
+<section class="notice caution">
+  <h2 class="notice-title">核对也可能启动原请求</h2>
+  <p>将按同一编号重新提交已确认的范围与预算。如果服务此前没有收到请求，此操作会启动研究并可能产生费用；已受理则返回原结果，不创建另一轮请求。</p>
+  <p class="lines">{{ costs|join('\n') }}</p>
+</section>
+<details>
+  <summary>请求详情</summary>
+  <p class="lines">请求编号：{{ payload.id }}
+预算原值：{{ payload.quote.seconds }} 秒</p>
+</details>
+<a class="link" href="/analysis/{{ payload.id }}">先查看原请求是否已受理</a>
+<form method="post" action="/analysis/reconcile">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <input type="hidden" name="payload" value="{{ payload_json }}">
+  <input type="hidden" name="codes" value="{{ code_text }}">
+  <button class="btn" type="submit">继续确认原请求</button>
+</form>
+<a class="link" href="/">返回研究首页</a>
+{% endblock %}

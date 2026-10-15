@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% from "_macros.html" import board_view %}
+{% block title %}价格参考 {{ code }}{% endblock %}
+{% block main %}
+<a class="link" href="/analysis/{{ run.id }}">返回价格参考</a>
+{{ board_view(board, rows, run.id, code) }}
+{% endblock %}

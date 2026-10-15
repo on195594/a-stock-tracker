@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block main %}
+<a class="link" href="/">返回研究首页</a>
+<h1>{{ title }}</h1>
+<details class="modes">
+  <summary>更换研究类型</summary>
+  <ul>
+    {% for key, info in modes.items() %}
+    <li><a class="link" href="/analysis?mode={{ key }}{% if code_text and key != 'screen' %}&amp;code={{ code_text|urlencode }}{% endif %}"{% if key == mode %} aria-current="page"{% endif %}>{{ info.title }}</a></li>
+    {% endfor %}
+  </ul>
+</details>
+<form method="post" action="/analysis" class="request">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <input type="hidden" name="id" value="{{ request_id }}">
+  <input type="hidden" name="mode" value="{{ mode }}">
+  <input type="hidden" name="quote" value="{{ quote_json }}">
+  {% if source %}<input type="hidden" name="from" value="{{ source }}">{% endif %}
+  {% if resume_from %}<input type="hidden" name="resume_from" value="{{ resume_from }}">{% endif %}
+  {% if mode != 'screen' %}
+  <label class="field">
+    <span>{{ '一家公司的股票代码' if mode == 'financial' else '股票代码（1–5 家）' }}</span>
+    {% if mode == 'financial' %}
+    <input name="codes" value="{{ code_text }}" maxlength="80" inputmode="text" autocomplete="off" placeholder="例如 600519 或 600519.SH" required>
+    {% else %}
+    <textarea name="codes" maxlength="80" rows="2" autocomplete="off" placeholder="例如 600519, 600900；最多 5 家" required>{{ code_text }}</textarea>
+    {% endif %}
+  </label>
+  {% endif %}
+  <section class="notice">
+    <h2 class="notice-title">边界与成本</h2>
+    <p>打开页面不产生费用，确认启动后才执行。</p>
+    <p class="lines">{{ lines|join('\n') }}</p>
+    {% if continuation %}<p class="lines">{{ continuation }}</p>{% endif %}
+  </section>
+  <label class="check">
+    <input type="checkbox" name="confirmed"{% if not available %} disabled{% endif %}>
+    <span>{{ confirm_label }}</span>
+  </label>
+  <button class="btn" type="submit"{% if not available %} disabled{% endif %}>{{ submit_label }}</button>
+  {% if feedback %}<p class="feedback" role="alert">{{ feedback }}</p>{% endif %}
+</form>
+{% endblock %}

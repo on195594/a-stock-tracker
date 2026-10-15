@@ -309,6 +309,40 @@ class DemoResearchClient:
             )
         )
 
+    def ranking(
+        self,
+        run_id: str,
+        industry: str | None = None,
+        query: str | None = None,
+        cursor: str | None = None,
+    ) -> RankingPage:
+        # Same paging contract as the receiver, over the synthetic screen groups.
+        if run_id not in self.runs or "groups" not in self.runs[run_id]["result"]:
+            raise ResearchRejected("该研究没有可分页的初筛排名")
+        result = self.runs[run_id]["result"]
+        rows = [
+            {"industry": group["industry"], **rank}
+            for group in result["groups"]
+            if not industry or industry == group["industry"]
+            for rank in group["ranking"]
+            if not query or query in rank["code"] or query in rank["name"]
+        ]
+        offset = int(cursor) if cursor and cursor.isdigit() else 0
+        end = offset + 50
+        return RankingPage.model_validate(
+            {
+                "run_id": run_id,
+                "total": len(rows),
+                "offset": offset,
+                "items": rows[offset:end],
+                "next_cursor": str(end) if end < len(rows) else None,
+                "is_last": end >= len(rows),
+                "prefilter": result["coverage"].get("prefilter"),
+                "coverage": result["coverage"],
+                "industries": [group["industry"] for group in result["groups"]],
+            }
+        )
+
 
 def configured_client() -> ResearchClient | None:
     url, token = os.getenv("RESEARCH_SERVICE_URL", ""), os.getenv("RESEARCH_SERVICE_TOKEN", "")

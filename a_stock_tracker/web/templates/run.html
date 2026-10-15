@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% from "_macros.html" import report_block, board_view %}
+{% block title %}研究 {{ run.id[:8] }}{% endblock %}
+{% block main %}
+{% set source = (run.request or {}).get('from') %}
+{% if source %}<a class="link" href="/analysis/{{ source }}">返回来源初筛</a>{% endif %}
+<a class="link" href="/analysis">返回选股与研究</a>
+{% set caution = run.status in ['failed', 'interrupted', 'partial'] %}
+{% macro execution() -%}
+<section class="notice{{ ' caution' if caution }}">
+  <h2 class="notice-title">执行：{{ label }}</h2>
+  <p class="lines">{{ run.message }}</p>
+</section>
+{%- endmacro %}
+{% if not screen %}{{ execution() }}{% endif %}
+
+{% if run.status == 'running' %}
+<section class="progress" data-poll="/analysis/{{ run.id }}/state.json" data-status="running" aria-live="polite">
+  <h1>后台研究中</h1>
+  <p class="pulse" aria-hidden="true"></p>
+  <p>覆盖：正在核查；结果：尚未生成。页面会自动刷新；退出页面不取消已确认请求。</p>
+</section>
+{% elif not result %}
+<h1>没有可用研究结果</h1>
+<p>覆盖：未完成不可继续。下一步：核对失败原因；新一轮研究须再次明确确认成本。</p>
+<p class="lines">{{ usage }}</p>
+{% elif board %}
+<p>覆盖：{{ '已尽但有资料缺口；补齐后再研究。' if rows|selectattr('status', 'equalto', 'gap')|list else '完整。' }}</p>
+{{ board_view(board, rows, run.id) }}
+{% elif mode == 'financial' %}
+<h1>财报研究</h1>
+{% if not reports %}
+<section class="notice caution">
+  <h2 class="notice-title">没有可读的公司财报报告</h2>
+  <p>本轮未生成可读报告；请核对停止原因和资料缺口。价格参考独立核查，不构成对财报判断的支持。</p>
+</section>
+<p class="lines">{{ usage }}</p>
+{% for code in (run.request or {}).get('codes', []) %}
+<a class="link" href="/analysis?mode=swing&amp;code={{ code }}">核对本公司价格参考</a>
+{% endfor %}
+{% endif %}
+{% for r in reports %}
+{{ report_block(r) }}
+{% if not r.readable %}<p>财报未形成可读结论；价格参考独立核查，不构成对财报判断的支持。</p>{% endif %}
+<a class="link" href="/analysis?mode=swing&amp;code={{ r.code }}">核对本公司价格参考</a>
+{% endfor %}
+{% elif screen %}
+<h1>选择公司研究财报</h1>
+<section class="notice{{ ' caution' if screen.caution }}">
+  <h2 class="notice-title">可研究 {{ screen.candidate_count }} 家 · 资料截至 {{ screen.data_date }}</h2>
+  <p>尚未覆盖 {{ screen.pending }} 家 · 资料缺口 {{ screen.gap }} 家。仅筛后同业排名，不是完整行业前三；财报资格不代表投资价值。</p>
+</section>
+{% if screen.truncated %}<section class="notice caution"><h2 class="notice-title">排名展示已截断</h2><p>{{ screen.truncated }}</p></section>{% endif %}
+{% if screen.groups %}
+<form method="get" action="/analysis/{{ run.id }}/ranking" class="search">
+  <label class="field"><span>按代码或名称筛选</span><input name="query" maxlength="20" autocomplete="off"></label>
+  <button class="btn quiet" type="submit">筛选完整排名</button>
+</form>
+{% for group in screen.groups %}
+<section class="group">
+  <h2>{{ group.industry }}</h2>
+  <p class="muted">{{ group.ranking|length }} 家 · 比较年度：{{ group.periods|join('、') }}</p>
+  {% for row in group.ranking[:3] %}{% set row = p.ranking_row(row) %}
+  <article class="candidate">
+    <h3 class="name">{{ row.name }} · {{ row.code }}</h3>
+    <p class="lines">{{ row.facts }}</p>
+    <a class="btn" href="/analysis?mode=financial&amp;code={{ row.code }}&amp;from={{ run.id }}">研究这家公司财报</a>
+    <a class="link" href="/analysis?mode=swing&amp;code={{ row.code }}&amp;from={{ run.id }}">查看价格纪律参考</a>
+  </article>
+  {% endfor %}
+  {% if group.ranking|length > 3 %}
+  <a class="link" href="/analysis/{{ run.id }}/ranking?industry={{ group.industry|urlencode }}">显示本组全部 {{ group.ranking|length }} 家</a>
+  {% endif %}
+</section>
+{% endfor %}
+{% else %}
+<p>尚未形成可比较候选；行业覆盖不足、资料缺口或资格未通过均可能导致零结果。</p>
+{% endif %}
+{% if run.continued_by %}
+<a class="link" href="/analysis/{{ run.continued_by }}">已继续 → 打开最新进度</a>
+{% elif screen.pending %}
+<section class="notice caution">
+  <h2 class="notice-title">初筛尚未完成</h2>
+  <p>下一步：确认新增预算后继续未覆盖部分。规则变化或冻结资料超过七天时，须回入口确认新批次。</p>
+</section>
+{% if run.can_continue %}<a class="{{ 'link' if screen.groups else 'btn' }}" href="/analysis?mode=screen&amp;resume_from={{ run.id }}">继续未覆盖初筛（核对预算）</a>{% endif %}
+{% else %}
+<p>下一步：选择公司研究财报或查看价格纪律参考；资料缺口不会自动重试。</p>
+{% endif %}
+{% endif %}
+
+<details class="basis">
+  <summary>{{ '筛选依据与用量' if screen else '依据' }}</summary>
+  <p class="lines">{{ basis }}</p>
+  {% if screen %}
+  {{ execution() }}
+  <p class="lines">{{ screen.covered }}</p>
+  <p>{{ screen.outcome }}</p>
+  {% for group in screen.groups %}
+  <p class="lines">{{ group.industry }} · 分项名次
+{% for row in group.ranking %}{{ row.name }} · {{ row.code }}：PB 名次 {{ row.get('pb_rank', '未记录') }}；ROE 名次 {{ row.get('roe_rank', '未记录') }}
+{% endfor %}</p>
+  {% endfor %}
+  <p class="lines">{{ screen.usage }}</p>
+  <p>组内按 PB 与 ROE 平均名次排序，不是跨行业总榜。仅筛后池资料完整的行业形成候选；这是筛后同业排名，不是完整行业前三。财报资格不代表投资价值。</p>
+  <p class="lines">{{ screen.basis }}</p>
+  {% if screen.prefilter %}<p class="lines">{{ screen.prefilter }}</p>{% endif %}
+  {% elif reports %}
+  <p class="lines">{{ usage }}</p>
+  {% endif %}
+</details>
+{% endblock %}

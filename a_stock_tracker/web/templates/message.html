@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block main %}
+<h1>{{ title }}</h1>
+<section class="notice caution">
+  <p class="lines">{{ detail }}</p>
+</section>
+<div class="actions">
+  {% if retry %}<a class="btn" href="{{ retry }}">重新查看</a>{% endif %}
+  {% if back %}<a class="link" href="{{ back }}">返回{{ '研究首页' if back == '/' else '上一步' }}</a>{% endif %}
+</div>
+{% endblock %}

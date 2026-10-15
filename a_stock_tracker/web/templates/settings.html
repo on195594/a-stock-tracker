@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}账户{% endblock %}
+{% block main %}
+<a class="link" href="/">返回研究首页</a>
+<h1>账户</h1>
+<section class="notice">
+  <p>{{ '合成演示会话' if demo else '已登录：GitHub 用户 ' ~ actor.user_id }}</p>
+  <p class="muted">会话有效至（上海）：{{ expires or '未记录' }}</p>
+</section>
+<p>退出后，本浏览器的会话立即失效；已受理的后台研究不会因此取消。</p>
+<form method="post" action="/logout">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <button class="btn" type="submit">退出登录</button>
+</form>
+{% endblock %}

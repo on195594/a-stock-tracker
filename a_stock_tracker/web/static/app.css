@@ -1,0 +1,463 @@
+/* 窗口索引 — tokens mirror DESIGN.md; system Chinese font stack, no web fonts. */
+:root {
+  --background: #e6eff0;
+  --surface: #f6fafa;
+  --band: #dbe8eb;
+  --ink: #203536;
+  --muted: #486168;
+  --accent: #006975;
+  --line: #bccdcf;
+  --caution: #805500;
+  --caution-bg: #fff1d6;
+  --error: #99362b;
+  --radius: 6px;
+  --related: 8px;
+  --group: 16px;
+  --inset: 20px;
+  --section: 24px;
+  --footer: 32px;
+  --font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
+    "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+  color-scheme: light;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--ink);
+  font: 400 16px/1.55 var(--font);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+  caret-color: var(--accent);
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--surface);
+}
+
+.shell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--related) var(--group);
+  max-width: 760px;
+  margin: 0 auto;
+  padding: var(--related) var(--inset);
+  border-bottom: 1px solid var(--line);
+}
+
+.brand {
+  font-weight: 700;
+  color: var(--ink);
+  text-decoration: none;
+  min-height: 48px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.badge {
+  font-size: 14px;
+  color: var(--caution);
+  background: var(--caution-bg);
+  padding: 2px var(--related);
+  border-radius: var(--radius);
+}
+
+.shell .nav {
+  margin-left: auto;
+}
+
+main {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: var(--section) var(--inset) var(--footer);
+  display: flex;
+  flex-direction: column;
+  gap: var(--group);
+}
+
+h1,
+h2,
+h3 {
+  margin: var(--related) 0 0;
+  line-height: 1.3;
+  font-weight: 700;
+  text-wrap: balance;
+}
+
+h1 {
+  font-size: 30px;
+}
+
+h2 {
+  font-size: 22px;
+  margin-top: var(--section);
+}
+
+h3 {
+  font-size: 18px;
+}
+
+p,
+blockquote,
+ul {
+  margin: 0;
+}
+
+.lines {
+  white-space: pre-line;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.error {
+  color: var(--error);
+}
+
+.caution-text {
+  color: var(--caution);
+  font-weight: 700;
+}
+
+.accent-text {
+  color: var(--accent);
+  font-size: 14px;
+}
+
+a {
+  color: var(--accent);
+  text-underline-offset: 3px;
+}
+
+/* Actions: 48px touch targets, flat, small radius. */
+.btn,
+.link,
+.nav {
+  display: inline-flex;
+  align-items: center;
+  min-height: 48px;
+  border-radius: var(--radius);
+  font: inherit;
+  text-decoration: none;
+}
+
+.btn {
+  justify-content: center;
+  padding: 12px var(--group);
+  background: var(--accent);
+  color: var(--surface);
+  border: 0;
+  cursor: pointer;
+  font-weight: 700;
+  align-self: flex-start;
+}
+
+.btn:hover {
+  background: #00545e;
+}
+
+.btn.quiet {
+  background: var(--band);
+  color: var(--accent);
+}
+
+.btn.quiet:hover {
+  background: #c9dde1;
+}
+
+.btn:disabled {
+  background: var(--band);
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.link,
+.nav {
+  padding: 12px;
+  margin-left: -12px;
+  color: var(--accent);
+  align-self: flex-start;
+}
+
+.link:hover,
+.nav:hover {
+  text-decoration: underline;
+}
+
+:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.entries {
+  display: flex;
+  flex-direction: column;
+  gap: var(--related);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--related) var(--group);
+}
+
+/* Bands: flat colour fields with a 3px left marker, never shadows. */
+.notice {
+  background: var(--band);
+  border-left: 3px solid var(--accent);
+  padding: var(--group);
+  display: flex;
+  flex-direction: column;
+  gap: var(--related);
+}
+
+.notice.caution {
+  background: var(--caution-bg);
+  border-left-color: var(--caution);
+}
+
+.notice-title {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.3;
+  margin: 0;
+}
+
+.notice.caution .notice-title {
+  color: var(--caution);
+}
+
+.notice h3 {
+  font-size: 16px;
+  margin-top: var(--related);
+}
+
+.recent,
+.group,
+.report {
+  display: flex;
+  flex-direction: column;
+  gap: var(--group);
+}
+
+.candidate {
+  display: flex;
+  flex-direction: column;
+  gap: var(--related);
+  padding-top: var(--group);
+  border-top: 1px solid var(--line);
+}
+
+.candidate .name {
+  font-size: 22px;
+  margin: 0;
+}
+
+.candidate .code {
+  margin-top: -4px;
+}
+
+.summary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.conditions,
+.conditions-panel {
+  background: var(--surface);
+  border-left: 3px solid var(--accent);
+  padding: var(--inset);
+  display: flex;
+  flex-direction: column;
+  gap: var(--related);
+}
+
+.limits {
+  border-top: 1px solid var(--line);
+  padding-top: var(--group);
+  color: var(--muted);
+}
+
+/* Forms: native controls, body-size labels. */
+.request,
+.search {
+  display: flex;
+  flex-direction: column;
+  gap: var(--group);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--related);
+  font-weight: 700;
+}
+
+input[type="text"],
+input:not([type]),
+textarea,
+select {
+  font: 400 16px/1.4 var(--font);
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  min-height: 48px;
+  width: 100%;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--muted);
+}
+
+.check {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  min-height: 48px;
+  padding: 12px 0;
+  cursor: pointer;
+}
+
+.check input {
+  width: 24px;
+  height: 24px;
+  margin: 0;
+  flex: none;
+  accent-color: var(--accent);
+}
+
+.feedback {
+  color: var(--error);
+}
+
+/* Disclosure: the signature interaction for basis, citations and model identity. */
+details {
+  background: var(--surface);
+  padding: 0 var(--group);
+}
+
+details[open] {
+  padding-bottom: var(--group);
+}
+
+details > :not(summary) + :not(summary) {
+  margin-top: var(--related);
+}
+
+summary {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  list-style: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+summary::-webkit-details-marker {
+  display: none;
+}
+
+/* Drawn chevron: points right when closed, down when open. */
+summary::before {
+  content: "";
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 150ms ease-out;
+}
+
+details[open] > summary::before {
+  transform: rotate(45deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  summary::before {
+    transition: none;
+  }
+}
+
+.modes ul {
+  list-style: none;
+  padding: 0;
+}
+
+.modes a[aria-current="page"] {
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.fact {
+  border-top: 1px solid var(--line);
+  padding-top: var(--related);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+blockquote {
+  border-left: 3px solid var(--line);
+  padding-left: 12px;
+  user-select: text;
+}
+
+.url {
+  word-break: break-all;
+}
+
+.progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--related);
+}
+
+.pulse {
+  height: 4px;
+  width: 100%;
+  background: linear-gradient(90deg, var(--band) 0%, var(--accent) 50%, var(--band) 100%);
+  background-size: 200% 100%;
+  animation: pulse 1.6s linear infinite;
+}
+
+@keyframes pulse {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulse {
+    animation: none;
+    background: var(--accent);
+  }
+}

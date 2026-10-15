@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}登录{% endblock %}
+{% block main %}
+<h1>登录</h1>
+<p>本站只供所有者本人使用。登录后可发起研究、查看进度与报告。</p>
+{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+{% if demo %}
+<form method="post" action="/login/demo">
+  <button class="btn" type="submit">进入合成演示</button>
+</form>
+<p class="muted">合成演示只在本机运行，不调用真实接口，不产生费用。</p>
+{% else %}
+<a class="btn" href="/oauth/start">使用 GitHub 登录</a>
+{% endif %}
+{% endblock %}
