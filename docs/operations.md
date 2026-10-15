@@ -23,11 +23,11 @@
 
 | 组件 | 运行形态 | 网络与通信 | 凭据与配置文件 | 隔离边界与安全要求 |
 |---|---|---|---|---|
-| **Web 界面** (`web`) | Docker 容器 (`a-stock-tracker-web`) | 监听宿主 `127.0.0.1:8550`；仅接受已验证的 Host 与 WS Origin | `.web.env`（GitHub OAuth、白名单用户 ID） | 无行情/模型凭据，不打开业务数据库，只读挂载价格参考目录；缺配置拒绝启动 |
+| **Web 界面** (`web`) | Docker 容器 (`a-stock-tracker-web`) | 监听宿主 `127.0.0.1:8550`；只接受已验证的 Host，POST 校验 CSRF 与同源 | `.web.env`（GitHub OAuth、白名单用户 ID） | 服务端 HTML，无行情/模型凭据，不打开业务数据库；缺配置拒绝启动 |
 | **研究网关桥**（可选） | Docker 挂载 (`docker-compose.research.yml`) | 仅挂载专用私有 Unix socket 目录（只读） | `.research-web.env`（socket 路径与共享令牌） | 仅转发经用户显式确认的研究请求，无法读取宿主模型/行情凭据 |
 | **宿主研究服务** (`research_service`) | 宿主 systemd 用户单元 | 私有 Unix socket（目录权限 `0700`），仅监听本地 | `.research.env`（TuShare Token、模型运行时凭据、私有根目录） | 持有凭据执行有界子进程，绝不进入 Docker 镜像或挂载给 Web；单次执行互斥 |
 | **本机 MCP 服务**（可选） | 本机客户端按需拉起的 stdio 进程 (`mcp_server`) | 经私有 Unix socket 调用接收器，不监听端口 | `.research-mcp.env`（socket 路径与独立的 MCP 令牌，`0600`） | 无行情/模型凭据，不读研究根目录；只读工具无法触达提交接口；接收器按令牌识别渠道并单独限额 |
-| **反向代理** (`nginx`) | 现有 `nginx` 容器 | 暴露 80/443，反向代理至 `127.0.0.1:8550` | `docker/nginx-stock.conf`（HTTPS 证书、静态资产 gzip/ETag） | 阻断非法 Host 与外部直接访问容器端口 |
+| **反向代理** (`nginx`) | 现有 `nginx` 容器 | 暴露 80/443，反向代理至 `127.0.0.1:8550` | `docker/nginx-stock.conf`（HTTPS 证书、与应用一致的 CSP、早期数据写请求 425） | 阻断非法 Host 与外部直接访问容器端口 |
 
 所有环境变量模板见 `.web.env.example`、`.research-web.env.example`、`.research.env.example` 和 `.research-mcp.env.example`。敏感配置文件权限须设为 `0600`，宿主数据根目录设为 `0700`，禁止提交至 Git。
 
@@ -45,16 +45,11 @@ RESEARCH_WEB_ENABLED=1 ./deploy.sh
 # 明确停用已有 Web 研究桥（不停止宿主接收器、不删除研究数据）
 RESEARCH_WEB_ENABLED=0 ./deploy.sh
 
-# 保留或启用已发布价格参考（OPPORTUNITY_HOST_ROOT 在导出环境或 .env 中配置）
-PUBLICATION_WEB_ENABLED=1 ./deploy.sh
-
-# 同时启用研究桥和已发布价格参考
-RESEARCH_WEB_ENABLED=1 PUBLICATION_WEB_ENABLED=1 ./deploy.sh
 ```
 
 开关只接受 `0` 或 `1`，空值及其他写法均拒绝。省略开关时，脚本检查现有 Web（含已停止容器）的研究环境项与桥挂载；发现已有桥则在构建、重建或修改 Nginx 前中止，要求显式选择 `1` 保留或 `0` 停用。Docker 状态读取失败也中止；不会仅因 `.research-web.env` 存在就自动启用。
 
-`PUBLICATION_WEB_ENABLED` 同样只接受 `0/1`；省略时若已有 `OPPORTUNITY_ROOT` 或发布目录挂载，脚本在修改前拒绝继续，要求明确保留或停用。`1` 加载固定的 `docker-compose.opportunities.yml`，`0` 只停用 Web 发布入口、不删除宿主文件。两项开关独立；已同时启用两项时必须明确两项选择。脚本按 `.env`、`.research-web.env` 顺序读取插值环境（后者仅研究桥启用时加载），导出的变量优先；不接受额外参数或任意 Compose 叠加文件。
+已发布价格参考（`/published`）随 Flet 退役：`PUBLICATION_WEB_ENABLED` 一经设置即在任何 Docker 命令前报错，重建后旧发布挂载不再保留；宿主上的发布目录原样保留、不删除。脚本按 `.env`、`.research-web.env` 顺序读取插值环境（后者仅研究桥启用时加载），导出的变量优先；不接受额外参数或任意 Compose 叠加文件。
 
 **部署脚本自动执行的防护步骤：**
 1. **配置预检**：检查 `.web.env`、`docker-compose.yml`、Nginx 源配置及目标站点；若启用桥接则核验 `.research-web.env` 与 `docker-compose.research.yml`；
@@ -198,13 +193,13 @@ export AUTOMATION_HERMES_RUNTIME=/absolute/path/to/installed/hermes-agent
 
 ## 重构切换与回滚要求
 
-**待实施运行方案，不改变当前部署命令或授权边界。** 技术决定见[重构方案](architecture.md#web-与-agent-接口重构方案)，验收见 [README](../README.md#重构验收门槛)。不运行 `deploy.sh` 做开发验证。
+**重构阶段 1–4 已在代码中完成，以下切换须逐项授权。** 进度见[架构](architecture.md#重构状态)，验收见 [README](../README.md#重构验收门槛)。不运行 `deploy.sh` 做开发验证。
 
 ### 接收器升级与回滚
 
-重构阶段 2、3 会改动接收器（修复管线、渠道令牌、每日限额、按代码查报告、排名分页），提交协议不变。每次升级单独授权：
+阶段 2、3 改动了接收器（修复管线、渠道令牌、每日限额、按代码查报告、排名分页），提交协议不变。宿主接收器以 `~/a-stock-tracker` 为工作目录并从中启动批处理：开发与 `uv sync` 只在独立 git worktree 中进行。每次升级单独授权：
 
-1. 先在合成接收器上验证新接收器与现网 Flet Web 兼容：报价、提交、状态与结果读取不受影响。
+1. 先在合成接收器上验证新接收器与现网 Web 兼容：报价、提交、状态与结果读取不受影响。
 2. 只在 `get_service_info` 显示无任务执行时更新宿主代码并重启接收器；批处理子进程从宿主工作区启动，任务运行中不改动工作区。
 3. 记录接收器当前提交作为回滚点；新增的 `.research-mcp.env` 为 0600，并已被 Git 与 Docker 构建排除。
 4. 新写入的元数据只做增量字段（如 `channel`），回滚到上一提交后旧接收器照常读取；不改写、不删除研究目录，不重跑任务。
@@ -213,32 +208,20 @@ export AUTOMATION_HERMES_RUNTIME=/absolute/path/to/installed/hermes-agent
 
 - 候选只在 loopback、临时目录与合成接收器上验证，不连接生产桥，不同时开放两个可提交入口。
 - 镜像只安装声明的直接依赖；构建后核对 FastAPI、模板与 OAuth 所需模块可导入。移除 Flet 后重新同步宿主环境属于接收器变更，按上一节执行。
-- Nginx（`docker/nginx-stock.conf`）：
-  - OAuth 回调路径保持 `/oauth_callback` 不变；私有响应不进共享缓存。
-  - 把 Flutter 时期的宽松 CSP（含 `unsafe-inline`、`unsafe-eval`、`ws:`）替换为与应用一致的 `default-src 'self'` 策略。
-  - 现配置开启了 `ssl_early_data on` 却没有防重放拦截：对非 GET/HEAD 请求在 `$ssl_early_data` 为 `1` 时返回 425，并向上游传递 `Early-Data` 头。
-  - 切换后再删除 WebSocket 升级配置。
+- Nginx（`docker/nginx-stock.conf`，已在仓库中更新，随部署生效）：`/oauth_callback` 路径不变；CSP 与应用一致（无 `unsafe-inline`、`unsafe-eval`、`ws:`）；`Referrer-Policy: same-origin`（保证同源 POST 携带真实 Origin）；`$ssl_early_data` 为 `1` 的非 GET/HEAD 请求返回 425，并向上游传递 `Early-Data`；`/api/session` 位置已删除。共享 `nginxconfig.io/proxy.conf` 中的 WebSocket 升级头切换后再删。
 - 记录现网镜像标识作为回滚点；回滚资料不进 Git、镜像或公开资源。
 
 ### 授权切换
 
 1. 交付差异、离线验收结果与未验证项，取得本次部署的明确授权。
-2. 只替换 Web 容器与对应 Nginx 配置，并按 `deploy.sh` 现有开关停用发布覆盖（`PUBLICATION_WEB_ENABLED`）；接收器不随之重启（除非另行授权），已受理任务继续执行。宿主上的已发布价格参考目录原样保留。
-3. 旧 Flet 会话失效，本人重新登录；按原编号确认旧任务与报告可读。不为验收发起新的收费任务。
+2. 只替换 Web 容器与对应 Nginx 配置（`RESEARCH_WEB_ENABLED=1 ./deploy.sh`，不再设置已退役的 `PUBLICATION_WEB_ENABLED`）；接收器不随之重启（除非另行授权），已受理任务继续执行。宿主上的已发布价格参考目录原样保留。
+3. 旧会话全部失效，本人重新登录；按原编号确认旧任务与报告可读。不为验收发起新的收费任务。
 4. 验证 OAuth、退出与 `no-store` 之后再开放提交。
 
 ### 回滚
 
-出现权限泄漏、幂等退化、旧任务不可读或主流程失败时，停止提交并提出回滚（须授权）：恢复上一镜像与代理配置，不改写研究目录，不重跑任务。Web 不新增持久状态，回滚不涉及数据迁移。稳定后清理旧镜像、容器须另行批准；Flet 专属代码与资源已在阶段 4 分支内删除，本页运行命令随切换更新。
+出现权限泄漏、幂等退化、旧任务不可读或主流程失败时，停止提交并提出回滚（须授权）：恢复上一镜像与代理配置，不改写研究目录，不重跑任务。Web 不新增持久状态，回滚不涉及数据迁移。稳定后清理旧镜像、容器须另行批准；Flet 专属代码与资源已在阶段 4 删除，回滚只恢复上一镜像，不恢复源码。
 
 ### 离线性能对照
 
-`make test-mobile` 同时打印合成首屏资源的编码/解码字节数、实际网络传输字节数（`transfer_bytes`，缓存命中计 0）及可操作页面与中文字体加载完成的耗时。每次新建浏览器上下文只测冷启动；外部域名在 DNS 层屏蔽以保留同页 HTTP 缓存（预加载字体由此复用），不代表线上或真机指标。以下命令仅运行首屏测量，不能替代完整点击回归：
-
-```bash
-# 同一台空闲机器顺序运行：模拟 10Mbps 下行、1Mbps 上行、80ms 延迟
-.venv/bin/python -m tests.test_mobile --performance-only --mobile-network --uncompressed-assets
-.venv/bin/python -m tests.test_mobile --performance-only --mobile-network
-```
-
-`--uncompressed-assets` 只在合成测试服务中关闭公开资源压缩；省略 `--mobile-network` 可核对 loopback 下的 CPU/压缩开销。比较时同时看传输量和耗时，不把单次结果当成稳定性能预算；真实网络、并发负载和生产反向代理仍需另行验收。
+`make test-mobile` 在 10 Mbps 下行 / 1 Mbps 上行 / 80 ms 延迟、禁用缓存的新浏览器上下文中，测量已认证首页可操作的耗时与传输字节，超过 2 秒即失败；外部域名请求一律拦截并计为失败。这是合成冒烟，不代表线上或真机指标；真实网络、并发负载和生产反向代理仍需另行验收。

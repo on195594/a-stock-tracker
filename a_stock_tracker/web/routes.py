@@ -10,6 +10,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -272,8 +273,20 @@ def create_app(
                 "研究服务暂时无法连接",
                 "后台研究服务未运行或无法连接。请联系管理员核对宿主服务状态；已受理的后台研究继续受预算约束。",
                 503,
-                retry=str(request.url.path)
-                + ("?" + request.url.query if request.url.query else ""),
+                # Rebuild a GET form URL from the inputs, even when reached from a POST.
+                retry="/analysis?"
+                + urlencode(
+                    {
+                        key: value
+                        for key, value in {
+                            "mode": mode,
+                            "code": code_text,
+                            "from": source,
+                            "resume_from": resume_from,
+                        }.items()
+                        if value
+                    }
+                ),
                 back="/",
             )
         if resume_source:

@@ -27,16 +27,6 @@ MOBILE_NETWORK = {
     "downloadThroughput": 10_000_000 / 8,
     "uploadThroughput": 1_000_000 / 8,
 }
-FUTURE_CLOCK = """
-(() => {
-  const Real = Date, offset = 30 * 864e5;
-  class Shifted extends Real {
-    constructor(...args) { args.length ? super(...args) : super(Real.now() + offset); }
-    static now() { return Real.now() + offset; }
-  }
-  Date = Shifted;
-})();
-"""
 
 
 def free_port() -> int:
@@ -93,6 +83,10 @@ def main_flow(page: Page, base: str, width: int) -> None:
     assert_layout(page, width, "form")
     page.click("button[type=submit]")
     expect(page.locator(".feedback")).to_contain_text("请先勾选确认")
+    # Editing the scope after confirming withdraws the confirmation.
+    page.check("input[name=confirmed]")
+    page.fill("input[name=codes]", "600000")
+    expect(page.locator("input[name=confirmed]")).not_to_be_checked()
     page.fill("input[name=codes]", "600519")
     confirm_and_submit(page)
     expect(page.locator("h1")).to_have_text("财报研究")
@@ -149,20 +143,32 @@ def main_flow(page: Page, base: str, width: int) -> None:
 
 
 def expiry_and_polling(browser, base: str) -> None:
-    # Expiry: the same open page hides levels once the Shanghai date passes the expiry.
+    # Expiry: an already open page hides levels once the Shanghai date passes the expiry,
+    # through the page's own timer, without navigating or reloading.
     context = browser.new_context(viewport={"width": 390, "height": 844})
     page = context.new_page()
     page.goto(base + "/login")
     page.click("text=进入合成演示")
     page.goto(base + "/analysis?mode=swing&code=600001")
     confirm_and_submit(page)
-    detail = page.url + "/600001.SH"
-    page.goto(detail)
-    expect(page.locator("[data-levels]").first).to_be_visible()
-    context.add_init_script(FUTURE_CLOCK)
-    page.goto(detail)
-    expect(page.locator("[data-levels]").first).to_be_hidden()
-    expect(page.locator("[data-expired]").first).to_be_visible()
+    run = page.url
+    session = context.storage_state()
+    for url in (base + "/", run, run + "/600001.SH"):
+        # A fresh fake clock per page, starting from real time.
+        viewer = browser.new_context(viewport={"width": 390, "height": 844}, storage_state=session)
+        opened = viewer.new_page()
+        opened.clock.install()
+        opened.goto(url)
+        levels = opened.locator("[data-levels]").first
+        expect(levels).to_be_visible()
+        # Jump the wall clock past expiry, then let the page's 60 s interval run once.
+        opened.clock.set_system_time(time.time() + 31 * 86400)
+        opened.clock.fast_forward(61_000)
+        assert opened.url == url, "expiry check must not navigate"
+        expect(levels).to_be_hidden()
+        expect(opened.locator("[data-expired]").first).to_be_visible()
+        expect(opened.locator("main")).not_to_contain_text("失效线 11.00", use_inner_text=True)
+        viewer.close()
 
     # Polling: a revoked session stops and clears progress; a status change reloads.
     run = "/analysis/" + "e" * 32

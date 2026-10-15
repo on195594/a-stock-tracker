@@ -65,8 +65,20 @@ function poll(region) {
   window.setTimeout(tick, 3000);
 }
 
+// A confirmation covers the scope that was on screen; editing the codes withdraws it.
+function guardConsent(form) {
+  const consent = form.querySelector("input[name=confirmed]");
+  const codes = form.querySelector("[name=codes]");
+  if (consent && codes) {
+    codes.addEventListener("input", () => {
+      consent.checked = false;
+    });
+  }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   hideExpired();
+  for (const form of document.querySelectorAll("form.request")) guardConsent(form);
   window.setInterval(hideExpired, 60000);
   for (const region of document.querySelectorAll("[data-poll]")) poll(region);
 });

@@ -6,7 +6,7 @@
 
 web
 
-手机网页优先，也须在桌面浏览器可用。当前实现是 Flet Web；已确认按[重构方案](docs/architecture.md#web-与-agent-接口重构方案)迁移到服务端 HTML（原生表单、链接与 `<details>`，少量同源脚本），保留认证与结果只读边界。用户已明确要求研究从网页发起，日常使用不要求跑终端；MCP 供本机 AI Agent 与 Skill 复用同一接口，不替代网页主流程。
+手机网页优先，也须在桌面浏览器可用。实现为服务端 HTML（原生表单、链接与 `<details>`，一个同源脚本），保留认证与结果只读边界。用户已明确要求研究从网页发起，日常使用不要求跑终端；MCP 供本机 AI Agent 与 Skill 复用同一接口，不替代网页主流程。
 
 ## Users
 
@@ -29,8 +29,7 @@ web
 ## Evidence on Hand
 
 - `a_stock_tracker/opportunity_demo.py`：明确标记的合成示例，不是生产研究结果或收益证据。
-- `a_stock_tracker/opportunity_view.py` / `app.py`：现存只读列表、详情、账户与登录流程。
-- `assets/fonts/`：本地简体中文字体与许可，不依赖运行时字体 CDN。
+- `a_stock_tracker/web/templates/` 与 `web/presenters.py`：首页、研究请求、结果、价格参考、账户与登录页面；系统中文字体，不依赖运行时字体 CDN。
 - `tests/test_mobile.py`：模拟手机宽度的真实浏览器点击验证；不证明真实设备体验或投资效果。
 
 没有已授权用于此 UI 的真实研究批次、收益证明或商业背书，不能编造。
