@@ -826,8 +826,13 @@ class ResearchStore:
             if code not in (0, 2) or disk_bytes(directory) > MAX_RUN_BYTES:
                 raise ScreenError("Batch failed")
             result = self.result(directory, state["request"]["mode"])
+            counts = result.get("coverage", {}).get("counts", {})
             complete = code == 0 or (
-                state["request"]["mode"] == "screen" and result["coverage"]["status"] == "complete"
+                state["request"]["mode"] == "screen"
+                and (
+                    result["coverage"]["status"] == "complete"
+                    or (counts.get("pending", 0) == 0 and not result.get("failed_reports"))
+                )
             )
             state.pop("result", None)
             state["usage"] = result.get("usage")

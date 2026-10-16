@@ -78,7 +78,7 @@
     {% endfor %}
   </details>
   {% endif %}
-  {% if r.gaps %}
+  {% if r.gaps and r.gaps|length > 3 %}
   <details>
     <summary>全部缺口与范围（{{ r.gaps|length }} 条）</summary>
     {% for gap in r.gaps %}<p>{{ gap }}</p>{% endfor %}
@@ -156,7 +156,7 @@
     <p class="lines">{{ (row.facts or {}).get('distance', '实际距离：未记录') }}
 规则上限：8%
 依据日期：{{ row.as_of or '未记录' }}
-下一步：本次不满足旧规则，可返回初筛核查其他公司或另行确认财报研究。</p>
+下一步：未满足量价纪律条件，可返回初筛核查其他公司或另行确认财报研究。</p>
     {% else %}
     <p>下一步：核对并补齐资料后，再明确确认新的研究。</p>
     {% endif %}

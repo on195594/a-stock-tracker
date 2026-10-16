@@ -517,3 +517,40 @@ def test_placeholder_punctuation_is_normalised_not_structural(tmp_path, monkeypa
     assert_published(result, 5)
     assert result["report"]["analysis"]["valuation"] == {"text": "事实不足，未形成", "facts": []}
     assert result["quality"]["unformed"] == {"valuation": "model_marked_insufficient"}
+
+
+def test_citation_errors_allow_document_metadata_years(case):
+    report = fixed_report(case)
+    # The referenced document has period "2025-12-31" and announced "2026-04-18"
+    report["facts"][0]["claim"] = "2025年年度财务报告审计意见为有效事实。"
+    assert d.citation_errors(report, case[3]) == {}
+
+    # Invented financial amount disguised as a year number must still fail
+    report["facts"][0]["claim"] = "营业收入为2025万元。"
+    assert d.citation_errors(report, case[3]) == {"F1": "numeric_mismatch"}
+
+    # Even if the claim starts with a valid year, an invented amount sharing the year literal must fail
+    report["facts"][0]["claim"] = "2025年营业收入为2025万元。"
+    assert d.citation_errors(report, case[3]) == {"F1": "numeric_mismatch"}
+
+    # Date fragments from metadata like month/day (-12, -31) must not be authorized as amounts
+    report["facts"][0]["claim"] = "本期净利润为-12万元。"
+    assert d.citation_errors(report, case[3]) == {"F1": "numeric_mismatch"}
+
+    # Unauthorized years outside metadata must also fail
+    report["facts"][0]["claim"] = "2024年营业收入同比变化。"
+    assert d.citation_errors(report, case[3]) == {"F1": "numeric_mismatch"}
+
+
+def test_scoped_complete_preserved_with_omitted_pages(tmp_path, monkeypatch, case):
+    case[3]["omitted_pages"] = [10, 11]
+    a.save_state(
+        tmp_path / "evidence-600001.SH.json",
+        {"freeze": case[1]["freeze"], "packet": case[3]},
+    )
+    fake_model(monkeypatch, case)
+    result = run_case(tmp_path, case)
+    assert result["status"] == "scoped_complete"
+    assert result["evidence_review"] == "passed"
+    summary = d.report_summary_status(d.structured_report(result))
+    assert "有 2 页原文未纳入分析，结论范围受限" in summary

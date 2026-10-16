@@ -162,6 +162,22 @@ PRICE_FAILURE_REASONS = {
         "missing_sessions",
         "日线数量不足，须核查停牌、缺失交易日或数据覆盖。",
     ),
+    "Require 61 validated bars per series": (
+        "missing_sessions",
+        "日线有效K线不足61根，须核查近期停牌、新股上市或数据覆盖。",
+    ),
+    "Require 61 historical and 5 future sessions": (
+        "calendar_gap",
+        "交易日历区间不足，须核查交易日历数据覆盖。",
+    ),
+    "Invalid sessions": (
+        "calendar_mismatch",
+        "交易日历记录无效，须核查交易日历数据。",
+    ),
+    "Invalid session ordering": (
+        "calendar_mismatch",
+        "交易日历顺序异常，须核查交易日历数据。",
+    ),
     "Duplicate, stale or missing bars": (
         "session_mismatch",
         "日线日期重复、过旧或缺失，须核查交易日覆盖。",
@@ -184,6 +200,10 @@ PRICE_FAILURE_REASONS = {
         "issuer_scope",
         "证券身份不符合沪深主板上市范围；须核查证券资料。",
     ),
+    "Only Shanghai/Shenzhen main-board identifiers": (
+        "issuer_scope",
+        "证券代码不属于沪深主板支持范围，仅支持沪深主板个股。",
+    ),
     "Invalid issuer or known ST risk": (
         "issuer_scope",
         "证券名称无效或存在 ST/退市标记；须核查证券资料。",
@@ -191,7 +211,9 @@ PRICE_FAILURE_REASONS = {
     "Mismatched price security": ("price_identity", "日线证券代码与目标不一致；须核查来源。"),
 }
 
-PRICE_FAILURE_MESSAGES = dict(PRICE_FAILURE_REASONS.values()) | {
+PRICE_FAILURE_MESSAGES = {cat: msg for cat, msg in PRICE_FAILURE_REASONS.values()} | {
+    "missing_sessions": "日线数量不足，须核查停牌、缺失交易日或数据覆盖。",
+    "session_mismatch": "日线日期重复、过旧或缺失，须核查交易日覆盖。",
     "invalid_number": "价格或成交量数值无效、非正或非有限值；须核查停牌与来源字段。",
     "issuer_scope": "证券身份不符合支持范围或存在 ST/退市标记；须核查证券资料。",
     "validation_failed": "资料或结构核验未通过；须核查本阶段来源与字段完整性。",
@@ -199,8 +221,13 @@ PRICE_FAILURE_MESSAGES = dict(PRICE_FAILURE_REASONS.values()) | {
 
 
 def price_diagnostic(stage: str, exc: Exception) -> dict[str, str]:
-    category = PRICE_FAILURE_REASONS.get(str(exc), ("validation_failed", ""))[0]
-    return {"stage": stage, "category": category, "message": PRICE_FAILURE_MESSAGES[category]}
+    if match := PRICE_FAILURE_REASONS.get(str(exc)):
+        return {"stage": stage, "category": match[0], "message": match[1]}
+    return {
+        "stage": stage,
+        "category": "validation_failed",
+        "message": PRICE_FAILURE_MESSAGES["validation_failed"],
+    }
 
 
 def collected_diagnostic(value: Any) -> dict[str, str]:
@@ -348,7 +375,7 @@ def publish(directory: Path, packets: list[dict[str, Any]], budget: Budget) -> d
                 "code": packet.get("code", "unknown"),
                 "name": packet.get("name", ""),
                 "status": "gap",
-                "reasons": [diagnostic["message"] + "不发布价格参考。"],
+                "reasons": [diagnostic["message"].rstrip("。") + "；不发布价格参考。"],
                 "diagnostic": diagnostic,
             }
         results.append(row)
