@@ -119,6 +119,14 @@ def test_recorded_omitted_page_counts_remain_visible(count):
     assert p.report_view(report)["omitted"] == f"{count} 页"
 
 
+def test_report_view_collapses_all_none_clues_but_keeps_recorded_ones():
+    base = {"code": "002236.SZ", "status": "incomplete", "error": "失败"}
+    assert p.report_view(base | {"clues": {"industry": None, "pb": None}})["clues"] == {}
+    assert p.report_view(base | {"clues": None})["clues"] == {}
+    clues = {"industry": "银行", "pb": None}
+    assert p.report_view(base | {"clues": clues})["clues"] == clues
+
+
 def test_failed_review_exposes_diagnostic_but_never_the_draft():
     report = demo_report("600001.SH") | {
         "evidence_review": "failed",

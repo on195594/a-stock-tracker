@@ -25,7 +25,7 @@
 <p>覆盖：未完成不可继续。下一步：核对失败原因；新一轮研究须再次明确确认成本。</p>
 <p class="lines">{{ usage }}</p>
 {% elif board %}
-<p>覆盖：{{ '已尽但有资料缺口；补齐后再研究。' if rows|selectattr('status', 'equalto', 'gap')|list else '完整。' }}</p>
+<p>覆盖：{{ '已尽但有资料缺口；补齐后再研究。' if rows|selectattr('status', 'equalto', 'gap')|first is defined else '完整。' }}</p>
 {{ board_view(board, rows, run.id) }}
 {% elif mode == 'financial' %}
 <h1>财报研究</h1>

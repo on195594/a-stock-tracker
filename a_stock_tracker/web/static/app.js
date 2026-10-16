@@ -1,27 +1,35 @@
 // The only script: progress polling and local price expiry. Pages work without it.
 "use strict";
 
+const SHANGHAI_FORMATTER = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Shanghai",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
 // Shanghai calendar date as YYYY-MM-DD, independent of the device time zone.
 function shanghaiToday() {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Shanghai",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date());
+  const parts = SHANGHAI_FORMATTER.formatToParts(new Date());
   const get = (type) => parts.find((part) => part.type === type).value;
   return `${get("year")}-${get("month")}-${get("day")}`;
 }
 
 // A price is valid through its expiry date; from the next Shanghai day hide every level.
+// Returns true while some block with an expiry date has not expired yet.
 function hideExpired() {
   const today = shanghaiToday();
+  let pending = false;
   for (const block of document.querySelectorAll("[data-expires]")) {
-    if (block.dataset.expires && today > block.dataset.expires) {
+    if (!block.dataset.expires) continue;
+    if (today > block.dataset.expires) {
       for (const level of block.querySelectorAll("[data-levels]")) level.hidden = true;
       for (const note of block.querySelectorAll("[data-expired]")) note.hidden = false;
+    } else {
+      pending = true;
     }
   }
+  return pending;
 }
 
 function poll(region) {
@@ -77,8 +85,12 @@ function guardConsent(form) {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-  hideExpired();
+  const pending = hideExpired();
   for (const form of document.querySelectorAll("form.request")) guardConsent(form);
-  window.setInterval(hideExpired, 60000);
+  if (pending) {
+    const expiryTimer = window.setInterval(() => {
+      if (!hideExpired()) window.clearInterval(expiryTimer);
+    }, 60000);
+  }
   for (const region of document.querySelectorAll("[data-poll]")) poll(region);
 });

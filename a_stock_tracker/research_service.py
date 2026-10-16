@@ -222,7 +222,13 @@ class ResearchStore:
             raise
         return handle
 
-    def status(self, identifier: str, *, include_result: bool = True) -> dict[str, Any]:
+    def status(
+        self,
+        identifier: str,
+        *,
+        include_result: bool = True,
+        states: dict[str, dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         with locked_root(self.root, blocking=True):
             path = self.directory(identifier) / "request.json"
             if not path.is_file():
@@ -272,7 +278,7 @@ class ResearchStore:
                     state["can_continue"] = False
         if state.get("request", {}).get("mode") == "screen":
             source = state.get("reused_from", identifier)
-            latest = self.latest(source)
+            latest = self.latest(source, states=states)
             state["continued_by"] = latest if latest != source else None
             if state["continued_by"]:
                 state["can_continue"] = False
@@ -295,27 +301,37 @@ class ResearchStore:
             except (OSError, ValueError, ScreenError):
                 continue
 
-    def chain(self, identifier: str) -> tuple[str, int]:
+    def chain(
+        self, identifier: str, states: dict[str, dict[str, Any]] | None = None
+    ) -> tuple[str, int]:
         seen: set[str] = set()
         count = 0
         while True:
             if identifier in seen:
                 raise ScreenError("Cyclic research chain")
             seen.add(identifier)
-            state = read_state(self.directory(identifier) / "request.json")
+            path = self.directory(identifier) / "request.json"
+            state = (
+                states[identifier]
+                if states is not None and identifier in states
+                else read_state(path)
+            )
             parent = state.get("reused_from") or state.get("continued_from")
             if not parent:
                 return identifier, count
             count += bool(state.get("continued_from") and not state.get("reused_from"))
             identifier = parent
 
-    def latest(self, identifier: str) -> str:
-        # shortcut: scans every request.json per status read; add an index if records reach thousands.
-        state = read_state(self.directory(identifier) / "request.json")
+    def latest(self, identifier: str, states: dict[str, dict[str, Any]] | None = None) -> str:
+        # shortcut: scans every request.json on uncached status reads; add an index if records reach thousands.
+        path = self.directory(identifier) / "request.json"
+        state = (
+            states[identifier] if states is not None and identifier in states else read_state(path)
+        )
         identifier = state.get("reused_from", identifier)
         successors = {
             s["continued_from"]: s["id"]
-            for _, s in self.metadata()
+            for s in (states.values() if states is not None else (s for _, s in self.metadata()))
             if s.get("continued_from") and not s.get("reused_from")
         }
         seen = set()
@@ -329,9 +345,11 @@ class ResearchStore:
     def recent(self) -> list[dict[str, Any]]:
         # Keep only compact chain metadata; load at most ten full states/results.
         chains: dict[str, dict[str, Any]] = {}
-        for path, state in self.metadata():
+        metadata = list(self.metadata())
+        states = {path.parent.name: state for path, state in metadata}
+        for path, state in metadata:
             try:
-                root, count = self.chain(path.parent.name)
+                root, count = self.chain(path.parent.name, states=states)
                 stamp = path.stat().st_mtime
                 item = chains.setdefault(
                     root, {"id": root, "time": 0.0, "continuations": 0, "reused": False}
@@ -345,7 +363,7 @@ class ResearchStore:
         runs = []
         for item in heapq.nlargest(10, chains.values(), key=lambda item: item["time"]):
             try:
-                state = self.status(item["id"], include_result=False)
+                state = self.status(item["id"], include_result=False, states=states)
                 if (
                     state["status"] in {"completed", "partial"}
                     and state["request"]["mode"] != "screen"
@@ -671,7 +689,7 @@ class ResearchStore:
     def find_reports(self, code: str) -> dict[str, Any]:
         if not re.fullmatch(r"(?:60\d{4}\.SH|00\d{4}\.SZ)", code):
             raise HTTPException(400, "仅支持沪深主板代码，如 600519.SH 或 000001.SZ")
-        reports = []
+        candidates = []
         for path, state in self.metadata():
             request = state.get("request", {})
             if (
@@ -681,31 +699,36 @@ class ResearchStore:
             ):
                 continue
             try:
-                result = self.result(self.directory(path.parent.name), "financial")
                 finished_at = state.get("finished_at") or state.get("created_at")
                 timestamp = datetime.fromisoformat(finished_at).timestamp() if finished_at else 0
+                candidates.append((timestamp, path, finished_at))
+            except (OSError, ValueError, ScreenError):
+                continue
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        reports = []
+        for _, path, finished_at in candidates:
+            try:
+                result = self.result(self.directory(path.parent.name), "financial")
                 for report in result.get("reports", []):
                     if report["code"] == code and report.get("evidence_review") == "passed":
                         reports.append(
-                            (
-                                timestamp,
-                                {
-                                    "run_id": path.parent.name,
-                                    "code": code,
-                                    "finished_at": finished_at,
-                                    "status": report["status"],
-                                    "rule": report.get("rule"),
-                                    "documents": report.get("documents", []),
-                                    "omitted_pages": report.get("omitted_pages"),
-                                    "gap_count": len(report.get("gaps", [])),
-                                    "quality": report.get("quality"),
-                                },
-                            )
+                            {
+                                "run_id": path.parent.name,
+                                "code": code,
+                                "finished_at": finished_at,
+                                "status": report["status"],
+                                "rule": report.get("rule"),
+                                "documents": report.get("documents", []),
+                                "omitted_pages": report.get("omitted_pages"),
+                                "gap_count": len(report.get("gaps", [])),
+                                "quality": report.get("quality"),
+                            }
                         )
+                        if len(reports) == 20:
+                            return {"code": code, "reports": reports}
             except (OSError, ValueError, ScreenError):
                 continue
-        reports.sort(key=lambda item: item[0], reverse=True)
-        return {"code": code, "reports": [report for _, report in reports[:20]]}
+        return {"code": code, "reports": reports}
 
     def ranking(
         self,

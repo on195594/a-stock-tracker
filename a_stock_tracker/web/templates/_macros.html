@@ -26,7 +26,7 @@
     {% if r.stage_message %}<p>失败原因：{{ r.stage_message }}</p>{% endif %}
     {% if r.error %}<p>{{ r.error }}</p>{% endif %}
   </div>
-  {% if r.clues and (r.clues.values()|select('ne', none)|list) %}
+  {% if r.clues %}
   <p>入围线索：行业 {{ r.clues.industry }}；估值日 {{ r.clues.valuation_date }}；PB {{ r.clues.pb }}；历史年度平均 ROE {{ r.roe }}。仅为同业研究顺序。</p>
   {% endif %}
   {% for section in r.sections %}
@@ -74,8 +74,9 @@
 </section>
 {% if code and not rows %}<h1>本批次没有该公司的价格参考记录。</h1>{% endif %}
 {% if not code %}
-<p class="muted">{{ p.available_count(rows) }} 项价格参考 · {{ rows|length }} 家显式股票池</p>
-{% if not p.available_count(rows) %}<h3>本批次没有价格参考。</h3>{% endif %}
+{% set available = p.available_count(rows) %}
+<p class="muted">{{ available }} 项价格参考 · {{ rows|length }} 家显式股票池</p>
+{% if not available %}<h3>本批次没有价格参考。</h3>{% endif %}
 {% endif %}
 {% set sub = 'h2' if code else 'h3' %}
 {% for row in rows %}

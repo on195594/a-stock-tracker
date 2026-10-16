@@ -462,6 +462,84 @@ def test_recent_selects_only_ten_newest_states(tmp_path, monkeypatch):
     assert len(calls) == 10
 
 
+def test_recent_and_latest_share_metadata_across_historical_chains(tmp_path, monkeypatch):
+    import os
+
+    store = ResearchStore(tmp_path / "service")
+    identifiers = [f"{number:032x}" for number in range(1, 7)]
+    for index, identifier in enumerate(identifiers):
+        directory = store.directory(identifier)
+        directory.mkdir(mode=0o700)
+        state = {"id": identifier, "request": payload("screen"), "status": "failed"}
+        if index in (1, 2, 5):
+            state["continued_from"] = identifiers[index - 1]
+        if index == 3:
+            state["reused_from"] = identifiers[2]
+        path = directory / "request.json"
+        save_state(path, state)
+        os.utime(path, (index + 1, index + 1))
+
+    metadata = list(store.metadata())
+    states = {path.parent.name: state for path, state in metadata}
+    for cached in (None, states):
+        assert store.chain(identifiers[3], states=cached) == (identifiers[0], 2)
+        assert store.latest(identifiers[0], states=cached) == identifiers[2]
+        assert store.latest(identifiers[3], states=cached) == identifiers[2]
+        assert store.latest(identifiers[4], states=cached) == identifiers[5]
+    partial = {identifiers[5]: states[identifiers[5]]}
+    assert store.chain(identifiers[5], states=partial) == (identifiers[4], 1)
+    assert store.latest(identifiers[4], states=partial) == identifiers[5]
+
+    scans = []
+
+    def scan():
+        scans.append(True)
+        return iter(metadata)
+
+    monkeypatch.setattr(store, "metadata", scan)
+    recent = store.recent()
+    assert len(scans) == 1
+    assert [run["id"] for run in recent] == [identifiers[5], identifiers[2]]
+    assert [run["continuations"] for run in recent] == [1, 2]
+    assert [run["reused"] for run in recent] == [False, True]
+
+
+def test_find_reports_stops_after_twenty_verified_reports(tmp_path, monkeypatch):
+    store = ResearchStore(tmp_path / "service")
+    for number in range(25):
+        directory = store.directory(f"{number:032x}")
+        directory.mkdir(mode=0o700)
+        save_state(
+            directory / "request.json",
+            {
+                "request": payload("financial"),
+                "status": "completed",
+                "finished_at": f"2026-10-{number + 1:02d}T00:00:00+00:00",
+            },
+        )
+    reads = []
+
+    def result(directory, mode):
+        number = int(directory.name, 16)
+        reads.append(number)
+        if number == 24:
+            raise ScreenError("synthetic invalid batch")
+        return {
+            "reports": [
+                {
+                    "code": "600519.SH",
+                    "status": "completed",
+                    "evidence_review": "failed" if number == 23 else "passed",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(store, "result", result)
+    reports = store.find_reports("600519.SH")["reports"]
+    assert [r["run_id"] for r in reports] == [f"{n:032x}" for n in range(22, 2, -1)]
+    assert reads == list(range(24, 2, -1))
+
+
 def test_recent_handles_concurrent_file_deletion_during_stat(tmp_path, monkeypatch):
     import errno
     from pathlib import Path

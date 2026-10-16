@@ -53,10 +53,12 @@ KEYWORDS = (
     "合同负债",
     "应收账款",
 )
+WHITESPACE_RE = re.compile(r"\s+")
+NUMBERS_RE = re.compile(r"[+\-\u2212]?[0-9]+(?:[,.][0-9]+)*%?")
 
 
 def compact(text: str) -> str:
-    return re.sub(r"\s+", "", text)
+    return WHITESPACE_RE.sub("", text)
 
 
 class OfficialSource:
@@ -299,8 +301,11 @@ def evidence_packet(documents: list[dict[str, Any]], row: dict[str, Any]) -> dic
     for doc in documents:
         # ponytail: bounded full-page selection, not full-document understanding; broaden only with measured budgets.
         first = doc["pages"][:6]
-        relevant = [p for p in doc["pages"][6:] if any(k in compact(p["text"]) for k in KEYWORDS)]
-        others = [p for p in doc["pages"][6:] if p not in relevant]
+        relevant: list[dict[str, Any]] = []
+        others: list[dict[str, Any]] = []
+        for page in doc["pages"][6:]:
+            text = compact(page["text"])
+            (relevant if any(k in text for k in KEYWORDS) else others).append(page)
         chosen = []
         allowance = min(remaining, MAX_TEXT // len(documents))
         for page in first + relevant + others:
@@ -446,17 +451,21 @@ CITATION_MESSAGES = {
 
 def citation_errors(report: dict[str, Any], packet: dict[str, Any]) -> dict[str, str]:
     pages = {(d["id"], p["page"]): p["text"] for d in packet["documents"] for p in d["pages"]}
+    compacted = {}
     errors = {}
     for fact in report["facts"]:
         quote = compact(fact["quote"])
         # A number cannot be invented or converted into a different unit by the model.
-        numbers = r"[+\-\u2212]?[0-9]+(?:[,.][0-9]+)*%?"
-        quoted_numbers = set(re.findall(numbers, fact["quote"]))
+        quoted_numbers = set(NUMBERS_RE.findall(fact["quote"]))
         if not 15 <= len(quote) <= 1600:
             errors[fact["id"]] = "citation_length"
-        elif quote not in compact(pages.get((fact["document"], fact["page"]), "")):
+            continue
+        key = (fact["document"], fact["page"])
+        if key not in compacted:
+            compacted[key] = compact(pages.get(key, ""))
+        if quote not in compacted[key]:
             errors[fact["id"]] = "citation_mismatch"
-        elif any(n not in quoted_numbers for n in re.findall(numbers, fact["claim"])):
+        elif any(n not in quoted_numbers for n in NUMBERS_RE.findall(fact["claim"])):
             errors[fact["id"]] = "numeric_mismatch"
         elif any(
             unit in fact["claim"] and unit not in fact["quote"]

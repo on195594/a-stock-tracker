@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
 from urllib.parse import urlparse
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -12,6 +11,20 @@ from a_stock_tracker.web.settings import LOOPBACK, Settings
 CSP = (
     "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; "
     "object-src 'none'; img-src 'self'"
+)
+CSP_BYTES = CSP.encode()
+SECURITY_HEADERS = (
+    (b"content-security-policy", CSP_BYTES),
+    (b"x-content-type-options", b"nosniff"),
+    (b"referrer-policy", b"same-origin"),
+    (b"x-frame-options", b"DENY"),
+    (b"cross-origin-opener-policy", b"same-origin"),
+)
+PLAIN_HEADERS = (
+    (b"content-type", b"text/plain; charset=utf-8"),
+    (b"cache-control", b"no-store"),
+    (b"content-security-policy", CSP_BYTES),
+    (b"x-content-type-options", b"nosniff"),
 )
 # Retired workbench, publication and Flet session URLs are gone, not compatibility aliases.
 RETIRED_EXACT = {"/research", "/discover", "/published", "/api/session"}
@@ -104,6 +117,9 @@ class SecurityMiddleware:
         self.app = app
         self.origin = Origin(settings)
         self.hsts = settings.secure_cookies
+        self.headers = SECURITY_HEADERS + (
+            ((b"strict-transport-security", b"max-age=31536000"),) if self.hsts else ()
+        )
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -128,15 +144,7 @@ class SecurityMiddleware:
 
         async def with_headers(message: Message) -> None:
             if message["type"] == "http.response.start":
-                extra: list[tuple[bytes, bytes]] = [
-                    (b"content-security-policy", CSP.encode()),
-                    (b"x-content-type-options", b"nosniff"),
-                    (b"referrer-policy", b"same-origin"),
-                    (b"x-frame-options", b"DENY"),
-                    (b"cross-origin-opener-policy", b"same-origin"),
-                ]
-                if self.hsts:
-                    extra.append((b"strict-transport-security", b"max-age=31536000"))
+                extra = list(self.headers)
                 existing = {k.lower() for k, _ in message.get("headers", [])}
                 if b"cache-control" not in existing:
                     extra.append(
@@ -151,11 +159,6 @@ class SecurityMiddleware:
         await self.app(scope, receive, with_headers)
 
     async def plain(self, send: Send, status: int, body: bytes) -> None:
-        headers: list[Any] = [
-            (b"content-type", b"text/plain; charset=utf-8"),
-            (b"cache-control", b"no-store"),
-            (b"content-security-policy", CSP.encode()),
-            (b"x-content-type-options", b"nosniff"),
-        ]
+        headers = list(PLAIN_HEADERS)
         await send({"type": "http.response.start", "status": status, "headers": headers})
         await send({"type": "http.response.body", "body": body})

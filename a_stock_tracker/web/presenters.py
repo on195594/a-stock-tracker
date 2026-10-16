@@ -68,11 +68,15 @@ def roe_text(value: Any) -> str:
     return f"{number:.2f}%" if number is not None else "未记录"
 
 
+CODE_SPLIT = re.compile(r"[,，\s]+")
+SIX_DIGITS = re.compile(r"\d{6}")
+
+
 def normalize_codes(raw: str) -> list[str]:
     """Accept 600519 / 600519.sh / comma or whitespace lists."""
-    codes = [c.strip().upper() for c in re.split(r"[,，\s]+", raw or "") if c.strip()]
+    codes = [c.strip().upper() for c in CODE_SPLIT.split(raw or "") if c.strip()]
     return [
-        c + (".SH" if c.startswith("60") else ".SZ") if re.fullmatch(r"\d{6}", c) else c
+        c + (".SH" if c.startswith("60") else ".SZ") if SIX_DIGITS.fullmatch(c) else c
         for c in codes
     ]
 
@@ -320,6 +324,7 @@ def report_view(report: dict[str, Any]) -> dict[str, Any]:
         stage = STAGES.get(key if isinstance(key, str) else "", "未记录")
         message = diagnostic.get("message")
     error = report.get("error") if report.get("error") != message else None
+    clues = report.get("clues") or {}
     return {
         "code": report["code"],
         "readable": readable,
@@ -331,8 +336,8 @@ def report_view(report: dict[str, Any]) -> dict[str, Any]:
         "stage": stage,
         "stage_message": message,
         "error": error,
-        "clues": report.get("clues", {}),
-        "roe": roe_text((report.get("clues") or {}).get("roe_mean")),
+        "clues": clues if any(v is not None for v in clues.values()) else {},
+        "roe": roe_text(clues.get("roe_mean")),
         "sections": [
             {"title": title, **analysis[key]} for key, title in SECTION_TITLES if key in analysis
         ],
@@ -397,6 +402,6 @@ def board_rows(board: dict[str, Any], code: str | None = None) -> list[dict[str,
 
 
 def available_count(rows: list[dict[str, Any]]) -> int:
-    return len(
-        [r for r in rows if r["status"] in {"observation", "reference"} and not r.get("expired")]
+    return sum(
+        1 for r in rows if r["status"] in {"observation", "reference"} and not r.get("expired")
     )

@@ -227,12 +227,19 @@ def create_app(
         if client is None:
             return render(request, actor, "unconnected.html", {})
         try:
-            info = await read(client.info)
-            if mode not in info["modes"]:
-                mode = "financial"
             resume_source = None
             if mode == "screen" and not resume_from:
-                recent = await read(client.recent)
+                info, recent = await asyncio.gather(read(client.info), read(client.recent))
+            elif mode == "screen" and p.RUN_ID.fullmatch(resume_from):
+                info, resume_source = await asyncio.gather(
+                    read(client.info), read(client.status, resume_from)
+                )
+            else:
+                info = await read(client.info)
+            if mode not in info["modes"]:
+                mode = "financial"
+                resume_source = None
+            if mode == "screen" and not resume_from:
                 latest = next(
                     (r for r in recent if (r.get("request") or {}).get("mode") == "screen"), None
                 )
@@ -241,7 +248,7 @@ def create_app(
             if mode == "screen" and resume_from:
                 if not p.RUN_ID.fullmatch(resume_from):
                     resume_source = None
-                else:
+                elif resume_source is None:
                     resume_source = await read(client.status, resume_from)
                 pending = (
                     ((resume_source or {}).get("result") or {})
