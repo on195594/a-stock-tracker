@@ -624,6 +624,13 @@ def test_financial_form_flags_an_existing_report_without_depending_on_it(owner):
     page = browser.get("/analysis?mode=financial&code=600001")
     assert page.status_code == 200 and "该公司已有研报" not in page.text
     assert 'name="confirmed"' in page.text
+    # A malformed report list from the receiver is treated the same way and never submits.
+    del client.fail["find_reports"]
+    client.reports = {"code": "600001.SH", "reports": None}
+    submitted = len(client.submitted)
+    page = browser.get("/analysis?mode=financial&code=600001")
+    assert page.status_code == 200 and "该公司已有研报" not in page.text
+    assert 'name="confirmed"' in page.text and len(client.submitted) == submitted
 
 
 def test_company_dossier_requires_login():
