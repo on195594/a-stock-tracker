@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% from "_macros.html" import summary_block %}
+{% block title %}公司档案 {{ code }}{% endblock %}
+{% block main %}
+<a class="link" href="/">返回研究首页</a>
+<h1>{{ name or code }}</h1>
+{% if name %}<p class="muted">{{ code }}</p>{% endif %}
+
+<section class="recent" aria-labelledby="financial">
+  <h2 id="financial">财报研究</h2>
+  {% if attempt %}
+  <section class="notice{{ '' if attempt.active else ' caution' }}">
+    <h3 class="notice-title">{{ '财报研究进行中' if attempt.active else '最近一次财报研究没有可读结论' }}</h3>
+    <p class="muted">{{ attempt.meta }}</p>
+    <a class="link" href="/analysis/{{ attempt.id }}">{{ '查看进度' if attempt.active else '查看原因' }}</a>
+  </section>
+  {% endif %}
+  {% if latest %}
+  <section class="notice">
+    <h3 class="notice-title">最新研报 · {{ latest.time }}</h3>
+    <p>{{ latest.status }}</p>
+    {% if latest.quality %}<p>{{ latest.quality }}</p>{% endif %}
+    <p class="muted">{{ latest.disclosure }} · {{ latest.gaps }}</p>
+  </section>
+  <a class="btn" href="/analysis/{{ latest.run_id }}#report-{{ code }}">阅读最新研报</a>
+  {% endif %}
+  {% if not (attempt and attempt.active) %}
+  {% if not latest %}<p>暂无通过复核的研报。</p>{% endif %}
+  <a class="{{ 'link' if latest else 'btn' }}" href="/analysis?mode=financial&amp;code={{ code }}">{{ '重新研究财报（核对预算）' if latest else '研究这家公司财报' }}</a>
+  {% endif %}
+</section>
+
+<section class="recent" aria-labelledby="price">
+  <h2 id="price">价格纪律参考</h2>
+  {% if price and price.active %}
+  <section class="notice">
+    <h3 class="notice-title">价格参考计算中</h3>
+    <p class="muted">{{ price.meta }}</p>
+    <a class="link" href="/analysis/{{ price.id }}">查看进度</a>
+  </section>
+  {% elif price %}
+  <p class="muted">{{ price.meta }}</p>
+  {% for summary in price.summaries %}{{ summary_block(summary, with_code=false) }}{% endfor %}
+  <a class="link" href="/analysis/{{ price.id }}{{ '/' ~ code if price.summaries }}">{{ '查看价格参考详情' if price.summaries else '查看结果' }}</a>
+  {% else %}
+  <p>尚未核对价格参考。</p>
+  {% endif %}
+  {% if not (price and price.active) %}
+  <a class="{{ 'link' if price else 'btn quiet' }}" href="/analysis?mode=swing&amp;code={{ code }}">{{ '重新核对价格参考（不调用模型）' if price else '核对价格参考（不调用模型）' }}</a>
+  {% endif %}
+  <p class="muted">价格由程序计算，与财报结论相互独立；有效期不等于持有期。</p>
+</section>
+
+{% if archive %}
+<details>
+  <summary>历史研报（{{ archive|length }} 份）</summary>
+  {% for r in archive %}
+  <div class="fact">
+    <p><strong>{{ r.time }}</strong> · {{ r.status }}</p>
+    <p class="muted">{{ r.disclosure }} · {{ r.gaps }}</p>
+    <a class="link" href="/analysis/{{ r.run_id }}#report-{{ code }}">阅读 {{ r.time }} 研报</a>
+  </div>
+  {% endfor %}
+</details>
+{% endif %}
+{% endblock %}

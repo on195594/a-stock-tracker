@@ -101,11 +101,78 @@ def test_home_orders_entries_and_groups_recent_runs(owner):
         < body.index("独立价格参考（不调用模型）")
     )
     visible = text(page)
-    assert visible.index("进行中") < visible.index("最近研究")
+    # Running work is pinned above the entries and listed once, not again in its tab.
+    assert visible.index("进行中") < visible.index("研究一家公司")
+    assert body.count(f'href="/analysis/{OTHER}"') == 1 and "查看进度" in visible
+    assert visible.index("进行中") < visible.index("财报研究 600001.SH")
     assert "反证第一句。" in visible and "第二句不在摘要" not in visible
+    assert "披露期：2025-12-31（公告 2026-04-01）" in visible
     assert "续跑 2 次 · 复用" in visible and "2026-10-15 16:00" in visible
-    assert f'href="/analysis/{OTHER}"' in body and "查看进度" in visible
     assert "历史发布批次" not in visible and "/published" not in body
+
+
+def test_home_overview_reads_every_mode_concurrently_and_links_tabs(owner):
+    client, browser = owner
+    client.recent_runs = [
+        run_state(mode) | {"id": identifier}
+        for mode, identifier in (("financial", RUN), ("screen", OTHER), ("swing", "d" * 32))
+    ]
+    page = browser.get("/")
+    assert {(c["mode"], c["limit"]) for c in client.recent_calls} == {
+        (None, 5),
+        ("financial", 3),
+        ("screen", 3),
+        ("swing", 3),
+    }
+    tabs = re.search(r'<nav class="tabs"[^>]*>(.*?)</nav>', page.text, re.S).group(1)
+    assert re.findall(r'href="([^"]+)"', tabs) == [
+        "/?view=overview",
+        "/?view=financial",
+        "/?view=screen",
+        "/?view=swing",
+    ]
+    assert '<a href="/?view=overview" aria-current="page">概览</a>' in tabs
+    visible = text(page)
+    assert visible.index("财报研究 600001.SH") < visible.index("初筛 全市场初筛")
+    assert visible.index("初筛 全市场初筛") < visible.index("价格参考 600001.SH")
+    for mode in ("financial", "screen", "swing"):
+        assert f'href="/?view={mode}"' in page.text.split("</nav>", 2)[-1]
+
+
+def test_home_mode_tab_lists_only_that_mode_and_pages_by_cursor(owner):
+    client, browser = owner
+    swings = [run_state("swing") | {"id": f"{i:032x}"} for i in range(10)]
+    client.recent_runs = [run_state("financial"), *swings]
+    page = browser.get("/?view=swing")
+    visible = text(page)
+    assert '<a href="/?view=swing" aria-current="page">价格参考</a>' in page.text
+    assert "财报研究 600001.SH" not in visible and visible.count("查看结果") == 10
+    assert f'href="/?view=swing&amp;cursor={swings[-1]["id"]}"' in page.text
+    assert {"mode": "swing", "code": None, "limit": 10, "cursor": None} in client.recent_calls
+    client.recent_calls.clear()
+    older = browser.get(f"/?view=swing&cursor={swings[-1]['id']}")
+    assert "价格参考 · 更早记录" in text(older) and 'href="/?view=swing"' in older.text
+    # Only the tab query pages; the global running-work query never takes the cursor.
+    assert {(c["mode"], c["cursor"]) for c in client.recent_calls} == {
+        (None, None),
+        ("swing", swings[-1]["id"]),
+    }
+    # Unknown views fall back to the overview; malformed cursors are never forwarded.
+    client.recent_calls.clear()
+    assert 'aria-current="page">概览' in browser.get("/?view=../x&cursor=zz").text
+    assert all(c["cursor"] is None for c in client.recent_calls)
+    browser.get("/?view=screen&cursor=not-a-run")
+    assert all(c["cursor"] is None for c in client.recent_calls)
+
+
+def test_home_mode_tab_rejected_cursor_and_unreachable(owner):
+    client, browser = owner
+    client.fail["recent"] = ResearchRejected("分页游标不在当前研究列表中")
+    page = browser.get("/?view=financial&cursor=" + RUN)
+    assert page.status_code == 400 and "分页已失效" in page.text
+    assert 'href="/?view=financial"' in page.text
+    client.fail["recent"] = ResearchUnavailable("down")
+    assert "研究服务暂时无法连接" in browser.get("/?view=financial").text
 
 
 def test_home_hides_expired_prices_and_marks_live_levels_for_expiry(owner):
@@ -116,11 +183,20 @@ def test_home_hides_expired_prices_and_marks_live_levels_for_expiry(owner):
         run_state("swing", summary=result_summary({"board": expired})),
         run_state("swing", summary=result_summary({"board": live})) | {"id": OTHER},
     ]
-    page = browser.get("/")
+    page = browser.get("/?view=swing")
     row = live["rows"][0]
     assert "已过期" in page.text and "历史价格参考" in page.text
+    assert "原有效至" in page.text
     assert page.text.count("收盘 11.20 元") == 1
-    assert f'data-expires="{row["expires"]}"' in page.text and "data-levels" in page.text
+    # The live tag and levels share one expiring block, so both swap at expiry.
+    block = re.search(
+        rf'<div class="summary" data-expires="{row["expires"]}">(.*?)</div>', page.text, re.S
+    )
+    assert block is not None
+    assert '<span class="tag" data-levels>有效期内</span>' in block.group(1)
+    assert '<p class="lines" data-levels>收盘 11.20 元' in block.group(1)
+    assert block.group(1).count("data-expired hidden") == 2
+    assert '<span class="tag caution">已过期</span>' in page.text
 
 
 def test_home_states_for_unconnected_unreachable_and_unconfigured():
@@ -432,3 +508,127 @@ def test_ranking_retry_keeps_filters(owner):
     assert page.status_code == 503
     retry = re.search(r'class="btn" href="([^"]+)"', page.text).group(1).replace("&amp;", "&")
     assert "industry=" in retry and "query=" in retry
+
+
+# ---- company dossier ----------------------------------------------------------------
+
+
+def archived(run_id, finished_at, **extra):
+    return {
+        "run_id": run_id,
+        "code": "600001.SH",
+        "name": "演示公司",
+        "finished_at": finished_at,
+        "status": "scoped_complete",
+        "documents": [{"period": "2025-12-31", "announced": "2026-04-01"}],
+        "omitted_pages": 0,
+        "gap_count": 2,
+    } | extra
+
+
+def test_company_dossier_shows_latest_report_price_and_archive(owner):
+    client, browser = owner
+    client.reports = {
+        "code": "600001.SH",
+        "reports": [
+            archived(RUN, "2026-10-15T08:00:00+00:00"),
+            archived(OTHER, "2026-09-01T08:00:00+00:00", omitted_pages=3),
+        ],
+    }
+    live = demo_board()
+    client.recent_runs = [
+        run_state("swing", summary=result_summary({"board": live})) | {"id": "d" * 32},
+        run_state("financial", summary=result_summary({"reports": []})),
+    ]
+    page = browser.get("/stock/600001.SH")
+    visible = text(page)
+    assert page.status_code == 200 and "<h1>演示公司</h1>" in page.text
+    assert {"mode": "swing", "code": "600001.SH", "limit": 1, "cursor": None} in (
+        client.recent_calls
+    )
+    assert {"mode": "financial", "code": "600001.SH", "limit": 1, "cursor": None} in (
+        client.recent_calls
+    )
+    assert visible.index("最新研报 · 2026-10-15 16:00") < visible.index("价格纪律参考")
+    assert "引用与语义复核通过，范围内完整" in visible and "主要缺口 2 条" in visible
+    assert f'href="/analysis/{RUN}#report-600001.SH"' in page.text
+    assert 'href="/analysis?mode=financial&amp;code=600001.SH"' in page.text
+    # Price reference: live levels in an expiring block plus the detail link.
+    row = live["rows"][0]
+    assert f'data-expires="{row["expires"]}"' in page.text and "收盘 11.20 元" in visible
+    assert f'href="/analysis/{"d" * 32}/600001.SH"' in page.text
+    assert 'href="/analysis?mode=swing&amp;code=600001.SH"' in page.text
+    # The newest financial run left nothing readable, so it is surfaced with its reason.
+    assert "最近一次财报研究没有可读结论" in visible
+    assert visible.index("价格纪律参考") < visible.index("历史研报（1 份）")
+    assert "有 3 页原文未纳入分析" in visible and f'href="/analysis/{OTHER}#report' in page.text
+
+
+def test_company_dossier_empty_and_running_states(owner):
+    client, browser = owner
+    client.recent_runs = []
+    visible = text(browser.get("/stock/600001.SH"))
+    assert "暂无通过复核的研报。" in visible and "研究这家公司财报" in visible
+    assert "尚未核对价格参考。" in visible and "核对价格参考（不调用模型）" in visible
+    assert "历史研报" not in visible
+    client.recent_runs = [
+        run_state("financial", status="running"),
+        run_state("swing", status="running") | {"id": OTHER},
+    ]
+    page = browser.get("/stock/600001.SH")
+    visible = text(page)
+    # Running work is shown with its progress link; no second request is offered.
+    assert "财报研究进行中" in visible and "价格参考计算中" in visible
+    assert "mode=financial" not in page.text and "mode=swing" not in page.text
+    assert f'href="/analysis/{RUN}"' in page.text and f'href="/analysis/{OTHER}"' in page.text
+
+
+def test_company_dossier_ignores_runs_for_other_codes_and_modes(owner):
+    client, browser = owner
+    # A receiver that ignored the filters must not leak another company into the dossier.
+    other = run_state("swing", summary=result_summary({"board": demo_board()}))
+    other["request"]["codes"] = ["600002.SH"]
+    client.recent = lambda **_: [other, run_state("screen")]
+    client.reports = {"code": "600001.SH", "reports": [archived(RUN, None, code="600002.SH")]}
+    visible = text(browser.get("/stock/600001.SH"))
+    assert "尚未核对价格参考。" in visible and "暂无通过复核的研报。" in visible
+
+
+def test_company_dossier_validates_codes_and_reports_unreachable(owner):
+    client, browser = owner
+    assert browser.get("/stock/300750.SZ").status_code == 404
+    assert browser.get("/stock/abc").status_code == 404
+    moved = browser.get("/stock/600001", follow_redirects=False)
+    assert moved.status_code == 303 and moved.headers["location"] == "/stock/600001.SH"
+    assert browser.get("/stock/000001.sz", follow_redirects=False).headers["location"] == (
+        "/stock/000001.SZ"
+    )
+    client.fail["find_reports"] = ResearchUnavailable("down")
+    page = browser.get("/stock/600001.SH")
+    assert page.status_code == 503 and "公司档案暂不可读取" in page.text
+    assert 'class="btn" href="/stock/600001.SH"' in page.text
+    # The retired workbench path stays retired.
+    assert browser.get("/company/600001.SH").status_code == 404
+
+
+def test_company_dossier_requires_login():
+    browser = app_client()
+    response = browser.get("/stock/600001.SH", follow_redirects=False)
+    assert response.status_code == 303 and response.headers["location"] == "/login"
+
+
+def test_report_screen_ranking_and_price_pages_link_codes_to_the_dossier(owner):
+    client, browser = owner
+    dossier = 'href="/stock/600001.SH">600001.SH · 公司档案</a>'
+    financial = submit(browser, "financial", "600001")
+    assert dossier in browser.get(financial).text
+    screen = submit(browser, "screen")
+    assert dossier in browser.get(screen).text
+    assert dossier in browser.get(screen + "/ranking").text
+    swing = submit(browser, "swing", "600001")
+    assert dossier in browser.get(swing).text
+    assert dossier in browser.get(swing + "/600001.SH").text
+    # The synthetic client lists its own reports and price runs in the dossier.
+    visible = text(browser.get("/stock/600001.SH"))
+    assert "合成示例，未进行真实复核" in visible or "合成报告" in visible
+    assert "收盘 11.20 元" in visible

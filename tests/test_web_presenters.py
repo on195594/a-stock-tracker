@@ -93,14 +93,120 @@ def test_recent_financial_labels_depend_on_readable_reports():
     assert p.recent_result_label(unreadable) == "无可读财报结论"
 
 
-def test_price_summary_hides_expired_levels_and_explains_gaps():
+def test_board_summary_hides_expired_levels_and_explains_gaps():
     row = demo_board()["rows"][0]
-    live = p.price_summary(row)
-    assert "收盘 11.20 元" in live and "失效线 11.00 元" in live and "1.79%" in live
-    expired = p.price_summary(demo_board("expired")["rows"][0])
-    assert "已过期" in expired and "11.00" not in expired and "1.79%" not in expired
-    gap = p.price_summary(demo_board("gap")["rows"][0])
-    assert gap.startswith("资料缺口：")
+    live = p.board_summary(row)
+    assert live["badge"] == {"text": "有效期内", "tone": ""}
+    assert "收盘 11.20 元" in live["levels"] and "失效线 11.00 元" in live["levels"]
+    assert live["expires"] == row["expires"] and live["helper"] == p.price_dates(row)
+    expired_row = demo_board("expired")["rows"][0]
+    expired = p.board_summary(expired_row)
+    assert expired["badge"] == {"text": "已过期", "tone": "caution"}
+    assert expired["levels"] is None and expired["expires"] is None
+    shown = expired["text"] + expired["helper"]
+    assert "11.00" not in shown and "1.79%" not in shown
+    assert f"原有效至 {expired_row['expires']}，已过期" in expired["helper"]
+    gap = p.board_summary(demo_board("gap")["rows"][0])
+    assert gap["badge"]["text"] == "资料缺口" and gap["text"].startswith("合成日线资料缺失")
+    assert gap["levels"] is None and gap["helper"] == ""
+
+
+@pytest.mark.parametrize(
+    "row,text,tone",
+    [
+        ({"status": "reference"}, "有效期内", ""),
+        ({"status": "observation"}, "旧规则 · 有效期内", ""),
+        ({"status": "observation", "expired": True}, "已过期", "caution"),
+        ({"status": "excluded"}, "旧规则未入选", "plain"),
+        ({"status": "gap"}, "资料缺口", "caution"),
+    ],
+)
+def test_price_badges_never_use_a_success_tone(row, text, tone):
+    assert p.price_badge(row) == {"text": text, "tone": tone}
+
+
+def test_validity_and_disclosure_texts_keep_unknowns_explicit():
+    assert p.validity_text({"status": "reference"}) == "有效期：未记录"
+    assert p.disclosure_text({}) == "披露期：未记录"
+    report = {"documents": [{"period": "2025-06-30", "announced": None}]}
+    assert p.disclosure_text(report) == "披露期：2025-06-30（公告 未记录）"
+
+
+def run(identifier, mode, status="completed", codes=("600001.SH",)):
+    return {
+        "id": identifier,
+        "status": status,
+        "request": {"mode": mode, "codes": [] if mode == "screen" else list(codes)},
+        "created_at": "2026-10-15T08:00:00+00:00",
+    }
+
+
+def test_tab_groups_pin_running_work_and_refilter_modes():
+    running = run("a" * 32, "financial", "running")
+    runs = {
+        "all": [running, run("b" * 32, "swing")],
+        "financial": [running, run("c" * 32, "financial")],
+        # A receiver that ignores the mode filter must not mix tabs.
+        "screen": [run("d" * 32, "screen"), run("e" * 32, "swing")],
+        "swing": [],
+    }
+    before = deepcopy(runs)
+    view = p.tab_groups(runs, "overview", 3)
+    assert [i["id"] for i in view["active"]] == ["a" * 32]
+    groups = {g["mode"]: g for g in view["groups"]}
+    assert list(groups) == ["financial", "screen", "swing"]
+    assert [i["id"] for i in groups["financial"]["items"]] == ["c" * 32]
+    assert [i["id"] for i in groups["screen"]["items"]] == ["d" * 32]
+    assert groups["screen"]["items"][0]["scope"] == "全市场初筛"
+    assert groups["financial"]["more"] == "/?view=financial" and groups["swing"]["more"] is None
+    assert groups["swing"]["empty"] == "暂无价格参考记录。"
+    assert all(g["next"] is None for g in view["groups"])
+    assert runs == before
+
+
+def test_tab_groups_offer_an_older_page_only_when_the_page_is_full():
+    full = [run(f"{i:032x}", "swing") for i in range(2)]
+    page = p.tab_groups({"all": [], "swing": full}, "swing", 2)
+    assert [g["mode"] for g in page["groups"]] == ["swing"]
+    assert page["groups"][0]["next"] == f"/?view=swing&cursor={full[-1]['id']}"
+    assert page["groups"][0]["more"] is None
+    assert p.tab_groups({"all": [], "swing": full[:1]}, "swing", 2)["groups"][0]["next"] is None
+
+
+def test_company_view_orders_reports_and_surfaces_unreadable_attempts():
+    reports = {
+        "code": "600001.SH",
+        "reports": [
+            {"run_id": "a" * 32, "code": "600001.SH", "name": "", "status": "scoped_complete"},
+            {"run_id": "b" * 32, "code": "600001.SH", "name": "演示公司", "status": "unchanged"},
+        ],
+    }
+    failed = run("c" * 32, "financial", "failed")
+    view = p.company_view("600001.SH", reports, [], [failed])
+    assert view["name"] == "演示公司" and view["latest"]["run_id"] == "a" * 32
+    assert [r["run_id"] for r in view["archive"]] == ["b" * 32]
+    assert view["latest"]["status"] == "引用已复核；未纳入分析的原文页数未知，结论范围待核查"
+    assert view["latest"]["gaps"] == "主要缺口 0 条" and view["price"] is None
+    assert view["attempt"]["id"] == "c" * 32
+    readable = run("d" * 32, "financial") | {
+        "summary": {"reports": [{"code": "600001.SH", "evidence_review": "passed"}]}
+    }
+    assert p.company_view("600001.SH", reports, [], [readable])["attempt"] is None
+    synthetic = {"run_id": "e" * 32, "code": "600001.SH", "status": "synthetic"}
+    synthetic["evidence_review"] = "not_real"
+    view = p.company_view("600001.SH", {"reports": [synthetic]}, [], [])
+    assert view["latest"]["status"] == "合成报告"
+
+
+def test_company_view_keeps_only_the_company_price_rows():
+    board = demo_board()
+    other = deepcopy(board["rows"][0]) | {"code": "600002.SH"}
+    swing = run("a" * 32, "swing", codes=("600001.SH", "600002.SH")) | {
+        "summary": {"board": {"rows": [board["rows"][0], other]}}
+    }
+    price = p.company_view("600001.SH", {"reports": []}, [swing], [])["price"]
+    assert price["id"] == "a" * 32 and not price["active"]
+    assert [s["code"] for s in price["summaries"]] == ["600001.SH"]
 
 
 @pytest.mark.parametrize("omitted", [{}, {"omitted_pages": None}, {"omitted_pages": -1}])

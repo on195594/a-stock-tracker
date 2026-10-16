@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import company_link %}
 {% block title %}初筛排名{% endblock %}
 {% block main %}
 <a class="link" href="/analysis/{{ run_id }}">返回初筛结果</a>
@@ -16,7 +17,8 @@
 <p class="muted">共 {{ page.total }} 家 · 第 {{ page.offset + 1 if page.total else 0 }}–{{ page.offset + rows|length }} 家 · 资料截至 {{ page.coverage.data_date }}</p>
 {% for row in rows %}
 <article class="candidate">
-  <h2 class="name">{{ row.name }} · {{ row.code }}</h2>
+  <h2 class="name">{{ row.name }}</h2>
+  {{ company_link(row.code) }}
   <p class="muted">{{ row.industry }}</p>
   <p class="lines">{{ row.facts }}</p>
   <a class="btn" href="/analysis?mode=financial&amp;code={{ row.code }}&amp;from={{ run_id }}">研究这家公司财报</a>

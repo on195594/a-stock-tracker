@@ -5,7 +5,6 @@ from __future__ import annotations
 import base64
 import binascii
 import fcntl
-import heapq
 import hmac
 import json
 import math
@@ -42,6 +41,7 @@ from a_stock_tracker.contracts import (
     ErrorCode,
     Quote,
     RankingPage,
+    RecentRunsQuery,
     ReportList,
     RunList,
     RunRequest,
@@ -342,26 +342,119 @@ class ResearchStore:
             identifier = successors[identifier]
         return identifier
 
-    def recent(self) -> list[dict[str, Any]]:
-        # Keep only compact chain metadata; load at most ten full states/results.
+    def recent(
+        self,
+        mode: str | None = None,
+        code: str | None = None,
+        limit: int = 10,
+        cursor: str | None = None,
+    ) -> list[dict[str, Any]]:
+        RecentRunsQuery.model_validate(dict(mode=mode, code=code, limit=limit, cursor=cursor))
+        # Filter and page compact chain metadata before loading full states/results.
         chains: dict[str, dict[str, Any]] = {}
         metadata = list(self.metadata())
         states = {path.parent.name: state for path, state in metadata}
         for path, state in metadata:
             try:
                 root, count = self.chain(path.parent.name, states=states)
-                stamp = path.stat().st_mtime
                 item = chains.setdefault(
-                    root, {"id": root, "time": 0.0, "continuations": 0, "reused": False}
+                    root,
+                    {"id": root, "root": root, "continuations": 0, "reused": False, "time": 0.0},
                 )
-                item["time"] = max(item["time"], stamp)
                 item["reused"] |= bool(state.get("reused_from"))
-                if not state.get("reused_from") and count >= item["continuations"]:
+                created_raw = state.get("created_at")
+                node_stamp = None
+                if isinstance(created_raw, str):
+                    try:
+                        created = datetime.fromisoformat(created_raw)
+                        node_stamp = created.replace(
+                            tzinfo=created.tzinfo or timezone.utc
+                        ).timestamp()
+                    except (ValueError, TypeError):
+                        pass
+                if node_stamp is None:
+                    node_stamp = path.parent.stat().st_mtime
+                item["time"] = max(item["time"], node_stamp)
+                if not state.get("reused_from") and (count, path.parent.name) >= (
+                    item["continuations"],
+                    item["id"],
+                ):
                     item.update(id=path.parent.name, continuations=count)
-            except (OSError, ValueError, ScreenError):
+            except (OSError, ValueError, TypeError, ScreenError):
                 continue
+        candidates = []
+        for item in chains.values():
+            state = states.get(item["id"])
+            if state is None:
+                continue
+            request = state.get("request")
+            if not isinstance(request, dict):
+                request = {}
+            if mode is not None and request.get("mode") != mode:
+                continue
+            if code is not None and (
+                not isinstance(request.get("codes"), list) or code not in request["codes"]
+            ):
+                continue
+            candidates.append((item["time"], item["id"], item))
+        candidates.sort(key=lambda entry: (entry[0], entry[1]), reverse=True)
+        if cursor is not None:
+            cursor_stamp = None
+            cursor_id = cursor
+            if "_" in cursor:
+                raw_stamp, cursor_id = cursor.split("_", 1)
+                try:
+                    cursor_stamp = float(raw_stamp)
+                except ValueError:
+                    pass
+            cursor_state = states.get(cursor_id)
+            if cursor_state is None:
+                raise ValueError("分页游标不在当前研究列表中")
+            cursor_request = cursor_state.get("request")
+            if not isinstance(cursor_request, dict):
+                cursor_request = {}
+            if mode is not None and cursor_request.get("mode") != mode:
+                raise ValueError("分页游标不在当前研究列表中")
+            if code is not None and (
+                not isinstance(cursor_request.get("codes"), list)
+                or code not in cursor_request["codes"]
+            ):
+                raise ValueError("分页游标不在当前研究列表中")
+            cursor_root = cursor_id
+            try:
+                cursor_root, _ = self.chain(cursor_id, states=states)
+            except (OSError, ValueError, ScreenError):
+                pass
+            cursor_chain = chains.get(cursor_root)
+            if cursor_chain is None:
+                raise ValueError("分页游标不在当前研究列表中")
+            if cursor_stamp is None:
+                if cursor_id == cursor_chain["id"]:
+                    cursor_stamp, cursor_rep_id = cursor_chain["time"], cursor_chain["id"]
+                else:
+                    created_raw = cursor_state.get("created_at")
+                    node_stamp = None
+                    if isinstance(created_raw, str):
+                        try:
+                            created = datetime.fromisoformat(created_raw)
+                            node_stamp = created.replace(
+                                tzinfo=created.tzinfo or timezone.utc
+                            ).timestamp()
+                        except (ValueError, TypeError):
+                            pass
+                    if node_stamp is None:
+                        node_stamp = self.directory(cursor_id).stat().st_mtime
+                    cursor_stamp, cursor_rep_id = node_stamp, cursor_id
+            else:
+                cursor_rep_id = cursor_id
+            candidates = [
+                entry
+                for entry in candidates
+                if entry[2].get("root") != cursor_root
+                and (entry[0], entry[1]) < (cursor_stamp, cursor_rep_id)
+            ]
         runs = []
-        for item in heapq.nlargest(10, chains.values(), key=lambda item: item["time"]):
+        for _, _, item in candidates:
             try:
                 state = self.status(item["id"], include_result=False, states=states)
                 if (
@@ -373,6 +466,8 @@ class ResearchStore:
                     )
                 state.update(continuations=item["continuations"], reused=item["reused"])
                 runs.append(state)
+                if len(runs) == limit:
+                    break
             except (OSError, ValueError, ScreenError):
                 continue
         return runs
@@ -952,8 +1047,9 @@ def create_service(root: Path, tokens: dict[str, str]) -> FastAPI:
                         await run_in_threadpool(channel_info, channel)
                     ).model_dump(by_alias=True, exclude_unset=True)
                 if path == "runs":
+                    query = RecentRunsQuery.model_validate_strings(dict(request.query_params))
                     return RunList.model_validate(
-                        {"runs": await run_in_threadpool(store.recent)}
+                        {"runs": await run_in_threadpool(store.recent, **query.model_dump())}
                     ).model_dump(by_alias=True, exclude_unset=True)
                 if path == "reports":
                     return ReportList.model_validate(

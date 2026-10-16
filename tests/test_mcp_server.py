@@ -234,6 +234,35 @@ def test_tool_catalog_and_capabilities(bridge):
         assert not hasattr(reader, name)
 
 
+def test_list_runs_pushes_kind_and_limit_past_newer_screen_runs(bridge):
+    swings = []
+    for number in range(35):
+        request = payload("swing" if number < 20 else "screen")
+        record(
+            bridge.store,
+            request,
+            created_at=(datetime(2026, 10, 1) + timedelta(hours=number)).isoformat() + "+00:00",
+        )
+        if number < 20:
+            swings.append(request["id"])
+
+    async def scenario():
+        async with Client(bridge.server) as client:
+            for limit in (1, 10, 20):
+                runs = success(
+                    await client.call_tool("list_runs", {"kind": "swing", "limit": limit})
+                )["runs"]
+                assert [r["id"] for r in runs] == list(reversed(swings))[:limit]
+                assert dict(bridge.requests[-1].url.params) == {
+                    "mode": "swing",
+                    "limit": str(limit),
+                }
+            assert len(success(await client.call_tool("list_runs", {}))["runs"]) == 10
+            assert dict(bridge.requests[-1].url.params) == {"limit": "10"}
+
+    anyio.run(scenario)
+
+
 def test_report_summaries_sections_and_citations(bridge):
     run_id = seed_report(bridge)
     other = seed_report(bridge, 2)
@@ -250,7 +279,7 @@ def test_report_summaries_sections_and_citations(bridge):
             assert runs[0]["reports"][0]["summary_status"] == "引用与语义复核通过，范围内完整"
             assert runs[0]["created_at"] == "2026-10-01T08:00:00+08:00"
             assert success(await client.call_tool("list_runs", {"kind": "swing"}))["runs"] == []
-            error(await client.call_tool("list_runs", {"limit": 11}), "invalid_request")
+            error(await client.call_tool("list_runs", {"limit": 21}), "invalid_request")
             overview = success(await client.call_tool("get_run", {"run_id": run_id}))
             assert overview["usage"]["requests"] == 8 and overview["usage"]["seconds_used"] == 10.5
             assert overview["reports"][0]["diagnostic"]["category"] == "validation_failed"

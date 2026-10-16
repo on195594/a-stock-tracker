@@ -170,6 +170,17 @@ class RunState(BaseModel):
     reused: bool | None = None
 
 
+class RecentRunsQuery(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    mode: Mode | None = None
+    code: str | None = Field(default=None, pattern=r"^(?:60\d{4}\.SH|00\d{4}\.SZ)$")
+    limit: int = Field(default=10, ge=1, le=20)
+    cursor: str | None = Field(
+        default=None, pattern=r"^(?:[a-f0-9]{32}|[0-9]+(?:\.[0-9]+)?_[a-f0-9]{32})$"
+    )
+
+
 class RunList(BaseModel):
     model_config = ConfigDict(extra="allow", strict=True)
 

@@ -1,8 +1,18 @@
 {% extends "base.html" %}
-{% from "_macros.html" import levels_block %}
+{% from "_macros.html" import summary_block %}
 {% block title %}研究首页{% endblock %}
 {% block main %}
 <h1>研究首页</h1>
+{% if active %}
+<section class="notice" aria-labelledby="active">
+  <h2 class="notice-title" id="active">进行中</h2>
+  {% for item in active %}
+  <p>{{ item.title }}</p>
+  <p class="muted">{{ item.meta }}</p>
+  <a class="link" href="/analysis/{{ item.id }}" aria-label="查看进度 · {{ item.title }}">查看进度</a>
+  {% endfor %}
+</section>
+{% endif %}
 <nav class="entries" aria-label="开始研究">
   <a class="btn" href="/analysis?mode=financial">研究一家公司</a>
   <a class="link" href="/analysis?mode=screen">从初筛找公司</a>
@@ -25,26 +35,27 @@
     <p>管理员需连接行情或模型服务，完成后再确认研究。</p>
   </section>
   {% endif %}
+  <nav class="tabs" aria-label="研究分类">
+    {% for key, title in p.VIEWS.items() %}<a href="/?view={{ key }}"{% if key == view %} aria-current="page"{% endif %}>{{ title }}</a>{% endfor %}
+  </nav>
   {% for group in groups %}
-  <section class="recent" aria-labelledby="g{{ loop.index }}">
-    <h2 id="g{{ loop.index }}">{{ group.title }}</h2>
+  <section class="recent" aria-labelledby="g-{{ group.mode }}">
+    <h2 id="g-{{ group.mode }}">{{ group.title }}{% if cursor %} · 更早记录{% endif %}</h2>
     {% for item in group["items"] %}
-    <article class="notice">
-      <h3 class="notice-title">{{ item.title }}</h3>
+    <article class="candidate">
+      <h3 class="notice-title">{{ item.scope }}</h3>
       <p class="muted">{{ item.meta }}</p>
-      {% for summary in item.summaries %}
-      <div class="summary">
-        <p class="lines">{{ summary.text }}</p>
-        {% if summary.levels %}{{ levels_block(summary.levels, summary.expires) }}{% endif %}
-      </div>
-      {% endfor %}
-      <a class="link" href="/analysis/{{ item.id }}" aria-label="{{ '查看进度' if item.active else '查看结果' }} · {{ item.title }}">{{ '查看进度' if item.active else '查看结果' }}</a>
+      {% for summary in item.summaries %}{{ summary_block(summary) }}{% endfor %}
+      <a class="link" href="/analysis/{{ item.id }}" aria-label="查看结果 · {{ item.title }}">查看结果</a>
     </article>
     {% else %}
     <p>{{ group.empty }}</p>
     {% endfor %}
+    {% if group.more %}<a class="link" href="{{ group.more }}">查看全部{{ group.title }}</a>{% endif %}
+    {% if group.next %}<a class="link" href="{{ group.next }}">更早的{{ group.title }}</a>{% endif %}
   </section>
   {% endfor %}
-  <a class="link" href="/">刷新研究进度</a>
+  {% if cursor %}<a class="link" href="/?view={{ view }}">返回最新记录</a>{% endif %}
+  <a class="link" href="{{ '/' if view == 'overview' else '/?view=' ~ view }}">刷新研究进度</a>
 {% endif %}
 {% endblock %}

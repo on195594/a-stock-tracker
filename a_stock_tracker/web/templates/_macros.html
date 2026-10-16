@@ -6,6 +6,31 @@
 </div>
 {%- endmacro %}
 
+{# Recent-run summary line: code and validity tag, text, live levels, dates. A live tag and
+   its levels sit in one expiring block so app.js swaps both once the Shanghai date passes. #}
+{% macro summary_block(s, with_code=true) -%}
+<div class="summary"{% if s.levels %} data-expires="{{ s.expires }}"{% endif %}>
+  {% if with_code or s.badge %}
+  <p class="summary-head">
+    {% if with_code %}<span>{{ s.code }}</span>{% endif %}
+    {% if s.badge %}<span class="tag{{ ' ' ~ s.badge.tone if s.badge.tone }}"{% if s.levels %} data-levels{% endif %}>{{ s.badge.text }}</span>{% endif %}
+    {% if s.levels %}<span class="tag caution" data-expired hidden>已过期</span>{% endif %}
+  </p>
+  {% endif %}
+  {% if s.text %}<p class="lines">{{ s.text }}</p>{% endif %}
+  {% if s.levels %}
+  <p class="lines" data-levels>{{ s.levels }}</p>
+  <p class="caution-text" data-expired hidden>已过期 · 仅供历史核查；观察线、失效线和距离已隐藏。</p>
+  {% endif %}
+  {% if s.helper %}<p class="muted">{{ s.helper }}</p>{% endif %}
+</div>
+{%- endmacro %}
+
+{# Code link into the company dossier; the code stays the visible name of the link. #}
+{% macro company_link(code) -%}
+<a class="link code" href="/stock/{{ code }}">{{ code }} · 公司档案</a>
+{%- endmacro %}
+
 {# Each fact id links to its source fact below; app.js opens the collapsed list. #}
 {% macro citations(code, ids) -%}
 <p class="muted">引用：{% for fid in ids %}<a class="citation" href="#fact-{{ code }}-{{ fid }}">{{ fid }}</a>{% if not loop.last %}、{% endif %}{% endfor %}</p>
@@ -32,6 +57,7 @@
     {% if r.stage %}<p>失败阶段：{{ r.stage }}</p>{% endif %}
     {% if r.stage_message %}<p>失败原因：{{ r.stage_message }}</p>{% endif %}
     {% if r.error %}<p>{{ r.error }}</p>{% endif %}
+    {{ company_link(r.code) }}
   </div>
   {# Shown by app.js once the head scrolls away; without the script it stays hidden. #}
   <p class="mini-head" data-mini-head hidden><a href="#report-{{ r.code }}">{{ r.code }}</a><span>{{ r.data_date }}</span></p>
@@ -113,7 +139,7 @@
 {% for row in rows %}
 <article class="candidate">
   <{{ level }} class="name">{{ row.name }}</{{ level }}>
-  <p class="muted code">{{ row.code }}</p>
+  {{ company_link(row.code) }}
   {% if row.status == 'reference' %}
     {% if row.expired %}
     <section class="notice caution">

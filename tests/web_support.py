@@ -10,7 +10,7 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from a_stock_tracker.auth import ACTIVE_SESSIONS
-from a_stock_tracker.contracts import RankingPage, RunState, ServiceInfo
+from a_stock_tracker.contracts import RankingPage, ReportList, RunState, ServiceInfo
 from a_stock_tracker.research_client import DemoResearchClient
 from a_stock_tracker.web import session as s
 from a_stock_tracker.web.routes import create_app
@@ -42,6 +42,8 @@ class FakeClient:
         self.runs: dict[str, dict[str, Any]] = {}
         self.fail: dict[str, BaseException] = {}
         self.recent_runs: list[dict[str, Any]] | None = None
+        self.recent_calls: list[dict[str, Any]] = []
+        self.reports: dict[str, Any] | None = None
 
     def _maybe_fail(self, name: str) -> None:
         if name in self.fail:
@@ -51,11 +53,31 @@ class FakeClient:
         self._maybe_fail("info")
         return self.demo.info()
 
-    def recent(self) -> list[RunState]:
+    def recent(
+        self,
+        mode: str | None = None,
+        code: str | None = None,
+        limit: int = 10,
+        cursor: str | None = None,
+    ) -> list[RunState]:
+        self.recent_calls.append(dict(mode=mode, code=code, limit=limit, cursor=cursor))
         self._maybe_fail("recent")
         if self.recent_runs is not None:
-            return [RunState.model_validate(r) for r in self.recent_runs]
-        return self.demo.recent()
+            # Same filters as the receiver; programmed runs are already newest first.
+            runs = [
+                r
+                for r in self.recent_runs
+                if (not mode or r["request"]["mode"] == mode)
+                and (not code or code in r["request"]["codes"])
+            ]
+            return [RunState.model_validate(r) for r in runs[:limit]]
+        return self.demo.recent(mode, code, limit, cursor)
+
+    def find_reports(self, code: str) -> ReportList:
+        self._maybe_fail("find_reports")
+        if self.reports is not None:
+            return ReportList.model_validate(self.reports)
+        return self.demo.find_reports(code)
 
     def submit(self, payload: dict[str, Any]) -> RunState:
         self.submitted.append(copy.deepcopy(payload))

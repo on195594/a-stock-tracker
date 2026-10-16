@@ -384,7 +384,7 @@ def test_slow_store_does_not_block_service_event_loop(tmp_path, monkeypatch, ope
 
     started, release = threading.Event(), threading.Event()
 
-    def slow(*args):
+    def slow(*args, **kwargs):
         started.set()
         assert release.wait(5)
         return [] if operation == "recent" else {"id": "a" * 32, "status": "running"}
@@ -448,7 +448,7 @@ def test_recent_selects_only_ten_newest_states(tmp_path, monkeypatch):
         directory.mkdir(mode=0o700)
         path = directory / "request.json"
         save_state(path, {"id": directory.name, "status": "failed"})
-        os.utime(path, (number + 1, number + 1))
+        os.utime(directory, (number + 1, number + 1))
     calls = []
     original = store.status
 
@@ -477,7 +477,7 @@ def test_recent_and_latest_share_metadata_across_historical_chains(tmp_path, mon
             state["reused_from"] = identifiers[2]
         path = directory / "request.json"
         save_state(path, state)
-        os.utime(path, (index + 1, index + 1))
+        os.utime(directory, (index + 1, index + 1))
 
     metadata = list(store.metadata())
     states = {path.parent.name: state for path, state in metadata}
@@ -502,6 +502,101 @@ def test_recent_and_latest_share_metadata_across_historical_chains(tmp_path, mon
     assert [run["id"] for run in recent] == [identifiers[5], identifiers[2]]
     assert [run["continuations"] for run in recent] == [1, 2]
     assert [run["reused"] for run in recent] == [False, True]
+
+
+@pytest.fixture
+def recent_store(tmp_path):
+    store = ResearchStore(tmp_path / "service")
+    for number in range(30):
+        request = payload("screen" if number >= 15 else "swing")
+        request["id"] = f"{number:032x}"
+        if number < 15:
+            request["codes"] = ["600519.SH", "000001.SZ"] if number % 2 else ["600519.SH"]
+        directory = store.directory(request["id"])
+        directory.mkdir(mode=0o700)
+        save_state(
+            directory / "request.json",
+            {
+                "id": request["id"],
+                "request": request,
+                "status": "failed",
+                "created_at": f"2026-10-{number + 1:02d}T00:00:00+00:00",
+            },
+        )
+    return store
+
+
+def test_recent_filters_before_limit_and_pages_without_duplicates(recent_store, monkeypatch):
+    store = recent_store
+    calls = []
+    original = store.status
+
+    def status(identifier, **kwargs):
+        calls.append(identifier)
+        return original(identifier, **kwargs)
+
+    monkeypatch.setattr(store, "status", status)
+    assert len(store.recent()) == 10
+    assert len(store.recent(limit=20)) == 20
+    assert len(store.recent(limit=1)) == 1
+    calls.clear()
+    first = store.recent(mode="swing", limit=10)
+    second = store.recent(mode="swing", cursor=first[-1]["id"])
+    assert [r["id"] for r in first + second] == [f"{n:032x}" for n in range(14, -1, -1)]
+    assert len(calls) == 15
+    assert store.recent(mode="swing", cursor=second[-1]["id"]) == []
+    expected = [f"{n:032x}" for n in range(13, 0, -2)]
+    assert [r["id"] for r in store.recent(code="000001.SZ")] == expected
+    first = store.recent(mode="swing", code="000001.SZ", limit=3)
+    second = store.recent(mode="swing", code="000001.SZ", cursor=first[-1]["id"])
+    assert [r["id"] for r in first + second] == expected
+    assert store.recent(mode="screen", code="600519.SH") == []
+    assert store.recent(mode="financial") == []
+    assert store.recent(code="600000.SH") == []
+    for cursor in ("f" * 32, f"{29:032x}"):
+        with pytest.raises(ValueError, match="游标"):
+            store.recent(mode="swing", cursor=cursor)
+
+
+def test_recent_created_at_order_survives_status_writes_and_uses_directory_fallback(
+    recent_store, monkeypatch
+):
+    import os
+
+    store = recent_store
+    old = store.directory(f"{0:032x}")
+    state = read_state(old / "request.json")
+    state["status"] = "running"
+    save_state(old / "request.json", state)
+    expected = [f"{n:032x}" for n in range(29, 9, -1)]
+    assert [r["id"] for r in store.recent(limit=20)] == expected
+    assert store.status(old.name)["status"] == "interrupted"
+    assert [r["id"] for r in store.recent(limit=20)] == expected
+
+    # Equal instants with different offsets must tie by id, independent of scan order.
+    latest = store.directory(f"{29:032x}")
+    state["created_at"] = "2026-10-30T08:00:00+08:00"
+    state["status"] = "failed"
+    save_state(old / "request.json", state)
+    assert [r["id"] for r in store.recent(limit=2)] == [latest.name, old.name]
+    metadata = list(store.metadata())
+    monkeypatch.setattr(store, "metadata", lambda: iter(reversed(metadata)))
+    assert [r["id"] for r in store.recent(limit=2)] == [latest.name, old.name]
+    assert store.recent(cursor=latest.name, limit=1)[0]["id"] == old.name
+    monkeypatch.undo()
+
+    state.pop("created_at")
+    save_state(old / "request.json", state)
+    stamp = datetime(2026, 10, 29, 12, tzinfo=timezone.utc).timestamp()
+    os.utime(old, (stamp, stamp))
+    os.utime(old / "request.json", (1, 1))
+    assert [r["id"] for r in store.recent(limit=2)] == [latest.name, old.name]
+
+
+@pytest.mark.parametrize("limit", [0, 21, -1, True, 1.5, "10"])
+def test_recent_rejects_invalid_limits(tmp_path, limit):
+    with pytest.raises(ValueError):
+        ResearchStore(tmp_path / "service").recent(limit=limit)
 
 
 def test_find_reports_stops_after_twenty_verified_reports(tmp_path, monkeypatch):
@@ -1137,3 +1232,112 @@ store.execute(directory, state, store.lease())
                 os.killpg(int(leader_path.read_text()), signal.SIGKILL)
             except ProcessLookupError:
                 pass
+
+
+def test_recent_tracks_chain_activity_timestamp_and_resolves_historical_cursor(tmp_path):
+    store = ResearchStore(tmp_path)
+    # Root screen run created at T=10:00
+    root_id = "0" * 31 + "1"
+    save_state(
+        tmp_path / root_id / "request.json",
+        {
+            "id": root_id,
+            "status": "completed",
+            "created_at": "2026-10-16T10:00:00+00:00",
+            "request": {"mode": "screen", "codes": []},
+            "usage": {},
+        },
+    )
+    # Reused run created later at T=12:00
+    reused_id = "0" * 31 + "2"
+    save_state(
+        tmp_path / reused_id / "request.json",
+        {
+            "id": reused_id,
+            "status": "completed",
+            "reused_from": root_id,
+            "created_at": "2026-10-16T12:00:00+00:00",
+            "request": {"mode": "screen", "codes": []},
+            "usage": {},
+        },
+    )
+    # Unrelated screen run created at T=11:00
+    other_id = "0" * 31 + "3"
+    save_state(
+        tmp_path / other_id / "request.json",
+        {
+            "id": other_id,
+            "status": "completed",
+            "created_at": "2026-10-16T11:00:00+00:00",
+            "request": {"mode": "screen", "codes": []},
+            "usage": {},
+        },
+    )
+    # The screen chain active time should be 12:00, ranking before other_id (11:00)
+    runs = store.recent(limit=10)
+    assert [r["id"] for r in runs] == [root_id, other_id]
+    # Cursor pagination using either the chain root or reused_id resolves correctly
+    paged = store.recent(cursor=reused_id, limit=10)
+    assert [r["id"] for r in paged] == [other_id]
+
+    # Invalid date string in continuation falls back to mtime and retains the latest failed node
+    corrupt_continuation_id = "0" * 31 + "4"
+    save_state(
+        tmp_path / corrupt_continuation_id / "request.json",
+        {
+            "id": corrupt_continuation_id,
+            "status": "failed",
+            "continued_from": other_id,
+            "created_at": "invalid-date-format",
+            "request": {"mode": "screen", "codes": []},
+            "usage": {},
+        },
+    )
+    # The chain of other_id now has corrupt_continuation_id as its latest node
+    runs_with_corrupt = store.recent(limit=10)
+    assert len(runs_with_corrupt) == 2
+    other_chain_item = next(r for r in runs_with_corrupt if r["id"] == corrupt_continuation_id)
+    assert other_chain_item["status"] == "failed"
+    assert other_chain_item["continuations"] == 1
+
+
+def test_recent_pages_reused_chain_using_emitted_id(tmp_path):
+    store = ResearchStore(tmp_path)
+    root_id = "0" * 31 + "1"
+    save_state(
+        tmp_path / root_id / "request.json",
+        {
+            "id": root_id,
+            "status": "completed",
+            "created_at": "2026-10-16T10:00:00+00:00",
+            "request": {"mode": "screen", "codes": []},
+            "usage": {},
+        },
+    )
+    reused_id = "0" * 31 + "2"
+    save_state(
+        tmp_path / reused_id / "request.json",
+        {
+            "id": reused_id,
+            "status": "completed",
+            "reused_from": root_id,
+            "created_at": "2026-10-16T12:00:00+00:00",
+            "request": {"mode": "screen", "codes": []},
+            "usage": {},
+        },
+    )
+    other_id = "0" * 31 + "3"
+    save_state(
+        tmp_path / other_id / "request.json",
+        {
+            "id": other_id,
+            "status": "completed",
+            "created_at": "2026-10-16T11:00:00+00:00",
+            "request": {"mode": "screen", "codes": []},
+            "usage": {},
+        },
+    )
+    first_page = store.recent(limit=1)
+    assert [r["id"] for r in first_page] == [root_id]
+    second_page = store.recent(limit=1, cursor=first_page[0]["id"])
+    assert [r["id"] for r in second_page] == [other_id]

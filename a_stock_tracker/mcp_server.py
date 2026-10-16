@@ -293,14 +293,10 @@ def register_reads(
         annotations=annotations,
     )
     def list_runs(
-        limit: Annotated[int, Field(ge=1, le=10)] = 10, kind: Mode | None = None
+        limit: Annotated[int, Field(ge=1, le=20)] = 10, kind: Mode | None = None
     ) -> ChainList:
-        runs = reader.recent()
-        return ChainList(
-            runs=[chain(r) for r in runs if kind is None or (r.request and r.request.mode == kind)][
-                :limit
-            ]
-        )
+        runs = reader.recent(mode=kind, limit=limit)
+        return ChainList(runs=[chain(r) for r in runs])
 
     @server.tool(
         description="查询进度、用量和结果概况，可等待状态变化至多 30 秒。" + UNTRUSTED,

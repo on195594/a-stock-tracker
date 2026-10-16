@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import report_block, board_view %}
+{% from "_macros.html" import report_block, board_view, company_link %}
 {% block title %}研究 {{ run.id[:8] }}{% endblock %}
 {% block main %}
 {% set source = (run.request or {}).get('from') %}
@@ -62,7 +62,8 @@
   <p class="muted">{{ group.ranking|length }} 家 · 比较年度：{{ group.periods|join('、') }}</p>
   {% for row in group.ranking[:3] %}{% set row = p.ranking_row(row) %}
   <article class="candidate">
-    <h3 class="name">{{ row.name }} · {{ row.code }}</h3>
+    <h3 class="name">{{ row.name }}</h3>
+    {{ company_link(row.code) }}
     <p class="lines">{{ row.facts }}</p>
     <a class="btn" href="/analysis?mode=financial&amp;code={{ row.code }}&amp;from={{ run.id }}">研究这家公司财报</a>
     <a class="link" href="/analysis?mode=swing&amp;code={{ row.code }}&amp;from={{ run.id }}">查看价格纪律参考</a>

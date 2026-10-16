@@ -52,7 +52,7 @@ def assert_layout(page: Page, width: int, where: str) -> None:
     overflow = page.evaluate("document.documentElement.scrollWidth - window.innerWidth")
     assert overflow <= 0, f"{where}@{width}: horizontal overflow {overflow}px"
     small = page.evaluate(
-        """() => [...document.querySelectorAll('main .btn, main .link, summary, .check, .shell .nav, .jump-bar a, .mini-head a')]
+        """() => [...document.querySelectorAll('main .btn, main .link, summary, .check, .shell .nav, .jump-bar a, .mini-head a, .tabs a')]
             .filter(el => el.offsetParent !== null)
             .map(el => [el.textContent.trim().slice(0, 20), el.getBoundingClientRect().height])
             .filter(([, h]) => h < 47.5)"""
@@ -116,6 +116,7 @@ def main_flow(page: Page, base: str, width: int) -> None:
     assert_layout(page, width, "home")
     entries = page.locator("nav.entries a")
     expect(entries).to_have_text(["研究一家公司", "从初筛找公司", "独立价格参考（不调用模型）"])
+    expect(page.locator("nav.tabs a")).to_have_text(["概览", "财报研究", "初筛", "价格参考"])
 
     # Financial: unconfirmed is refused and nothing runs; confirmed starts once.
     entries.first.click()
@@ -145,8 +146,15 @@ def main_flow(page: Page, base: str, width: int) -> None:
     expect(cited).to_be_in_viewport()
     report_jumps(page, width)
 
+    # The report code opens the company dossier: latest report and a price entry.
+    page.click("text=600519.SH · 公司档案")
+    expect(page.locator("h1")).to_have_text("演示公司")
+    expect(page.locator("a.btn", has_text="阅读最新研报")).to_be_visible()
+    expect(page.locator("main")).to_contain_text("尚未核对价格参考。")
+    assert_layout(page, width, "company")
+
     # Price reference is a separate confirmation, prefilled but never auto-submitted.
-    page.click("text=核对本公司价格参考")
+    page.click("text=核对价格参考（不调用模型）")
     expect(page.locator("textarea[name=codes]")).to_have_value("600519.SH")
     expect(page.locator("input[name=confirmed]")).not_to_be_checked()
     page.fill("textarea[name=codes]", "600001")
@@ -173,6 +181,14 @@ def main_flow(page: Page, base: str, width: int) -> None:
         page.goto(base + "/analysis?mode=swing&code=" + code)
         confirm_and_submit(page)
         expect(page.locator("main")).to_contain_text(text)
+
+    # Home tabs are plain links; the price tab lists only price references.
+    page.goto(base + "/")
+    page.locator("nav.tabs a", has_text="价格参考").click()
+    expect(page.locator("nav.tabs a[aria-current=page]")).to_have_text("价格参考")
+    expect(page.locator("main")).to_contain_text("资料缺口")
+    expect(page.locator("main")).not_to_contain_text("全市场初筛")
+    assert_layout(page, width, "home-tab")
 
     # Read failure offers a retry without inventing a result.
     page.goto(base + "/analysis/" + "f" * 32)
@@ -325,7 +341,8 @@ def main() -> int:
     assert not external, f"external requests attempted: {external}"
     print(
         "Browser passed: 360/390/430px + desktop; home, consent refusal, financial report, "
-        "citations by keyboard, report jump bar and sticky mini-head, price time window, "
+        "citations by keyboard, report jump bar and sticky mini-head, company dossier, home tabs, "
+        "price time window, "
         "price reference prefill and detail, screen ranking filter, "
         "gap/empty/read-failure states, logout isolation, retired URLs 404, local expiry "
         "hiding, polling stop on 401 and reload on change. Synthetic, not a real device."

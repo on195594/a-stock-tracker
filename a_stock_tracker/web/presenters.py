@@ -41,6 +41,7 @@ SECTION_TITLES = (
 )
 CODE = re.compile(r"(?:60\d{4}\.SH|00\d{4}\.SZ)")
 RUN_ID = re.compile(r"[a-f0-9]{32}")
+CURSOR_RE = re.compile(r"^(?:[a-f0-9]{32}|[0-9]+(?:\.[0-9]+)?_[a-f0-9]{32})$")
 PRICE_LIMITS = LIMITS
 PRICE_SECTIONS = SECTIONS
 LEGACY_PRICE_RULE = RULE
@@ -157,19 +158,6 @@ def price_levels_text(row: dict[str, Any]) -> str:
     )
 
 
-def price_summary(row: dict[str, Any]) -> str:
-    """Home/recent summary; an expired row never shows a price."""
-    if row["status"] == "gap":
-        return "资料缺口：" + "；".join(row["reasons"])
-    if row["status"] == "excluded":
-        return "旧规则未入选：" + "；".join(row["reasons"])
-    if row.get("expired"):
-        return "已过期 · 仅供历史核查\n" + price_dates(row) + "\n观察线、失效线和距离已隐藏。"
-    if row["status"] == "observation":
-        return price_dates(row) + "\n旧规则批次；请进入详情核查历史条件。"
-    return price_levels_text(row) + "\n" + price_dates(row)
-
-
 def recent_result_label(run: dict[str, Any]) -> str:
     status = run["status"]
     if status in {"running", "failed", "interrupted"}:
@@ -197,61 +185,187 @@ def recent_result_label(run: dict[str, Any]) -> str:
     return "部分结果 · " + label if status == "partial" else label
 
 
+def disclosure_text(report: dict[str, Any]) -> str:
+    docs = report.get("documents") or []
+    if not docs:
+        return "披露期：未记录"
+    return "披露期：" + "；".join(
+        f"{d.get('period') or '未记录'}（公告 {d.get('announced') or '未记录'}）" for d in docs
+    )
+
+
+def price_badge(row: dict[str, Any]) -> dict[str, str]:
+    """Validity tag only; tones are neutral or caution, never a success colour."""
+    if row["status"] == "gap":
+        return {"text": "资料缺口", "tone": "caution"}
+    if row["status"] == "excluded":
+        return {"text": "旧规则未入选", "tone": "plain"}
+    if row.get("expired"):
+        return {"text": "已过期", "tone": "caution"}
+    return {"text": "有效期内" if row["status"] == "reference" else "旧规则 · 有效期内", "tone": ""}
+
+
+def validity_text(row: dict[str, Any]) -> str:
+    if not row.get("expires"):
+        return "有效期：未记录"
+    if row.get("expired"):
+        return f"依据截至 {row.get('as_of') or '未记录'}；原有效至 {row['expires']}，已过期"
+    return price_dates(row)
+
+
+def report_summary(report: dict[str, Any]) -> dict[str, Any]:
+    counter = (
+        report.get("analysis", {}).get("counterevidence", {}).get("text", "")
+        if readable_report(report)
+        else ""
+    )
+    return {
+        "code": report["code"],
+        "badge": None,
+        "text": report_summary_status(report)
+        + ("\n最强反证：" + counter.split("。", 1)[0] + "。" if counter else ""),
+        "helper": disclosure_text(report),
+        "levels": None,
+        "expires": None,
+    }
+
+
+def board_summary(row: dict[str, Any]) -> dict[str, Any]:
+    """Recent/dossier price line; only a live reference carries levels."""
+    live = row["status"] == "reference" and not row.get("expired")
+    if row["status"] in {"gap", "excluded"}:
+        text = "；".join(row.get("reasons") or [])
+    elif row.get("expired"):
+        text = "仅供历史核查；观察线、失效线和距离已隐藏。"
+    elif row["status"] == "observation":
+        text = "旧规则批次；请进入详情核查历史条件。"
+    else:
+        text = ""
+    return {
+        "code": row["code"],
+        "badge": price_badge(row),
+        "text": text,
+        "helper": validity_text(row) if row["status"] not in {"gap", "excluded"} else "",
+        # Live levels are a separate element so the page script can hide them at expiry.
+        "levels": price_levels_text(row) if live else None,
+        "expires": row.get("expires") if live else None,
+    }
+
+
+def run_mode(run: dict[str, Any]) -> str | None:
+    return (run.get("request") or {}).get("mode")
+
+
+def run_codes(run: dict[str, Any]) -> list[str]:
+    return (run.get("request") or {}).get("codes") or []
+
+
 def recent_item(run: dict[str, Any]) -> dict[str, Any]:
     chain = f" · 续跑 {run['continuations']} 次" if run.get("continuations") else ""
     if run.get("reused") or run.get("reused_from"):
         chain += " · 复用"
     result = run.get("summary") or {}
-    summaries = []
-    for report in result.get("reports", []):
-        counter = (
-            report.get("analysis", {}).get("counterevidence", {}).get("text", "")
-            if readable_report(report)
-            else ""
-        )
-        summaries.append(
-            {
-                "text": f"{report['code']} · {report_summary_status(report)}\n{report_dates(report)}"
-                + ("\n最强反证：" + counter.split("。", 1)[0] + "。" if counter else ""),
-                "levels": None,
-            }
-        )
-    for row in result.get("board", {}).get("rows", []):
-        live = row["status"] == "reference" and not row.get("expired")
-        summaries.append(
-            {
-                # Live levels are a separate element so the page script can hide them at expiry.
-                "text": row["code"] + "\n" + (price_dates(row) if live else price_summary(row)),
-                "levels": price_levels_text(row) if live else None,
-                "expires": row.get("expires"),
-            }
-        )
-    request = run.get("request") or {}
+    scope = ",".join(run_codes(run)) or "全市场初筛"
     return {
         "id": run["id"],
         "active": run["status"] == "running",
-        "title": (run.get("limits") or {}).get("title", "研究")
-        + " · "
-        + (",".join(request.get("codes") or []) or "全市场初筛"),
+        "title": (run.get("limits") or {}).get("title", "研究") + " · " + scope,
+        "scope": scope,
         "meta": f"{recent_result_label(run)}{chain} · {local_time(run.get('created_at'))}",
-        "summaries": summaries,
+        "summaries": [report_summary(r) for r in result.get("reports", [])]
+        + [board_summary(row) for row in result.get("board", {}).get("rows", [])],
     }
 
 
-def recent_groups(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    items = [recent_item(r) for r in runs]
+VIEWS = {"overview": "概览", "financial": "财报研究", "screen": "初筛", "swing": "价格参考"}
+MODE_ORDER = ("financial", "screen", "swing")
+EMPTY = {
+    "financial": "暂无财报研究记录。",
+    "screen": "暂无初筛记录。",
+    "swing": "暂无价格参考记录。",
+}
+
+
+def tab_groups(runs: dict[str, list[dict[str, Any]]], view: str, limit: int) -> dict[str, Any]:
+    """Home tabs: running work pinned on top, then one group per mode in the view.
+
+    `runs` holds the global recent list under "all" and per-mode lists under each mode.
+    Lists are re-filtered by mode, so a receiver that ignores the filter cannot mix tabs.
+    """
+    active, pinned = [], set()
+    for run in (r for key in ("all", *MODE_ORDER) for r in runs.get(key, [])):
+        if run["status"] == "running" and run["id"] not in pinned:
+            pinned.add(run["id"])
+            active.append(recent_item(run))
     groups = []
-    active = [i for i in items if i["active"]]
-    if active:
-        groups.append({"title": "进行中", "items": active, "empty": ""})
-    groups.append(
-        {
-            "title": "最近研究",
-            "items": [i for i in items if not i["active"]],
-            "empty": "暂无研究记录，可开始选股与研究。",
-        }
+    for mode in MODE_ORDER if view == "overview" else (view,):
+        listed = runs.get(mode, [])
+        items = [recent_item(r) for r in listed if run_mode(r) == mode and r["id"] not in pinned]
+        groups.append(
+            {
+                "mode": mode,
+                "title": VIEWS[mode],
+                "items": items,
+                "empty": EMPTY[mode],
+                "more": f"/?view={mode}" if view == "overview" and items else None,
+                "next": f"/?view={mode}&cursor={listed[-1].get('cursor') or listed[-1]['id']}"
+                if view != "overview" and len(listed) == limit
+                else None,
+            }
+        )
+    return {"active": active, "groups": groups}
+
+
+def archived_report(report: dict[str, Any]) -> dict[str, Any]:
+    # The receiver lists only reviewed reports; synthetic ones say so themselves.
+    report = {"evidence_review": "passed", **report}
+    return {
+        "run_id": report["run_id"],
+        "time": local_time(report.get("finished_at")),
+        "status": report_summary_status(report),
+        "disclosure": disclosure_text(report),
+        "quality": quality_text(report.get("quality")),
+        "gaps": f"主要缺口 {report.get('gap_count', 0)} 条",
+    }
+
+
+def company_view(
+    code: str,
+    reports: dict[str, Any],
+    swing: list[dict[str, Any]],
+    financial: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Company dossier: latest reviewed report, latest price reference, report archive."""
+    listed = [r for r in reports.get("reports", []) if r.get("code") == code]
+    archive = [archived_report(r) for r in listed]
+    attempt_run = next(
+        (r for r in financial if run_mode(r) == "financial" and code in run_codes(r)), None
     )
-    return groups
+    attempt = None
+    # Surface the newest financial run only when it is running or left nothing readable.
+    if attempt_run and not (
+        attempt_run["status"] in {"completed", "partial"}
+        and any(readable_report(r) for r in (attempt_run.get("summary") or {}).get("reports", []))
+    ):
+        attempt = recent_item(attempt_run)
+    price_run = next((r for r in swing if run_mode(r) == "swing" and code in run_codes(r)), None)
+    price = None
+    if price_run:
+        item = recent_item(price_run)
+        price = {
+            "id": item["id"],
+            "active": item["active"],
+            "meta": item["meta"],
+            "summaries": [s for s in item["summaries"] if s["code"] == code],
+        }
+    return {
+        "code": code,
+        "name": next((r["name"] for r in listed if r.get("name")), ""),
+        "latest": archive[0] if archive else None,
+        "archive": archive[1:],
+        "attempt": attempt,
+        "price": price,
+    }
 
 
 def quote_lines(info: dict[str, Any], mode: str, offer: dict[str, Any]) -> list[str]:

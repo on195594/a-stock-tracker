@@ -42,6 +42,10 @@ LOGIN_ERRORS = {
     "denied": "该 GitHub 账号未获授权。",
     "failed": "GitHub 登录未完成，请重新尝试。",
 }
+# Home reads: newest runs to find running work, per-mode previews, and one tab page.
+ACTIVE_LIMIT = 5
+OVERVIEW_LIMIT = 3
+VIEW_LIMIT = 10
 
 
 def plain(value: Any) -> Any:
@@ -192,25 +196,87 @@ def create_app(
 
     # ---- research pages -------------------------------------------------------------
 
-    async def read(fn: Callable[..., Any], *args: Any) -> Any:
-        return plain(await run_in_threadpool(fn, *args))
+    async def read(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        return plain(await run_in_threadpool(fn, *args, **kwargs))
 
     @app.get("/")
     async def home(request: Request) -> Response:
         actor = actor_of(request)
         if actor is None:
             return to_login()
-        context: dict[str, Any] = {"connected": client is not None}
+        q = request.query_params
+        view = q.get("view", "")
+        view = view if view in p.VIEWS else "overview"
+        raw_cursor = q.get("cursor", "")
+        cursor = raw_cursor if view != "overview" and p.CURSOR_RE.fullmatch(raw_cursor) else None
+        context: dict[str, Any] = {"connected": client is not None, "view": view, "cursor": cursor}
         if client is not None:
+            modes = p.MODE_ORDER if view == "overview" else (view,)
+            limit = OVERVIEW_LIMIT if view == "overview" else VIEW_LIMIT
             try:
-                # Run independent receiver reads concurrently.
-                info, recent = await asyncio.gather(read(client.info), read(client.recent))
+                # Run independent receiver reads concurrently; the global list finds running work.
+                info, everything, *listed = await asyncio.gather(
+                    read(client.info),
+                    read(client.recent, limit=ACTIVE_LIMIT),
+                    *(read(client.recent, mode=m, limit=limit, cursor=cursor) for m in modes),
+                )
+            except ResearchRejected:
+                return failure(
+                    request,
+                    actor,
+                    "分页已失效",
+                    "研究记录已变化，请从最新记录重新查看。",
+                    400,
+                    back="/",
+                    retry=f"/?view={view}",
+                )
             except ResearchUnavailable:
                 context["unreachable"] = True
             else:
                 context["configured"] = any(m.get("available") for m in info["modes"].values())
-                context["groups"] = p.recent_groups(recent)
+                context.update(
+                    p.tab_groups({"all": everything, **dict(zip(modes, listed))}, view, limit)
+                )
         return render(request, actor, "home.html", context)
+
+    @app.get("/stock/{code}")
+    async def company(request: Request, code: str) -> Response:
+        actor = actor_of(request)
+        if actor is None:
+            return to_login()
+        canonical = p.normalize_codes(code)
+        if len(canonical) != 1 or not p.CODE.fullmatch(canonical[0]):
+            return failure(
+                request,
+                actor,
+                "股票代码不正确",
+                "仅支持沪深主板代码，如 600519.SH 或 000001.SZ。",
+                404,
+                back="/",
+            )
+        if canonical[0] != code:
+            return RedirectResponse("/stock/" + canonical[0], status_code=303)
+        if client is None:
+            return render(request, actor, "unconnected.html", {})
+        try:
+            reports, swing, financial = await asyncio.gather(
+                read(client.find_reports, code),
+                read(client.recent, mode="swing", code=code, limit=1),
+                read(client.recent, mode="financial", code=code, limit=1),
+            )
+        except ResearchUnavailable:
+            return failure(
+                request,
+                actor,
+                "公司档案暂不可读取",
+                "研究服务暂时无法连接；未启动新请求。",
+                503,
+                retry="/stock/" + code,
+                back="/",
+            )
+        return render(
+            request, actor, "company.html", p.company_view(code, reports, swing, financial)
+        )
 
     async def form_page(
         request: Request,
@@ -229,7 +295,9 @@ def create_app(
         try:
             resume_source = None
             if mode == "screen" and not resume_from:
-                info, recent = await asyncio.gather(read(client.info), read(client.recent))
+                info, recent = await asyncio.gather(
+                    read(client.info), read(client.recent, mode="screen", limit=1)
+                )
             elif mode == "screen" and p.RUN_ID.fullmatch(resume_from):
                 info, resume_source = await asyncio.gather(
                     read(client.info), read(client.status, resume_from)

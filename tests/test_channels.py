@@ -585,3 +585,73 @@ def test_projection_contracts_preserve_missing_and_extra_fields():
         facts=[fact],
     )
     assert ReportView.model_validate(report).model_dump(exclude_unset=True) == report
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"mode": "trade"},
+        {"mode": ""},
+        {"code": "../private"},
+        {"code": "600519"},
+        {"cursor": "../private"},
+        {"cursor": "A" * 32},
+        {"cursor": ""},
+        {"cursor": "f" * 32},
+        {"limit": "0"},
+        {"limit": "21"},
+        {"limit": "1.5"},
+        {"limit": "true"},
+        {"limit": ""},
+    ],
+)
+def test_recent_query_rejects_invalid_parameters(tmp_path, params):
+    with TestClient(service.create_service(tmp_path / "service", TOKENS)) as client:
+        response = client.get("/runs", params=params, headers=auth())
+        assert response.status_code == 400
+        assert ErrorBody.model_validate(response.json()).code == "invalid_request"
+
+
+def test_recent_client_forwards_filters_and_cursor_to_receiver(tmp_path, monkeypatch):
+    store = service.ResearchStore(tmp_path / "service")
+    requests = []
+    for number in range(25):
+        request = payload("screen" if number >= 15 else "swing")
+        if number < 15 and number % 2:
+            request["codes"] = ["600519.SH", "000001.SZ"]
+        record(store, request, created_at=f"2026-10-{number + 1:02d}T00:00:00+00:00")
+        requests.append(request)
+
+    with TestClient(service.create_service(store.root, TOKENS)) as receiver:
+        original = httpx.Client
+        seen = []
+
+        def forward(incoming):
+            seen.append(incoming)
+            answer = receiver.get(str(incoming.url), headers=auth())
+            return httpx.Response(answer.status_code, json=answer.json())
+
+        monkeypatch.setattr(
+            httpx, "Client", lambda **kw: original(transport=httpx.MockTransport(forward))
+        )
+        client = ResearchClient("http://testserver", TOKENS["mcp"])
+        assert len(client.recent()) == 10
+        assert dict(seen[-1].url.params) == {"limit": "10"}
+        assert len(client.recent(limit=20)) == 20
+        assert len(client.recent(mode="swing")) == 10
+        expected = [requests[n]["id"] for n in range(13, 0, -2)]
+        assert [r.id for r in client.recent(code="000001.SZ")] == expected
+        first = client.recent(mode="swing", code="000001.SZ", limit=3)
+        second = client.recent(mode="swing", code="000001.SZ", limit=3, cursor=first[-1].id)
+        assert dict(seen[-1].url.params) == {
+            "mode": "swing",
+            "code": "000001.SZ",
+            "limit": "3",
+            "cursor": first[-1].id,
+        }
+        third = client.recent(mode="swing", code="000001.SZ", cursor=second[-1].id)
+        assert [r.id for r in first + second + third] == expected
+        assert client.recent(mode="swing", code="000001.SZ", cursor=third[-1].id) == []
+        with pytest.raises(ResearchRejected) as error:
+            client.recent(limit=21)
+        assert error.value.code == "invalid_request"

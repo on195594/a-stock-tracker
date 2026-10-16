@@ -288,6 +288,68 @@ a {
   gap: 4px;
 }
 
+.summary-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--related);
+}
+
+/* Validity tags: neutral or caution with a written label, never a success colour. */
+.tag {
+  font-size: 14px;
+  font-weight: 700;
+  padding: 0 var(--related);
+  border-radius: var(--radius);
+  background: var(--band);
+  color: var(--accent);
+}
+
+.tag.caution {
+  background: var(--caution-bg);
+  color: var(--caution);
+}
+
+.tag.plain {
+  color: var(--muted);
+}
+
+/* Home tabs: plain links, one row that scrolls sideways like the jump bar. */
+.tabs {
+  display: flex;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  margin: 0 -12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.tabs a {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  min-height: 48px;
+  padding: 0 12px;
+  border-bottom: 3px solid transparent;
+  color: var(--muted);
+  font-weight: 700;
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+.tabs a:hover {
+  text-decoration: underline;
+}
+
+.tabs a[aria-current="page"] {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
+
+.tabs a:focus-visible {
+  outline-offset: -3px;
+}
+
 .conditions,
 .conditions-panel {
   background: var(--surface);

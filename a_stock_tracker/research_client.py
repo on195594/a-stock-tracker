@@ -106,8 +106,19 @@ class ResearchClient:
     def info(self) -> ServiceInfo:
         return ServiceInfo.model_validate(self.call("GET", "/info"))
 
-    def recent(self) -> list[RunState]:
-        return RunList.model_validate(self.call("GET", "/runs")).runs
+    def recent(
+        self,
+        mode: str | None = None,
+        code: str | None = None,
+        limit: int = 10,
+        cursor: str | None = None,
+    ) -> list[RunState]:
+        params = {
+            key: value
+            for key, value in dict(mode=mode, code=code, limit=str(limit), cursor=cursor).items()
+            if value is not None
+        }
+        return RunList.model_validate(self.call("GET", "/runs", params=params)).runs
 
     def submit(self, payload: dict[str, Any]) -> RunState:
         validate_request(payload)
@@ -163,10 +174,27 @@ class DemoResearchClient:
             }
         )
 
-    def recent(self) -> list[RunState]:
+    def recent(
+        self,
+        mode: str | None = None,
+        code: str | None = None,
+        limit: int = 10,
+        cursor: str | None = None,
+    ) -> list[RunState]:
+        # Same filters and id cursor as the receiver; only chain tails are listed.
+        tails = [
+            identifier
+            for identifier in reversed(self.runs)
+            if not any(s.get("continued_from") == identifier for s in self.runs.values())
+        ]
+        if cursor is not None:
+            if cursor not in tails:
+                raise ResearchRejected("分页游标不在当前研究列表中")
+            tails = tails[tails.index(cursor) + 1 :]
         runs = []
-        for identifier in reversed(self.runs):
-            if any(s.get("continued_from") == identifier for s in self.runs.values()):
+        for identifier in tails:
+            request = self.runs[identifier]["request"]
+            if (mode and request["mode"] != mode) or (code and code not in request["codes"]):
                 continue
             state = self.status(identifier).model_dump(by_alias=True, exclude_unset=True)
             state["summary"] = result_summary(state.pop("result"))
@@ -176,9 +204,31 @@ class DemoResearchClient:
                 node = self.runs[node["continued_from"]]
             state["continuations"] = count
             runs.append(RunState.model_validate(state))
-            if len(runs) == 10:
+            if len(runs) == limit:
                 break
         return runs
+
+    def find_reports(self, code: str) -> ReportList:
+        reports = [
+            {
+                "run_id": identifier,
+                "code": code,
+                "name": report.get("name"),
+                "finished_at": value["created_at"],
+                "status": report["status"],
+                # Synthetic reports are never reviewed; keep that visible to the page.
+                "evidence_review": report["evidence_review"],
+                "documents": report.get("documents", []),
+                "omitted_pages": report.get("omitted_pages"),
+                "gap_count": len(report.get("gaps", [])),
+                "quality": report.get("quality"),
+            }
+            for identifier, value in reversed(self.runs.items())
+            if value["request"]["mode"] == "financial"
+            for report in value["result"]["reports"]
+            if report["code"] == code
+        ]
+        return ReportList.model_validate({"code": code, "reports": reports[:20]})
 
     def submit(self, payload: dict[str, Any]) -> RunState:
         validate_request(payload)
