@@ -117,7 +117,8 @@ systemctl --user disable --now a-stock-tracker-research.service
 #### 服务状态探针与排障
 - **Web 服务直接探针**：
   ```bash
-  curl -I -H 'Host: stock.keyi.win' http://127.0.0.1:8550/
+  curl --fail --silent --show-error -o /dev/null -w '%{http_code}\n' \
+    -H 'Host: stock.keyi.win' http://127.0.0.1:8550/login
   ```
 - **Nginx 语法核对**：
   ```bash
@@ -191,24 +192,24 @@ export AUTOMATION_HERMES_RUNTIME=/absolute/path/to/installed/hermes-agent
 - CLI JSON 与 `invocation.json` 的 `report_counts` / `failed_reports` 区分报告状态与复核失败。退出码 0 要求覆盖完成、无待研究且复核通过；2 表示部分完成或存在失败；运行异常为 1。只扫描也会因候选待研究返回 2。已提交的失败报告是终态，`--resume` 不重跑；修复原因后须显式新建批次。通过复核不代表全文完整、投资可用或获得 `a-stock-qa` 标签。
 - 代码交付不启用周度定时或投递。一次性验收不等于生产切换；未来确认预算、时间和目的地后，原生定时器调用同一入口即可。
 
-## 重构切换与回滚要求
+## 升级与回滚要求
 
-**重构阶段 1–5 已全部完成上线。** 进度见[架构](architecture.md#重构状态)，验收见 [README](../README.md#重构验收门槛)。不运行 `deploy.sh` 做开发验证。
+验收门槛见 [README](../README.md#回归与发布门槛)，历史发布记录见 [CHANGELOG](../CHANGELOG.md)。不运行 `deploy.sh` 做开发验证。
 
 ### 接收器升级与回滚
 
-阶段 2、3 改动了接收器（修复管线、渠道令牌、每日限额、按代码查报告、排名分页），提交协议不变。宿主接收器以 `~/a-stock-tracker` 为工作目录并从中启动批处理：开发与 `uv sync` 只在独立 git worktree 中进行。每次升级单独授权：
+接收器负责研究执行、报价、渠道限额和结果读取；升级时须保留提交协议与历史数据兼容性。宿主接收器以 `~/a-stock-tracker` 为工作目录并从中启动批处理：开发与 `uv sync` 只在独立 git worktree 中进行。每次升级单独授权：
 
 1. 先在合成接收器上验证新接收器与现网 Web 兼容：报价、提交、状态与结果读取不受影响。
 2. 只在 `get_service_info` 显示无任务执行时更新宿主代码并重启接收器；批处理子进程从宿主工作区启动，任务运行中不改动工作区。
-3. 记录接收器当前提交作为回滚点；新增的 `.research-mcp.env` 为 0600，并已被 Git 与 Docker 构建排除。
+3. 记录接收器当前提交作为回滚点；启用 MCP 时 `.research-mcp.env` 为 0600，并已被 Git 与 Docker 构建排除。
 4. 新写入的元数据只做增量字段（如 `channel`），回滚到上一提交后旧接收器照常读取；不改写、不删除研究目录，不重跑任务。
 
 ### Web 切换前
 
 - 候选只在 loopback、临时目录与合成接收器上验证，不连接生产桥，不同时开放两个可提交入口。
-- 镜像只安装声明的直接依赖；构建后核对 FastAPI、模板与 OAuth 所需模块可导入。移除 Flet 后重新同步宿主环境属于接收器变更，按上一节执行。
-- Nginx（`docker/nginx-stock.conf`，已在仓库中更新，随部署生效）：`/oauth_callback` 路径不变；CSP 与应用一致（无 `unsafe-inline`、`unsafe-eval`、`ws:`）；`Referrer-Policy: same-origin`（保证同源 POST 携带真实 Origin）；`$ssl_early_data` 为 `1` 的非 GET/HEAD 请求返回 425，并向上游传递 `Early-Data`；`/api/session` 位置已删除。共享 `nginxconfig.io/proxy.conf` 中的 WebSocket 升级头切换后再删。
+- 镜像按锁文件安装运行依赖，不安装开发依赖；构建后核对 FastAPI、模板与 OAuth 所需模块可导入。同步宿主环境属于接收器变更，按上一节执行。
+- Nginx（`docker/nginx-stock.conf`）：`/oauth_callback` 路径不变；CSP 与应用一致（无 `unsafe-inline`、`unsafe-eval`、`ws:`）；`Referrer-Policy: same-origin`（保留同源 Referer，作为来源核查的回退依据）；`$ssl_early_data` 为 `1` 的非 GET/HEAD 请求返回 425，并向上游传递 `Early-Data`；`/api/session` 位置已删除。共享 `nginxconfig.io/proxy.conf` 须先核对其他站点依赖，不随本站升级清理。
 - 记录现网镜像标识作为回滚点；回滚资料不进 Git、镜像或公开资源。
 
 ### 授权切换
@@ -220,7 +221,7 @@ export AUTOMATION_HERMES_RUNTIME=/absolute/path/to/installed/hermes-agent
 
 ### 回滚
 
-出现权限泄漏、幂等退化、旧任务不可读或主流程失败时，停止提交并提出回滚（须授权）：恢复上一镜像与代理配置，不改写研究目录，不重跑任务。Web 不新增持久状态，回滚不涉及数据迁移。稳定后清理旧镜像、容器须另行批准；Flet 专属代码与资源已在阶段 4 删除，回滚只恢复上一镜像，不恢复源码。
+出现权限泄漏、幂等退化、旧任务不可读或主流程失败时，停止提交并提出回滚（须授权）：恢复上一镜像与代理配置，不改写研究目录，不重跑任务。Web 不新增持久状态，回滚不涉及数据迁移。稳定后清理旧镜像、容器须另行批准；Flet 专属代码与资源已退役，回滚只恢复上一镜像，不恢复源码。
 
 ### 离线性能对照
 

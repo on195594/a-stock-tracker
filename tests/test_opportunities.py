@@ -18,7 +18,24 @@ def test_conditions_are_computed_and_not_claimed_triggered():
     assert row["levels"]["trigger"] == 11.23
     assert row["levels"]["stop"] == 11.0
     assert row["levels"]["distance"] == pytest.approx((11.2 - 11.0) / 11.2 * 100)
-    assert "ceiling" not in row["levels"] and "volume" not in row["levels"]
+    assert set(row["levels"]) == {
+        "close",
+        "ma20",
+        "ma60",
+        "relative",
+        "trigger",
+        "stop",
+        "distance",
+        "uptrend",
+    }
+    assert set(swing.price_conditions(packet["bars"], packet["benchmark"])) == {
+        "close",
+        "ma20",
+        "ma60",
+        "relative",
+        "trigger",
+        "stop",
+    }
     assert row["as_of"] == packet["sessions"][-1]
     assert row["expires"] == packet["future_sessions"][-1]
     assert "观察线" in row["facts"]["condition"]
@@ -209,7 +226,6 @@ def test_publish_has_no_model_path_and_preserves_company_gaps(tmp_path, monkeypa
 
 def legacy_board():
     packet = demo_packet()
-    c = swing.price_conditions(packet["bars"], packet["benchmark"])
     row = {
         "code": packet["code"],
         "name": packet["name"],
@@ -224,7 +240,8 @@ def legacy_board():
             "invalidation": "历史失效价 11.00 元",
             "distance": "旧规则距离 3.93%",
         },
-        "levels": {k: c[k] for k in ("trigger", "ceiling", "stop", "volume")},
+        # Historical artifacts must not depend on the current pricing algorithm.
+        "levels": {"trigger": 11.23, "ceiling": 11.45, "stop": 11.0, "volume": 15000},
         "explanation": {
             k: {
                 "text": "合成历史说明：只引用当时日线中的资料，不表示现在仍然有效。",

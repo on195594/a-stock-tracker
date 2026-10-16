@@ -101,7 +101,10 @@ def bridge(tmp_path, monkeypatch):
                 headers={"Authorization": request.headers["Authorization"]},
             )
             if env.lose_reply and request.method == "POST":
+                failure = env.lose_reply
                 env.lose_reply = False
+                if failure == "invalid_receipt":
+                    return httpx.Response(200, json={"id": answer.json()["id"]})
                 raise httpx.ReadTimeout("internal private path /secret/token")
             return httpx.Response(
                 answer.status_code,
@@ -533,11 +536,12 @@ def test_pending_expiry_restart_and_eviction(bridge):
     anyio.run(scenario)
 
 
-def test_acceptance_unknown_retries_the_same_payload_once(bridge):
+@pytest.mark.parametrize("failure", [True, "invalid_receipt"])
+def test_acceptance_unknown_retries_the_same_payload_once(bridge, failure):
     async def scenario():
         async with Client(bridge.server) as client:
             offer = await prepare(client)
-            bridge.lose_reply = True
+            bridge.lose_reply = failure
             error(
                 await client.call_tool("submit_run", {"request_id": offer["request_id"]}),
                 "acceptance_unknown",

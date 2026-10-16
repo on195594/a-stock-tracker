@@ -35,6 +35,7 @@ from fastapi.testclient import TestClient
 
 from a_stock_tracker.auth import ACTIVE_SESSIONS, AuthError
 from a_stock_tracker.research_client import (
+    ResearchClient,
     ResearchQuoteChanged,
     ResearchRejected,
     ResearchUnavailable,
@@ -206,6 +207,31 @@ def test_oauth_state_is_single_use_and_browser_bound():
     assert s.COOKIE not in browser.cookies
     login(browser)
     assert browser.get("/").status_code == 200
+
+
+def test_oauth_state_capacity_preserves_pending_login_and_recovers(monkeypatch):
+    monkeypatch.setattr(s, "MAX_OAUTH_STATES", 2)
+    browser = app_client()
+    browser.get("/oauth/start", follow_redirects=False)
+    state = browser.cookies[s.STATE_COOKIE]
+    stranger = app_client()
+    stranger.get("/oauth/start", follow_redirects=False)
+    pending = dict(s.OAUTH_STATES)
+    for _ in range(3):
+        refused = stranger.get("/oauth/start", follow_redirects=False)
+        assert refused.status_code == 429
+        assert "稍后重试" in refused.text
+        assert "set-cookie" not in refused.headers
+        assert refused.headers["cache-control"] == "no-store"
+        assert s.OAUTH_STATES == pending
+
+    done = browser.get(f"/oauth_callback?code=c&state={state}", follow_redirects=False)
+    assert done.headers["location"] == "/" and s.COOKIE in browser.cookies
+    assert stranger.get("/oauth/start", follow_redirects=False).status_code == 303
+    assert len(s.OAUTH_STATES) == 2
+    monkeypatch.setattr(s.time, "time", lambda: max(pending.values()) + s.STATE_SECONDS)
+    assert stranger.get("/oauth/start", follow_redirects=False).status_code == 303
+    assert len(s.OAUTH_STATES) == 1
 
 
 def test_expired_oauth_state_is_refused(monkeypatch):
@@ -382,9 +408,20 @@ def test_rejection_keeps_input_with_reason():
     assert "600519,000001" in response.text
 
 
-def test_acceptance_unknown_reconciles_only_the_same_request():
+@pytest.mark.parametrize("invalid_receipt", [False, True])
+def test_acceptance_unknown_reconciles_only_the_same_request(monkeypatch, invalid_receipt):
     client = FakeClient()
-    client.fail["submit"] = ResearchUnavailable("研究服务或受理状态暂不可确认。")
+    original_submit = client.submit
+    if invalid_receipt:
+        real_client = ResearchClient("http://research", "x" * 32)
+
+        def accepted_without_status(method, path, payload):
+            return original_submit(payload).model_dump(exclude={"status"})
+
+        monkeypatch.setattr(real_client, "call", accepted_without_status)
+        monkeypatch.setattr(client, "submit", real_client.submit)
+    else:
+        client.fail["submit"] = ResearchUnavailable("研究服务或受理状态暂不可确认。")
     browser = app_client(client)
     login(browser)
     fields = request_form(browser, "financial", "600519")
@@ -392,7 +429,8 @@ def test_acceptance_unknown_reconciles_only_the_same_request():
     assert unknown.status_code == 503
     assert "核对也可能启动原请求" in unknown.text and fields["id"] in unknown.text
     assert "输出 token 与费用无硬上限" in unknown.text
-    del client.fail["submit"]
+    client.fail.pop("submit", None)
+    monkeypatch.setattr(client, "submit", original_submit)
     again = form_fields(unknown.text)
     done = browser.post(
         "/analysis/reconcile",
@@ -403,6 +441,7 @@ def test_acceptance_unknown_reconciles_only_the_same_request():
     assert done.status_code == 303 and done.headers["location"] == "/analysis/" + fields["id"]
     assert client.submitted[0] == client.submitted[1]
     assert client.submitted[1]["id"] == fields["id"]
+    assert list(client.demo.runs) == [fields["id"]]
 
 
 def test_in_flight_revocation_hides_late_results():

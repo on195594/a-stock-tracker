@@ -20,7 +20,6 @@ class AuthError(RuntimeError):
 @dataclass
 class Actor:
     user_id: str
-    expires_at: float
     sid: str | None = None
 
 
@@ -40,10 +39,7 @@ def create_owner_actor(github_user_id: str | int | None, allowed_user_id: str | 
     if norm_user != norm_allowed:
         raise AuthError("unauthorized GitHub user ID")
 
-    return Actor(
-        user_id=norm_user,
-        expires_at=time.monotonic() + AUTH_EXPIRY_SECONDS,
-    )
+    return Actor(user_id=norm_user)
 
 
 def check_production_auth_config(
@@ -133,11 +129,6 @@ def verify_session_token(
         if active_user != user_id or active_exp <= now:
             ACTIVE_SESSIONS.pop(sid, None)
             return None
-        remaining = exp - now
-        return Actor(
-            user_id=user_id,
-            expires_at=time.monotonic() + remaining,
-            sid=sid,
-        )
+        return Actor(user_id=user_id, sid=sid)
     except Exception:
         return None

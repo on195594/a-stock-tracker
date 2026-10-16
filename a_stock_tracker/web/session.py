@@ -29,6 +29,7 @@ from a_stock_tracker.web.settings import Settings
 COOKIE = "stock_session"
 STATE_COOKIE = "stock_oauth_state"
 STATE_SECONDS = 600
+MAX_OAUTH_STATES = 128
 DEMO_USER = "0"
 # One-time OAuth states: state -> expiry (wall clock).
 OAUTH_STATES: dict[str, float] = {}
@@ -95,6 +96,8 @@ def purge_states(now: float | None = None) -> None:
 
 def authorize_redirect(response_factory: Callable[[str], Response], settings: Settings) -> Response:
     purge_states()
+    if len(OAUTH_STATES) >= MAX_OAUTH_STATES:
+        return Response("登录请求过多，请稍后重试。", status_code=429, media_type="text/plain")
     state = secrets.token_urlsafe(24)
     OAUTH_STATES[state] = time.time() + STATE_SECONDS
     url = "https://github.com/login/oauth/authorize?" + urlencode(

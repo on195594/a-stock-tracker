@@ -8,7 +8,7 @@
 
 本 README 维护产品目标、网页主流程与验收。模块、数据和安全合同见 [架构](docs/architecture.md)；管理员配置、部署和高级 CLI 见 [运维](docs/operations.md)；历史验证结论见 [离线验证](docs/offline-validation.md)。[peer-screen-v1](docs/specs/2026-09-22-peer-screen-spec.md) 只维护财报研究规则。UI 场景和表达分别见 [PRODUCT](PRODUCT.md)、[DESIGN](DESIGN.md)。
 
-网页是 FastAPI + Jinja2 服务端 HTML（原生表单、链接与可展开依据，一个同源脚本）；本机 AI Agent 与 Skill 通过 MCP 服务（`python -m a_stock_tracker.mcp_server`）复用同一接口。重构各阶段已全部完成并上线部署，进度见[架构](docs/architecture.md#重构状态)；MCP 注册为本机客户端按需配置。
+网页是 FastAPI + Jinja2 服务端 HTML（原生表单、链接与可展开依据，一个同源脚本）；本机 AI Agent 与 Skill 通过 MCP 服务（`python -m a_stock_tracker.mcp_server`）复用同一接口。MCP 注册为本机客户端按需配置；历史上线记录见 [CHANGELOG](CHANGELOG.md)，实际运行状态须按[运维](docs/operations.md#服务状态探针与排障)核验。
 
 ## 本地演示与验证
 
@@ -49,8 +49,6 @@ make test-mobile             # 真实浏览器点击，含 360/390/430px
 - 价格参考仅由程序离线计算，量价只作风险纪律参考；历史 `swing-observation-v1` 仅有离线重放结论（未证明稳定超额），前瞻验证未积累样本即放弃，相关代码不再维护。
 - 不做多用户、个人笔记、自选关注或自动交易系统。
 
-<a id="当前阶段与下一步"></a>
-
 ## 验收与运行授权
 
 - 手机无需终端即可完成输入公司 → 成本确认 → 研究 → 摘要/反证 → 引用 → 可选价格确认 → 返回/退出。
@@ -58,9 +56,9 @@ make test-mobile             # 真实浏览器点击，含 360/390/430px
 - 价格计算不调用模型；新旧规则分别识别，到期自动隐藏行动价位，不改写历史产物。
 - 认证、预算、同编号幂等、原子发布、完整性校验与迟到结果隔离不退化；失败与未知用量不冒充成功或零费用。
 
-### 重构验收门槛
+### 回归与发布门槛
 
-以下是重构的切换门槛（进度见[架构](docs/architecture.md#重构状态)），合成验收由 `make check` 与 `make test-mobile` 覆盖；任一项失败即阻断切换，不以平均表现抵消。
+以下是后续变更的回归与发布门槛，合成验收由 `make check` 与 `make test-mobile` 覆盖；任一项失败即阻断切换，不以平均表现抵消。
 
 - 用户流程：上述手机主流程在 360/390/430px 真实点击完成，含报价变化、重复提交（同编号只执行一次）、受理未知后同编号核对、退出与价格到期隐藏；长中文报告可读，状态不只靠颜色区分。
 - 冷启动：10 Mbps / 80 ms、新浏览器上下文下，已认证首页可操作 ≤2 秒（单项冒烟，不做 P95 统计）。

@@ -347,6 +347,7 @@ def test_receiver_and_client_round_trip(tmp_path, monkeypatch, service_info):
         (409, {"code": "busy", "detail": 12}, "ResearchUnavailable", None),
         (409, [], "ResearchUnavailable", None),
         (500, {"code": "service_error", "detail": "private"}, "ResearchUnavailable", None),
+        (500, "internal server traceback with TUSHARE_TOKEN=secret", "ResearchUnavailable", None),
     ],
 )
 def test_client_error_mapping(monkeypatch, status, body, exception, message):
@@ -359,18 +360,48 @@ def test_client_error_mapping(monkeypatch, status, body, exception, message):
         httpx,
         "Client",
         lambda **kw: original(
-            transport=httpx.MockTransport(lambda _: httpx.Response(status, json=body))
+            transport=httpx.MockTransport(
+                lambda _: httpx.Response(
+                    status, **({"text": body} if isinstance(body, str) else {"json": body})
+                )
+            )
         ),
     )
     client = research_client.ResearchClient("http://research", "x" * 32)
     with pytest.raises(getattr(research_client, exception)) as error:
-        client.call("GET", "/info")
+        client.submit(request())
     assert type(error.value).__name__ == exception
     assert str(error.value) == (
         message
         if message is not None
         else "研究服务或受理状态暂不可确认。核对原请求，不自动重新收费。"
     )
+
+
+@pytest.mark.parametrize("body", [{"id": "a" * 32}, {"id": "a" * 32, "status": 1}])
+def test_client_submit_invalid_receipt_is_acceptance_unknown(monkeypatch, body):
+    import httpx
+
+    from a_stock_tracker.research_client import ResearchClient, ResearchUnavailable
+
+    calls = []
+
+    def respond(incoming):
+        calls.append(incoming)
+        return httpx.Response(200, json=body)
+
+    original = httpx.Client
+    monkeypatch.setattr(
+        httpx, "Client", lambda **kw: original(transport=httpx.MockTransport(respond))
+    )
+    client = ResearchClient("http://research", "x" * 32)
+    with pytest.raises(ValueError):
+        client.submit({})
+    assert not calls
+    with pytest.raises(ResearchUnavailable) as error:
+        client.submit(request())
+    assert error.value.code == "acceptance_unknown"
+    assert len(calls) == 1 and calls[0].method == "POST"
 
 
 def test_demo_returns_models_and_keeps_mutable_dict_storage():

@@ -15,7 +15,6 @@ from fastapi.testclient import TestClient
 
 from a_stock_tracker.automation import read_state, save_state
 from a_stock_tracker.research import ScreenError
-from a_stock_tracker.research_client import ResearchClient, ResearchUnavailable
 from a_stock_tracker.research_service import (
     ResearchStore,
     create_service,
@@ -514,34 +513,6 @@ def test_recent_ignores_malformed_directories_and_missing_files(tmp_path):
     assert runs[0]["id"] == p["id"]
 
 
-def test_research_client_preserves_bounded_conflict_detail_and_redacts_500(monkeypatch):
-    def handler_409(request):
-        return httpx.Response(409, json={"detail": "已有研究执行中，请查看进度，不重复启动。"})
-
-    original = httpx.Client
-    monkeypatch.setattr(
-        httpx,
-        "Client",
-        lambda **kw: original(transport=httpx.MockTransport(handler_409)),
-    )
-    with pytest.raises(ResearchUnavailable) as err:
-        ResearchClient("http://research", "x" * 32).submit(payload())
-    assert "已有研究执行中" in str(err.value)
-
-    def handler_500(request):
-        return httpx.Response(500, text="internal server traceback with TUSHARE_TOKEN=secret")
-
-    monkeypatch.setattr(
-        httpx,
-        "Client",
-        lambda **kw: original(transport=httpx.MockTransport(handler_500)),
-    )
-    with pytest.raises(ResearchUnavailable) as err_500:
-        ResearchClient("http://research", "x" * 32).submit(payload())
-    assert "secret" not in str(err_500.value)
-    assert "暂不可确认" in str(err_500.value)
-
-
 def test_configured_client_graceful_on_bad_env(monkeypatch):
     from a_stock_tracker.research_client import configured_client
 
@@ -885,27 +856,6 @@ def test_complete_screen_groups_are_not_batch_queue_and_response_is_bounded(tmp_
     assert result["truncated"] and "上限" in result["truncation_note"]
     assert 5 < len(result["groups"][0]["ranking"]) < 30000
     assert len(json.dumps(result, ensure_ascii=False).encode()) < 3_900_000
-
-
-@pytest.mark.parametrize(
-    "response_code,error_type",
-    [("quote_changed", "ResearchQuoteChanged"), ("busy", "ResearchRejected")],
-)
-def test_client_distinguishes_explicit_rejection(monkeypatch, response_code, error_type):
-    from a_stock_tracker import research_client
-
-    original = httpx.Client
-    monkeypatch.setattr(
-        httpx,
-        "Client",
-        lambda **kw: original(
-            transport=httpx.MockTransport(
-                lambda _: httpx.Response(409, json={"code": response_code, "detail": "请重新确认"})
-            )
-        ),
-    )
-    with pytest.raises(getattr(research_client, error_type)):
-        ResearchClient("http://research", "x" * 32).submit(payload())
 
 
 def test_price_quote_has_no_model_and_rejects_old_model_consent(tmp_path, monkeypatch):

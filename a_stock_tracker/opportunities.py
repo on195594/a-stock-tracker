@@ -80,7 +80,7 @@ def bars(rows: Any, sessions: list[str]) -> list[dict[str, float]]:
 def price_conditions(
     stock: list[dict[str, float]], benchmark: list[dict[str, float]]
 ) -> dict[str, Any]:
-    """Compute swing-observation-v1 levels from two validated 61-session windows."""
+    """Compute price-reference-v1 levels from two validated 61-session windows."""
     if len(stock) != 61 or len(benchmark) != 61:
         raise ScreenError("Require 61 validated bars per series")
     closes = [r["close"] for r in stock]
@@ -89,16 +89,6 @@ def price_conditions(
     relative = (close / closes[-21] - benchmark[-1]["close"] / benchmark[-21]["close"]) * 100
     trigger = round(max(r["high"] for r in stock[-20:]) + 0.01, 2)
     stop = round(min(r["low"] for r in stock[-10:]), 2)
-    ceiling = round(trigger * 1.02, 2)
-    risk = (ceiling - stop) / ceiling * 100
-    volume = round(sum(r["vol"] for r in stock[-20:]) / 20 * 1.5, 2)
-    reasons = []
-    if not close > ma20 > ma60:
-        reasons.append("收盘价与均线未形成向上排列")
-    if relative <= 0:
-        reasons.append("近二十个交易日未跑赢沪深三百")
-    if risk > 8:
-        reasons.append("观察区间上沿至失效价距离超过规则上限")
     return {
         "close": close,
         "ma20": ma20,
@@ -106,10 +96,6 @@ def price_conditions(
         "relative": relative,
         "trigger": trigger,
         "stop": stop,
-        "ceiling": ceiling,
-        "risk": risk,
-        "volume": volume,
-        "reasons": reasons,
     }
 
 

@@ -8,6 +8,7 @@ from typing import Any, get_args
 from urllib.parse import urlparse
 
 import httpx
+from pydantic import ValidationError
 
 from a_stock_tracker.contracts import (
     ErrorBody,
@@ -110,7 +111,15 @@ class ResearchClient:
 
     def submit(self, payload: dict[str, Any]) -> RunState:
         validate_request(payload)
-        return RunState.model_validate(self.call("POST", "/runs", payload))
+        response = self.call("POST", "/runs", payload)
+        try:
+            return RunState.model_validate(response)
+        except ValidationError as exc:
+            # A malformed acknowledgement does not prove the request was rejected.
+            raise ResearchUnavailable(
+                "研究回执暂不可确认。核对原请求，不自动重新收费。",
+                code="acceptance_unknown",
+            ) from exc
 
     def status(self, identifier: str) -> RunState:
         if len(identifier) != 32 or any(c not in "0123456789abcdef" for c in identifier):
