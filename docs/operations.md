@@ -193,7 +193,7 @@ export AUTOMATION_HERMES_RUNTIME=/absolute/path/to/installed/hermes-agent
 
 ## 重构切换与回滚要求
 
-**重构阶段 1–4 已在代码中完成，以下切换须逐项授权。** 进度见[架构](architecture.md#重构状态)，验收见 [README](../README.md#重构验收门槛)。不运行 `deploy.sh` 做开发验证。
+**重构阶段 1–5 已全部完成上线。** 进度见[架构](architecture.md#重构状态)，验收见 [README](../README.md#重构验收门槛)。不运行 `deploy.sh` 做开发验证。
 
 ### 接收器升级与回滚
 

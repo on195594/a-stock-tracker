@@ -8,7 +8,7 @@
 
 本 README 维护产品目标、网页主流程与验收。模块、数据和安全合同见 [架构](docs/architecture.md)；管理员配置、部署和高级 CLI 见 [运维](docs/operations.md)；历史验证结论见 [离线验证](docs/offline-validation.md)。[peer-screen-v1](docs/specs/2026-09-22-peer-screen-spec.md) 只维护财报研究规则。UI 场景和表达分别见 [PRODUCT](PRODUCT.md)、[DESIGN](DESIGN.md)。
 
-网页是 FastAPI + Jinja2 服务端 HTML（原生表单、链接与可展开依据，一个同源脚本）；本机 AI Agent 与 Skill 通过 MCP 服务（`python -m a_stock_tracker.mcp_server`）复用同一接口。重构进度见[架构](docs/architecture.md#重构状态)：代码已完成，生产切换、宿主接收器升级与 MCP 注册须另行授权。
+网页是 FastAPI + Jinja2 服务端 HTML（原生表单、链接与可展开依据，一个同源脚本）；本机 AI Agent 与 Skill 通过 MCP 服务（`python -m a_stock_tracker.mcp_server`）复用同一接口。重构各阶段已全部完成并上线部署，进度见[架构](docs/architecture.md#重构状态)；MCP 注册为本机客户端按需配置。
 
 ## 本地演示与验证
 

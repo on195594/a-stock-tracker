@@ -2,12 +2,12 @@
 
 当前范围、运行命令与下一步以 [README](README.md) 为准；数据合同见 [架构](docs/architecture.md)。旧部署记录不是当前健康证明或未来操作授权。
 
-## 未发布：接口模型、研究质量 v2、MCP 与服务端 HTML
+## 2026-10-16：接口模型、研究质量 v2、MCP 与服务端 HTML 上线部署
 
+- 生产 Web 切换为 FastAPI + Jinja2 服务端 HTML，移除旧 Flet 容器及资产；Nginx 同步启用严格 CSP、同源 Referrer-Policy 与 0-RTT 早期数据防重放；宿主研究接收器与研究网关桥连通正常。
 - 接收器与客户端改用 pydantic 接口模型；财报研究在一次有界修复后剔除仍未逐字核验的引用，复核通过的报告不再显示“未完成”，并记录修复与剔除条目。
 - 本机 stdio MCP 服务提供 10 个工具；接收器按令牌区分 Web 与 MCP 渠道，MCP 每日最多受理 3 次。
-- 网页由 Flet 改为 FastAPI + Jinja2 服务端 HTML：系统中文字体，首屏传输约 12 KB（原约 10 MB）；会话、CSRF、同源校验、在途撤权与严格 CSP 见架构。`/published`、`/opportunity/*`、发布覆盖与 `PUBLICATION_WEB_ENABLED` 退役，本地字体子集删除。
-- 此记录不表示已部署、接收器已升级或 MCP 已注册。
+- `/published`、`/opportunity/*`、发布覆盖与 `PUBLICATION_WEB_ENABLED` 退役，本地字体子集删除。
 
 ## 未发布：界面细化与首屏字体
 
