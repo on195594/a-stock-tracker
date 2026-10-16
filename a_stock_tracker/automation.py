@@ -339,7 +339,15 @@ def scan(
         path = directory / f"scan-{code}.json"
         stored = state["scan"].get(code)
         if stored:
-            result = read_result(path, stored)
+            saved = read_result(path, stored)
+            if digest(saved.get("state")) != saved.get("sha256"):
+                raise ScreenError("State checksum mismatch")
+            envelope = saved["state"]
+            result = envelope["result"]
+            if envelope["freeze"] != state["freeze"] or result.get("code") != code:
+                raise ScreenError("Scan result identity conflict")
+            result_rows.append(result)
+            continue
         elif path.exists():
             result = read_state(path)["result"]  # recover a published result before cursor commit
         elif original["status"] != "pending" or (frozen["sample"] and code not in frozen["sample"]):

@@ -990,6 +990,30 @@ def test_small_industry_completes_within_budget_without_repeating_cached_rows(
     assert sum(r["status"] == "qualified" for r in rows) == 4
 
 
+def test_scan_resumes_without_rewriting_state_file_for_cached_rows(tmp_path, monkeypatch):
+    monkeypatch.setattr(a.time, "sleep", lambda *_: None)
+    frozen, state = fixture(3)
+    state["freeze"] = a.digest(frozen)
+    client = Client()
+    budget = a.Budget(10, 300)
+    a.scan(tmp_path, frozen, state, a.MarketClient(client, budget), "synthetic", budget)
+    state_file = tmp_path / "state.json"
+    assert state_file.exists()
+
+    saved_paths = []
+    original_save_state = a.save_state
+
+    def tracking_save_state(path, val):
+        saved_paths.append(path)
+        return original_save_state(path, val)
+
+    monkeypatch.setattr(a, "save_state", tracking_save_state)
+    budget2 = a.Budget(10, 300)
+    rows2 = a.scan(tmp_path, frozen, state, a.MarketClient(client, budget2), "synthetic", budget2)
+    assert len(rows2) == 3
+    assert state_file not in saved_paths
+
+
 @pytest.mark.parametrize(
     "pb,mv,status,reason",
     [

@@ -98,9 +98,7 @@
   <p class="lines">{{ screen.covered }}</p>
   <p>{{ screen.outcome }}</p>
   {% for group in screen.groups %}
-  <p class="lines">{{ group.industry }} · 分项名次
-{% for row in group.ranking %}{{ row.name }} · {{ row.code }}：PB 名次 {{ row.get('pb_rank', '未记录') }}；ROE 名次 {{ row.get('roe_rank', '未记录') }}
-{% endfor %}</p>
+  <p class="lines">{{ group.industry }}：{{ group.ranking|length }} 家入选（前 3 家名次见上方卡片；完整排名见上方入口）</p>
   {% endfor %}
   <p class="lines">{{ screen.usage }}</p>
   <p>组内按 PB 与 ROE 平均名次排序，不是跨行业总榜。仅筛后池资料完整的行业形成候选；这是筛后同业排名，不是完整行业前三。财报资格不代表投资价值。</p>
