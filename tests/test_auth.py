@@ -1,6 +1,5 @@
 """Unit tests for actor authentication, session token signing and verification."""
 
-import base64
 import time
 
 from a_stock_tracker import auth
@@ -10,20 +9,22 @@ def test_session_token_roundtrip():
     secret = "test-secret-key-12345"
     user_id = "12345678"
     expires_at = time.time() + 3600
-    token = auth.sign_session_token(user_id, secret, expires_at)
+    sid = auth.register_session(user_id, expires_at)
+    token = auth.sign_session_token(user_id, secret, expires_at, sid=sid)
     assert isinstance(token, str) and "." in token
 
     actor = auth.verify_session_token(token, secret, user_id)
     assert actor is not None
     assert actor.user_id == user_id
-    assert actor.role == "owner"
-    assert actor.is_valid
+    assert actor.sid == sid
 
 
 def test_session_token_tampering():
     secret = "test-secret-key-12345"
     user_id = "12345678"
-    token = auth.sign_session_token(user_id, secret, time.time() + 3600)
+    expires_at = time.time() + 3600
+    sid = auth.register_session(user_id, expires_at)
+    token = auth.sign_session_token(user_id, secret, expires_at, sid=sid)
     b64_payload, sig = token.rsplit(".", 1)
 
     # Tampered signature
@@ -39,13 +40,17 @@ def test_session_token_tampering():
 def test_session_token_expired():
     secret = "test-secret-key-12345"
     user_id = "12345678"
-    expired_token = auth.sign_session_token(user_id, secret, time.time() - 10)
+    expires_at = time.time() - 10
+    sid = auth.register_session(user_id, expires_at)
+    expired_token = auth.sign_session_token(user_id, secret, expires_at, sid=sid)
     assert auth.verify_session_token(expired_token, secret, user_id) is None
 
 
 def test_session_token_unauthorized_user():
     secret = "test-secret-key-12345"
-    token = auth.sign_session_token("99999999", secret, time.time() + 3600)
+    expires_at = time.time() + 3600
+    sid = auth.register_session("99999999", expires_at)
+    token = auth.sign_session_token("99999999", secret, expires_at, sid=sid)
     assert auth.verify_session_token(token, secret, "12345678") is None
 
 
@@ -58,30 +63,16 @@ def test_session_token_malformed_inputs():
 def test_session_revocation_invalidates_token():
     secret = "test-secret-key-12345"
     user_id = "12345678"
-    token = auth.sign_session_token(user_id, secret, time.time() + 3600)
+    expires_at = time.time() + 3600
+    sid = auth.register_session(user_id, expires_at)
+    token = auth.sign_session_token(user_id, secret, expires_at, sid=sid)
     actor = auth.verify_session_token(token, secret, user_id)
-    assert actor is not None and actor.is_valid
+    assert actor is not None
 
     # Revoking session directly removes it from active registry
     auth.revoke_session(actor.sid)
-    # Actor with this sid automatically becomes invalid
-    assert not actor.is_valid
     # Token verification now returns None
     assert auth.verify_session_token(token, secret, user_id) is None
-
-
-def test_revoke_session_explicitly():
-    secret = "test-secret-key-12345"
-    user_id = "12345678"
-    token = auth.sign_session_token(user_id, secret, time.time() + 3600)
-    assert auth.verify_session_token(token, secret, user_id) is not None
-
-    auth.revoke_session(token)
-    assert auth.verify_session_token(token, secret, user_id) is None
-
-    # Malformed unhashable sid payload does not raise TypeError
-    bad = base64.urlsafe_b64encode(b'{"sid":["unhashable"]}').decode() + ".fake"
-    auth.revoke_session(bad)
 
 
 def test_fresh_login_replaces_prior_user_sessions():

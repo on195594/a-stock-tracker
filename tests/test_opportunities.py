@@ -6,7 +6,6 @@ from datetime import date, timedelta
 import pytest
 
 from a_stock_tracker import opportunities as swing
-from a_stock_tracker.auth import AuthError, create_demo_actor
 from a_stock_tracker.automation import Budget, digest, save_state
 from a_stock_tracker.opportunity_demo import demo_board, demo_packet
 from a_stock_tracker.research import ScreenError
@@ -258,20 +257,16 @@ def saved_board(tmp_path, legacy=False):
 
 
 @pytest.mark.parametrize("legacy", [False, True])
-def test_board_integrity_expiry_and_actor(tmp_path, legacy):
+def test_board_integrity_and_expiry(tmp_path, legacy):
     board = saved_board(tmp_path, legacy)
     output = tmp_path / ("swing-" + "a" * 32) / "result.json"
     before = output.read_bytes()
-    actor = create_demo_actor()
     expiry = date.fromisoformat(board["rows"][0]["expires"])
-    loaded = swing.load_board(actor, tmp_path, on=expiry)
+    loaded = swing.load_board(tmp_path, on=expiry)
     assert loaded and not loaded["rows"][0]["expired"]
-    loaded = swing.load_board(actor, tmp_path, on=expiry + timedelta(days=1))
+    loaded = swing.load_board(tmp_path, on=expiry + timedelta(days=1))
     assert loaded and loaded["rows"][0]["expired"]
     assert output.read_bytes() == before
-    actor.revoke()
-    with pytest.raises(AuthError):
-        swing.load_board(actor, tmp_path)
 
 
 @pytest.mark.parametrize("damage", ["hash", "status", "symlink", "traversal"])
@@ -292,4 +287,4 @@ def test_invalid_board_artifacts_refused(tmp_path, damage):
     else:
         save_state(tmp_path / "latest.json", {"run": "../secret", "digest": "x"})
     with pytest.raises(ScreenError):
-        swing.load_board(create_demo_actor(), root)
+        swing.load_board(root)

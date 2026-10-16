@@ -69,7 +69,7 @@ def roe_text(value: Any) -> str:
 
 
 def normalize_codes(raw: str) -> list[str]:
-    """Accept 600519 / 600519.sh / comma or whitespace lists, as the Flet form did."""
+    """Accept 600519 / 600519.sh / comma or whitespace lists."""
     codes = [c.strip().upper() for c in re.split(r"[,，\s]+", raw or "") if c.strip()]
     return [
         c + (".SH" if c.startswith("60") else ".SZ") if re.fullmatch(r"\d{6}", c) else c
@@ -246,7 +246,7 @@ def recent_groups(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def quote_lines(info: dict[str, Any], mode: str, offer: dict[str, Any]) -> list[str]:
-    """Cost boundary for exactly the selected mode, mirroring the Flet confirmation."""
+    """Cost boundary for the selected mode shown before confirmation."""
     lines = [
         "合成演示：不调用真实接口，不产生费用。"
         if info.get("demo")

@@ -48,13 +48,6 @@ async function main() {
   }
   const model = runtime.getModel(request.provider, request.model);
   if (!model) throw new Error("Configured pi model not found");
-  if (process.argv[3] === "--check") {
-    // Metadata only; never resolve/refresh OAuth or send a model request during deployment.
-    const auth = JSON.parse(await readFile(join(process.env.AUTOMATION_PI_AGENT_DIR, "auth.json"), "utf8"));
-    if (!auth[request.provider]) throw new Error("Provider credentials not configured");
-    console.log(JSON.stringify({ provider: model.provider, model: model.id, tool_count: 0 }));
-    return;
-  }
   console.log(JSON.stringify(await infer(runtime, model, request)));
 }
 

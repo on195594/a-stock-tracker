@@ -26,7 +26,7 @@ related_targets: ["a_stock_tracker/web/templates","a_stock_tracker/web/static/ap
 
 ## States and Interaction
 
-分别表达加载、未配置批次、无价格参考、旧规则未入选、资料缺口、财报复核失败、过期、未知公司、读取失败。每个状态有明确原因或合法返回路径；读取失败允许重试，但不恢复旧工作台入口。过期仍可读历史解释，主区域及展开依据都隐藏可行动条件。demo 仅使用现有合成数据。
+分别表达后台执行中、服务未连接/未配置、无可用研究结果、初筛部分完成可继续、无价格参考、旧规则未入选、资料缺口、财报复核失败、过期、读取失败。每个状态有明确原因或合法返回路径；读取失败允许重试，但不恢复旧工作台入口。过期仍可读历史非行动事实，主区域及展开依据都隐藏可行动条件。demo 仅使用现有合成数据。
 
 私有页在读取后再次核验会话，退出或撤权后不写出私有内容；Web 不直接增加价格计算、采集、模型调用、交易操作或个人状态；新增网关只提交本人已确认的有界后台研究请求。48px 动作目标、语义标题和可读的展开名称支持键盘与触控。长公司名、长来源和多行反证必须换行，不横向溢出。
 
@@ -40,13 +40,13 @@ THESIS: 日期与观察窗口成为核查索引，拒绝把候选排成交易卡
 
 OWN-WORLD: 冷矿蓝整页底、深墨正文、矿蓝来源/日期横带、琥珀反证、浅底左标记价格区；细线分候选，无阴影。
 
-STORY: 先确认资料身份和有效期，完整读解释、反证与等待事项，再核对程序条件及 AI 引用；没有资料不凑推荐。
+STORY: 首页从三类研究入口或进行中/最近研究进入；结果页（`run.html`）先看执行状态、资料日期、最强反证与缺口（或初筛同业候选、价格纪律参考），再读分节判断、原文引用与可展开依据；没有资料不凑推荐。
 
-FIRST VIEWPORT: 手机 20px 边距，顶部品牌与账户、30px 页面标题、来源横带、数量、22px 公司名与独立代码/日期行；解释与反证向下连续阅读，详情动作跟随内容，价格不抢先于反证。桌面限制 760px，不用卡片补满空白。
+FIRST VIEWPORT: 手机 20px 边距，顶部品牌与账户、30px 页面标题；首页首屏为三类研究入口及进行中/最近研究摘要，`run.html` 首屏为返回链接、执行/覆盖横带与主结果（财报摘要与反证、初筛每组前三候选或价格参考），底部展开依据。桌面限制 760px，不用卡片补满空白。
 
 FORM: 有界日期索引，grounded 顺序第 3，seed `8db48fc6`；用户选择代码优先的“窗口索引”，不是 image-first comp。签名交互是可展开的核查依据与 AI 引用，到期只保留非行动依据。
 
-FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
+FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md.
 
 ## Direction Provenance
 

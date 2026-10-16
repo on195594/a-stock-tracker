@@ -12,9 +12,7 @@ import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo
 
-from a_stock_tracker.auth import Actor, check_actor
 from a_stock_tracker.automation import (
     Budget,
     MarketClient,
@@ -23,11 +21,10 @@ from a_stock_tracker.automation import (
     read_state,
     save_state,
 )
-from a_stock_tracker.research import BudgetStop, ScreenError, call_api, frame_records
+from a_stock_tracker.research import SHANGHAI, BudgetStop, ScreenError, call_api, frame_records
 
 RULE = "swing-observation-v1"
 REFERENCE_RULE = "price-reference-v1"
-SHANGHAI = ZoneInfo("Asia/Shanghai")
 LIMITS = (
     "量价仅作风险纪律参考。重放未发现稳定超额，不代表投资价值或交易建议。"
     "未覆盖公告、财报与资金变化；A股T+1、跳空、停牌和涨跌停可能使退出条件无法执行。"
@@ -382,8 +379,7 @@ def publish(directory: Path, packets: list[dict[str, Any]], budget: Budget) -> d
     return result
 
 
-def load_board(actor: Actor, root: Path | None, *, on: date | None = None) -> dict[str, Any] | None:
-    check_actor(actor)
+def load_board(root: Path | None, *, on: date | None = None) -> dict[str, Any] | None:
     if root is None:
         return None
     if not root.is_absolute() or any(p.is_symlink() for p in (root, *root.parents)):
@@ -420,7 +416,6 @@ def load_board(actor: Actor, root: Path | None, *, on: date | None = None) -> di
             if date.fromisoformat(row["as_of"]) > current:
                 raise ScreenError("Future observation")
             row["expired"] = current > date.fromisoformat(row["expires"])
-    check_actor(actor)
     return result
 
 

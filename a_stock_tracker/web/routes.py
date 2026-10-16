@@ -203,7 +203,7 @@ def create_app(
         context: dict[str, Any] = {"connected": client is not None}
         if client is not None:
             try:
-                # Independent reads run concurrently, as the Flet home page did.
+                # Run independent receiver reads concurrently.
                 info, recent = await asyncio.gather(read(client.info), read(client.recent))
             except ResearchUnavailable:
                 context["unreachable"] = True

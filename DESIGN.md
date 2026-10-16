@@ -14,24 +14,24 @@ colors:
   error: "#99362B"
 typography:
   headline:
-    fontFamily: "system-ui, PingFang SC, Noto Sans CJK SC, Microsoft YaHei, sans-serif"
+    fontFamily: '-apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei", system-ui, sans-serif'
     fontSize: 30px
     fontWeight: 700
   title:
-    fontFamily: "system-ui, PingFang SC, Noto Sans CJK SC, Microsoft YaHei, sans-serif"
+    fontFamily: '-apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei", system-ui, sans-serif'
     fontSize: 22px
     fontWeight: 700
   section:
-    fontFamily: "system-ui, PingFang SC, Noto Sans CJK SC, Microsoft YaHei, sans-serif"
+    fontFamily: '-apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei", system-ui, sans-serif'
     fontSize: 18px
     fontWeight: 700
   body:
-    fontFamily: "system-ui, PingFang SC, Noto Sans CJK SC, Microsoft YaHei, sans-serif"
+    fontFamily: '-apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei", system-ui, sans-serif'
     fontSize: 16px
     fontWeight: 400
     lineHeight: 1.55
   label:
-    fontFamily: "system-ui, PingFang SC, Noto Sans CJK SC, Microsoft YaHei, sans-serif"
+    fontFamily: '-apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei", system-ui, sans-serif'
     fontSize: 14px
     fontWeight: 400
 rounded:
@@ -70,7 +70,7 @@ caution 配 caution-bg 表达反证、缺口和过期，始终附明确标签；
 
 ## Typography
 
-使用系统中文字体栈（苹方、思源/Noto CJK、微软雅黑），无网页字体与运行时字体 CDN；数字用等宽数字。正文 16px、行高 1.55，辅助字段 13–14px，分组标题 16–18px；不能把风险或限制缩成小字。公司的完整名称与代码分行；标题不截断，解释与反证完整换行，不用密集全粗体。
+使用系统中文字体栈（苹方、冬青黑体、思源/Noto CJK、微软雅黑），无网页字体与运行时字体 CDN；数字用等宽数字。正文 16px、行高 1.55，辅助字段 14px，页面标题 30px、二级标题与候选名称 22px、分组与横带标题 16–18px；不能把风险或限制缩成小字。公司的完整名称与代码分行；标题不截断，解释与反证完整换行，不用密集全粗体。
 
 金额、单位、来源和日期保留程序给出的原文；UI 不重新解析或计算价格。使用语义标题，辅助数据不伪装成标题。不同系统的字体度量不同，长名称和多行反证须在真实浏览器截图中核对换行。
 
@@ -94,9 +94,9 @@ caution 配 caution-bg 表达反证、缺口和过期，始终附明确标签；
 
 单家公司财报的用量区须区分本轮请求与冻结证券范围背景统计；明确背景统计含预先排除、资料缺口及指定范围外证券，不将其呈现为单家公司研究进度。
 
-财报摘要始终显示状态、资料日期、最强反证全文与前三条缺口；业务/财务/估值方法/改变判断的条件逐段列引用编号，原文事实和全部缺口可展开。来源 URL 仅文本，不渲染 Markdown 或图片。只折叠核查依据、事实引用和模型身份；依据保留选择复制，并使用完整只读文本语义，不让原生选择控件被读成空白禁用输入。解释、最强反证与有效期始终可见。财报复核失败不展示草稿。价格参考只依赖程序资料校验，不调用模型；到期时主区域与展开内容隐藏观察线、失效线和距离，保留历史非行动事实。首页过期摘要不显示价格。demo 明确显示合成身份，不另造一套演示页面。
+财报摘要始终显示状态、资料日期、最强反证全文与前三条缺口；业务/财务/估值方法/改变判断的条件逐段列引用编号，原文事实和全部缺口可展开。来源 URL 仅文本，不渲染 Markdown 或图片。只折叠核查依据、事实引用和模型身份；依据保留选择复制。解释、最强反证与有效期始终可见。财报复核失败不展示草稿。价格参考只依赖程序资料校验，不调用模型；到期时主区域与展开内容隐藏观察线、失效线和距离，保留历史非行动事实。首页过期摘要不显示价格。demo 明确显示合成身份，不另造一套演示页面。
 
-首页以“研究一家公司”为主动作，“从初筛找公司”为次动作，“独立价格参考（不调用模型）”为第三入口；`/analysis` 默认财报研究。研究入口用原生类型选择、代码输入、按模式展示的预算与模型报价、明确成本复选框和启动动作，禁止用命令示例代替工作流。受理未知时只核对原编号；进度/覆盖/失败与结果重开在网页完成；最近研究只在首页；原 `/published` 发布入口已退役。初筛结果先展示每组前三名与研究动作，完整排名分页查看，运行依据随后展开。候选上的研究动作预填代码，但不替用户勾选成本确认。从财报报告进入价格参考须再次确认该模式的范围和预算，不自动执行；价格/初筛不展示模型费用确认。核对同编号不承诺提供方零费用，失败恢复区分受理未知与报价明确拒绝。未配置服务有明确管理员连接说明，无假完成或用户终端要求。
+首页以“研究一家公司”为主动作，“从初筛找公司”为次动作，“独立价格参考（不调用模型）”为第三入口；`/analysis` 默认财报研究。研究入口用原生类型选择、代码输入、按模式展示的预算与模型报价（具体预算与参数合同见 [docs/architecture.md](docs/architecture.md)）、明确成本复选框和启动动作，禁止用命令示例代替工作流。受理未知时只核对原编号；进度/覆盖/失败与结果重开在网页完成；最近研究只在首页；原 `/published` 发布入口已退役。初筛结果先展示每组前三名与研究动作，完整排名分页查看，运行依据随后展开。候选上的研究动作预填代码，但不替用户勾选成本确认。从财报报告进入价格参考须再次确认该模式的范围和预算，不自动执行；价格/初筛不展示模型费用确认。核对同编号不承诺提供方零费用，失败恢复区分受理未知与报价明确拒绝。未配置服务有明确管理员连接说明，无假完成或用户终端要求。
 
 UI 保留认证与数据合同，私有页在读取后再次核验会话；确认只授权本次后台有界请求，退出或到期后不再显示私有结果，但不自动取消已受理请求。无数据、无价格参考、失败与过期分别表达，并保留合法重试或返回路径。手机浏览器回归不是生产认证或真机验收。
 

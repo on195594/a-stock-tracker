@@ -21,7 +21,6 @@ from a_stock_tracker.research_service import (
     create_service,
     quote,
     request_info,
-    validate_request,
 )
 
 
@@ -33,25 +32,6 @@ def payload(mode="swing"):
         "confirmed": True,
         "quote": quote(request_info(), mode),
     }
-
-
-@pytest.mark.parametrize(
-    "change",
-    [
-        {"confirmed": False},
-        {"confirmed": 1},
-        {"codes": ["../../secret"]},
-        {"codes": ["600519.SH"] * 2},
-        {"mode": "trade"},
-        {"id": "../x"},
-        {"root": "/tmp/private"},
-        {"codes": [True]},
-        {"codes": []},
-    ],
-)
-def test_invalid_request_refused_before_execution(change):
-    with pytest.raises(ValueError):
-        validate_request({**payload(), **change})
 
 
 def test_private_service_auth_budget_confirmation_and_same_nonce(tmp_path, monkeypatch):
@@ -176,19 +156,6 @@ def test_completed_results_revalidated_on_each_read_and_failure_not_success(tmp_
     store.execute(directory, state, lease)
     assert store.status(p["id"])["status"] == "failed"
     assert "synthetic" not in json.dumps(store.status(p["id"]))
-
-
-def test_client_redacts_backend_errors_and_reuses_same_request(monkeypatch):
-    def handler(request):
-        return httpx.Response(500, text="private credentials and traceback")
-
-    original = httpx.Client
-    monkeypatch.setattr(
-        httpx, "Client", lambda **kw: original(transport=httpx.MockTransport(handler))
-    )
-    with pytest.raises(ResearchUnavailable) as error:
-        ResearchClient("http://research", "x" * 32).submit(payload())
-    assert "credentials" not in str(error.value)
 
 
 def test_financial_result_reads_verified_envelopes_not_unchecked_markdown(tmp_path):

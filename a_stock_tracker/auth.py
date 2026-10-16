@@ -9,7 +9,6 @@ import json
 import secrets
 import time
 from dataclasses import dataclass
-from typing import Literal
 
 AUTH_EXPIRY_SECONDS = 8 * 3600  # 8 hours maximum business authorization
 
@@ -21,30 +20,8 @@ class AuthError(RuntimeError):
 @dataclass
 class Actor:
     user_id: str
-    role: Literal["owner", "demo"]
     expires_at: float
-    revoked: bool = False
     sid: str | None = None
-
-    @property
-    def is_valid(self) -> bool:
-        if self.revoked or time.monotonic() >= self.expires_at:
-            return False
-        if self.sid is not None and self.sid not in ACTIVE_SESSIONS:
-            return False
-        return True
-
-    def revoke(self) -> None:
-        self.revoked = True
-
-
-def create_demo_actor() -> Actor:
-    """Create an authorized actor for loopback demo mode."""
-    return Actor(
-        user_id="demo_user",
-        role="demo",
-        expires_at=time.monotonic() + AUTH_EXPIRY_SECONDS,
-    )
 
 
 def create_owner_actor(github_user_id: str | int | None, allowed_user_id: str | None) -> Actor:
@@ -65,18 +42,8 @@ def create_owner_actor(github_user_id: str | int | None, allowed_user_id: str | 
 
     return Actor(
         user_id=norm_user,
-        role="owner",
         expires_at=time.monotonic() + AUTH_EXPIRY_SECONDS,
     )
-
-
-def check_actor(actor: Actor | None) -> Actor:
-    """Validate actor and raise AuthError if missing, expired, or revoked."""
-    if actor is None:
-        raise AuthError("missing authorization context")
-    if not actor.is_valid:
-        raise AuthError("authorization expired or revoked")
-    return actor
 
 
 def check_production_auth_config(
@@ -106,54 +73,33 @@ def purge_expired_sessions() -> None:
         ACTIVE_SESSIONS.pop(sid, None)
 
 
-def register_session(user_id: str, expires_at: float, replace_user: bool = True) -> str:
+def register_session(user_id: str, expires_at: float) -> str:
     """Register an active server-side session SID for an authenticated user, replacing any prior sessions for that user."""
     purge_expired_sessions()
     norm_user = str(user_id).strip()
-    if replace_user:
-        for old_sid in [s for s, (u, _) in list(ACTIVE_SESSIONS.items()) if u == norm_user]:
-            ACTIVE_SESSIONS.pop(old_sid, None)
+    for old_sid in [s for s, (u, _) in list(ACTIVE_SESSIONS.items()) if u == norm_user]:
+        ACTIVE_SESSIONS.pop(old_sid, None)
     sid = secrets.token_hex(16)
     ACTIVE_SESSIONS[sid] = (norm_user, expires_at)
     return sid
 
 
-def sign_session_token(user_id: str, secret: str, expires_at: float, sid: str | None = None) -> str:
+def sign_session_token(user_id: str, secret: str, expires_at: float, sid: str) -> str:
     """Create an HMAC-SHA256 signed session token for persistent browser authentication."""
     purge_expired_sessions()
     norm_user = str(user_id).strip()
-    session_sid = sid or secrets.token_hex(16)
-    ACTIVE_SESSIONS[session_sid] = (norm_user, expires_at)
     payload = json.dumps(
-        {"u": norm_user, "sid": session_sid, "exp": int(expires_at)}, separators=(",", ":")
+        {"u": norm_user, "sid": sid, "exp": int(expires_at)}, separators=(",", ":")
     ).encode("utf-8")
     b64_payload = base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
     sig = hmac.new(secret.encode("utf-8"), b64_payload.encode("ascii"), hashlib.sha256).hexdigest()
     return f"{b64_payload}.{sig}"
 
 
-def revoke_session(token_or_sid: str | None) -> None:
-    """Explicitly revoke a session token or sid from active registry."""
-    if not token_or_sid:
-        return
-    sid = None
-    if "." in token_or_sid:
-        try:
-            b64_payload = token_or_sid.rsplit(".", 1)[0]
-            padded = b64_payload + "=" * (-len(b64_payload) % 4)
-            data = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
-            raw_sid = data.get("sid")
-            if isinstance(raw_sid, str) and raw_sid.strip():
-                sid = raw_sid.strip()
-        except Exception:
-            pass
-    elif isinstance(token_or_sid, str) and token_or_sid.strip():
-        sid = token_or_sid.strip()
-    if sid:
-        try:
-            ACTIVE_SESSIONS.pop(sid, None)
-        except Exception:
-            pass
+def revoke_session(sid: str | None) -> None:
+    """Explicitly revoke a session sid from active registry."""
+    if isinstance(sid, str) and sid.strip():
+        ACTIVE_SESSIONS.pop(sid.strip(), None)
 
 
 def verify_session_token(
@@ -190,7 +136,6 @@ def verify_session_token(
         remaining = exp - now
         return Actor(
             user_id=user_id,
-            role="owner",
             expires_at=time.monotonic() + remaining,
             sid=sid,
         )

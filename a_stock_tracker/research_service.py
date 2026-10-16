@@ -26,7 +26,6 @@ from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse
 
-from a_stock_tracker.auth import create_owner_actor
 from a_stock_tracker.automation import (
     PB_MV_SCREEN,
     coverage,
@@ -570,7 +569,7 @@ class ResearchStore:
     def result(self, directory: Path, mode: str) -> dict[str, Any]:
         root = directory / "batch"
         if mode == "swing":
-            board = load_board(create_owner_actor("0", "0"), root)
+            board = load_board(root)
             if board is None:
                 raise ScreenError("No verified board")
             return {"board": board}

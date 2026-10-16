@@ -1,1 +1,1 @@
-"""A-share swing opportunities: evidence, AI explanations and price conditions."""
+"""A-share company research: financial evidence, counterevidence and price discipline."""
