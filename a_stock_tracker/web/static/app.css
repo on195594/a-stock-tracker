@@ -16,6 +16,11 @@
   --inset: 20px;
   --section: 24px;
   --footer: 32px;
+  /* Reading column; desktop pages that list or compare widen to --wide. */
+  --column: 760px;
+  --wide: 1120px;
+  /* Desktop report outline sits in a left gutter beside the reading column. */
+  --outline: 240px;
   /* Room a jump target keeps below the 48px sticky mini-head. */
   --stub-clear: 64px;
   --font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
@@ -58,7 +63,7 @@ body {
   flex-wrap: wrap;
   align-items: center;
   gap: var(--related) var(--group);
-  max-width: 760px;
+  max-width: var(--column);
   margin: 0 auto;
   padding: var(--related) var(--inset);
   border-bottom: 1px solid var(--line);
@@ -86,7 +91,7 @@ body {
 }
 
 main {
-  max-width: 760px;
+  max-width: var(--column);
   margin: 0 auto;
   padding: var(--section) var(--inset) var(--footer);
   display: flex;
@@ -210,16 +215,62 @@ a {
   outline-offset: 2px;
 }
 
-.entries {
+/* Link rows: related actions share a line and wrap, instead of stacking 48px rows. */
+.entries,
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 var(--group);
+}
+
+/* Home: the code field is the first thing a returning reader touches. */
+.home-start,
+.home-list,
+.grid2 {
+  display: flex;
+  flex-direction: column;
+  gap: var(--group);
+}
+
+.quick {
   display: flex;
   flex-direction: column;
   gap: var(--related);
 }
 
-.actions {
+.quick .field span {
+  font-size: 18px;
+}
+
+.quick .btn {
+  align-self: stretch;
+}
+
+/* Recent research titles are the link; the company name leads, the code follows. */
+.item-title {
+  font-size: 18px;
+  margin: 0;
+}
+
+.item-link {
+  display: inline-block;
+  padding: 4px 0;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.item-link:hover {
+  text-decoration: underline;
+}
+
+/* The step after a report: a separate, re-confirmed price reference. */
+.next {
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--related) var(--group);
+  flex-direction: column;
+  gap: var(--related);
+  padding-top: var(--group);
+  border-top: 1px solid var(--line);
 }
 
 /* Bands: flat colour fields with a 3px left marker, never shadows. */
@@ -348,6 +399,11 @@ a {
 
 .tabs a:focus-visible {
   outline-offset: -3px;
+}
+
+.conditions [data-levels] > :first-child,
+.conditions-panel [data-levels] > :first-child {
+  margin-top: 0;
 }
 
 .conditions,
@@ -582,7 +638,7 @@ details[open] > summary::before {
   align-items: center;
   gap: 0 var(--group);
   min-height: 48px;
-  padding: 0 max(var(--inset), calc((100% - 760px) / 2 + var(--inset)));
+  padding: 0 max(var(--inset), calc((100% - var(--column)) / 2 + var(--inset)));
   background: var(--band);
   border-bottom: 2px dashed var(--line);
   color: var(--muted);
@@ -638,5 +694,65 @@ blockquote {
   .pulse {
     animation: none;
     background: var(--accent);
+  }
+}
+
+/* Desktop: list pages use two columns, reports gain a left outline. Phones keep one column. */
+@media (min-width: 1024px) {
+  .shell,
+  main.wide {
+    max-width: var(--wide);
+  }
+
+  main.home {
+    display: grid;
+    grid-template-columns: 320px minmax(0, 1fr);
+    gap: 48px;
+    align-items: start;
+  }
+
+  .home-start {
+    position: sticky;
+    top: var(--section);
+  }
+
+  .home .entries {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .grid2 {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--group) 48px;
+    align-items: start;
+  }
+
+  main.reading {
+    max-width: calc(var(--column) + var(--outline));
+    padding-left: calc(var(--inset) + var(--outline));
+  }
+
+  /* Zero-height sticky rail: the outline hangs beside the report and takes no space. */
+  main.reading .jump-bar {
+    order: -1;
+    position: sticky;
+    top: var(--stub-clear);
+    flex-direction: column;
+    width: calc(var(--outline) - 40px);
+    height: 0;
+    margin: 0 0 calc(-1 * var(--group)) calc(-1 * var(--outline));
+    overflow: visible;
+    border: 0;
+  }
+
+  main.reading .jump-bar a {
+    padding: 0 12px;
+    border-left: 1px solid var(--line);
+    white-space: normal;
+  }
+
+  main.reading .mini-head {
+    padding-left: calc((100% - var(--column) - var(--outline)) / 2 + var(--inset) + var(--outline));
   }
 }

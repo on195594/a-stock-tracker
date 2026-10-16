@@ -14,7 +14,7 @@
   {% if demo %}<span class="badge">合成演示 · 非真实研究</span>{% endif %}
   {% if actor %}<a class="nav" href="/settings">账户</a>{% endif %}
 </header>
-<main id="main">
+<main id="main"{% block layout %}{% endblock %}>
 {% block main %}{% endblock %}
 </main>
 </body>

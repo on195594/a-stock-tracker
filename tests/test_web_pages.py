@@ -103,8 +103,8 @@ def test_home_orders_entries_and_groups_recent_runs(owner):
     visible = text(page)
     # Running work is pinned above the entries and listed once, not again in its tab.
     assert visible.index("进行中") < visible.index("研究一家公司")
-    assert body.count(f'href="/analysis/{OTHER}"') == 1 and "查看进度" in visible
-    assert visible.index("进行中") < visible.index("财报研究 600001.SH")
+    assert body.count(f'href="/analysis/{OTHER}"') == 1 and 'aria-label="查看进度' in body
+    assert visible.index("进行中") < visible.index("财报研究 演示公司 · 600001.SH")
     assert "反证第一句。" in visible and "第二句不在摘要" not in visible
     assert "披露期：2025-12-31（公告 2026-04-01）" in visible
     assert "续跑 2 次 · 复用" in visible and "2026-10-15 16:00" in visible
@@ -146,7 +146,7 @@ def test_home_mode_tab_lists_only_that_mode_and_pages_by_cursor(owner):
     page = browser.get("/?view=swing")
     visible = text(page)
     assert '<a href="/?view=swing" aria-current="page">价格参考</a>' in page.text
-    assert "财报研究 600001.SH" not in visible and visible.count("查看结果") == 10
+    assert "财报研究 600001.SH" not in visible and page.text.count('aria-label="查看结果') == 10
     assert f'href="/?view=swing&amp;cursor={swings[-1]["id"]}"' in page.text
     assert {"mode": "swing", "code": None, "limit": 10, "cursor": None} in client.recent_calls
     client.recent_calls.clear()
@@ -375,7 +375,8 @@ def test_screen_result_previews_candidates_before_basis(owner):
     visible = text(page)
     assert visible.index("选择公司研究财报") < visible.index("筛选依据与用量")
     assert "可研究 4 家" in visible and "尚未覆盖 1 家" in visible
-    assert "研究这家公司财报" in visible and "继续未覆盖初筛（核对预算）" in visible
+    assert 'aria-label="研究这家公司财报 · 演示公司"' in page.text
+    assert "继续未覆盖初筛（核对预算）" in visible
     identifier = run.rsplit("/", 1)[-1]
     assert f"mode=financial&amp;code=600001.SH&amp;from={identifier}" in page.text
     assert "冻结门槛：0＜PB≤3" in visible and "未经收益验证" in visible
@@ -401,7 +402,7 @@ def test_ranking_pages_and_filters(owner):
     assert "较大距离示例" in visible and "演示公司" not in visible and "共 1 家" in visible
     assert "下一页" not in visible
     everything = browser.get(run + "/ranking")
-    assert text(everything).count("研究这家公司财报") == 4
+    assert everything.text.count('aria-label="研究这家公司财报') == 4
 
 
 def test_price_reference_list_and_detail(owner):
@@ -609,6 +610,20 @@ def test_company_dossier_validates_codes_and_reports_unreachable(owner):
     assert 'class="btn" href="/stock/600001.SH"' in page.text
     # The retired workbench path stays retired.
     assert browser.get("/company/600001.SH").status_code == 404
+
+
+def test_financial_form_flags_an_existing_report_without_depending_on_it(owner):
+    client, browser = owner
+    assert "该公司已有研报" not in browser.get("/analysis?mode=financial&code=600001").text
+    run = submit(browser, "financial", "600001").rsplit("/", 1)[-1]
+    page = browser.get("/analysis?mode=financial&code=600001")
+    assert "该公司已有研报" in page.text and f'href="/analysis/{run}#report-600001.SH"' in page.text
+    assert "该公司已有研报" not in browser.get("/analysis?mode=swing&code=600001").text
+    # A failed report lookup is only a missing hint; the confirmation form still renders.
+    client.fail["find_reports"] = ResearchUnavailable("down")
+    page = browser.get("/analysis?mode=financial&code=600001")
+    assert page.status_code == 200 and "该公司已有研报" not in page.text
+    assert 'name="confirmed"' in page.text
 
 
 def test_company_dossier_requires_login():

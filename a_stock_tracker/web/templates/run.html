@@ -1,10 +1,13 @@
 {% extends "base.html" %}
 {% from "_macros.html" import report_block, board_view, company_link %}
 {% block title %}研究 {{ run.id[:8] }}{% endblock %}
+{% block layout %}{% if screen %} class="wide"{% elif reports %} class="reading"{% endif %}{% endblock %}
 {% block main %}
 {% set source = (run.request or {}).get('from') %}
-{% if source %}<a class="link" href="/analysis/{{ source }}">返回来源初筛</a>{% endif %}
-<a class="link" href="/analysis">返回选股与研究</a>
+<div class="actions">
+  {% if source %}<a class="link" href="/analysis/{{ source }}">返回来源初筛</a>{% endif %}
+  <a class="link" href="/">返回研究首页</a>
+</div>
 {% set caution = run.status in ['failed', 'interrupted', 'partial'] %}
 {% macro execution() -%}
 <section class="notice{{ ' caution' if caution }}">
@@ -12,7 +15,9 @@
   <p class="lines">{{ run.message }}</p>
 </section>
 {%- endmacro %}
-{% if not screen %}{{ execution() }}{% endif %}
+{# A finished run keeps its execution note in the basis; anything else leads with it. #}
+{% set execution_on_top = not screen and run.status != 'completed' %}
+{% if execution_on_top %}{{ execution() }}{% endif %}
 
 {% if run.status == 'running' %}
 <section class="progress" data-poll="/analysis/{{ run.id }}/state.json" data-status="running" aria-live="polite">
@@ -41,8 +46,14 @@
 {% endif %}
 {% for r in reports %}
 {{ report_block(r) }}
-{% if not r.readable %}<p>财报未形成可读结论；价格参考独立核查，不构成对财报判断的支持。</p>{% endif %}
-<a class="link" href="/analysis?mode=swing&amp;code={{ r.code }}">核对本公司价格参考</a>
+<section class="next" aria-label="读完报告后 · {{ r.code }}">
+  <h2 class="notice-title">读完报告后</h2>
+  <p>{{ '财报未形成可读结论；' if not r.readable }}价格纪律参考由程序独立计算、不调用模型，需再次确认，不构成对财报判断的支持。</p>
+  <div class="actions">
+    <a class="btn quiet" href="/analysis?mode=swing&amp;code={{ r.code }}">核对本公司价格参考</a>
+    <a class="link" href="/stock/{{ r.code }}">公司档案</a>
+  </div>
+</section>
 {% endfor %}
 {% elif screen %}
 <h1>选择公司研究财报</h1>
@@ -52,10 +63,7 @@
 </section>
 {% if screen.truncated %}<section class="notice caution"><h2 class="notice-title">排名展示已截断</h2><p>{{ screen.truncated }}</p></section>{% endif %}
 {% if screen.groups %}
-<form method="get" action="/analysis/{{ run.id }}/ranking" class="search">
-  <label class="field"><span>按代码或名称筛选</span><input name="query" maxlength="20" autocomplete="off"></label>
-  <button class="btn quiet" type="submit">筛选完整排名</button>
-</form>
+<div class="grid2">
 {% for group in screen.groups %}
 <section class="group">
   <h2>{{ group.industry }}</h2>
@@ -65,8 +73,10 @@
     <h3 class="name">{{ row.name }}</h3>
     {{ company_link(row.code) }}
     <p class="lines">{{ row.facts }}</p>
-    <a class="btn" href="/analysis?mode=financial&amp;code={{ row.code }}&amp;from={{ run.id }}">研究这家公司财报</a>
-    <a class="link" href="/analysis?mode=swing&amp;code={{ row.code }}&amp;from={{ run.id }}">查看价格纪律参考</a>
+    <div class="actions">
+      <a class="btn" href="/analysis?mode=financial&amp;code={{ row.code }}&amp;from={{ run.id }}" aria-label="研究这家公司财报 · {{ row.name }}">研究财报</a>
+      <a class="link" href="/analysis?mode=swing&amp;code={{ row.code }}&amp;from={{ run.id }}" aria-label="查看价格纪律参考 · {{ row.name }}">价格参考</a>
+    </div>
   </article>
   {% endfor %}
   {% if group.ranking|length > 3 %}
@@ -74,6 +84,11 @@
   {% endif %}
 </section>
 {% endfor %}
+</div>
+<form method="get" action="/analysis/{{ run.id }}/ranking" class="search">
+  <label class="field"><span>在完整排名中按代码或名称查找</span><input name="query" maxlength="20" autocomplete="off"></label>
+  <button class="btn quiet" type="submit">筛选完整排名</button>
+</form>
 {% else %}
 <p>尚未形成可比较候选；行业覆盖不足、资料缺口或资格未通过均可能导致零结果。</p>
 {% endif %}
@@ -91,7 +106,8 @@
 {% endif %}
 
 <details>
-  <summary>{{ '筛选依据与用量' if screen else '依据' }}</summary>
+  <summary>{{ '筛选依据与用量' if screen else '执行与依据' }}</summary>
+  {% if not screen and not execution_on_top %}{{ execution() }}{% endif %}
   <p class="lines">{{ basis }}</p>
   {% if screen %}
   {{ execution() }}

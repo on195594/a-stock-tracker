@@ -265,12 +265,17 @@ def recent_item(run: dict[str, Any]) -> dict[str, Any]:
     if run.get("reused") or run.get("reused_from"):
         chain += " · 复用"
     result = run.get("summary") or {}
-    scope = ",".join(run_codes(run)) or "全市场初筛"
+    codes = run_codes(run)
+    scope = ",".join(codes) or "全市场初筛"
+    # A single-company run is named after the company; its summaries then omit the code.
+    entries = result.get("reports", []) + result.get("board", {}).get("rows", [])
+    name = next((e["name"] for e in entries if e.get("name")), "") if len(codes) == 1 else ""
     return {
         "id": run["id"],
         "active": run["status"] == "running",
         "title": (run.get("limits") or {}).get("title", "研究") + " · " + scope,
-        "scope": scope,
+        "scope": f"{name} · {scope}" if name else scope,
+        "single": len(codes) == 1,
         "meta": f"{recent_result_label(run)}{chain} · {local_time(run.get('created_at'))}",
         "summaries": [report_summary(r) for r in result.get("reports", [])]
         + [board_summary(row) for row in result.get("board", {}).get("rows", [])],

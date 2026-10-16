@@ -115,13 +115,16 @@ def main_flow(page: Page, base: str, width: int) -> None:
     expect(page.locator("h1")).to_have_text("研究首页")
     assert_layout(page, width, "home")
     entries = page.locator("nav.entries a")
-    expect(entries).to_have_text(["研究一家公司", "从初筛找公司", "独立价格参考（不调用模型）"])
+    expect(entries).to_have_text(["从初筛找公司", "独立价格参考（不调用模型）"])
     expect(page.locator("nav.tabs a")).to_have_text(["概览", "财报研究", "初筛", "价格参考"])
 
-    # Financial: unconfirmed is refused and nothing runs; confirmed starts once.
-    entries.first.click()
-    page.fill("input[name=codes]", "600519")
+    # Financial: the home code field only pre-fills the confirmation page.
+    page.fill("form.quick input[name=code]", "600519")
+    page.click("form.quick button")
+    expect(page.locator("input[name=codes]")).to_have_value("600519")
+    expect(page.locator("input[name=confirmed]")).not_to_be_checked()
     assert_layout(page, width, "form")
+    # Unconfirmed is refused and nothing runs; confirmed starts once.
     page.click("button[type=submit]")
     expect(page.locator(".feedback")).to_contain_text("请先勾选确认")
     # Editing the scope after confirming withdraws the confirmation.
@@ -279,7 +282,7 @@ def cold_start(browser, base: str) -> dict:
     cdp.send("Network.setCacheDisabled", {"cacheDisabled": True})
     cdp.send("Network.emulateNetworkConditions", MOBILE_NETWORK)
     page.goto(base + "/")
-    page.locator("a.btn", has_text="研究一家公司").wait_for()
+    page.locator("form.quick button").wait_for()
     metrics = page.evaluate(
         """() => {
             const nav = performance.getEntriesByType('navigation')[0];
@@ -340,7 +343,7 @@ def main() -> int:
             server.kill()
     assert not external, f"external requests attempted: {external}"
     print(
-        "Browser passed: 360/390/430px + desktop; home, consent refusal, financial report, "
+        "Browser passed: 360/390/430px + desktop; home code field, consent refusal, financial report, "
         "citations by keyboard, report jump bar and sticky mini-head, company dossier, home tabs, "
         "price time window, "
         "price reference prefill and detail, screen ranking filter, "

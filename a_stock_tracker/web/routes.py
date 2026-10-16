@@ -278,6 +278,26 @@ def create_app(
             request, actor, "company.html", p.company_view(code, reports, swing, financial)
         )
 
+    async def prior_report(mode: str, code_text: str) -> dict[str, Any] | None:
+        """Newest reviewed report for a single company, so a paid rerun is a conscious choice.
+
+        Only a hint: an unreadable report list never blocks the form.
+        """
+        codes = p.normalize_codes(code_text)
+        if (
+            client is None
+            or mode != "financial"
+            or len(codes) != 1
+            or not p.CODE.fullmatch(codes[0])
+        ):
+            return None
+        try:
+            listed = await read(client.find_reports, codes[0])
+        except ResearchUnavailable:
+            return None
+        reports = [r for r in listed.get("reports", []) if r.get("code") == codes[0]]
+        return {**p.archived_report(reports[0]), "code": codes[0]} if reports else None
+
     async def form_page(
         request: Request,
         actor: Actor,
@@ -292,6 +312,7 @@ def create_app(
     ) -> Response:
         if client is None:
             return render(request, actor, "unconnected.html", {})
+        prior = None
         try:
             resume_source = None
             if mode == "screen" and not resume_from:
@@ -303,7 +324,7 @@ def create_app(
                     read(client.info), read(client.status, resume_from)
                 )
             else:
-                info = await read(client.info)
+                info, prior = await asyncio.gather(read(client.info), prior_report(mode, code_text))
             if mode not in info["modes"]:
                 mode = "financial"
                 resume_source = None
@@ -393,6 +414,7 @@ def create_app(
                 "confirm_label": p.confirmation_label(info, mode),
                 "submit_label": "确认新增预算并继续初筛" if resume_source else "确认启动研究",
                 "available": available,
+                "prior": prior if mode == "financial" else None,
                 "feedback": feedback
                 or ("" if available else "本类型尚未配置，需管理员完成一次连接；不能假装已研究。"),
             },

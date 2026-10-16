@@ -117,6 +117,7 @@ def result_summary(result: dict[str, Any]) -> dict[str, Any]:
                         k: row[k]
                         for k in (
                             "code",
+                            "name",
                             "status",
                             "as_of",
                             "expires",
@@ -144,6 +145,7 @@ def result_summary(result: dict[str, Any]) -> dict[str, Any]:
                 )
             }
             | {
+                "name": report.get("name"),
                 "quality": report.get("quality"),
                 "analysis": {"counterevidence": report["analysis"]["counterevidence"]}
                 if "counterevidence" in report["analysis"]
