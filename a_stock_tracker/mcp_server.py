@@ -123,6 +123,7 @@ class ResearchMCPServer(MCPServer):
 
 class ReportBrief(BaseModel):
     code: str
+    name: str | None = None
     summary_status: str
     diagnostic: dict[str, str] | None
     quality: Quality | None
@@ -233,6 +234,7 @@ def check_code(value: str) -> None:
 def brief(report: dict[str, Any]) -> ReportBrief:
     return ReportBrief(
         code=report["code"],
+        name=report.get("name"),
         summary_status=report_summary_status(report),
         diagnostic=public_diagnostic(report.get("diagnostic")),
         quality=report.get("quality"),

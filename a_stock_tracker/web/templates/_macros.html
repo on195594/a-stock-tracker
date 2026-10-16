@@ -22,9 +22,10 @@
 {%- endmacro %}
 
 {% macro report_block(r) -%}
+{% set display_title = (r.name ~ " · " ~ r.code) if r.name else r.code %}
 <section class="report" aria-labelledby="report-{{ r.code }}" data-report>
   <div class="notice" data-report-head>
-    <h2 class="notice-title anchor" id="report-{{ r.code }}">报告 · {{ r.code }}</h2>
+    <h2 class="notice-title anchor" id="report-{{ r.code }}">报告 · {{ display_title }}</h2>
     <p>{{ r.status }}</p>
     {% if r.quality %}<p>{{ r.quality }}</p>{% endif %}
     <p class="lines muted">{{ r.dates }}</p>

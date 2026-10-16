@@ -756,8 +756,17 @@ def structured_report(result: dict[str, Any]) -> dict[str, Any]:
     packet = result.get("evidence", {})
     report = result.get("report", {}) if result.get("evidence_review") == "passed" else {}
     docs = {d["id"]: d for d in packet.get("documents", [])}
+    name = (
+        result.get("name")
+        or packet.get("structured", {}).get("name")
+        or next(
+            (d.get("official_name") for d in packet.get("documents", []) if d.get("official_name")),
+            None,
+        )
+    )
     return {
         "code": result["code"],
+        "name": name,
         "status": result["status"],
         "evidence_review": result.get("evidence_review"),
         "rule": packet.get("template"),
@@ -1061,6 +1070,7 @@ def research_batch(
                     passed = validate_review(review, report)
                     result = {
                         "code": code,
+                        "name": row.get("name", ""),
                         "freeze": state["freeze"],
                         "status": "scoped_complete"
                         if passed and not packet["omitted_pages"]
@@ -1092,6 +1102,7 @@ def research_batch(
             diagnostic = failure_diagnostic(stage, exc)
             result = {
                 "code": code,
+                "name": row.get("name", ""),
                 "freeze": state["freeze"],
                 "status": "incomplete",
                 "diagnostic": diagnostic,

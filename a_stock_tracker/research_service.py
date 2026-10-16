@@ -715,6 +715,7 @@ class ResearchStore:
                             {
                                 "run_id": path.parent.name,
                                 "code": code,
+                                "name": report.get("name"),
                                 "finished_at": finished_at,
                                 "status": report["status"],
                                 "rule": report.get("rule"),

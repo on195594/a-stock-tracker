@@ -332,6 +332,7 @@ def report_view(report: dict[str, Any]) -> dict[str, Any]:
     clues = report.get("clues") or {}
     return {
         "code": report["code"],
+        "name": report.get("name") or "",
         "readable": readable,
         "status": report_summary_status(report),
         "quality": quality_text(report.get("quality")),

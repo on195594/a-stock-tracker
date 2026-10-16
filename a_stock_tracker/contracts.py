@@ -210,6 +210,7 @@ class ReportView(BaseModel):
     model_config = ConfigDict(extra="allow", strict=True)
 
     code: str
+    name: str | None = None
     status: str
     evidence_review: str | None = None
     rule: str | None = None
@@ -229,6 +230,7 @@ class ReportSummary(BaseModel):
 
     run_id: str
     code: str
+    name: str | None = None
     finished_at: str | None = None
     status: str
     rule: str | None = None

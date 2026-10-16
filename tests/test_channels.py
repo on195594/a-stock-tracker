@@ -564,8 +564,12 @@ def test_projection_contracts_preserve_missing_and_extra_fields():
         "future": True,
     }
     report = structured_report({"code": "600519.SH", "status": "failed"})
-    assert report["rule"] is None
+    assert report["rule"] is None and report["name"] is None
+    assert ReportView.model_validate(report).name is None
     assert ReportView.model_validate(report).model_dump(exclude_unset=True) == report
+    named_report = structured_report({"code": "600519.SH", "name": "贵州茅台", "status": "failed"})
+    assert named_report["name"] == "贵州茅台"
+    assert ReportView.model_validate(named_report).name == "贵州茅台"
     for model, value in (
         (Fact, fact),
         (Section, {"text": "text", "facts": ["F1"], "future": True}),

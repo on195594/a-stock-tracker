@@ -68,6 +68,7 @@ def demo_board(scenario="reference"):
 def demo_report(code):
     return {
         "code": code,
+        "name": "演示公司",
         "status": "synthetic",
         "evidence_review": "not_real",
         "quality": {

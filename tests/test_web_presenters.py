@@ -127,6 +127,13 @@ def test_report_view_collapses_all_none_clues_but_keeps_recorded_ones():
     assert p.report_view(base | {"clues": clues})["clues"] == clues
 
 
+def test_report_view_includes_name_when_available():
+    named = p.report_view({"code": "600519.SH", "name": "贵州茅台", "status": "scoped_complete"})
+    assert named["name"] == "贵州茅台"
+    unnamed = p.report_view({"code": "600519.SH", "status": "scoped_complete"})
+    assert unnamed["name"] == ""
+
+
 def test_failed_review_exposes_diagnostic_but_never_the_draft():
     report = demo_report("600001.SH") | {
         "evidence_review": "failed",

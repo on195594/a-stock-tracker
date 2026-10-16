@@ -236,6 +236,7 @@ def test_financial_report_hierarchy_and_failed_draft_is_hidden(owner, review):
     client.runs[RUN] = run_state(result={"reports": [report], "usage": None})
     page = browser.get("/analysis/" + RUN)
     html, visible = page.text, text(page)
+    assert "演示公司 · 600001.SH" in visible
     assert "资料截至 2026-04-01" in visible
     if review == "passed":
         assert visible.index("完整反证第一句。第二句也必须保留。") < visible.index("业务")
