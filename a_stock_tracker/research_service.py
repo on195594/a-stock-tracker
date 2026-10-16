@@ -912,7 +912,7 @@ def create_service(root: Path, tokens: dict[str, str]) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
     @app.exception_handler(HTTPException)
-    async def http_error(request, exc):
+    async def http_error(_request: Request, exc: HTTPException) -> JSONResponse:
         codes: dict[int, ErrorCode] = {
             400: "invalid_request",
             403: "unauthorized",

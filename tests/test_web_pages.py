@@ -234,11 +234,29 @@ def test_financial_report_hierarchy_and_failed_draft_is_hidden(owner, review):
     if review == "failed":
         report["error"] = "独立证据复核未通过；草稿不作为确定结论发布"
     client.runs[RUN] = run_state(result={"reports": [report], "usage": None})
-    visible = text(browser.get("/analysis/" + RUN))
+    page = browser.get("/analysis/" + RUN)
+    html, visible = page.text, text(page)
     assert "资料截至 2026-04-01" in visible
     if review == "passed":
         assert visible.index("完整反证第一句。第二句也必须保留。") < visible.index("业务")
-        assert "引用：F1" in visible and "PDF 第 12 页" in visible
+        assert "引用： F1" in visible and "PDF 第 12 页" in visible
+        assert '<a class="citation" href="#fact-600001.SH-F1">F1</a>' in html
+        assert 'id="fact-600001.SH-F1"' in html
+        # Stub syntax: perforated head, section jumps with matching targets, mini-head.
+        assert '<hr class="perforation" aria-hidden="true">' in html
+        jumps = re.search(r'<nav class="jump-bar"[^>]*>(.*?)</nav>', html, re.S)
+        assert jumps is not None
+        targets = re.findall(r'href="#([^"]+)"', jumps.group(1))
+        assert targets == [
+            "counter-600001.SH",
+            "gaps-600001.SH",
+            *(f"section-600001.SH-{i}" for i in range(1, 5)),
+            "facts-600001.SH",
+        ]
+        for target in targets:
+            assert re.search(rf'class="[^"]*\banchor\b[^"]*" id="{re.escape(target)}"', html)
+        mini = re.search(r'<p class="mini-head" data-mini-head hidden>(.*?)</p>', html, re.S)
+        assert mini is not None and "资料截至 2026-04-01（公告日）" in mini.group(1)
         assert "来源 URL：https://example.invalid/synthetic.pdf" in visible
         summary = visible.split("业务")[0]
         assert "缺口2" in summary and "缺口3" not in summary
@@ -247,6 +265,7 @@ def test_financial_report_hierarchy_and_failed_draft_is_hidden(owner, review):
         assert "独立复核未通过，草稿不展示" in visible
         assert "完整反证第一句" not in visible and "合成收入集中事实" not in visible
         assert "财报未形成可读结论" in visible
+        assert 'class="jump-bar"' not in html
     assert 'href="/analysis?mode=swing&amp;code=600001.SH"' in browser.get("/analysis/" + RUN).text
 
 
@@ -321,6 +340,20 @@ def test_price_reference_list_and_detail(owner):
     for key in ("trend", "relative", "condition", "invalidation", "distance"):
         assert row["facts"][key] in dvisible
     assert f'data-expires="{row["expires"]}"' in detail.text
+    # Plain-text validity window, a perforated line before the conditions, no arrows.
+    for page in (listing, detail):
+        window = re.search(r'<p class="window">(.*?)</p>', page.text, re.S)
+        assert window is not None
+        window_text = re.sub(r"<[^>]+>", "", window.group(1))
+        assert window_text == f"依据截至 {row['as_of']}━━ 后续 5 个交易日 ━━有效至 {row['expires']}"
+        assert not re.search("[→←↑↓⟶➔➜▶►]", window_text)
+    head, perforation, conditions = (
+        detail.text.index('<p class="window">'),
+        detail.text.index('class="perforation"'),
+        detail.text.index("观察线与失效线"),
+    )
+    assert head < perforation < conditions
+    assert 'class="perforation"' not in listing.text
     missing = browser.get(run + "/600002.SH")
     assert "本批次没有该公司的价格参考记录。" in text(missing)
 
@@ -378,7 +411,7 @@ def test_quote_refresh_failure_keeps_inputs_in_a_get_retry(owner):
     fields = request_form(browser, "financial", "600519")
     fields["from"] = RUN
 
-    def reject(payload):
+    def reject(_payload):
         client.fail["info"] = ResearchUnavailable("down")
         raise ResearchRejected("被拒")
 

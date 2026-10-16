@@ -49,7 +49,7 @@ def test_atomic_write_file_sync_failure_never_publishes(tmp_path, monkeypatch, e
     if existing:
         target.write_bytes(b"previous-evidence\n")
 
-    def fail_sync(file_descriptor: int) -> None:
+    def fail_sync(_file_descriptor: int) -> None:
         raise OSError("injected file fsync failure")
 
     monkeypatch.setattr(script.os, "fsync", fail_sync)

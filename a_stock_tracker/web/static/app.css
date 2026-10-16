@@ -16,6 +16,8 @@
   --inset: 20px;
   --section: 24px;
   --footer: 32px;
+  /* Room a jump target keeps below the 48px sticky mini-head. */
+  --stub-clear: 64px;
   --font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
     "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei", system-ui, sans-serif;
   color-scheme: light;
@@ -251,6 +253,10 @@ a {
   margin-top: var(--related);
 }
 
+.notice > :first-child {
+  margin-top: 0;
+}
+
 .recent,
 .group,
 .report {
@@ -420,6 +426,117 @@ details[open] > summary::before {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+/* Citation ids: inline padding widens the tap area without changing line height. */
+.citation {
+  color: var(--accent);
+  font-weight: 700;
+  padding: 14px 6px;
+  text-decoration: none;
+}
+
+.citation:hover,
+.citation:focus-visible {
+  text-decoration: underline;
+}
+
+.fact,
+.anchor {
+  scroll-margin-top: var(--stub-clear);
+}
+
+/* The fact a citation jumped to. */
+.fact:target {
+  padding: var(--related);
+  background: var(--band);
+  outline: 2px solid var(--accent);
+}
+
+/* Dossier stub syntax: a perforated line tears a head from its body. */
+.perforation {
+  margin: 0;
+  border: 0;
+  border-top: 2px dashed var(--line);
+}
+
+/* Validity window as plain text; each end stays on one line, the span may wrap. */
+.window {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--related);
+}
+
+.window > span {
+  white-space: nowrap;
+}
+
+.window-span {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+/* Section jumps for long reports: one row that scrolls sideways, never wraps. */
+.jump-bar {
+  display: flex;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  /* Bleed into the page gutter so the first label lines up with the text column. */
+  margin: 0 -12px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.jump-bar a {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  min-height: 48px;
+  padding: 0 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+.jump-bar a:hover {
+  text-decoration: underline;
+}
+
+.jump-bar a:focus-visible {
+  outline-offset: -3px;
+}
+
+/* Sticky mini-head: code and data date once the report head has scrolled away. */
+.mini-head {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 var(--group);
+  min-height: 48px;
+  padding: 0 max(var(--inset), calc((100% - 760px) / 2 + var(--inset)));
+  background: var(--band);
+  border-bottom: 2px dashed var(--line);
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.mini-head a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 48px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.mini-head a:hover {
+  text-decoration: underline;
 }
 
 blockquote {

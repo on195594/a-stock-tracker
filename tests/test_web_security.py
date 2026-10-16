@@ -32,6 +32,7 @@ import time
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from a_stock_tracker.auth import ACTIVE_SESSIONS, AuthError
 from a_stock_tracker.research_client import (
@@ -159,7 +160,7 @@ def test_retired_routes_are_gone(path):
 
 def test_websocket_is_closed():
     browser = app_client()
-    with pytest.raises(Exception):
+    with pytest.raises(WebSocketDisconnect):
         with browser.websocket_connect("/ws"):
             pass
 
@@ -234,7 +235,7 @@ def test_oauth_state_capacity_preserves_pending_login_and_recovers(monkeypatch):
     assert len(s.OAUTH_STATES) == 1
 
 
-def test_expired_oauth_state_is_refused(monkeypatch):
+def test_expired_oauth_state_is_refused():
     browser = app_client()
     start = browser.get("/oauth/start", follow_redirects=False)
     state = start.headers["location"].split("state=")[1].split("&")[0]
@@ -415,7 +416,7 @@ def test_acceptance_unknown_reconciles_only_the_same_request(monkeypatch, invali
     if invalid_receipt:
         real_client = ResearchClient("http://research", "x" * 32)
 
-        def accepted_without_status(method, path, payload):
+        def accepted_without_status(_method, _path, payload):
             return original_submit(payload).model_dump(exclude={"status"})
 
         monkeypatch.setattr(real_client, "call", accepted_without_status)

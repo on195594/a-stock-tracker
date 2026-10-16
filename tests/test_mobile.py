@@ -52,7 +52,7 @@ def assert_layout(page: Page, width: int, where: str) -> None:
     overflow = page.evaluate("document.documentElement.scrollWidth - window.innerWidth")
     assert overflow <= 0, f"{where}@{width}: horizontal overflow {overflow}px"
     small = page.evaluate(
-        """() => [...document.querySelectorAll('main .btn, main .link, summary, .check, .shell .nav')]
+        """() => [...document.querySelectorAll('main .btn, main .link, summary, .check, .shell .nav, .jump-bar a, .mini-head a')]
             .filter(el => el.offsetParent !== null)
             .map(el => [el.textContent.trim().slice(0, 20), el.getBoundingClientRect().height])
             .filter(([, h]) => h < 47.5)"""
@@ -69,6 +69,44 @@ def confirm_and_submit(page: Page) -> None:
     expect(page.locator("input[name=confirmed]")).to_be_checked()
     page.click("button[type=submit]")
     page.wait_for_load_state()
+
+
+def below_mini_head(page: Page, selector: str) -> bool:
+    return page.evaluate(
+        """(selector) => document.querySelector(selector).getBoundingClientRect().top
+            >= document.querySelector('[data-mini-head]').getBoundingClientRect().bottom""",
+        selector,
+    )
+
+
+def report_jumps(page: Page, width: int) -> None:
+    # Instant scrolling keeps positions deterministic; smooth scrolling is covered above.
+    page.emulate_media(reduced_motion="reduce")
+    mini = page.locator("[data-mini-head]")
+    page.evaluate("window.scrollTo(0, 0)")
+    expect(mini).to_be_hidden()
+    jumps = page.locator(".jump-bar a")
+    expect(jumps).to_have_text(
+        ["最强反证", "主要缺口", "业务", "财务", "估值方法", "改变判断的条件", "原文事实"]
+    )
+    assert_layout(page, width, "jump-bar")
+    # The fact list opens from the bar; past the head, the mini-head names code and date.
+    jumps.last.click()
+    expect(page.locator("details#facts-600519\\.SH")).to_have_attribute("open", "")
+    expect(mini).to_be_visible()
+    expect(mini).to_contain_text("600519.SH")
+    expect(mini).to_contain_text("资料截至")
+    assert_layout(page, width, "mini-head")
+    jumps.nth(5).evaluate("link => link.scrollIntoView({inline: 'nearest'})")
+    jumps.nth(5).click()
+    heading = page.locator("#section-600519\\.SH-4")
+    expect(heading).to_be_in_viewport()
+    assert below_mini_head(page, "#section-600519\\.SH-4"), f"heading under mini-head@{width}"
+    # The mini-head leads back to the report head, where it hides again.
+    mini.locator("a").click()
+    expect(page.locator("#report-600519\\.SH")).to_be_in_viewport()
+    expect(mini).to_be_hidden()
+    page.emulate_media(reduced_motion="no-preference")
 
 
 def main_flow(page: Page, base: str, width: int) -> None:
@@ -98,6 +136,14 @@ def main_flow(page: Page, base: str, width: int) -> None:
     page.keyboard.press("Enter")
     expect(page.locator(".fact").first).to_contain_text("PDF 第 12 页")
     assert_layout(page, width, "report")
+    # A citation reopens the collapsed fact list and lands on the cited fact.
+    page.keyboard.press("Enter")
+    expect(page.locator(".fact").first).to_be_hidden()
+    page.locator(".notice.caution a.citation").first.click()
+    cited = page.locator(".fact:target")
+    expect(cited).to_be_visible()
+    expect(cited).to_be_in_viewport()
+    report_jumps(page, width)
 
     # Price reference is a separate confirmation, prefilled but never auto-submitted.
     page.click("text=核对本公司价格参考")
@@ -108,6 +154,8 @@ def main_flow(page: Page, base: str, width: int) -> None:
     expect(page.locator("main")).to_contain_text("1 项价格参考 · 1 家显式股票池")
     page.click("text=查看价格参考")
     expect(page.locator("main")).to_contain_text("观察线与失效线")
+    expect(page.locator(".window")).to_contain_text("后续 5 个交易日")
+    expect(page.locator(".perforation")).to_be_visible()
     assert_layout(page, width, "price")
 
     # Screen: candidates first, then the paged ranking with a filter.
@@ -277,7 +325,8 @@ def main() -> int:
     assert not external, f"external requests attempted: {external}"
     print(
         "Browser passed: 360/390/430px + desktop; home, consent refusal, financial report, "
-        "citations by keyboard, price reference prefill and detail, screen ranking filter, "
+        "citations by keyboard, report jump bar and sticky mini-head, price time window, "
+        "price reference prefill and detail, screen ranking filter, "
         "gap/empty/read-failure states, logout isolation, retired URLs 404, local expiry "
         "hiding, polling stop on 401 and reload on change. Synthetic, not a real device."
     )

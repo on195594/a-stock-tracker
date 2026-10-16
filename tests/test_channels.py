@@ -37,7 +37,7 @@ def auth(channel="mcp"):
     return {"Authorization": "Bearer " + TOKENS[channel]}
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def ready(monkeypatch):
     monkeypatch.setenv("TUSHARE_TOKEN", "synthetic")
     monkeypatch.setenv("RESEARCH_PROVIDER", "synthetic")
@@ -85,7 +85,7 @@ def test_invalid_channel_tokens_rejected(tmp_path, tokens):
     assert not (tmp_path / "service").exists()
 
 
-def test_auth_checks_every_token_and_optional_channel(tmp_path, monkeypatch, ready):
+def test_auth_checks_every_token_and_optional_channel(tmp_path, monkeypatch):
     calls = []
     compare = service.hmac.compare_digest
 
@@ -111,7 +111,7 @@ def test_auth_checks_every_token_and_optional_channel(tmp_path, monkeypatch, rea
 
 
 @pytest.mark.parametrize("mcp_enabled", [False, True])
-def test_main_loads_channel_tokens(tmp_path, monkeypatch, ready, mcp_enabled):
+def test_main_loads_channel_tokens(tmp_path, monkeypatch, mcp_enabled):
     monkeypatch.setenv("RESEARCH_SERVICE_ROOT", str(tmp_path / "service"))
     monkeypatch.setenv("RESEARCH_SERVICE_TOKEN", TOKENS["web"])
     monkeypatch.delenv("RESEARCH_SERVICE_SOCKET", raising=False)
@@ -127,7 +127,7 @@ def test_main_loads_channel_tokens(tmp_path, monkeypatch, ready, mcp_enabled):
         assert client.get("/info", headers=auth()).status_code == (200 if mcp_enabled else 403)
 
 
-def test_channel_records_limit_idempotency_and_info(tmp_path, ready):
+def test_channel_records_limit_idempotency_and_info(tmp_path):
     root = tmp_path / "service"
     with TestClient(service.create_service(root, TOKENS)) as client:
         store = service.ResearchStore(root)
@@ -182,7 +182,7 @@ def test_channel_records_limit_idempotency_and_info(tmp_path, ready):
         assert store.channel_used() == 3
 
 
-def test_limit_uses_shanghai_date_and_legacy_records_are_web(tmp_path, monkeypatch, ready):
+def test_limit_uses_shanghai_date_and_legacy_records_are_web(tmp_path, monkeypatch):
     now = datetime(2026, 10, 15, 16, 30, tzinfo=timezone.utc)
 
     class Clock(datetime):
@@ -207,7 +207,7 @@ def test_limit_uses_shanghai_date_and_legacy_records_are_web(tmp_path, monkeypat
         assert client.post("/runs", json=payload(), headers=auth()).status_code == 200
 
 
-def test_same_day_screen_reuse_counts_as_acceptance(tmp_path, monkeypatch, ready):
+def test_same_day_screen_reuse_counts_as_acceptance(tmp_path, monkeypatch):
     store, original, _ = screen_checkpoint_fixture(tmp_path)
     monkeypatch.setattr(service, "Thread", lambda **_: pytest.fail("reuse started execution"))
     with TestClient(service.create_service(store.root, TOKENS)) as client:
@@ -224,7 +224,7 @@ def test_same_day_screen_reuse_counts_as_acceptance(tmp_path, monkeypatch, ready
         assert client.post("/runs", json=payload("screen"), headers=auth("web")).status_code == 200
 
 
-def test_concurrent_submissions_never_exceed_limit(tmp_path, ready):
+def test_concurrent_submissions_never_exceed_limit(tmp_path):
     root = tmp_path / "service"
     gate = Barrier(8)
     with TestClient(service.create_service(root, TOKENS)) as client:
@@ -284,7 +284,7 @@ def saved_report(
     return request["id"], run
 
 
-def test_find_reports_verified_passed_newest_twenty_and_rules(tmp_path, ready):
+def test_find_reports_verified_passed_newest_twenty_and_rules(tmp_path):
     root = tmp_path / "service"
     receiver = service.create_service(root, TOKENS)
     store = service.ResearchStore(root)
@@ -348,17 +348,16 @@ def test_reports_sort_instants_across_timezones_and_skip_failed_reads(tmp_path, 
     ]
 
 
-@pytest.fixture
-def large_screen(tmp_path):
+def screen_dataset(tmp_path, long_names=False):
     store, request, run = screen_checkpoint_fixture(tmp_path)
     row = read_state(next(run.glob("scan-*.json")))["result"]
     frozen = service.read_result(run / "universe.json")
-    # Long synthetic names cross the response ceiling with only four pages.
+    suffix = ("-" + "x" * 26000) if long_names else ""
     frozen["rows"] = [
         {
             **row,
             "code": f"{600000 + i:06d}.SH",
-            "name": f"company-{i:03d}-" + "x" * 26000,
+            "name": f"company-{i:03d}{suffix}",
             "industry": "A" if i < 75 else "B",
             "pb": float(i + 1),
         }
@@ -368,6 +367,16 @@ def large_screen(tmp_path):
     state.update(freeze=save(run / "universe.json", frozen), scan={})
     save_state(run / "state.json", state)
     return store, request, run
+
+
+@pytest.fixture
+def large_screen(tmp_path):
+    return screen_dataset(tmp_path, long_names=True)
+
+
+@pytest.fixture
+def paginated_screen(tmp_path):
+    return screen_dataset(tmp_path, long_names=False)
 
 
 def test_ranking_pages_full_verified_result_and_filters(large_screen):
@@ -447,8 +456,8 @@ def test_ranking_pages_full_verified_result_and_filters(large_screen):
         )
 
 
-def test_ranking_rejects_bad_cursors_and_non_screen(large_screen):
-    store, request, run = large_screen
+def test_ranking_rejects_bad_cursors_and_non_screen(paginated_screen):
+    store, request, run = paginated_screen
     path = "/runs/" + request["id"] + "/ranking"
     with TestClient(service.create_service(store.root, TOKENS)) as client:
         first = client.get(path, headers=auth()).json()
@@ -490,8 +499,8 @@ def test_ranking_rejects_bad_cursors_and_non_screen(large_screen):
             assert response.json()["detail"] == "该研究没有可分页的初筛排名"
 
 
-def test_client_report_ranking_models_params_and_limit(large_screen, monkeypatch, ready):
-    store, request, _ = large_screen
+def test_client_report_ranking_models_params_and_limit(paginated_screen, monkeypatch):
+    store, request, _ = paginated_screen
     with TestClient(service.create_service(store.root, TOKENS)) as receiver:
         original = httpx.Client
         seen = []

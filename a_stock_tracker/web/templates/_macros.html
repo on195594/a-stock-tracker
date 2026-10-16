@@ -6,39 +6,69 @@
 </div>
 {%- endmacro %}
 
+{# Each fact id links to its source fact below; app.js opens the collapsed list. #}
+{% macro citations(code, ids) -%}
+<p class="muted">引用：{% for fid in ids %}<a class="citation" href="#fact-{{ code }}-{{ fid }}">{{ fid }}</a>{% if not loop.last %}、{% endif %}{% endfor %}</p>
+{%- endmacro %}
+
+{# Perforated line between a stub head and its body; decorative only. #}
+{% macro perforation() -%}
+<hr class="perforation" aria-hidden="true">
+{%- endmacro %}
+
+{# Plain-text validity window: dates and span only, never a pointer towards a price. #}
+{% macro time_window(as_of, expires) -%}
+<p class="window"><span>依据截至 {{ as_of }}</span><span class="window-span"><span aria-hidden="true">━━</span> 后续 5 个交易日 <span aria-hidden="true">━━</span></span><span>有效至 {{ expires }}</span></p>
+{%- endmacro %}
+
 {% macro report_block(r) -%}
-<section class="report" aria-labelledby="report-{{ r.code }}">
-  <div class="notice">
-    <h2 class="notice-title" id="report-{{ r.code }}">报告 · {{ r.code }}</h2>
+<section class="report" aria-labelledby="report-{{ r.code }}" data-report>
+  <div class="notice" data-report-head>
+    <h2 class="notice-title anchor" id="report-{{ r.code }}">报告 · {{ r.code }}</h2>
     <p>{{ r.status }}</p>
     {% if r.quality %}<p>{{ r.quality }}</p>{% endif %}
     <p class="lines muted">{{ r.dates }}</p>
-    {% if r.counter %}
-    <h3>最强反证</h3>
-    <p class="lines">{{ r.counter.text }}</p>
-    {% if r.counter.facts %}<p class="muted">引用：{{ r.counter.facts|join('、') }}</p>{% endif %}
-    {% endif %}
-    {% if r.gaps %}
-    <h3>主要缺口</h3>
-    {% for gap in r.gaps[:3] %}<p>{{ gap }}</p>{% endfor %}
-    {% endif %}
     {% if r.stage %}<p>失败阶段：{{ r.stage }}</p>{% endif %}
     {% if r.stage_message %}<p>失败原因：{{ r.stage_message }}</p>{% endif %}
     {% if r.error %}<p>{{ r.error }}</p>{% endif %}
   </div>
+  {# Shown by app.js once the head scrolls away; without the script it stays hidden. #}
+  <p class="mini-head" data-mini-head hidden><a href="#report-{{ r.code }}">{{ r.code }}</a><span>{{ r.data_date }}</span></p>
+  {% if r.counter or r.gaps %}
+  {{ perforation() }}
+  <div class="notice caution">
+    {% if r.counter %}
+    <h3 class="notice-title anchor" id="counter-{{ r.code }}">最强反证</h3>
+    <p class="lines">{{ r.counter.text }}</p>
+    {% if r.counter.facts %}{{ citations(r.code, r.counter.facts) }}{% endif %}
+    {% endif %}
+    {% if r.gaps %}
+    <h3 class="notice-title anchor" id="gaps-{{ r.code }}">主要缺口</h3>
+    {% for gap in r.gaps[:3] %}<p>{{ gap }}</p>{% endfor %}
+    {% endif %}
+  </div>
+  {% endif %}
   {% if r.clues %}
   <p>入围线索：行业 {{ r.clues.industry }}；估值日 {{ r.clues.valuation_date }}；PB {{ r.clues.pb }}；历史年度平均 ROE {{ r.roe }}。仅为同业研究顺序。</p>
   {% endif %}
+  {% if r.sections %}
+  <nav class="jump-bar" aria-label="报告分节 · {{ r.code }}">
+    {% if r.counter %}<a href="#counter-{{ r.code }}">最强反证</a>{% endif %}
+    {% if r.gaps %}<a href="#gaps-{{ r.code }}">主要缺口</a>{% endif %}
+    {% for section in r.sections %}<a href="#section-{{ r.code }}-{{ loop.index }}">{{ section.title }}</a>{% endfor %}
+    {% if r.facts %}<a href="#facts-{{ r.code }}">原文事实</a>{% endif %}
+  </nav>
+  {% endif %}
   {% for section in r.sections %}
-  <h3>{{ section.title }}</h3>
+  <h3 class="anchor" id="section-{{ r.code }}-{{ loop.index }}">{{ section.title }}</h3>
   <p class="lines">{{ section.text }}</p>
-  {% if section.facts %}<p class="muted">引用：{{ section.facts|join('、') }}</p>{% endif %}
+  {% if section.facts %}{{ citations(r.code, section.facts) }}{% endif %}
   {% endfor %}
   {% if r.facts %}
-  <details>
+  <details class="anchor" id="facts-{{ r.code }}">
     <summary>原文事实（{{ r.facts|length }} 条）</summary>
     {% for fact in r.facts %}
-    <div class="fact">
+    <div class="fact" id="fact-{{ r.code }}-{{ fact.id }}">
       <p><strong>[{{ fact.id }}]</strong> {{ fact.claim }}</p>
       <p class="muted">来源：{{ fact.title }} · PDF 第 {{ fact.page }} 页；报告期 {{ fact.period }}；公告 {{ fact.announced }}</p>
       <blockquote class="lines">{{ fact.quote }}</blockquote>
@@ -94,10 +124,11 @@
     <section class="notice">
       <{{ sub }} class="notice-title">价格纪律参考</{{ sub }}>
       {% if not code %}{{ levels_block(p.price_levels_text(row), row.expires) }}{% endif %}
-      <p>{{ p.price_dates(row) }}</p>
+      {{ time_window(row.as_of, row.expires) }}
     </section>
     {% endif %}
     {% if code %}
+    {% if not row.expired %}{{ perforation() }}{% endif %}
     <{{ sub }}>量价事实</{{ sub }}>
     <p>{{ row.facts.trend }}</p>
     <p>{{ row.facts.relative }}</p>

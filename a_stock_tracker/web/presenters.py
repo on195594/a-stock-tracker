@@ -95,14 +95,19 @@ def source_times_text(value: Any) -> str:
     return "\n".join(entries)
 
 
-def report_dates(report: dict[str, Any]) -> str:
+def report_data_date(report: dict[str, Any]) -> str:
     docs = report.get("documents", [])
     if not docs:
         return "资料日期：未记录"
-    latest = max(d["announced"] for d in docs)
-    return f"资料截至 {latest}（公告日）\n" + "；".join(
-        f"报告期 {d['period']} / 公告 {d['announced']}" for d in docs
-    )
+    return f"资料截至 {max(d['announced'] for d in docs)}（公告日）"
+
+
+def report_dates(report: dict[str, Any]) -> str:
+    docs = report.get("documents", [])
+    if not docs:
+        return report_data_date(report)
+    periods = "；".join(f"报告期 {d['period']} / 公告 {d['announced']}" for d in docs)
+    return f"{report_data_date(report)}\n{periods}"
 
 
 def readable_report(report: dict[str, Any]) -> bool:
@@ -331,6 +336,7 @@ def report_view(report: dict[str, Any]) -> dict[str, Any]:
         "status": report_summary_status(report),
         "quality": quality_text(report.get("quality")),
         "dates": report_dates(report),
+        "data_date": report_data_date(report),
         "counter": analysis.get("counterevidence"),
         "gaps": report.get("gaps", []),
         "stage": stage,

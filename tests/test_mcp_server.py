@@ -310,20 +310,26 @@ def test_report_summaries_sections_and_citations(bridge):
     anyio.run(scenario)
 
 
-@pytest.mark.parametrize("review", ["failed", None, "not_reviewed"])
-def test_failed_and_unreviewed_reports_never_expose_drafts(bridge, review):
-    run_id = seed_report(bridge, review=review)
+def test_failed_and_unreviewed_reports_never_expose_drafts(bridge):
+    run_ids = [
+        seed_report(bridge, number=i, review=r)
+        for i, r in enumerate(["failed", None, "not_reviewed"], 1)
+    ]
 
     async def scenario():
         async with Client(bridge.server) as client:
-            report = success(await client.call_tool("get_report", {"run_id": run_id, "code": CODE}))
-            assert report["analysis"] == {} and report["counterevidence"] is None
-            assert MALICIOUS not in json.dumps(report, ensure_ascii=False)
-            assert report["diagnostic"]["stage"] == "independent_review"
-            assert "private traceback" not in str(report)
-            error(
-                await client.call_tool("get_facts", {"run_id": run_id, "code": CODE}), "not_found"
-            )
+            for run_id in run_ids:
+                report = success(
+                    await client.call_tool("get_report", {"run_id": run_id, "code": CODE})
+                )
+                assert report["analysis"] == {} and report["counterevidence"] is None
+                assert MALICIOUS not in json.dumps(report, ensure_ascii=False)
+                assert report["diagnostic"]["stage"] == "independent_review"
+                assert "private traceback" not in str(report)
+                error(
+                    await client.call_tool("get_facts", {"run_id": run_id, "code": CODE}),
+                    "not_found",
+                )
 
     anyio.run(scenario)
 
@@ -628,9 +634,8 @@ def test_wait_stops_on_status_change_and_at_deadline(bridge):
         lease.close()
 
 
-@pytest.mark.parametrize(
-    "status,code",
-    [
+def test_client_keeps_codes_and_reads_map_failures(bridge):
+    failures = [
         (400, "invalid_request"),
         (403, "unauthorized"),
         (404, "not_found"),
@@ -639,48 +644,46 @@ def test_wait_stops_on_status_change_and_at_deadline(bridge):
         (429, "channel_limit"),
         (409, "quote_changed"),
         (503, "acceptance_unknown"),
-    ],
-)
-def test_client_keeps_codes_and_reads_map_failures(bridge, status, code):
-    bridge.response = (status, {"code": code, "detail": "已净化的错误"})
-    with pytest.raises(ResearchUnavailable) as caught:
-        bridge.client.info()
-    assert caught.value.code == code
+    ]
+    for status, code in failures:
+        bridge.response = (status, {"code": code, "detail": "已净化的错误"})
+        with pytest.raises(ResearchUnavailable) as caught:
+            bridge.client.info()
+        assert caught.value.code == code
 
     async def scenario():
         async with Client(bridge.server) as client:
-            error(
-                await client.call_tool("get_service_info", {}),
-                "service_error" if status == 503 else code,
-            )
+            for status, code in failures:
+                bridge.response = (status, {"code": code, "detail": "已净化的错误"})
+                error(
+                    await client.call_tool("get_service_info", {}),
+                    "service_error" if status == 503 else code,
+                )
 
     anyio.run(scenario)
 
 
-@pytest.mark.parametrize(
-    "exc,code",
-    [
+def test_fallback_errors_do_not_expose_exception_text(bridge, monkeypatch):
+    cases = [
         (ResearchUnavailable("private /token"), "service_error"),
         (ResearchRejected("private /token"), "invalid_request"),
         (ResearchQuoteChanged("private /token"), "quote_changed"),
-    ],
-)
-def test_fallback_errors_do_not_expose_exception_text(bridge, monkeypatch, exc, code):
-    assert exc.code is None
+    ]
+    for exc, code in cases:
+        assert exc.code is None
+        current_exc = exc
+        monkeypatch.setattr(
+            bridge.client, "info", lambda exc=current_exc: (_ for _ in ()).throw(exc)
+        )
+        server = mcp.build_server(bridge.client)
 
-    def failing():
-        raise exc
+        async def scenario(expected_code=code):
+            async with Client(server) as client:
+                result = await client.call_tool("get_service_info", {})
+                error(result, expected_code)
+                assert "private" not in result.content[0].text
 
-    monkeypatch.setattr(bridge.client, "info", failing)
-    server = mcp.build_server(bridge.client)
-
-    async def scenario():
-        async with Client(server) as client:
-            result = await client.call_tool("get_service_info", {})
-            error(result, code)
-            assert "private" not in result.content[0].text
-
-    anyio.run(scenario)
+        anyio.run(scenario)
 
 
 def test_bad_ids_codes_and_sdk_input_never_reach_receiver(bridge):
@@ -796,13 +799,13 @@ def test_load_client_rejects_unsafe_or_incomplete_files(tmp_path, monkeypatch, c
     assert "m" * 32 not in str(caught.value) and str(config) not in str(caught.value)
 
 
-@pytest.mark.parametrize("quote", ['"', "'"])
-def test_load_client_strips_shell_quotes_like_the_receiver(tmp_path, quote):
-    config = tmp_path / "config.env"
-    config.write_text(
-        f"RESEARCH_SERVICE_SOCKET={quote}/tmp/synthetic.sock{quote}\n"
-        f"RESEARCH_SERVICE_MCP_TOKEN={quote}{'m' * 32}{quote}\n"
-    )
-    config.chmod(0o600)
-    client = mcp.load_client(config)
-    assert (client.socket, client.token) == ("/tmp/synthetic.sock", "m" * 32)
+def test_load_client_strips_shell_quotes_like_the_receiver(tmp_path):
+    for quote in ('"', "'"):
+        config = tmp_path / f"config_{ord(quote)}.env"
+        config.write_text(
+            f"RESEARCH_SERVICE_SOCKET={quote}/tmp/synthetic.sock{quote}\n"
+            f"RESEARCH_SERVICE_MCP_TOKEN={quote}{'m' * 32}{quote}\n"
+        )
+        config.chmod(0o600)
+        client = mcp.load_client(config)
+        assert (client.socket, client.token) == ("/tmp/synthetic.sock", "m" * 32)

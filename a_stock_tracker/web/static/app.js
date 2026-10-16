@@ -1,4 +1,5 @@
-// The only script: progress polling and local price expiry. Pages work without it.
+// The only script: progress polling, local price expiry, report jumps and the sticky
+// mini-head. Pages work without it.
 "use strict";
 
 const SHANGHAI_FORMATTER = new Intl.DateTimeFormat("en-CA", {
@@ -84,9 +85,76 @@ function guardConsent(form) {
   }
 }
 
+// A report target (cited fact, section, fact list) may sit in or be a collapsed
+// <details>: open it, then scroll to the target.
+function revealTarget(hash) {
+  if (hash.length < 2) return;
+  let id;
+  try {
+    id = decodeURIComponent(hash.slice(1));
+  } catch {
+    return;
+  }
+  const target = document.getElementById(id);
+  if (!target || !target.closest("[data-report]")) return;
+  const details = target.closest("details");
+  if (details) details.open = true;
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  target.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+}
+
+// Navigate to the fragment so :target applies, but undo the browser's instant jump
+// and scroll smoothly from where the reader was.
+function followAnchor(link) {
+  link.addEventListener("click", (event) => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+      return;
+    event.preventDefault();
+    const x = window.scrollX;
+    const y = window.scrollY;
+    if (window.location.hash !== link.hash) {
+      window.location.hash = link.hash;
+      window.scrollTo(x, y);
+    }
+    revealTarget(link.hash);
+  });
+}
+
+window.addEventListener("hashchange", () => revealTarget(window.location.hash));
+
+// Show the report's mini-head while its head is above the viewport and the report
+// itself still fills the top of the screen.
+function stickReportHead(report) {
+  const head = report.querySelector("[data-report-head]");
+  const mini = report.querySelector("[data-mini-head]");
+  if (!head || !mini || !("IntersectionObserver" in window)) return;
+  let headAbove = false;
+  let reportAtTop = false;
+  const update = () => {
+    mini.hidden = !(headAbove && reportAtTop);
+  };
+  new IntersectionObserver((entries) => {
+    const entry = entries[entries.length - 1];
+    headAbove = !entry.isIntersecting && entry.boundingClientRect.top < 0;
+    update();
+  }).observe(head);
+  // Inset by the mini-head height so it never sits over the next block.
+  new IntersectionObserver(
+    (entries) => {
+      reportAtTop = entries[entries.length - 1].isIntersecting;
+      update();
+    },
+    { rootMargin: "-48px 0px 0px 0px" },
+  ).observe(report);
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   const pending = hideExpired();
   for (const form of document.querySelectorAll("form.request")) guardConsent(form);
+  const anchors = document.querySelectorAll("a.citation, .jump-bar a, .mini-head a");
+  for (const link of anchors) followAnchor(link);
+  for (const report of document.querySelectorAll("[data-report]")) stickReportHead(report);
+  revealTarget(window.location.hash);
   if (pending) {
     const expiryTimer = window.setInterval(() => {
       if (!hideExpired()) window.clearInterval(expiryTimer);

@@ -305,7 +305,7 @@ def test_descendant_is_stopped_before_next_run(tmp_path, monkeypatch, stop_reaso
         "id": p["id"],
         "request": p,
         "status": "running",
-        "limits": {"seconds": 5 if stop_reason == "leader_exit" else -29},
+        "limits": {"seconds": 5 if stop_reason == "leader_exit" else -29.8},
     }
     store.execute(directory, state, store.lease())
     child = int(pid_path.read_text())
@@ -798,7 +798,7 @@ def test_child_refuses_changed_confirmed_screen_before_market_access(tmp_path, m
     assert not (tmp_path / "batch").exists()
 
 
-def test_resume_quote_scales_with_remaining_and_pins_child_limits(tmp_path, monkeypatch):
+def test_resume_quote_scales_with_remaining_and_pins_child_limits(tmp_path):
     store, original, _ = screen_checkpoint_fixture(tmp_path)
     status = store.status(original["id"])
     offered = status["continuation_quote"]
