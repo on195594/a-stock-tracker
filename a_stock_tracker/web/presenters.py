@@ -9,14 +9,14 @@ import re
 from datetime import datetime
 from typing import Any
 
-from a_stock_tracker.disclosures import quality_text, report_summary_status
+from a_stock_tracker.disclosures import UNFORMED, quality_text, report_summary_status, scope_text
 from a_stock_tracker.opportunities import LIMITS, RULE, SECTIONS
 from a_stock_tracker.research import SHANGHAI, finite_number
 
 STATUS_LABELS = {
     "running": "执行中",
     "completed": "已结束",
-    "partial": "部分结果",
+    "partial": "已结束（部分资料缺失）",
     "failed": "失败",
     "interrupted": "中断",
 }
@@ -36,9 +36,10 @@ STAGES = {
 SECTION_TITLES = (
     ("business", "业务"),
     ("financial", "财务"),
-    ("valuation", "估值方法"),
-    ("change_conditions", "改变判断的条件"),
+    ("valuation", "估值"),
+    ("change_conditions", "什么会改变结论"),
 )
+UNFORMED_TEXT = "资料不足，本次没有形成判断。"
 CODE = re.compile(r"(?:60\d{4}\.SH|00\d{4}\.SZ)")
 RUN_ID = re.compile(r"[a-f0-9]{32}")
 CURSOR_RE = re.compile(r"^(?:[a-f0-9]{32}|[0-9]+(?:\.[0-9]+)?_[a-f0-9]{32})$")
@@ -151,14 +152,28 @@ def price_dates(row: dict[str, Any]) -> str:
 
 
 def price_levels_text(row: dict[str, Any]) -> str:
+    """Plain reading of the program's own levels; compares them, never derives a new price."""
     levels = row["levels"]
+    close, ma20, ma60 = (finite_number(levels.get(k)) for k in ("close", "ma20", "ma60"))
+    trend = ""
+    if close is not None and ma20 is not None and ma60 is not None:
+        if close > ma20 and close > ma60:
+            trend = "，在 20 日和 60 日均线上方，走势偏强"
+        elif close < ma20 and close < ma60:
+            trend = "，在 20 日和 60 日均线下方，走势偏弱"
+        else:
+            trend = "，夹在 20 日和 60 日均线之间，方向不明"
+    trigger = finite_number(levels.get("trigger"))
+    watch = f"站上 {trigger:.2f} 元（近 20 日最高）才算转强；" if trigger is not None else ""
     return (
-        f"收盘 {levels['close']:.2f} 元；失效线 {levels['stop']:.2f} 元；"
-        f"收盘至失效线距离 {levels['distance']:.2f}%"
+        f"收盘 {levels['close']:.2f} 元{trend}。{watch}"
+        f"跌破 {levels['stop']:.2f} 元（近 10 日最低）说明走势转坏，"
+        f"离收盘还有 {levels['distance']:.2f}%。"
     )
 
 
 def recent_result_label(run: dict[str, Any]) -> str:
+    """What the user got, not the batch's coverage flag (a single-company run is always partial)."""
     status = run["status"]
     if status in {"running", "failed", "interrupted"}:
         return STATUS_LABELS[status]
@@ -169,20 +184,30 @@ def recent_result_label(run: dict[str, Any]) -> str:
     reports = result.get("reports", [])
     if rows:
         available = [r for r in rows if r["status"] in {"reference", "observation"}]
-        label = (
-            "历史价格参考"
+        return (
+            "价格参考已过期"
             if available and all(r.get("expired") for r in available)
-            else "价格参考可查看"
+            else "价格参考"
             if available
-            else "资料不足"
+            else "价格资料不足"
         )
-    elif reports:
-        label = "财报可查看" if any(readable_report(r) for r in reports) else "无可读财报结论"
-    elif run.get("request", {}).get("mode") == "screen":
-        label = "初筛结果可查看"
-    else:
-        label = "结果待核查"
-    return "部分结果 · " + label if status == "partial" else label
+    if reports:
+        return "研究完成" if any(readable_report(r) for r in reports) else "未能生成结论"
+    if run.get("request", {}).get("mode") == "screen":
+        return "初筛完成" if status == "completed" else "初筛未全部完成"
+    return "结果待核查"
+
+
+def conclusion_text(report: dict[str, Any]) -> str:
+    """One readable line: the v3 summary, else the first sentence of the main risk."""
+    if not readable_report(report):
+        return ""
+    analysis = report.get("analysis") or {}
+    summary = (analysis.get("summary") or {}).get("text", "")
+    if summary:
+        return summary
+    counter = (analysis.get("counterevidence") or {}).get("text", "")
+    return "主要风险：" + counter.split("。", 1)[0] + "。" if counter else ""
 
 
 def disclosure_text(report: dict[str, Any]) -> str:
@@ -214,16 +239,10 @@ def validity_text(row: dict[str, Any]) -> str:
 
 
 def report_summary(report: dict[str, Any]) -> dict[str, Any]:
-    counter = (
-        report.get("analysis", {}).get("counterevidence", {}).get("text", "")
-        if readable_report(report)
-        else ""
-    )
     return {
         "code": report["code"],
         "badge": None,
-        "text": report_summary_status(report)
-        + ("\n最强反证：" + counter.split("。", 1)[0] + "。" if counter else ""),
+        "text": conclusion_text(report) or report_summary_status(report),
         "helper": disclosure_text(report),
         "levels": None,
         "expires": None,
@@ -236,7 +255,7 @@ def board_summary(row: dict[str, Any]) -> dict[str, Any]:
     if row["status"] in {"gap", "excluded"}:
         text = "；".join(row.get("reasons") or [])
     elif row.get("expired"):
-        text = "仅供历史核查；观察线、失效线和距离已隐藏。"
+        text = "已过期，价位已隐藏；需要时重新核对。"
     elif row["status"] == "observation":
         text = "旧规则批次；请进入详情核查历史条件。"
     else:
@@ -282,7 +301,7 @@ def recent_item(run: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-VIEWS = {"overview": "概览", "financial": "财报研究", "screen": "初筛", "swing": "价格参考"}
+VIEWS = {"overview": "公司", "financial": "财报记录", "screen": "初筛记录", "swing": "价格记录"}
 MODE_ORDER = ("financial", "screen", "swing")
 EMPTY = {
     "financial": "暂无财报研究记录。",
@@ -321,6 +340,56 @@ def tab_groups(runs: dict[str, list[dict[str, Any]]], view: str, limit: int) -> 
     return {"active": active, "groups": groups}
 
 
+def company_cards(runs: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    """One card per company from the newest runs; superseded, failed and expired results
+    fold away automatically and stay reachable in the per-type record tabs."""
+    cards: dict[str, dict[str, Any]] = {}
+
+    def card(code: str, name: str | None, when: str | None) -> dict[str, Any]:
+        entry = cards.setdefault(
+            code,
+            {"code": code, "name": "", "when": "", "report": None, "failed": None, "price": None},
+        )
+        entry["name"] = entry["name"] or name or ""
+        entry["when"] = max(entry["when"], when or "")
+        return entry
+
+    for run in runs.get("financial", []):
+        if run_mode(run) != "financial" or run["status"] not in {"completed", "partial"}:
+            continue
+        for report in (run.get("summary") or {}).get("reports", []):
+            entry = card(report["code"], report.get("name"), run.get("created_at"))
+            if entry["report"]:
+                continue  # newest readable report already shown; older ones are history
+            if readable_report(report):
+                entry["report"] = {
+                    "run_id": run["id"],
+                    "text": conclusion_text(report),
+                    "time": local_time(run.get("created_at")),
+                    "disclosure": disclosure_text(report),
+                }
+            elif entry["failed"] is None:
+                entry["failed"] = run["id"]
+    for run in runs.get("swing", []):
+        if run_mode(run) != "swing" or run["status"] not in {"completed", "partial"}:
+            continue
+        for row in (run.get("summary") or {}).get("board", {}).get("rows", []):
+            if row["status"] != "reference":
+                continue  # gaps and legacy rows stay in the price records
+            entry = card(row["code"], row.get("name"), run.get("created_at"))
+            if entry["price"] is None:
+                entry["price"] = {"run_id": run["id"], **board_summary(row)}
+    for entry in cards.values():
+        if entry["report"]:
+            entry["failed"] = None  # a later failed retry does not hide a readable report
+    return sorted(cards.values(), key=lambda c: c["when"], reverse=True)
+
+
+def latest_screen(runs: list[dict[str, Any]]) -> dict[str, Any] | None:
+    finished = [r for r in runs if run_mode(r) == "screen" and r["status"] != "running"]
+    return recent_item(finished[0]) if finished else None
+
+
 def archived_report(report: dict[str, Any]) -> dict[str, Any]:
     # The receiver lists only reviewed reports; synthetic ones say so themselves.
     report = {"evidence_review": "passed", **report}
@@ -328,9 +397,10 @@ def archived_report(report: dict[str, Any]) -> dict[str, Any]:
         "run_id": report["run_id"],
         "time": local_time(report.get("finished_at")),
         "status": report_summary_status(report),
+        "conclusion": report.get("conclusion") or "",
         "disclosure": disclosure_text(report),
         "quality": quality_text(report.get("quality")),
-        "gaps": f"主要缺口 {report.get('gap_count', 0)} 条",
+        "gaps": f"待补资料 {report.get('gap_count', 0)} 条",
     }
 
 
@@ -457,19 +527,50 @@ def report_view(report: dict[str, Any]) -> dict[str, Any]:
         "quality": quality_text(report.get("quality")),
         "dates": report_dates(report),
         "data_date": report_data_date(report),
+        "summary": analysis.get("summary"),
+        "snapshot": snapshot_text(report.get("snapshot")) if readable else None,
         "counter": analysis.get("counterevidence"),
         "gaps": report.get("gaps", []),
+        "scope": report.get("scope", []),
+        "scope_text": scope_text(report),
         "stage": stage,
         "stage_message": message,
         "error": error,
         "clues": clues if any(v is not None for v in clues.values()) else {},
         "roe": roe_text(clues.get("roe_mean")),
         "sections": [
-            {"title": title, **analysis[key]} for key, title in SECTION_TITLES if key in analysis
+            {"title": title, **analysis[key]}
+            | (
+                {"text": UNFORMED_TEXT}
+                if analysis[key]["text"].strip().rstrip("。") == UNFORMED
+                else {}
+            )
+            for key, title in SECTION_TITLES
+            if key in analysis
         ],
         "facts": report.get("facts", []) if readable else [],
         "omitted": omitted_pages_text(report.get("omitted_pages")),
     }
+
+
+def snapshot_text(value: Any) -> str | None:
+    """Valuation snapshot line; values are shown as the receiver gave them, never recomputed."""
+    if not isinstance(value, dict):
+        return None
+    parts = [
+        f"{label} {value[key]:g}{unit}"
+        for key, label, unit in (
+            ("close", "收盘", " 元"),
+            ("pe_ttm", "市盈率(TTM)", " 倍"),
+            ("pb", "市净率", " 倍"),
+            ("total_mv_yi", "总市值", " 亿元"),
+            ("dv_ttm", "股息率", "%"),
+        )
+        if finite_number(value.get(key)) is not None
+    ]
+    if finite_number(value.get("pe_ttm")) is None:
+        parts.insert(1, "市盈率(TTM) 无（亏损或无法计算）")
+    return f"{' · '.join(parts)}（{value.get('date') or '日期未记录'}）" if parts else None
 
 
 def screen_view(run: dict[str, Any]) -> dict[str, Any]:
@@ -512,11 +613,12 @@ def screen_view(run: dict[str, Any]) -> dict[str, Any]:
 
 def ranking_row(row: dict[str, Any]) -> dict[str, Any]:
     total_mv = finite_number(row.get("total_mv"))
+    order = finite_number(row.get("order"))
     return {
         **row,
-        "facts": f"PB（倍）：{row.get('pb', '未记录')}；历史年度平均 ROE：{roe_text(row.get('roe_mean'))}\n"
-        + (f"总市值：{total_mv / 10000:g}亿元\n" if total_mv is not None else "")
-        + f"平均名次：{row.get('order', '未记录')}",
+        "facts": f"市净率 {row.get('pb', '未记录')} 倍 · 近年平均 ROE {roe_text(row.get('roe_mean'))}"
+        + (f" · 总市值 {total_mv / 10000:.1f} 亿元" if total_mv is not None else "")
+        + (f"\n本组按市净率与 ROE 综合排第 {order:g}" if order is not None else ""),
     }
 
 

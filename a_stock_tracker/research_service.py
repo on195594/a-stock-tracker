@@ -147,9 +147,11 @@ def result_summary(result: dict[str, Any]) -> dict[str, Any]:
             | {
                 "name": report.get("name"),
                 "quality": report.get("quality"),
-                "analysis": {"counterevidence": report["analysis"]["counterevidence"]}
-                if "counterevidence" in report["analysis"]
-                else {},
+                "analysis": {
+                    k: report["analysis"][k]
+                    for k in ("summary", "counterevidence")
+                    if k in report["analysis"]
+                },
             }
             for report in result.get("reports", [])
         ]
@@ -821,6 +823,9 @@ class ResearchStore:
                                 "omitted_pages": report.get("omitted_pages"),
                                 "gap_count": len(report.get("gaps", [])),
                                 "quality": report.get("quality"),
+                                "conclusion": (report.get("analysis") or {})
+                                .get("summary", {})
+                                .get("text"),
                             }
                         )
                         if len(reports) == 20:

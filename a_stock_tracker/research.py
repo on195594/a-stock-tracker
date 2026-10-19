@@ -120,7 +120,7 @@ def fetch_universe(
         "daily_basic",
         token,
         trade_date=data_date.replace("-", ""),
-        fields="ts_code,trade_date,pb,total_mv",
+        fields="ts_code,trade_date,close,pe_ttm,pb,total_mv,dv_ttm",
     )
     valuation = frame_records(
         valuation_frame, {"ts_code", "trade_date", "pb", "total_mv"}, "daily_basic"

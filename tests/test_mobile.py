@@ -87,7 +87,7 @@ def report_jumps(page: Page, width: int) -> None:
     expect(mini).to_be_hidden()
     jumps = page.locator(".jump-bar a")
     expect(jumps).to_have_text(
-        ["最强反证", "主要缺口", "业务", "财务", "估值方法", "改变判断的条件", "原文事实"]
+        ["主要风险", "还缺的资料", "业务", "财务", "估值", "什么会改变结论", "原文出处"]
     )
     assert_layout(page, width, "jump-bar")
     # The fact list opens from the bar; past the head, the mini-head names code and date.
@@ -116,7 +116,7 @@ def main_flow(page: Page, base: str, width: int) -> None:
     assert_layout(page, width, "home")
     entries = page.locator("nav.entries a")
     expect(entries).to_have_text(["从初筛找公司", "独立价格参考（不调用模型）"])
-    expect(page.locator("nav.tabs a")).to_have_text(["概览", "财报研究", "初筛", "价格参考"])
+    expect(page.locator("nav.tabs a")).to_have_text(["公司", "财报记录", "初筛记录", "价格记录"])
 
     # Financial: the home code field only pre-fills the confirmation page.
     page.fill("form.quick input[name=code]", "600519")
@@ -134,8 +134,9 @@ def main_flow(page: Page, base: str, width: int) -> None:
     page.fill("input[name=codes]", "600519")
     confirm_and_submit(page)
     expect(page.locator("h1")).to_have_text("财报研究")
-    expect(page.locator("main")).to_contain_text("最强反证")
-    summary = page.locator("summary", has_text="原文事实")
+    expect(page.locator(".conclusion")).to_contain_text("需要谨慎")
+    expect(page.locator("main")).to_contain_text("主要风险")
+    summary = page.locator("summary", has_text="原文出处")
     summary.focus()
     page.keyboard.press("Enter")
     expect(page.locator(".fact").first).to_contain_text("PDF 第 12 页")
@@ -152,19 +153,19 @@ def main_flow(page: Page, base: str, width: int) -> None:
     # The report code opens the company dossier: latest report and a price entry.
     page.click("text=600519.SH · 公司档案")
     expect(page.locator("h1")).to_have_text("演示公司")
-    expect(page.locator("a.btn", has_text="阅读最新研报")).to_be_visible()
-    expect(page.locator("main")).to_contain_text("尚未核对价格参考。")
+    expect(page.locator("a.btn", has_text="阅读完整报告")).to_be_visible()
+    expect(page.locator("main")).to_contain_text("还没有算过价格参考。")
     assert_layout(page, width, "company")
 
     # Price reference is a separate confirmation, prefilled but never auto-submitted.
-    page.click("text=核对价格参考（不调用模型）")
+    page.click("text=计算价格参考（不调用模型）")
     expect(page.locator("textarea[name=codes]")).to_have_value("600519.SH")
     expect(page.locator("input[name=confirmed]")).not_to_be_checked()
     page.fill("textarea[name=codes]", "600001")
     confirm_and_submit(page)
-    expect(page.locator("main")).to_contain_text("1 项价格参考 · 1 家显式股票池")
+    expect(page.locator("main")).to_contain_text("1 / 1 家得到价格参考")
     page.click("text=查看价格参考")
-    expect(page.locator("main")).to_contain_text("观察线与失效线")
+    expect(page.locator("main")).to_contain_text("关键价位怎么来的")
     expect(page.locator(".window")).to_contain_text("后续 5 个交易日")
     expect(page.locator(".perforation")).to_be_visible()
     assert_layout(page, width, "price")
@@ -180,15 +181,15 @@ def main_flow(page: Page, base: str, width: int) -> None:
     assert_layout(page, width, "ranking")
 
     # Gap and empty price states stay distinct.
-    for code, text in (("600003", "资料核验失败"), ("600004", "0 项价格参考")):
+    for code, text in (("600003", "资料核验失败"), ("600004", "0 / 0 家得到价格参考")):
         page.goto(base + "/analysis?mode=swing&code=" + code)
         confirm_and_submit(page)
         expect(page.locator("main")).to_contain_text(text)
 
     # Home tabs are plain links; the price tab lists only price references.
     page.goto(base + "/")
-    page.locator("nav.tabs a", has_text="价格参考").click()
-    expect(page.locator("nav.tabs a[aria-current=page]")).to_have_text("价格参考")
+    page.locator("nav.tabs a", has_text="价格记录").click()
+    expect(page.locator("nav.tabs a[aria-current=page]")).to_have_text("价格记录")
     expect(page.locator("main")).to_contain_text("资料缺口")
     expect(page.locator("main")).not_to_contain_text("全市场初筛")
     assert_layout(page, width, "home-tab")
@@ -236,7 +237,7 @@ def expiry_and_polling(browser, base: str) -> None:
         assert opened.url == url, "expiry check must not navigate"
         expect(levels).to_be_hidden()
         expect(opened.locator("[data-expired]").first).to_be_visible()
-        expect(opened.locator("main")).not_to_contain_text("失效线 11.00", use_inner_text=True)
+        expect(opened.locator("main")).not_to_contain_text("11.00 元", use_inner_text=True)
         viewer.close()
 
     # Polling: a revoked session stops and clears progress; a status change reloads.

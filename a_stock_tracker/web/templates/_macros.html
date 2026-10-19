@@ -50,13 +50,16 @@
 {% set display_title = (r.name ~ " · " ~ r.code) if r.name else r.code %}
 <section class="report" aria-labelledby="report-{{ r.code }}" data-report>
   <div class="notice" data-report-head>
-    <h2 class="notice-title anchor" id="report-{{ r.code }}">报告 · {{ display_title }}</h2>
-    <p>{{ r.status }}</p>
-    {% if r.quality %}<p>{{ r.quality }}</p>{% endif %}
-    <p class="lines muted">{{ r.dates }}</p>
-    {% if r.stage %}<p>失败阶段：{{ r.stage }}</p>{% endif %}
-    {% if r.stage_message %}<p>失败原因：{{ r.stage_message }}</p>{% endif %}
+    <h2 class="notice-title anchor" id="report-{{ r.code }}">{{ display_title }}</h2>
+    <p>{{ r.status }} · {{ r.data_date }}</p>
+    {% if r.stage %}<p>未完成的步骤：{{ r.stage }}</p>{% endif %}
+    {% if r.stage_message %}<p>原因：{{ r.stage_message }}</p>{% endif %}
     {% if r.error %}<p>{{ r.error }}</p>{% endif %}
+    {% if r.summary %}
+    <p class="conclusion lines">{{ r.summary.text }}</p>
+    {% if r.summary.facts %}{{ citations(r.code, r.summary.facts) }}{% endif %}
+    {% endif %}
+    {% if r.snapshot %}<p class="muted">{{ r.snapshot }}</p>{% endif %}
     {{ company_link(r.code) }}
   </div>
   {# Shown by app.js once the head scrolls away; without the script it stays hidden. #}
@@ -65,25 +68,22 @@
   {{ perforation() }}
   <div class="notice caution">
     {% if r.counter %}
-    <h3 class="notice-title anchor" id="counter-{{ r.code }}">最强反证</h3>
+    <h3 class="notice-title anchor" id="counter-{{ r.code }}">主要风险</h3>
     <p class="lines">{{ r.counter.text }}</p>
     {% if r.counter.facts %}{{ citations(r.code, r.counter.facts) }}{% endif %}
     {% endif %}
     {% if r.gaps %}
-    <h3 class="notice-title anchor" id="gaps-{{ r.code }}">主要缺口</h3>
+    <h3 class="notice-title anchor" id="gaps-{{ r.code }}">还缺的资料</h3>
     {% for gap in r.gaps[:3] %}<p>{{ gap }}</p>{% endfor %}
     {% endif %}
   </div>
   {% endif %}
-  {% if r.clues %}
-  <p>入围线索：行业 {{ r.clues.industry }}；估值日 {{ r.clues.valuation_date }}；PB {{ r.clues.pb }}；历史年度平均 ROE {{ r.roe }}。仅为同业研究顺序。</p>
-  {% endif %}
   {% if r.sections %}
   <nav class="jump-bar" aria-label="报告分节 · {{ r.code }}">
-    {% if r.counter %}<a href="#counter-{{ r.code }}">最强反证</a>{% endif %}
-    {% if r.gaps %}<a href="#gaps-{{ r.code }}">主要缺口</a>{% endif %}
+    {% if r.counter %}<a href="#counter-{{ r.code }}">主要风险</a>{% endif %}
+    {% if r.gaps %}<a href="#gaps-{{ r.code }}">还缺的资料</a>{% endif %}
     {% for section in r.sections %}<a href="#section-{{ r.code }}-{{ loop.index }}">{{ section.title }}</a>{% endfor %}
-    {% if r.facts %}<a href="#facts-{{ r.code }}">原文事实</a>{% endif %}
+    {% if r.facts %}<a href="#facts-{{ r.code }}">原文出处</a>{% endif %}
   </nav>
   {% endif %}
   {% for section in r.sections %}
@@ -93,7 +93,7 @@
   {% endfor %}
   {% if r.facts %}
   <details class="anchor" id="facts-{{ r.code }}">
-    <summary>原文事实（{{ r.facts|length }} 条）</summary>
+    <summary>原文出处（{{ r.facts|length }} 条）</summary>
     {% for fact in r.facts %}
     <div class="fact" id="fact-{{ r.code }}-{{ fact.id }}">
       <p><strong>[{{ fact.id }}]</strong> {{ fact.claim }}</p>
@@ -106,33 +106,35 @@
   {% endif %}
   {% if r.gaps and r.gaps|length > 3 %}
   <details>
-    <summary>全部缺口与范围（{{ r.gaps|length }} 条）</summary>
+    <summary>全部待补资料（{{ r.gaps|length }} 条）</summary>
     {% for gap in r.gaps %}<p>{{ gap }}</p>{% endfor %}
   </details>
   {% endif %}
-  <p>未纳入分析的原文：{{ r.omitted }}。仅定期报告范围内研究，不是投资结论保证。</p>
+  <details>
+    <summary>研究范围与质量</summary>
+    <p class="lines muted">{{ r.dates }}</p>
+    <p>{{ r.scope_text }}</p>
+    {% for line in r.scope %}<p>{{ line }}</p>{% endfor %}
+    {% if r.quality %}<p>{{ r.quality }}</p>{% endif %}
+    {% if r.clues %}<p>入选初筛时的指标：行业 {{ r.clues.industry }}；估值日 {{ r.clues.valuation_date }}；市净率 {{ r.clues.pb }}；近年平均 ROE {{ r.roe }}。</p>{% endif %}
+  </details>
 </section>
 {%- endmacro %}
 
 {% macro board_view(board, rows, run_id, code=None) -%}
 {% set level = 'h1' if code else 'h2' %}
 {% if not code %}
-<h2>价格纪律参考</h2>
-<p>价格由程序计算；请结合财报反证与资料缺口判断。</p>
+<h2>价格参考</h2>
+<p>价位由程序按近期行情计算，不调用模型；有效期是后续 5 个交易日，不是建议持有多久。</p>
 {% endif %}
 {% if board.rule == p.LEGACY_PRICE_RULE %}
 <section class="notice"><p class="notice-title">旧规则批次</p><p>历史结果只读，按原有效期隐藏过期条件。</p></section>
 {% endif %}
-<section class="notice">
-  <p class="notice-title">{{ '合成演示 · 非真实股票、非AI研究结果' if board.demo else '显式股票池 · 非全市场精选' }}</p>
-  <p class="lines">来源：{{ board.source }}{% if board.created_at %}
-批次生成：{{ p.local_time(board.created_at) }}{% endif %}{% if not board.demo %}
-价格参考不代表投资逻辑正确。{% endif %}</p>
-</section>
+{% if board.demo %}<section class="notice"><p class="notice-title">合成演示 · 非真实股票、非AI研究结果</p></section>{% endif %}
 {% if code and not rows %}<h1>本批次没有该公司的价格参考记录。</h1>{% endif %}
 {% if not code %}
 {% set available = p.available_count(rows) %}
-<p class="muted">{{ available }} 项价格参考 · {{ rows|length }} 家显式股票池</p>
+<p class="muted">{{ available }} / {{ rows|length }} 家得到价格参考</p>
 {% if not available %}<h3>本批次没有价格参考。</h3>{% endif %}
 {% endif %}
 {% set sub = 'h2' if code else 'h3' %}
@@ -149,21 +151,21 @@
     </section>
     {% else %}
     <section class="notice">
-      <{{ sub }} class="notice-title">价格纪律参考</{{ sub }}>
-      {% if not code %}{{ levels_block(p.price_levels_text(row), row.expires) }}{% endif %}
+      <{{ sub }} class="notice-title">价格参考</{{ sub }}>
+      {{ levels_block(p.price_levels_text(row), row.expires) }}
       {{ time_window(row.as_of, row.expires) }}
     </section>
     {% endif %}
     {% if code %}
     {% if not row.expired %}{{ perforation() }}{% endif %}
-    <{{ sub }}>量价事实</{{ sub }}>
+    <{{ sub }}>计算依据</{{ sub }}>
     <p>{{ row.facts.trend }}</p>
     <p>{{ row.facts.relative }}</p>
     {% if row.facts.adjustment %}<p>{{ row.facts.adjustment }}</p>{% endif %}
     {% if not row.expired %}
     <div class="conditions" data-expires="{{ row.expires }}">
       <div data-levels>
-        <{{ sub }}>观察线与失效线</{{ sub }}>
+        <{{ sub }}>关键价位怎么来的</{{ sub }}>
         <p>{{ row.facts.condition }}</p>
         <p>{{ row.facts.invalidation }}</p>
         <p>{{ row.facts.distance }}</p>
@@ -232,5 +234,10 @@
   {% endif %}
 </article>
 {% endfor %}
-<p class="limits">{{ p.PRICE_LIMITS }}</p>
+<details>
+  <summary>数据来源与执行风险</summary>
+  <p class="lines">来源：{{ board.source }}{% if board.created_at %}
+计算时间：{{ p.local_time(board.created_at) }}{% endif %}</p>
+  <p class="limits">{{ p.PRICE_LIMITS }}</p>
+</details>
 {%- endmacro %}

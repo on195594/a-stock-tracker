@@ -244,7 +244,7 @@ def packet_and_report():
         "facts": facts,
         "analysis": {
             k: {"text": "假设：现金流持续性需要验证。", "facts": ["F1", "F2"]}
-            for k in ("business", "financial", "valuation", "counterevidence", "change_conditions")
+            for k in d.REQUIRED_SECTIONS + d.OPTIONAL_SECTIONS
         },
         "gaps": ["假设未验证"],
     }

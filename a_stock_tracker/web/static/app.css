@@ -747,3 +747,19 @@ blockquote {
     padding-left: calc((100% - var(--column) - var(--outline)) / 2 + var(--inset) + var(--outline));
   }
 }
+
+/* The report's one-line conclusion leads the head; weight, not colour, carries it. */
+.conclusion {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* The only disclaimer on every page. */
+.disclaimer {
+  max-width: var(--column);
+  margin: 0 auto;
+  padding: 0 var(--inset) var(--footer);
+  color: var(--muted);
+  font-size: 0.875rem;
+}

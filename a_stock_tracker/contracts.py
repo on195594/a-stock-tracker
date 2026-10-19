@@ -230,6 +230,7 @@ class ReportSummary(BaseModel):
     omitted_pages: int | None = None
     gap_count: int
     quality: Quality | None = None
+    conclusion: str | None = None
 
 
 class ReportList(BaseModel):

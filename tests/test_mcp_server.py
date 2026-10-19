@@ -276,7 +276,7 @@ def test_report_summaries_sections_and_citations(bridge):
             assert len(runs) == 2 and all(r["mode"] == "financial" for r in runs)
             assert all("result" not in r and "analysis" not in str(r) for r in runs)
             assert runs[0]["reports"][0]["quality"]["passed"] == 7
-            assert runs[0]["reports"][0]["summary_status"] == "引用与语义复核通过，范围内完整"
+            assert runs[0]["reports"][0]["summary_status"] == "研究完成"
             assert runs[0]["created_at"] == "2026-10-01T08:00:00+08:00"
             assert success(await client.call_tool("list_runs", {"kind": "swing"}))["runs"] == []
             error(await client.call_tool("list_runs", {"limit": 21}), "invalid_request")

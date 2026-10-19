@@ -48,7 +48,9 @@ LOGIN_ERRORS = {
 log = logging.getLogger(__name__)
 # Home reads: newest runs to find running work, per-mode previews, and one tab page.
 ACTIVE_LIMIT = 5
-OVERVIEW_LIMIT = 3
+# shortcut: company cards group only the newest 20 runs per type; move grouping into the
+# receiver if one person's research ever outgrows that.
+COMPANY_LIMIT = 20
 VIEW_LIMIT = 10
 
 
@@ -247,13 +249,18 @@ def create_app(
         context: dict[str, Any] = {"connected": client is not None, "view": view, "cursor": cursor}
         if client is not None:
             modes = p.MODE_ORDER if view == "overview" else (view,)
-            limit = OVERVIEW_LIMIT if view == "overview" else VIEW_LIMIT
+            limit = VIEW_LIMIT
+            limits = (
+                {"financial": COMPANY_LIMIT, "screen": 1, "swing": COMPANY_LIMIT}
+                if view == "overview"
+                else {view: VIEW_LIMIT}
+            )
             try:
                 # Run independent receiver reads concurrently; the global list finds running work.
                 info, everything, *listed = await asyncio.gather(
                     read(client.info),
                     read(client.recent, limit=ACTIVE_LIMIT),
-                    *(read(client.recent, mode=m, limit=limit, cursor=cursor) for m in modes),
+                    *(read(client.recent, mode=m, limit=limits[m], cursor=cursor) for m in modes),
                 )
             except ResearchRejected:
                 return failure(
@@ -269,9 +276,11 @@ def create_app(
                 context["unreachable"] = True
             else:
                 context["configured"] = any(m.get("available") for m in info["modes"].values())
-                context.update(
-                    p.tab_groups({"all": everything, **dict(zip(modes, listed))}, view, limit)
-                )
+                by_mode = dict(zip(modes, listed))
+                context.update(p.tab_groups({"all": everything, **by_mode}, view, limit))
+                if view == "overview":
+                    context["cards"] = p.company_cards(by_mode)
+                    context["screen"] = p.latest_screen(by_mode.get("screen", []))
         return render(request, actor, "home.html", context)
 
     @app.get("/stock/{code}")

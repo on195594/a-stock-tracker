@@ -16,41 +16,42 @@
 </section>
 {%- endmacro %}
 {# A finished run keeps its execution note in the basis; anything else leads with it. #}
-{% set execution_on_top = not screen and run.status != 'completed' %}
+{# Finished runs (a single-company run always ends partial) keep the note in the basis. #}
+{% set execution_on_top = not screen and run.status not in ['completed', 'partial'] %}
 {% if execution_on_top %}{{ execution() }}{% endif %}
 
 {% if run.status == 'running' %}
 <section class="progress" data-poll="/analysis/{{ run.id }}/state.json" data-status="running" aria-live="polite">
   <h1>后台研究中</h1>
   <p class="pulse" aria-hidden="true"></p>
-  <p>覆盖：正在核查；结果：尚未生成。页面会自动刷新；退出页面不取消已确认请求。</p>
+  <p>页面会自动刷新；离开页面不会取消已确认的研究。</p>
 </section>
 {% elif not result %}
 <h1>没有可用研究结果</h1>
-<p>覆盖：未完成不可继续。下一步：核对失败原因；新一轮研究须再次明确确认成本。</p>
+<p>研究没有完成，原因见下方“执行与依据”。重新研究需要再次确认费用。</p>
 <p class="lines">{{ usage }}</p>
 {% elif board %}
-<p>覆盖：{{ '已尽但有资料缺口；补齐后再研究。' if rows|selectattr('status', 'equalto', 'gap')|first is defined else '完整。' }}</p>
+{% if rows|selectattr('status', 'equalto', 'gap')|first is defined %}<section class="notice caution"><p>部分公司资料不全，没有算出价格参考，原因见各公司条目。</p></section>{% endif %}
 {{ board_view(board, rows, run.id) }}
 {% elif mode == 'financial' %}
 <h1>财报研究</h1>
 {% if not reports %}
 <section class="notice caution">
-  <h2 class="notice-title">没有可读的公司财报报告</h2>
-  <p>本轮未生成可读报告；请核对停止原因和资料缺口。价格参考独立核查，不构成对财报判断的支持。</p>
+  <h2 class="notice-title">这次没有生成可读的报告</h2>
+  <p>原因与用量见下方“执行与依据”。</p>
 </section>
 <p class="lines">{{ usage }}</p>
 {% for code in (run.request or {}).get('codes', []) %}
-<a class="link" href="/analysis?mode=swing&amp;code={{ code }}">核对本公司价格参考</a>
+<a class="link" href="/analysis?mode=swing&amp;code={{ code }}">看看现在的价格参考</a>
 {% endfor %}
 {% endif %}
 {% for r in reports %}
 {{ report_block(r) }}
 <section class="next" aria-label="读完报告后 · {{ r.code }}">
   <h2 class="notice-title">读完报告后</h2>
-  <p>{{ '财报未形成可读结论；' if not r.readable }}价格纪律参考由程序独立计算、不调用模型，需再次确认，不构成对财报判断的支持。</p>
+  <p>想知道现在的价位处在什么位置？价格参考由程序按近期行情计算，不调用模型，需要再确认一次。</p>
   <div class="actions">
-    <a class="btn quiet" href="/analysis?mode=swing&amp;code={{ r.code }}">核对本公司价格参考</a>
+    <a class="btn quiet" href="/analysis?mode=swing&amp;code={{ r.code }}">看价格参考</a>
     <a class="link" href="/stock/{{ r.code }}">公司档案</a>
   </div>
 </section>
@@ -59,7 +60,7 @@
 <h1>选择公司研究财报</h1>
 <section class="notice{{ ' caution' if screen.caution }}">
   <h2 class="notice-title">可研究 {{ screen.candidate_count }} 家 · 资料截至 {{ screen.data_date }}</h2>
-  <p>尚未覆盖 {{ screen.pending }} 家 · 资料缺口 {{ screen.gap }} 家。仅筛后同业排名，不是完整行业前三；财报资格不代表投资价值。</p>
+  <p>按市净率和 ROE 在同行业里排序，只说明财务指标靠前，不代表值得买。{% if screen.gap %}{{ screen.gap }} 家资料不全，未参与排序。{% endif %}{% if screen.pending %}还有 {{ screen.pending }} 家没扫描。{% endif %}</p>
 </section>
 {% if screen.truncated %}<section class="notice caution"><h2 class="notice-title">排名展示已截断</h2><p>{{ screen.truncated }}</p></section>{% endif %}
 {% if screen.groups %}
@@ -101,7 +102,6 @@
 </section>
 {% if run.can_continue %}<a class="{{ 'link' if screen.groups else 'btn' }}" href="/analysis?mode=screen&amp;resume_from={{ run.id }}">继续未覆盖初筛（核对预算）</a>{% endif %}
 {% else %}
-<p>下一步：选择公司研究财报或查看价格纪律参考；资料缺口不会自动重试。</p>
 {% endif %}
 {% endif %}
 

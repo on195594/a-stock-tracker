@@ -25,7 +25,7 @@
       <input name="code" maxlength="20" inputmode="numeric" autocomplete="off" placeholder="股票代码，如 600519" required>
     </label>
     <button class="btn" type="submit">研究这家公司</button>
-    <p class="muted">下一步核对范围、预算与模型，确认后才开始。</p>
+    <p class="muted">下一步先看费用和范围，确认后才开始。</p>
   </form>
   <nav class="entries" aria-label="其他研究入口">
     <a class="link" href="/analysis?mode=screen">从初筛找公司</a>
@@ -53,6 +53,36 @@
   <nav class="tabs" aria-label="研究分类">
     {% for key, title in p.VIEWS.items() %}<a href="/?view={{ key }}"{% if key == view %} aria-current="page"{% endif %}>{{ title }}</a>{% endfor %}
   </nav>
+  {% if view == 'overview' %}
+  <section class="recent" aria-labelledby="companies">
+    <h2 id="companies">我研究过的公司</h2>
+    {% for c in cards %}
+    <article class="candidate">
+      <h3 class="item-title"><a class="item-link" href="/stock/{{ c.code }}" aria-label="公司档案 · {{ c.name }} {{ c.code }}">{{ c.name or c.code }}{% if c.name %} · {{ c.code }}{% endif %}</a></h3>
+      {% if c.report %}
+      <p class="lines">{{ c.report.text or '研究完成，进入档案阅读。' }}</p>
+      <p class="muted">研究于 {{ c.report.time }} · {{ c.report.disclosure }}</p>
+      {% elif c.failed %}
+      <p>上次财报研究未能生成结论。</p>
+      <a class="link" href="/analysis/{{ c.failed }}">查看原因</a>
+      {% endif %}
+      {% if c.price %}{{ summary_block(c.price, with_code=false) }}{% endif %}
+    </article>
+    {% else %}
+    <p>还没有研究过的公司。在上方输入股票代码开始第一份研究。</p>
+    {% endfor %}
+  </section>
+  {% if screen %}
+  <section class="recent" aria-labelledby="screen-latest">
+    <h2 id="screen-latest">最近一次初筛</h2>
+    <article class="candidate">
+      <h3 class="item-title"><a class="item-link" href="/analysis/{{ screen.id }}" aria-label="查看初筛候选">查看初筛候选</a></h3>
+      <p class="muted">{{ screen.meta }}</p>
+    </article>
+  </section>
+  {% endif %}
+  <p class="muted">失败、被新结果取代或已过期的记录会自动收起，可在“财报记录 / 初筛记录 / 价格记录”里翻看。</p>
+  {% else %}
   {% for group in groups %}
   <section class="recent" aria-labelledby="g-{{ group.mode }}">
     <h2 id="g-{{ group.mode }}">{{ group.title }}{% if cursor %} · 更早记录{% endif %}</h2>
@@ -65,14 +95,12 @@
     {% else %}
     <p>{{ group.empty }}</p>
     {% endfor %}
-    {% if group.more or group.next %}
-    <div class="actions">
-      {% if group.more %}<a class="link" href="{{ group.more }}">查看全部{{ group.title }}</a>{% endif %}
-      {% if group.next %}<a class="link" href="{{ group.next }}">更早的{{ group.title }}</a>{% endif %}
-    </div>
+    {% if group.next %}
+    <div class="actions"><a class="link" href="{{ group.next }}">更早的{{ group.title }}</a></div>
     {% endif %}
   </section>
   {% endfor %}
+  {% endif %}
   {% if cursor %}<a class="link" href="/?view={{ view }}">返回最新记录</a>{% endif %}
 {% endif %}
 </div>

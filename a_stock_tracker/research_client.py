@@ -229,6 +229,7 @@ class DemoResearchClient:
                 "omitted_pages": report.get("omitted_pages"),
                 "gap_count": len(report.get("gaps", [])),
                 "quality": report.get("quality"),
+                "conclusion": report.get("analysis", {}).get("summary", {}).get("text"),
             }
             for identifier, value in reversed(self.runs.items())
             if value["request"]["mode"] == "financial"

@@ -76,8 +76,8 @@ def test_financial_usage_labels_frozen_scope_and_unknown_stays_unknown():
         ("running", "执行中"),
         ("failed", "失败"),
         ("interrupted", "中断"),
-        ("completed", "初筛结果可查看"),
-        ("partial", "部分结果 · 初筛结果可查看"),
+        ("completed", "初筛完成"),
+        ("partial", "初筛未全部完成"),
         ("unknown", "状态待核查"),
     ],
 )
@@ -89,15 +89,18 @@ def test_recent_labels_distinguish_execution_from_result(status, label):
 def test_recent_financial_labels_depend_on_readable_reports():
     readable = {"status": "completed", "summary": {"reports": [{"evidence_review": "passed"}]}}
     unreadable = {"status": "completed", "summary": {"reports": [{"evidence_review": "failed"}]}}
-    assert p.recent_result_label(readable) == "财报可查看"
-    assert p.recent_result_label(unreadable) == "无可读财报结论"
+    assert p.recent_result_label(readable) == "研究完成"
+    assert p.recent_result_label(unreadable) == "未能生成结论"
 
 
 def test_board_summary_hides_expired_levels_and_explains_gaps():
     row = demo_board()["rows"][0]
     live = p.board_summary(row)
     assert live["badge"] == {"text": "有效期内", "tone": ""}
-    assert "收盘 11.20 元" in live["levels"] and "失效线 11.00 元" in live["levels"]
+    assert live["levels"] == (
+        "收盘 11.20 元，在 20 日和 60 日均线上方，走势偏强。站上 11.23 元（近 20 日最高）才算转强；"
+        "跌破 11.00 元（近 10 日最低）说明走势转坏，离收盘还有 1.79%。"
+    )
     assert live["expires"] == row["expires"] and live["helper"] == p.price_dates(row)
     expired_row = demo_board("expired")["rows"][0]
     expired = p.board_summary(expired_row)
@@ -185,8 +188,8 @@ def test_company_view_orders_reports_and_surfaces_unreadable_attempts():
     view = p.company_view("600001.SH", reports, [], [failed])
     assert view["name"] == "演示公司" and view["latest"]["run_id"] == "a" * 32
     assert [r["run_id"] for r in view["archive"]] == ["b" * 32]
-    assert view["latest"]["status"] == "引用已复核；未纳入分析的原文页数未知，结论范围待核查"
-    assert view["latest"]["gaps"] == "主要缺口 0 条" and view["price"] is None
+    assert view["latest"]["status"] == "研究完成" and view["latest"]["conclusion"] == ""
+    assert view["latest"]["gaps"] == "待补资料 0 条" and view["price"] is None
     assert view["attempt"]["id"] == "c" * 32
     readable = run("d" * 32, "financial") | {
         "summary": {"reports": [{"code": "600001.SH", "evidence_review": "passed"}]}

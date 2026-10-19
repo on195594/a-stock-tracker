@@ -67,7 +67,7 @@ def test_pdf_failure_preserves_only_selected_metadata_with_unknown_coverage(tmp_
     assert public["diagnostic"]["stage"] == "document_extraction"
     assert public["omitted_pages"] is None
     assert public["documents"] == [{"period": doc["period"], "announced": doc["announced"]}]
-    assert "公告元数据" in public["gaps"][0]
+    assert "公告元数据" in public["scope"][0]
 
 
 @pytest.mark.parametrize(
@@ -139,7 +139,7 @@ def test_price_collection_error_projection_is_sanitized(tmp_path, error):
 
 
 def test_passed_summary_with_unknown_page_count_is_not_complete():
-    assert "未知" in d.report_summary_status(
+    assert "未知" in d.scope_text(
         {"evidence_review": "passed", "status": "scoped_complete", "omitted_pages": None}
     )
 
@@ -178,7 +178,7 @@ def test_render_passed_report_uses_review_status_with_omitted_pages():
 
     rendered = d.render(result)
 
-    assert "引用已复核" in rendered and "2 页原文未纳入分析" in rendered
+    assert "研究完成" in rendered and "未送入模型的全文页数：2" in rendered
     assert "补齐后再研究" not in rendered
 
 
@@ -198,5 +198,5 @@ def test_render_failed_result_uses_summary_failure_status_and_gap_line():
 
     rendered = d.render(result)
 
-    assert "状态：原文/模型检查失败，没有可读结论" in rendered
+    assert "状态：未能生成结论" in rendered
     assert "缺口：原文/模型验证未完成" in rendered

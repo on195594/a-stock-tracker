@@ -1148,7 +1148,8 @@ def test_structured_projection_joins_sources_and_never_returns_rejected_draft():
         "url": "https://example.invalid/a.pdf",
     }
     assert report["documents"] == [{"period": "2025-12-31", "announced": "2026-04-01"}]
-    assert report["gaps"] == ["未核查新闻", "回款缺口"] and report["omitted_pages"] == 1
+    assert report["gaps"] == ["回款缺口"] and report["scope"] == ["未核查新闻"]
+    assert report["omitted_pages"] == 1
     assert report["analysis"]["business"]["facts"] == ["F1"]
     assert "私人全文" not in json.dumps(report, ensure_ascii=False)
     assert result == before

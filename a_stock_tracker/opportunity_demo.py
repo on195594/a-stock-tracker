@@ -85,7 +85,19 @@ def demo_report(code):
             "pb": 1.0,
             "roe_mean": 10.0,
         },
+        "snapshot": {
+            "date": "2026-04-01",
+            "close": 12.5,
+            "pe_ttm": 18.2,
+            "pb": 1.0,
+            "total_mv_yi": 86.4,
+            "dv_ttm": 2.1,
+        },
         "analysis": {
+            "summary": {
+                "text": "需要谨慎（合成示例）：收入集中在单一产品，回款质量尚未核实。",
+                "facts": ["F1"],
+            },
             "business": {
                 "text": "合成财报报告 · 非真实研究结果。示例业务依赖单一产品。",
                 "facts": ["F1"],
@@ -113,7 +125,8 @@ def demo_report(code):
                 "url": "https://example.invalid/synthetic.pdf",
             }
         ],
-        "gaps": ["合成缺口：未覆盖临时公告", "合成缺口：订单资料缺失"],
+        "gaps": ["合成缺口：订单资料缺失"],
+        "scope": ["合成范围：仅定期报告，未覆盖临时公告"],
         "omitted_pages": 2,
         "error": None,
     }

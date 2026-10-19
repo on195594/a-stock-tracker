@@ -25,7 +25,7 @@ def case(tmp_path):
         {"id": "F5", "document": "123", "page": 1, "quote": quote, "claim": quote}
     )
     report["facts"][0]["quote"] += "这不是逐字原文。"
-    for section in ("business", "financial", "valuation", "counterevidence"):
+    for section in ("summary", "business", "financial", "valuation", "counterevidence"):
         report["analysis"][section]["facts"] = ["F1", "F2"]
     report["analysis"]["change_conditions"]["facts"] = ["F5"]
     a.save_state(
@@ -132,7 +132,7 @@ def test_still_bad_fact_is_dropped_before_review(tmp_path, monkeypatch, case):
     assert "质量：修复 1 次 / 剔除 1 条未通过校验的事实" in d.render(result)
 
 
-@pytest.mark.parametrize("section", ["business", "financial", "counterevidence"])
+@pytest.mark.parametrize("section", ["summary", "business", "financial", "counterevidence"])
 def test_unsupported_required_section_hides_draft(tmp_path, monkeypatch, case, section):
     case[4]["analysis"][section]["facts"] = ["F1"]
     calls, _ = fake_model(monkeypatch, case)
@@ -142,7 +142,7 @@ def test_unsupported_required_section_hides_draft(tmp_path, monkeypatch, case, s
     assert result["diagnostic"] == {
         "stage": "citation_validation",
         "category": "section_unsupported",
-        "message": "业务、财务或最强反证缺少通过校验的原文事实；未发布草稿。",
+        "message": "结论、业务、财务或主要风险缺少通过校验的原文事实或数字出处；未发布草稿。",
     }
     assert result["quality"]["passed"] == 0
     assert len(result["quality"]["dropped"]) == 1
@@ -488,7 +488,7 @@ def test_repair_budget_stop_leaves_candidate_resumable(tmp_path, monkeypatch, ca
 
 def test_prune_does_not_mutate_generated_report(case):
     original = copy.deepcopy(case[4])
-    final, dropped, unformed = d.prune_report(case[4], d.citation_errors(case[4], case[3]))
+    final, dropped, unformed = d.prune_report(case[4], d.citation_errors(case[4], case[3]), case[3])
     assert case[4] == original
     d.validate_report(final, case[3])
     assert len(final["facts"]) == 4
@@ -555,8 +555,9 @@ def test_scoped_complete_preserved_with_omitted_pages(tmp_path, monkeypatch, cas
     result = run_case(tmp_path, case)
     assert result["status"] == "scoped_complete"
     assert result["evidence_review"] == "passed"
-    summary = d.report_summary_status(d.structured_report(result))
-    assert "有 2 页原文未纳入分析，结论范围受限" in summary
+    public = d.structured_report(result)
+    assert d.report_summary_status(public) == "研究完成"
+    assert "有 2 页未送入分析" in d.scope_text(public)
 
 
 def test_citation_details_locate_skipped_table_line(case):
@@ -603,3 +604,112 @@ def test_regressed_repair_keeps_better_first_round(tmp_path, monkeypatch, case):
     assert result["quality"]["dropped"] == [{"id": "F1", "reason": "citation_mismatch"}]
     assert [f["id"] for f in result["report"]["facts"]] == ["F2", "F3", "F4", "F5"]
     assert calls[-1].endswith("-verify")
+
+
+def number_case():
+    packet, report = __import__("tests.test_automation", fromlist=["x"]).packet_and_report()
+    quote = "营业收入（元） 16,703,694,265.38 15,181,329,651.13 10.03% 经营活动产生的现金流量净额 -1,107,268,584.24"
+    packet["documents"][0]["pages"][0]["text"] += "\n" + quote
+    packet["documents"][0].update(period="2026-06-30", announced="2026-08-15")
+    packet["structured"]["market_snapshot"] = {
+        "date": "2026-10-16",
+        "close": 33.72,
+        "pe_ttm": 25.41,
+    }
+    report["facts"].append(
+        {
+            "id": "F5",
+            "document": "123",
+            "page": 1,
+            "quote": quote,
+            "claim": "营业收入同比增长10.03%",
+        }
+    )
+    return packet, report
+
+
+def test_analysis_numbers_allow_unit_conversion_rounding_sign_and_snapshot():
+    packet, report = number_case()
+    report["analysis"]["financial"] = {
+        "text": "截至6月30日，2026年上半年营收167.04亿元（约167亿），同比增长10.03%（约10%）；经营现金流净流出11.07亿元。分两个板块，见F5。",
+        "facts": ["F5", "F1"],
+    }
+    report["analysis"]["valuation"] = {"text": "收盘33.72元，市盈率约25.4倍。", "facts": ["MKT"]}
+    assert d.analysis_number_errors(report, packet) == {}
+    d.validate_report(report, packet)
+
+
+def test_unsourced_numbers_withdraw_optional_and_fail_required_sections():
+    packet, report = number_case()
+    report["analysis"]["valuation"] = {"text": "市盈率约40倍，偏贵。", "facts": ["MKT"]}
+    report["analysis"]["financial"] = {"text": "营收增长15%，2019年以来最快。", "facts": ["F5"]}
+    assert d.analysis_number_errors(report, packet) == {
+        "valuation": ["40"],
+        "financial": ["2019年", "15%"],
+    }
+    pruned, dropped, missing = d.prune_report(report, {}, packet)
+    assert pruned["analysis"]["valuation"] == {"text": d.UNFORMED, "facts": []}
+    assert missing == {"valuation": "numbers_unsupported"}
+    assert not d.supported(pruned["analysis"]["financial"])
+    assert d.support_rank(pruned)[0] is False
+    with pytest.raises(ScreenError, match="Analysis number"):
+        d.validate_report(report, packet)
+    # Each section is checked only against its own cited facts.
+    report["analysis"]["financial"] = {"text": "营收增长10.03%。", "facts": ["F1"]}
+    assert d.analysis_number_errors(report, packet)["financial"] == ["10.03%"]
+
+
+def test_market_reference_needs_snapshot_and_never_supports_required_section():
+    packet, report = number_case()
+    report["analysis"]["business"]["facts"] = ["MKT"]
+    with pytest.raises(ScreenError, match="Unbound analysis"):
+        d.check_structure(report, packet)
+    report["analysis"]["business"]["facts"] = ["F1", "MKT"]
+    d.check_structure(report, packet)
+    del packet["structured"]["market_snapshot"]
+    with pytest.raises(ScreenError, match="Unbound analysis"):
+        d.check_structure(report, packet)
+
+
+def test_evidence_packet_carries_market_snapshot_in_yi():
+    row = {
+        "code": "603606.SH",
+        "name": "合成",
+        "industry": "电气设备",
+        "pb": 3.1,
+        "valuation_date": "2026-10-16",
+        "annual_roes": [],
+        "roe_mean": 12.0,
+        "research_report": {},
+        "close": 33.72,
+        "pe_ttm": 25.41,
+        "dv_ttm": 1.2,
+        "total_mv": 2318960.5,
+    }
+    doc = {"id": "1", "pages": [{"page": 1, "text": "x" * 20}]}
+    snapshot = d.evidence_packet([doc], row)["structured"]["market_snapshot"]
+    assert snapshot == {
+        "date": "2026-10-16",
+        "close": 33.72,
+        "pe_ttm": 25.41,
+        "pb": 3.1,
+        "total_mv_yi": 231.9,
+        "dv_ttm": 1.2,
+    }
+
+
+def test_number_guard_keeps_percent_and_amount_apart_and_accepts_cited_prior_years():
+    packet, report = number_case()
+    quote = "2025年毛利率15% 第1.2.3节 2025.12.31 营业收入（元） 3,750,000,000"
+    packet["documents"][0]["pages"][0]["text"] += "\n" + quote
+    report["facts"].append(
+        {"id": "F6", "document": "123", "page": 1, "quote": quote, "claim": "毛利率15%"}
+    )
+    report["analysis"]["financial"] = {
+        "text": "2025年毛利率15%，营收37.5亿元；见第1.2.3节，截至2025.12.31。",
+        "facts": ["F6"],
+    }
+    assert d.analysis_number_errors(report, packet) == {}
+    # A percentage cannot be restated as an amount, nor a scaled amount as a percentage.
+    report["analysis"]["financial"]["text"] = "净利润15亿元，订单下滑37.5%。"
+    assert d.analysis_number_errors(report, packet) == {"financial": ["15", "37.5%"]}

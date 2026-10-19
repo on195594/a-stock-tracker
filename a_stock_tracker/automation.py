@@ -193,6 +193,8 @@ def initial_row(basic: dict[str, Any], valuation: dict[str, Any], target: str) -
         "code": code,
         "valuation_date": target,
         "pb": finite_number(valuation.get("pb")),
+        # Snapshot for the report's valuation section; never used to qualify or rank.
+        **{k: finite_number(valuation.get(k)) for k in ("close", "pe_ttm", "dv_ttm", "total_mv")},
         "status": "pending",
         "reason": "FINANCIAL_PENDING",
     }
