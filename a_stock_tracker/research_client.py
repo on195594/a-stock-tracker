@@ -8,7 +8,7 @@ from typing import Any, get_args
 from urllib.parse import urlparse
 
 import httpx
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from a_stock_tracker.contracts import (
     ErrorBody,
@@ -103,8 +103,17 @@ class ResearchClient:
                 "研究服务或受理状态暂不可确认。核对原请求，不自动重新收费。"
             ) from exc
 
+    def _read[M: BaseModel](
+        self, model: type[M], path: str, params: dict[str, str] | None = None
+    ) -> M:
+        try:
+            return model.model_validate(self.call("GET", path, params=params))
+        except ValidationError as exc:
+            # A reply outside the contract is the receiver's fault, never the caller's input.
+            raise ResearchUnavailable("研究服务返回内容未通过校验，暂不可读取。") from exc
+
     def info(self) -> ServiceInfo:
-        return ServiceInfo.model_validate(self.call("GET", "/info"))
+        return self._read(ServiceInfo, "/info")
 
     def recent(
         self,
@@ -118,7 +127,7 @@ class ResearchClient:
             for key, value in dict(mode=mode, code=code, limit=str(limit), cursor=cursor).items()
             if value is not None
         }
-        return RunList.model_validate(self.call("GET", "/runs", params=params)).runs
+        return self._read(RunList, "/runs", params).runs
 
     def submit(self, payload: dict[str, Any]) -> RunState:
         validate_request(payload)
@@ -135,10 +144,10 @@ class ResearchClient:
     def status(self, identifier: str) -> RunState:
         if len(identifier) != 32 or any(c not in "0123456789abcdef" for c in identifier):
             raise ResearchUnavailable("请求编号不正确")
-        return RunState.model_validate(self.call("GET", "/runs/" + identifier))
+        return self._read(RunState, "/runs/" + identifier)
 
     def find_reports(self, code: str) -> ReportList:
-        return ReportList.model_validate(self.call("GET", "/reports", params={"code": code}))
+        return self._read(ReportList, "/reports", {"code": code})
 
     def ranking(
         self,
@@ -154,9 +163,7 @@ class ResearchClient:
             for key, value in {"industry": industry, "query": query, "cursor": cursor}.items()
             if value is not None
         }
-        return RankingPage.model_validate(
-            self.call("GET", "/runs/" + run_id + "/ranking", params=params)
-        )
+        return self._read(RankingPage, "/runs/" + run_id + "/ranking", params)
 
 
 class DemoResearchClient:

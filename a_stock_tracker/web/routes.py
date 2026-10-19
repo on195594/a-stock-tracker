@@ -16,7 +16,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -293,7 +293,7 @@ def create_app(
             return None
         try:
             listed = await read(client.find_reports, codes[0])
-        except (ResearchUnavailable, ValidationError):
+        except ResearchUnavailable:
             return None
         reports = [r for r in listed.get("reports", []) if r.get("code") == codes[0]]
         return {**p.archived_report(reports[0]), "code": codes[0]} if reports else None

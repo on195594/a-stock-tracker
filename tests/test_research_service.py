@@ -1276,9 +1276,11 @@ def test_recent_tracks_chain_activity_timestamp_and_resolves_historical_cursor(t
     # The screen chain active time should be 12:00, ranking before other_id (11:00)
     runs = store.recent(limit=10)
     assert [r["id"] for r in runs] == [root_id, other_id]
-    # Cursor pagination using either the chain root or reused_id resolves correctly
-    paged = store.recent(cursor=reused_id, limit=10)
-    assert [r["id"] for r in paged] == [other_id]
+    # Cursor pagination using either the emitted chain root or reused_id resolves correctly
+    first_page = store.recent(limit=1)
+    assert [r["id"] for r in first_page] == [root_id]
+    for cursor in (first_page[0]["id"], reused_id):
+        assert [r["id"] for r in store.recent(cursor=cursor, limit=10)] == [other_id]
 
     # Invalid date string in continuation falls back to mtime and retains the latest failed node
     corrupt_continuation_id = "0" * 31 + "4"
@@ -1299,45 +1301,3 @@ def test_recent_tracks_chain_activity_timestamp_and_resolves_historical_cursor(t
     other_chain_item = next(r for r in runs_with_corrupt if r["id"] == corrupt_continuation_id)
     assert other_chain_item["status"] == "failed"
     assert other_chain_item["continuations"] == 1
-
-
-def test_recent_pages_reused_chain_using_emitted_id(tmp_path):
-    store = ResearchStore(tmp_path)
-    root_id = "0" * 31 + "1"
-    save_state(
-        tmp_path / root_id / "request.json",
-        {
-            "id": root_id,
-            "status": "completed",
-            "created_at": "2026-10-16T10:00:00+00:00",
-            "request": {"mode": "screen", "codes": []},
-            "usage": {},
-        },
-    )
-    reused_id = "0" * 31 + "2"
-    save_state(
-        tmp_path / reused_id / "request.json",
-        {
-            "id": reused_id,
-            "status": "completed",
-            "reused_from": root_id,
-            "created_at": "2026-10-16T12:00:00+00:00",
-            "request": {"mode": "screen", "codes": []},
-            "usage": {},
-        },
-    )
-    other_id = "0" * 31 + "3"
-    save_state(
-        tmp_path / other_id / "request.json",
-        {
-            "id": other_id,
-            "status": "completed",
-            "created_at": "2026-10-16T11:00:00+00:00",
-            "request": {"mode": "screen", "codes": []},
-            "usage": {},
-        },
-    )
-    first_page = store.recent(limit=1)
-    assert [r["id"] for r in first_page] == [root_id]
-    second_page = store.recent(limit=1, cursor=first_page[0]["id"])
-    assert [r["id"] for r in second_page] == [other_id]

@@ -619,18 +619,16 @@ def test_financial_form_flags_an_existing_report_without_depending_on_it(owner):
     page = browser.get("/analysis?mode=financial&code=600001")
     assert "该公司已有研报" in page.text and f'href="/analysis/{run}#report-600001.SH"' in page.text
     assert "该公司已有研报" not in browser.get("/analysis?mode=swing&code=600001").text
-    # A failed report lookup is only a missing hint; the confirmation form still renders.
+    # A failed or malformed report lookup is only a missing hint; the confirmation form still renders.
     client.fail["find_reports"] = ResearchUnavailable("down")
     page = browser.get("/analysis?mode=financial&code=600001")
     assert page.status_code == 200 and "该公司已有研报" not in page.text
     assert 'name="confirmed"' in page.text
-    # A malformed report list from the receiver is treated the same way and never submits.
-    del client.fail["find_reports"]
+    client.fail.clear()
     client.reports = {"code": "600001.SH", "reports": None}
-    submitted = len(client.submitted)
     page = browser.get("/analysis?mode=financial&code=600001")
     assert page.status_code == 200 and "该公司已有研报" not in page.text
-    assert 'name="confirmed"' in page.text and len(client.submitted) == submitted
+    assert 'name="confirmed"' in page.text
 
 
 def test_company_dossier_requires_login():

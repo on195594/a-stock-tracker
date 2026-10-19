@@ -528,16 +528,6 @@ details[open] > summary::before {
   }
 }
 
-.modes ul {
-  list-style: none;
-  padding: 0;
-}
-
-.modes a[aria-current="page"] {
-  font-weight: 700;
-  text-decoration: underline;
-}
-
 .fact {
   border-top: 1px solid var(--line);
   padding-top: var(--related);

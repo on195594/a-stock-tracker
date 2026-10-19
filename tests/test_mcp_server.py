@@ -692,6 +692,38 @@ def test_client_keeps_codes_and_reads_map_failures(bridge):
     anyio.run(scenario)
 
 
+def test_malformed_receiver_reads_are_unavailable_not_invalid_requests(bridge):
+    # A receiver answer that fails the contract is the service's fault, not the caller's.
+    wrong_types = dict.fromkeys(["modes", "runs", "id", "reports", "rows"], 1)
+    bridge.response = (200, {"private_marker": "/secret/token", **wrong_types})
+    run_id = "a" * 32
+    for read in [
+        lambda: bridge.client.info(),
+        lambda: bridge.client.recent(),
+        lambda: bridge.client.status(run_id),
+        lambda: bridge.client.find_reports(CODE),
+        lambda: bridge.client.ranking(run_id),
+    ]:
+        with pytest.raises(ResearchUnavailable) as caught:
+            read()
+        assert caught.value.code is None
+
+    async def scenario():
+        async with Client(bridge.server) as client:
+            for name, args in [
+                ("get_service_info", {}),
+                ("list_runs", {}),
+                ("get_run", {"run_id": run_id}),
+                ("find_reports", {"code": CODE}),
+                ("get_screen_ranking", {"run_id": run_id}),
+            ]:
+                result = await client.call_tool(name, args)
+                error(result, "service_error")
+                assert "private_marker" not in result.content[0].text
+
+    anyio.run(scenario)
+
+
 def test_fallback_errors_do_not_expose_exception_text(bridge, monkeypatch):
     cases = [
         (ResearchUnavailable("private /token"), "service_error"),

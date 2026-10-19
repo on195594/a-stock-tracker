@@ -5,11 +5,13 @@ import pytest
 from a_stock_tracker import atomic_io as script
 
 
-def test_atomic_write_restores_previous_file_after_post_replace_failure(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize("existing", [False, True])
+def test_atomic_write_rolls_back_after_directory_sync_failure(
+    tmp_path, monkeypatch, existing
 ) -> None:
     target = tmp_path / "evidence.json"
-    target.write_bytes(b"previous-evidence\n")
+    if existing:
+        target.write_bytes(b"previous-evidence\n")
     real_fsync = script.os.fsync
     calls = 0
 
@@ -25,9 +27,12 @@ def test_atomic_write_restores_previous_file_after_post_replace_failure(
     with pytest.raises(OSError, match="injected directory fsync failure"):
         script._atomic_write_bytes(target, b"new-evidence\n")
 
-    assert target.read_bytes() == b"previous-evidence\n"
-    assert not list(tmp_path.glob(".*.tmp"))
-    assert not list(tmp_path.glob(".*.rollback"))
+    if existing:
+        assert target.read_bytes() == b"previous-evidence\n"
+        assert not list(tmp_path.glob(".*.tmp"))
+        assert not list(tmp_path.glob(".*.rollback"))
+    else:
+        assert list(tmp_path.iterdir()) == []
 
 
 @pytest.mark.parametrize("existing", [False, True])
@@ -59,25 +64,6 @@ def test_atomic_write_file_sync_failure_never_publishes(tmp_path, monkeypatch, e
     assert target.read_bytes() == b"previous-evidence\n" if existing else not target.exists()
     assert not list(tmp_path.glob(".*.tmp"))
     assert not list(tmp_path.glob(".*.rollback"))
-
-
-def test_atomic_write_removes_new_file_after_directory_sync_failure(tmp_path, monkeypatch) -> None:
-    target = tmp_path / "evidence.json"
-    real_fsync = script.os.fsync
-    calls = 0
-
-    def fail_first_directory_sync(file_descriptor: int) -> None:
-        nonlocal calls
-        calls += 1
-        if calls == 2:
-            raise OSError("injected directory fsync failure")
-        real_fsync(file_descriptor)
-
-    monkeypatch.setattr(script.os, "fsync", fail_first_directory_sync)
-    with pytest.raises(OSError, match="injected directory fsync failure"):
-        script._atomic_write_bytes(target, b"new-evidence\n")
-
-    assert list(tmp_path.iterdir()) == []
 
 
 def test_atomic_write_reports_rollback_failure(tmp_path, monkeypatch) -> None:

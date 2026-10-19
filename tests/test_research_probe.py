@@ -12,14 +12,14 @@ def test_probe_checks_authenticated_info_only(monkeypatch, capsys, available):
     client = research_client.ResearchClient("http://research", "t" * 32, "/synthetic/socket")
     calls = []
 
-    def call(method, path, payload=None):
-        calls.append((method, path, payload))
+    def call(method, path, payload=None, params=None):
+        calls.append((method, path, payload, params))
         return {"demo": False, "modes": {m: {"available": available} for m in LIMITS}}
 
     monkeypatch.setattr(client, "call", call)
     monkeypatch.setattr(research_client, "configured_client", lambda: client)
     assert research_client.check_bridge() == 0
-    assert calls == [("GET", "/info", None)]
+    assert calls == [("GET", "/info", None, None)]
     assert "no research was started" in capsys.readouterr().out
 
 

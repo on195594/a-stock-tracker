@@ -1,6 +1,6 @@
 {# Shared fragments; every value is autoescaped plain text. #}
 {% macro levels_block(levels, expires) -%}
-<div class="expiring" data-expires="{{ expires }}">
+<div data-expires="{{ expires }}">
   <p class="lines" data-levels>{{ levels }}</p>
   <p class="caution-text" data-expired hidden>已过期 · 仅供历史核查；观察线、失效线和距离已隐藏。</p>
 </div>
@@ -123,7 +123,7 @@
 {% if board.rule == p.LEGACY_PRICE_RULE %}
 <section class="notice"><p class="notice-title">旧规则批次</p><p>历史结果只读，按原有效期隐藏过期条件。</p></section>
 {% endif %}
-<section class="notice band">
+<section class="notice">
   <p class="notice-title">{{ '合成演示 · 非真实股票、非AI研究结果' if board.demo else '显式股票池 · 非全市场精选' }}</p>
   <p class="lines">来源：{{ board.source }}{% if board.created_at %}
 批次生成：{{ p.local_time(board.created_at) }}{% endif %}{% if not board.demo %}
@@ -187,7 +187,7 @@
     <p>下一步：核对并补齐资料后，再明确确认新的研究。</p>
     {% endif %}
   {% else %}
-    <section class="notice band">
+    <section class="notice">
       <p class="muted">依据截至 {{ row.as_of }}</p>
       <p class="muted">历史条件有效至 {{ row.expires }}</p>
     </section>

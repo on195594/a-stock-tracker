@@ -8,10 +8,11 @@ import re
 from typing import Any
 
 from fastapi.testclient import TestClient
+from pydantic import BaseModel, ValidationError
 
 from a_stock_tracker.auth import ACTIVE_SESSIONS
 from a_stock_tracker.contracts import RankingPage, ReportList, RunState, ServiceInfo
-from a_stock_tracker.research_client import DemoResearchClient
+from a_stock_tracker.research_client import DemoResearchClient, ResearchUnavailable
 from a_stock_tracker.web import session as s
 from a_stock_tracker.web.routes import create_app
 from a_stock_tracker.web.settings import Settings
@@ -49,6 +50,12 @@ class FakeClient:
         if name in self.fail:
             raise self.fail[name]
 
+    def _validate[M: BaseModel](self, model: type[M], data: Any) -> M:
+        try:
+            return model.model_validate(data)
+        except ValidationError as exc:
+            raise ResearchUnavailable("研究服务返回内容未通过校验，暂不可读取。") from exc
+
     def info(self) -> ServiceInfo:
         self._maybe_fail("info")
         return self.demo.info()
@@ -70,13 +77,13 @@ class FakeClient:
                 if (not mode or r["request"]["mode"] == mode)
                 and (not code or code in r["request"]["codes"])
             ]
-            return [RunState.model_validate(r) for r in runs[:limit]]
+            return [self._validate(RunState, r) for r in runs[:limit]]
         return self.demo.recent(mode, code, limit, cursor)
 
     def find_reports(self, code: str) -> ReportList:
         self._maybe_fail("find_reports")
         if self.reports is not None:
-            return ReportList.model_validate(self.reports)
+            return self._validate(ReportList, self.reports)
         return self.demo.find_reports(code)
 
     def submit(self, payload: dict[str, Any]) -> RunState:
@@ -87,7 +94,7 @@ class FakeClient:
     def status(self, identifier: str) -> RunState:
         self._maybe_fail("status")
         if identifier in self.runs:
-            return RunState.model_validate(self.runs[identifier])
+            return self._validate(RunState, self.runs[identifier])
         return self.demo.status(identifier)
 
     def ranking(self, *args: Any) -> RankingPage:
