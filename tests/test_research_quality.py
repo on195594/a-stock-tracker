@@ -528,7 +528,7 @@ def test_prune_does_not_mutate_generated_report(case):
     assert dropped == [{"id": "F1", "reason": "citation_mismatch"}] and unformed == {}
 
 
-def test_facts_deleted_by_repair_are_recorded(tmp_path, monkeypatch, case):
+def test_tied_repair_keeps_original_drop_reason(tmp_path, monkeypatch, case):
     repaired = copy.deepcopy(case[4])
     repaired["facts"] = [fact for fact in repaired["facts"] if fact["id"] != "F1"]
     for item in repaired["analysis"].values():
@@ -537,7 +537,7 @@ def test_facts_deleted_by_repair_are_recorded(tmp_path, monkeypatch, case):
     result = run_case(tmp_path, case)
     assert_published(result, 4)
     assert result["quality"]["repair"] == "repaired"
-    assert result["quality"]["dropped"] == [{"id": "F1", "reason": "removed_by_repair"}]
+    assert result["quality"]["dropped"] == [{"id": "F1", "reason": "citation_mismatch"}]
     assert result["quality"]["passed"] == 4
     assert "剔除 1 条未通过校验的事实" in d.render(result)
 
