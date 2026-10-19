@@ -159,6 +159,7 @@
     <{{ sub }}>量价事实</{{ sub }}>
     <p>{{ row.facts.trend }}</p>
     <p>{{ row.facts.relative }}</p>
+    {% if row.facts.adjustment %}<p>{{ row.facts.adjustment }}</p>{% endif %}
     {% if not row.expired %}
     <div class="conditions" data-expires="{{ row.expires }}">
       <div data-levels>

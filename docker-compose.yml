@@ -12,6 +12,9 @@ services:
       PUBLIC_BASE_URL: https://stock.keyi.win
       HOST: 0.0.0.0
       PORT: 8550
+      # deploy.sh reads this default to attach the research bridge overlay
+      # (docker-compose.research.yml); RESEARCH_WEB_ENABLED=0 ./deploy.sh overrides once.
+      RESEARCH_WEB_ENABLED: ${RESEARCH_WEB_ENABLED:-1}
 networks:
   nginx-network:
     external: true

@@ -8,6 +8,7 @@ import math
 import os
 import re
 import signal
+import time
 import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -24,7 +25,9 @@ from a_stock_tracker.automation import (
 from a_stock_tracker.research import SHANGHAI, BudgetStop, ScreenError, call_api, frame_records
 
 RULE = "swing-observation-v1"
-REFERENCE_RULE = "price-reference-v1"
+REFERENCE_RULE = "price-reference-v2"
+# Unadjusted-only references stay readable as published; never rewritten.
+REFERENCE_RULE_V1 = "price-reference-v1"
 LIMITS = (
     "量价仅作风险纪律参考。重放未发现稳定超额，不代表投资价值或交易建议。"
     "未覆盖公告、财报与资金变化；A股T+1、跳空、停牌和涨跌停可能使退出条件无法执行。"
@@ -53,12 +56,23 @@ def validate_dates(values: Any) -> list[str]:
     return values
 
 
-def bars(rows: Any, sessions: list[str]) -> list[dict[str, float]]:
+# Exchange ex-rights reference prices only ever lower pre_close (dividend, bonus or rights
+# issue); a rise, an extreme ratio or repeated breaks are treated as a source gap.
+MIN_ADJUST_FACTOR = 0.3
+MAX_ADJUSTMENTS = 2
+PRICE_FIELDS = ("open", "high", "low", "close", "pre_close")
+
+
+def bars(
+    rows: Any, sessions: list[str], *, adjust: bool = False
+) -> tuple[list[dict[str, float]], list[dict[str, Any]]]:
+    """Validated bars; with adjust, forward-adjust history to the latest price basis."""
     if not isinstance(rows, list) or len(rows) != len(sessions):
         raise ScreenError("Missing trading sessions")
     if [r["date"] for r in rows] != sessions:
         raise ScreenError("Duplicate, stale or missing bars")
     result: list[dict[str, float]] = []
+    breaks: list[tuple[int, float]] = []
     for row in rows:
         item = {
             key: number(row[key]) for key in ("open", "high", "low", "close", "vol", "pre_close")
@@ -70,17 +84,25 @@ def bars(rows: Any, sessions: list[str]) -> list[dict[str, float]]:
             <= item["high"]
         ):
             raise ScreenError("Invalid OHLC")
-        # Unadjusted levels are unsafe across corporate actions; do not introduce QFQ.
         if result and abs(item["pre_close"] - result[-1]["close"]) > 0.011:
-            raise ScreenError("Discontinuous price basis; corporate action or source gap")
+            factor = item["pre_close"] / result[-1]["close"]
+            if not adjust or not MIN_ADJUST_FACTOR <= factor < 1:
+                raise ScreenError("Discontinuous price basis; corporate action or source gap")
+            breaks.append((len(result), factor))
         result.append(item)
-    return result
+    if len(breaks) > MAX_ADJUSTMENTS:
+        raise ScreenError("Discontinuous price basis; corporate action or source gap")
+    for index, factor in breaks:
+        for item in result[:index]:
+            for key in PRICE_FIELDS:
+                item[key] *= factor
+    return result, [{"date": sessions[i], "factor": round(f, 4)} for i, f in breaks]
 
 
 def price_conditions(
     stock: list[dict[str, float]], benchmark: list[dict[str, float]]
 ) -> dict[str, Any]:
-    """Compute price-reference-v1 levels from two validated 61-session windows."""
+    """Compute price-reference levels from two validated 61-session windows."""
     if len(stock) != 61 or len(benchmark) != 61:
         raise ScreenError("Require 61 validated bars per series")
     closes = [r["close"] for r in stock]
@@ -115,8 +137,8 @@ def evaluate(packet: dict[str, Any]) -> dict[str, Any]:
         or "退" in name
     ):
         raise ScreenError("Invalid issuer or known ST risk")
-    stock = bars(packet["bars"], sessions)
-    benchmark = bars(packet["benchmark"], sessions)
+    stock, adjustments = bars(packet["bars"], sessions, adjust=True)
+    benchmark, _ = bars(packet["benchmark"], sessions)
     c = price_conditions(stock, benchmark)
     distance = (c["close"] - c["stop"]) / c["close"] * 100
     facts = {
@@ -128,6 +150,12 @@ def evaluate(packet: dict[str, Any]) -> dict[str, Any]:
         "distance": f"收盘至失效线距离 {distance:.2f}%；不是最大损失承诺。",
         "limits": LIMITS,
     }
+    if adjustments:
+        events = "、".join(f"{a['date']}（系数 {a['factor']:.4f}）" for a in adjustments)
+        facts["adjustment"] = (
+            f"已按交易所除权参考价前复权：{events}；历史价格换算到最新价格口径，"
+            "均线、观察线与失效线据此计算，可能不是历史实际成交价。"
+        )
     return {
         "code": code,
         "name": name,
@@ -135,6 +163,7 @@ def evaluate(packet: dict[str, Any]) -> dict[str, Any]:
         "expires": future[-1],
         "status": "reference",
         "facts": facts,
+        "adjustments": adjustments,
         "levels": {k: c[k] for k in ("close", "ma20", "ma60", "relative", "trigger", "stop")}
         | {"distance": distance, "uptrend": c["close"] > c["ma20"] > c["ma60"]},
     }
@@ -387,6 +416,12 @@ def publish(directory: Path, packets: list[dict[str, Any]], budget: Budget) -> d
         "rows": results,
         "model_calls": 0,
         "requests": budget.used,
+        "usage": {
+            "requests": budget.used,
+            "request_limit": budget.limit,
+            "seconds_used": round(time.monotonic() - budget.started, 2),
+            "stop_reason": budget.stop_reason,
+        },
     }
     save_state(directory / "result.json", result)
     return result
@@ -410,7 +445,11 @@ def load_board(root: Path | None, *, on: date | None = None) -> dict[str, Any] |
     if directory.is_symlink() or output.is_symlink() or output.stat().st_size > 1_000_000:
         raise ScreenError("Invalid opportunity artifact")
     result = read_state(output)
-    if digest(result) != pointer["digest"] or result.get("rule") not in {RULE, REFERENCE_RULE}:
+    if digest(result) != pointer["digest"] or result.get("rule") not in {
+        RULE,
+        REFERENCE_RULE_V1,
+        REFERENCE_RULE,
+    }:
         raise ScreenError("Opportunity integrity mismatch")
     if not isinstance(result.get("rows"), list) or len(result["rows"]) > 5:
         raise ScreenError("Invalid bounded board")

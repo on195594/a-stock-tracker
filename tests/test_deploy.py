@@ -294,3 +294,45 @@ def test_existing_publication_mount_is_not_carried_forward(deployment):
     result = run(RESEARCH_WEB_ENABLED="0", EXISTING="publication")
     assert result.returncode == 0, result.stderr
     assert "opportunities" not in log.read_text()
+
+
+def compose_default(root: Path, value: str) -> None:
+    (root / "docker-compose.yml").write_text(
+        "services:\n  web:\n    environment:\n"
+        f"      RESEARCH_WEB_ENABLED: ${{RESEARCH_WEB_ENABLED:-{value}}}\n"
+    )
+
+
+@pytest.mark.parametrize("value", ["0", "1"])
+def test_compose_default_selects_bridge_without_environment(deployment, value):
+    root, _, log, run = deployment
+    compose_default(root, value)
+    result = run(EXISTING="bridge")
+    assert result.returncode == 0, result.stderr
+    calls = log.read_text()
+    assert ("-f docker-compose.research.yml" in calls) is (value == "1")
+    assert ("a_stock_tracker.research_client" in calls) is (value == "1")
+
+
+def test_environment_overrides_compose_default(deployment):
+    root, _, log, run = deployment
+    compose_default(root, "1")
+    result = run(RESEARCH_WEB_ENABLED="0", EXISTING="bridge")
+    assert result.returncode == 0, result.stderr
+    assert "docker-compose.research.yml" not in log.read_text()
+
+
+@pytest.mark.parametrize("value", ["", "2", "true"])
+def test_invalid_compose_default_fails_before_docker_commands(deployment, value):
+    root, site, log, run = deployment
+    compose_default(root, value)
+    result = run()
+    assert result.returncode != 0
+    assert "docker-compose.yml must set RESEARCH_WEB_ENABLED" in result.stderr
+    assert log.read_text() == ""
+    assert site.read_text() == "old config\n"
+
+
+def test_repository_compose_enables_bridge_by_default():
+    compose = (Path(__file__).resolve().parents[1] / "docker-compose.yml").read_text()
+    assert "RESEARCH_WEB_ENABLED: ${RESEARCH_WEB_ENABLED:-1}" in compose

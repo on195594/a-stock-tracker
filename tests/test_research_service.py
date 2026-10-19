@@ -254,6 +254,55 @@ def test_execute_handles_child_process_exiting_before_killpg(tmp_path, monkeypat
     assert read_state(directory / "request.json")["status"] == "completed"
 
 
+@pytest.mark.parametrize(
+    "mode,result,status",
+    [
+        # Named-company research keeps market coverage partial; a passed report completes it.
+        (
+            "financial",
+            {"reports": [{"code": "600519.SH", "evidence_review": "passed"}]},
+            "completed",
+        ),
+        ("financial", {"reports": [{"code": "600519.SH", "evidence_review": "failed"}]}, "partial"),
+        ("financial", {"reports": []}, "partial"),
+        ("swing", {"board": {"rows": []}, "usage": {"requests": 4}}, "partial"),
+    ],
+)
+def test_exit_two_status_and_usage_by_mode(tmp_path, monkeypatch, mode, result, status):
+    monkeypatch.setenv("RESEARCH_PROVIDER", "p")
+    monkeypatch.setenv("RESEARCH_MODEL", "m")
+    store = ResearchStore(tmp_path / "service")
+    p = payload(mode)
+    directory = store.directory(p["id"])
+    directory.mkdir(mode=0o700)
+    state = {"id": p["id"], "request": p, "status": "running", "limits": {"seconds": 1}}
+    save_state(directory / "request.json", state)
+    lease = store.lease()
+
+    class MockProcess:
+        pid = 123456
+
+        def wait(self, timeout=None):
+            return 2
+
+    monkeypatch.setattr("subprocess.Popen", lambda *a, **kw: MockProcess())
+    monkeypatch.setattr("os.killpg", lambda *a: None)
+    monkeypatch.setattr(
+        store, "result", lambda *a: {"coverage": {"status": "partial", "counts": {}}, **result}
+    )
+    store.execute(directory, state, lease)
+    saved = read_state(directory / "request.json")
+    assert saved["status"] == status
+    assert saved["usage"] == result.get("usage")
+
+
+def test_swing_result_carries_board_usage(tmp_path, monkeypatch):
+    store = ResearchStore(tmp_path / "service")
+    board = {"rule": "price-reference-v2", "rows": [], "usage": {"requests": 4}}
+    monkeypatch.setattr("a_stock_tracker.research_service.load_board", lambda root: board)
+    assert store.result(tmp_path, "swing") == {"board": board, "usage": {"requests": 4}}
+
+
 def test_execute_pins_cwd_to_repo_root(tmp_path, monkeypatch):
     from a_stock_tracker.research_service import REPO_ROOT
 

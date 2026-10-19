@@ -8,8 +8,19 @@ source_conf=docker/nginx-stock.conf
 command -v docker >/dev/null
 # Validate both choices before any Docker commands or deployment changes.
 if (( $# )); then
-    echo 'deploy.sh accepts no arguments; use RESEARCH_WEB_ENABLED.' >&2
+    echo 'deploy.sh accepts no arguments; set RESEARCH_WEB_ENABLED in docker-compose.yml or the environment.' >&2
     exit 1
+fi
+# The bridge switch defaults from docker-compose.yml (${RESEARCH_WEB_ENABLED:-N});
+# an exported RESEARCH_WEB_ENABLED overrides it for this run only.
+if [[ ! -v RESEARCH_WEB_ENABLED ]] && grep -q '^[[:space:]]*RESEARCH_WEB_ENABLED:' docker-compose.yml 2>/dev/null; then
+    configured=$(sed -n 's/^[[:space:]]*RESEARCH_WEB_ENABLED:[[:space:]]*\${RESEARCH_WEB_ENABLED:-\([01]\)}[[:space:]]*$/\1/p' docker-compose.yml)
+    if [[ "$configured" != 0 && "$configured" != 1 ]]; then
+        echo 'docker-compose.yml must set RESEARCH_WEB_ENABLED: ${RESEARCH_WEB_ENABLED:-0} or ${RESEARCH_WEB_ENABLED:-1}.' >&2
+        exit 1
+    fi
+    # Exported so the container sees the same effective value.
+    export RESEARCH_WEB_ENABLED="$configured"
 fi
 if [[ -v RESEARCH_WEB_ENABLED && "$RESEARCH_WEB_ENABLED" != 0 && "$RESEARCH_WEB_ENABLED" != 1 ]]; then
     echo "RESEARCH_WEB_ENABLED must be exactly 0 (disable) or 1 (enable)." >&2

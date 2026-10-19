@@ -123,6 +123,7 @@ def result_summary(result: dict[str, Any]) -> dict[str, Any]:
                             "expires",
                             "expired",
                             "levels",
+                            "adjustments",
                             "reasons",
                         )
                         if k in row
@@ -687,7 +688,8 @@ class ResearchStore:
             board = load_board(root)
             if board is None:
                 raise ScreenError("No verified board")
-            return {"board": board}
+            # Boards published before usage was recorded keep usage unknown (null).
+            return {"board": board, "usage": board.get("usage")}
         result, _ = self.batch_result(directory, mode)
         result["truncated"] = False
         # Leave room for request metadata under the client's 4 MB response ceiling.
@@ -924,11 +926,22 @@ class ResearchStore:
                 raise ScreenError("Batch failed")
             result = self.result(directory, state["request"]["mode"])
             counts = result.get("coverage", {}).get("counts", {})
-            complete = code == 0 or (
-                state["request"]["mode"] == "screen"
-                and (
-                    result["coverage"]["status"] == "complete"
-                    or (counts.get("pending", 0) == 0 and not result.get("failed_reports"))
+            reports = result.get("reports") or []
+            complete = (
+                code == 0
+                or (
+                    state["request"]["mode"] == "screen"
+                    and (
+                        result["coverage"]["status"] == "complete"
+                        or (counts.get("pending", 0) == 0 and not result.get("failed_reports"))
+                    )
+                )
+                # Named-company research still enumerates the market, so coverage stays
+                # partial; every requested report passing review is the completed outcome.
+                or (
+                    state["request"]["mode"] == "financial"
+                    and {r.get("code") for r in reports} == set(state["request"]["codes"])
+                    and all(r.get("evidence_review") == "passed" for r in reports)
                 )
             )
             state.pop("result", None)

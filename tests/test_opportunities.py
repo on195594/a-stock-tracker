@@ -7,6 +7,7 @@ import pytest
 
 from a_stock_tracker import opportunities as swing
 from a_stock_tracker.automation import Budget, digest, save_state
+from a_stock_tracker.mcp_server import EXPIRED_FACTS
 from a_stock_tracker.opportunity_demo import demo_board, demo_packet
 from a_stock_tracker.research import ScreenError
 
@@ -50,7 +51,10 @@ def test_conditions_are_computed_and_not_claimed_triggered():
         "nan",
         "bool",
         "ohlc",
-        "corporate_action",
+        "price_rise",
+        "extreme_ratio",
+        "repeated_actions",
+        "benchmark_action",
         "future_order",
         "st",
         "outside",
@@ -71,8 +75,15 @@ def test_unsafe_evidence_cannot_produce_levels(damage):
         packet["bars"][-1]["close"] = True
     elif damage == "ohlc":
         packet["bars"][-1]["high"] = 1
-    elif damage == "corporate_action":
-        packet["bars"][-1]["pre_close"] = 5
+    elif damage == "price_rise":
+        packet["bars"][-1]["pre_close"] = round(packet["bars"][-2]["close"] * 1.1, 2)
+    elif damage == "extreme_ratio":
+        packet["bars"][-1]["pre_close"] = round(packet["bars"][-2]["close"] * 0.2, 2)
+    elif damage == "repeated_actions":
+        for i in (-30, -20, -10):
+            packet["bars"][i]["pre_close"] = round(packet["bars"][i - 1]["close"] * 0.95, 2)
+    elif damage == "benchmark_action":
+        packet["benchmark"][-1]["pre_close"] = round(packet["benchmark"][-2]["close"] * 0.95, 2)
     elif damage == "future_order":
         packet["future_sessions"][0] = packet["sessions"][-1]
     elif damage in {"st", "s_star_st", "delisting"}:
@@ -83,6 +94,34 @@ def test_unsafe_evidence_cannot_produce_levels(damage):
         packet["bars"][-1]["vol"] = 0
     with pytest.raises(ScreenError):
         swing.evaluate(packet)
+
+
+def test_ex_rights_break_is_forward_adjusted_and_disclosed():
+    packet = demo_packet()
+    raw = deepcopy(packet["bars"])
+    previous = raw[-16]["close"]
+    packet["bars"][-15]["pre_close"] = round(previous * 0.98, 2)
+    factor = packet["bars"][-15]["pre_close"] / previous
+    row = swing.evaluate(packet)
+    assert row["status"] == "reference"
+    assert row["adjustments"] == [{"date": packet["sessions"][-15], "factor": round(factor, 4)}]
+    # History before the ex-date moves to the latest price basis; later bars stay raw.
+    adjusted = [r["close"] * factor for r in raw[:-15]] + [r["close"] for r in raw[-15:]]
+    highs = [r["high"] * factor for r in raw[-20:-15]] + [r["high"] for r in raw[-15:]]
+    assert row["levels"]["close"] == raw[-1]["close"]
+    assert row["levels"]["ma60"] == pytest.approx(sum(adjusted[-60:]) / 60)
+    assert row["levels"]["trigger"] == round(max(highs) + 0.01, 2)
+    assert (
+        "前复权" in row["facts"]["adjustment"]
+        and packet["sessions"][-15] in row["facts"]["adjustment"]
+    )
+    # The disclosure is not a level, so expiry never blanks it.
+    assert "adjustment" not in EXPIRED_FACTS
+
+
+def test_unbroken_series_has_no_adjustment_fact():
+    row = swing.evaluate(demo_packet())
+    assert row["adjustments"] == [] and "adjustment" not in row["facts"]
 
 
 @pytest.mark.parametrize(
@@ -222,6 +261,9 @@ def test_publish_has_no_model_path_and_preserves_company_gaps(tmp_path, monkeypa
     assert "levels" not in result["rows"][0]
     assert result["rows"][1]["status"] == "reference"
     assert (tmp_path / "result.json").is_file()
+    assert result["usage"]["requests"] == result["requests"]
+    assert result["usage"]["request_limit"] == 20
+    assert result["usage"]["stop_reason"] == "completed"
 
 
 def legacy_board():
@@ -267,13 +309,16 @@ def test_legacy_reader_keeps_explanation_validation():
 def saved_board(tmp_path, legacy=False):
     run = "swing-" + "a" * 32
     (tmp_path / run).mkdir()
-    board = legacy_board() if legacy else demo_board()
+    board = legacy_board() if legacy is True else demo_board()
+    if legacy == "v1":
+        # Unadjusted price-reference-v1 artifacts stay readable as published.
+        board["rule"] = swing.REFERENCE_RULE_V1
     save_state(tmp_path / run / "result.json", board)
     save_state(tmp_path / "latest.json", {"run": run, "digest": digest(board)})
     return board
 
 
-@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("legacy", [False, True, "v1"])
 def test_board_integrity_and_expiry(tmp_path, legacy):
     board = saved_board(tmp_path, legacy)
     output = tmp_path / ("swing-" + "a" * 32) / "result.json"
