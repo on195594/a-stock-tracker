@@ -754,3 +754,34 @@ def test_percent_column_and_page_level_number_sources():
     assert d.analysis_number_errors(report, packet) == {}
     report["analysis"]["financial"]["text"] = "归母净利润6.1亿元。"
     assert d.analysis_number_errors(report, packet) == {"financial": ["6.1"]}
+
+
+def test_number_guard_rejects_unit_crossing_small_amounts_and_invented_dates():
+    # Codex review 2026-10-19: each case below used to pass validate_report.
+    page = "营业收入（元） 4,275,000,000 同比增长10.03% 截至 2026 年 8 月 3 日 在手订单 179.34 亿元"
+    packet = {
+        "structured": {"code": "x", "market_snapshot": {"close": 33.72, "date": "2026-10-16"}},
+        "documents": [
+            {
+                "id": "1",
+                "period": "2026-06-30",
+                "announced": "2026-08-15",
+                "pages": [{"page": 1, "text": page}],
+            }
+        ],
+    }
+    fact = {"id": "F1", "document": "1", "page": 1, "quote": page, "claim": "c"}
+
+    def errors(text, facts=("F1",)):
+        report = {"facts": [fact], "analysis": {"s": {"text": text, "facts": list(facts)}}}
+        return d.analysis_number_errors(report, packet).get("s", [])
+
+    assert errors("营收33.72亿元。") == ["33.72"]  # snapshot counts only with MKT
+    assert errors("收盘33.72元，快照截至2026年10月16日。", ("MKT",)) == []
+    assert errors("净利润12亿元。") == ["12"]
+    assert errors("分3个板块，6月30日止。") == []
+    assert errors("2026年12月31日有新订单。") == ["2026年12月31日"]
+    assert errors("截至2026年8月3日在手订单179.34亿元，营收42.75亿元，增长10.03%。") == []
+    # A stray "%" elsewhere in the quote no longer licenses "%" on another number.
+    claim = {"quote": "营业收入（元）42.75，同比增长10.03%", "claim": "收入同比增长42.75%"}
+    assert d.unquoted_numbers(claim, None, "") == ["42.75%"]

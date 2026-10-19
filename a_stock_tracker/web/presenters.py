@@ -199,11 +199,27 @@ def recent_result_label(run: dict[str, Any]) -> str:
     return "结果待核查"
 
 
+def well_formed_sections(report: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Analysis sections shaped {text: str, facts: [str]}; anything else is treated as absent,
+    so a malformed receiver reply cannot break a page."""
+    analysis = report.get("analysis")
+    if not isinstance(analysis, dict):
+        return {}
+    return {
+        key: {"text": item["text"], "facts": item["facts"]}
+        for key, item in analysis.items()
+        if isinstance(item, dict)
+        and isinstance(item.get("text"), str)
+        and isinstance(item.get("facts"), list)
+        and all(isinstance(f, str) for f in item["facts"])
+    }
+
+
 def conclusion_text(report: dict[str, Any]) -> str:
     """One readable line: the v3 summary, else the first sentence of the main risk."""
     if not readable_report(report):
         return ""
-    analysis = report.get("analysis") or {}
+    analysis = well_formed_sections(report)
     summary = (analysis.get("summary") or {}).get("text", "")
     if summary:
         return summary
@@ -513,7 +529,7 @@ def frozen_cost_lines(payload: dict[str, Any]) -> list[str]:
 def report_view(report: dict[str, Any]) -> dict[str, Any]:
     """Structured report projection for the page; a failed review exposes no draft."""
     readable = readable_report(report)
-    analysis = report.get("analysis", {}) if readable else {}
+    analysis = well_formed_sections(report) if readable else {}
     diagnostic = report.get("diagnostic")
     stage = message = None
     if isinstance(diagnostic, dict):

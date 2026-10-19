@@ -63,6 +63,12 @@ DATE_RE = re.compile(
     r"[0-9]{4}(?:-[0-9]{2}-[0-9]{2}|\.[0-9]{1,2}\.[0-9]{1,2}|年(?:[0-9]{1,2}月(?:[0-9]{1,2}日)?)?)"
     r"|[0-9]{1,2}月[0-9]{1,2}日"
 )
+FULL_DATE_RE = re.compile(
+    r"([0-9]{4})(?:-([0-9]{1,2})-([0-9]{1,2})|\.([0-9]{1,2})\.([0-9]{1,2})|年([0-9]{1,2})月([0-9]{1,2})日)"
+)
+MONTH_DAY_RE = re.compile(r"([0-9]{1,2})月([0-9]{1,2})日")
+YEAR_RE = re.compile(r"[0-9]{4}")
+FIGURE_UNIT_RE = re.compile(r"\s*(?:亿|万|元|倍|%|个百分点)")
 REF_RE = re.compile(r"(?<![A-Za-z0-9])(?:F[0-9]+|MKT)(?![0-9])")
 NUMBERS_RE = re.compile(r"[+\-\u2212]?[0-9]+(?:[,.][0-9]+)*%?")
 
@@ -393,7 +399,7 @@ GENERATE = """你是只读公司研究员，为普通投资者写一份读得懂
 - 读者是普通投资者：短句，先结论后理由，少用术语，必要术语顺带解释。不要写“推论：”“最强反证是”之类前缀，也不要在正文写F1等编号（编号只放facts列表）；推测用“可能”“说明”“看起来”等词在句中标明。
 - summary用一到两句话回答“这家公司现在值不值得继续研究”：以“值得继续研究”“需要谨慎”或“暂不值得”之一开头，再给1–2个带数字的关键理由，引用事实id。
 - business、financial、counterevidence必须写出关键数字（金额、同比增减、占比）。金额可从元换算为亿元或万元并四舍五入，例如16,703,694,265.38元写作167.04亿元；百分比照抄原文。
-- 正文中的每个数字都必须出自该段facts所引事实所在的原文页（允许上述单位换算与四舍五入），或出自structured结构化字段；引文应包含正文用到的那一行数字，找不到出处的数字不要写。
+- 正文中的每个数字都必须出自该段facts所引事实所在的原文页（允许上述单位换算与四舍五入），或出自structured结构化字段（此时该段facts须包含MKT）；具体日期须是原文写明的日期；引文应包含正文用到的那一行数字，找不到出处的数字不要写。
 - MKT指structured.market_snapshot行情快照（date估值日、close收盘价元、pe_ttm市盈率TTM、pb市净率、total_mv_yi总市值亿元、dv_ttm股息率%）。valuation可只引用MKT，结合structured的ROE历史说明估值高低与适用方法；pe_ttm为空通常表示亏损或无法计算，要如实说明；行情数值写到两位小数；不给目标价。
 - change_conditions写可观察的具体条件（哪项指标回升或恶化到什么程度会改变结论），引用相关事实或MKT。
 至少3条最多8条实质事实；不要引用目录。summary、业务、财务和最强反证在资料允许时各引用至少两条不同事实，避免单条引文失效使整段失去支撑。所有影响判断的非结构化事实只能来自facts。不要编造无来源数字、证券、日期。跨累计期间不可直接比较或据此推断恶化。数值、金额单位、报告期、比较基期必须同时在原文引文中，找不到就用非数值事实或写缺口。审计意见不能用董事声明代替，不得把“未核验”写成“无风险”。不能给交易或账户动作。资料不足时仍给出有界分析及缺口，不冒充完整投资结论。
@@ -484,7 +490,7 @@ def unquoted_numbers(fact: dict[str, Any], doc: dict[str, Any] | None, page: str
     claim = fact["claim"]
     # A "(%)" table header (in the quote or on its page) lets "30.85" be restated as "30.85%";
     # sign and digits stay exact.
-    percent_column = "%" in fact["quote"] or any(h in page for h in ("(%)", "（%）"))
+    percent_column = any(h in fact["quote"] + page for h in ("(%)", "（%）"))
     return [
         m.group()
         for m in NUMBERS_RE.finditer(claim)
@@ -546,41 +552,71 @@ def number_matches(token: str, sources: set[tuple[float, bool]]) -> bool:
     )
 
 
+def date_parts(m: re.Match[str]) -> tuple[int, int, int]:
+    y, mo, d = (int(g) for g in m.groups() if g)
+    return y, mo, d
+
+
+def source_dates(text: str) -> set[tuple[int, ...]]:
+    """Full dates (year, month, day) and month-days found in compacted source text."""
+    found: set[tuple[int, ...]] = set()
+    for m in FULL_DATE_RE.finditer(compact(text)):
+        y, mo, d = date_parts(m)
+        found |= {(y, mo, d), (mo, d)}
+    return found
+
+
 def analysis_number_errors(report: dict[str, Any], packet: dict[str, Any]) -> dict[str, list[str]]:
     """Numbers in section text must come from the source pages of that section's cited facts
-    (the quote may be narrower than the figures it sits next to) or from structured fields."""
+    (the quote may be narrower than the figures it sits next to); structured fields, including
+    the market snapshot, count only for sections that cite MKT."""
     facts = {f["id"]: f for f in report["facts"]}
     pages = {(d["id"], p["page"]): p["text"] for d in packet["documents"] for p in d["pages"]}
     structured = source_numbers(packet["structured"])
-    years = {
-        str(doc.get(k, ""))[:4]
-        for doc in packet.get("documents", [])
-        for k in ("period", "announced")
-    } | {str(packet["structured"].get("valuation_date") or "")[:4]}
+    report_dates = " ".join(
+        str(doc.get(k, "")) for doc in packet.get("documents", []) for k in ("period", "announced")
+    )
+    years = {y for y in YEAR_RE.findall(report_dates)} | {
+        str(packet["structured"].get("valuation_date") or "")[:4]
+    }
     errors = {}
     for section, item in report["analysis"].items():
         if unformed(item):
             continue
         cited = [facts[fid] for fid in item["facts"] if fid in facts]
-        sources = structured | source_numbers(
-            [
-                f["quote"] + " " + f["claim"] + " " + pages.get((f["document"], f["page"]), "")
-                for f in cited
-            ]
+        texts = [
+            f["quote"] + " " + f["claim"] + " " + pages.get((f["document"], f["page"]), "")
+            for f in cited
+        ]
+        sources = source_numbers(texts) | (structured if MARKET_REF in item["facts"] else set())
+        dates = source_dates(" ".join(texts) + " " + report_dates) | (
+            source_dates(str(packet["structured"])) if MARKET_REF in item["facts"] else set()
         )
         text = REF_RE.sub(" ", item["text"])
-        # A year is fine when it is a report year or appears in the cited sources (prior periods).
-        bad = [
-            m.group()
-            for m in DATE_RE.finditer(text)
-            if m.group()[:4].isdigit()
-            and m.group()[:4] not in years
-            and (float(m.group()[:4]), False) not in sources
-        ]
+        bad = []
+        for m in DATE_RE.finditer(text):
+            full = FULL_DATE_RE.fullmatch(compact(m.group()))
+            month_day = MONTH_DAY_RE.fullmatch(m.group())
+            if full:
+                # A complete date must be one the sources state, not just a known year.
+                ok = date_parts(full) in dates
+            elif month_day:
+                ok = tuple(int(g) for g in month_day.groups()) in dates
+            else:
+                # A bare year (or year-month) is a report year or a prior period cited.
+                ok = m.group()[:4] in years or (float(m.group()[:4]), False) in sources
+            if not ok:
+                bad.append(m.group())
         for m in NUMBERS_RE.finditer(DATE_RE.sub(" ", text)):
             token = m.group()
-            # Small bare integers are counts or months ("两个板块", "6月"), not financial figures.
-            if not token.endswith("%") and re.fullmatch(r"[+\-−]?(?:[0-9]|1[0-2])", token):
+            # Small bare integers are counts or months ("两个板块", "6月"), never a figure
+            # with a financial unit such as "12亿元".
+            unit = FIGURE_UNIT_RE.match(DATE_RE.sub(" ", text), m.end())
+            if (
+                not token.endswith("%")
+                and not unit
+                and re.fullmatch(r"[+\-−]?(?:[0-9]|1[0-2])", token)
+            ):
                 continue
             if number_value(token) is not None and not number_matches(token, sources):
                 bad.append(token)

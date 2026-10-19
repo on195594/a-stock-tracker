@@ -293,10 +293,28 @@ def test_legacy_conclusion_drops_fact_ids_and_snapshot_rounds():
         "evidence_review": "passed",
         "analysis": {
             "counterevidence": {
-                "text": "推论（F2、F6）：最强反证是现金流为负（F4、F5）。其后不显示。"
+                "text": "推论（F2、F6）：最强反证是现金流为负（F4、F5）。其后不显示。",
+                "facts": ["F4"],
             }
         },
     }
     assert p.conclusion_text(report) == "主要风险：现金流为负。"
     text = p.snapshot_text({"date": "2026-10-16", "close": 33.72, "pe_ttm": 20.4019, "pb": 3.2889})
     assert text == "收盘 33.72 元 · 市盈率(TTM) 20.4 倍 · 市净率 3.29 倍（2026-10-16）"
+
+
+def test_malformed_receiver_sections_are_treated_as_absent():
+    report = {
+        "code": "600001.SH",
+        "evidence_review": "passed",
+        "status": "scoped_complete",
+        "analysis": {
+            "summary": "bad",
+            "business": {"text": "业务。", "facts": ["F1"]},
+            "financial": {"text": 1, "facts": []},
+        },
+    }
+    assert p.conclusion_text(report) == ""
+    view = p.report_view(report)
+    assert view["summary"] is None and [s["title"] for s in view["sections"]] == ["业务"]
+    assert p.conclusion_text(report | {"analysis": "bad"}) == ""
