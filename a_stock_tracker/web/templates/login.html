@@ -11,5 +11,18 @@
 <p class="muted">合成演示只在本机运行，不调用真实接口，不产生费用。</p>
 {% else %}
 <a class="btn" href="/oauth/start">使用 GitHub 登录</a>
+{% if admin %}
+<form method="post" action="/login/admin">
+  <label class="field">
+    <span>管理员账号</span>
+    <input name="username" autocomplete="username" required>
+  </label>
+  <label class="field">
+    <span>密码</span>
+    <input name="password" type="password" autocomplete="current-password" required>
+  </label>
+  <button class="btn" type="submit">账号密码登录</button>
+</form>
+{% endif %}
 {% endif %}
 {% endblock %}

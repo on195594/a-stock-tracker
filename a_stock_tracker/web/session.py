@@ -1,9 +1,10 @@
-"""Signed session cookie, CSRF tokens and the GitHub OAuth exchange."""
+"""Signed session cookie, CSRF tokens, the GitHub OAuth exchange and optional admin login."""
 
 from __future__ import annotations
 
 import hashlib
 import hmac
+import ipaddress
 import secrets
 import time
 from collections.abc import Callable
@@ -37,6 +38,39 @@ OAUTH_STATES: dict[str, float] = {}
 
 def allowed_user(settings: Settings) -> str:
     return DEMO_USER if settings.demo else settings.allowed_user_id
+
+
+def client_ip(request: Request) -> str:
+    # Nginx overwrites X-Real-IP with the client address (Cloudflare's CF-Connecting-IP only
+    # for Cloudflare peers); only host-local peers reach the app directly.
+    forwarded = request.headers.get("x-real-ip", "").strip()
+    return forwarded or (request.client.host if request.client else "")
+
+
+def is_local(request: Request, settings: Settings) -> bool:
+    try:
+        address = ipaddress.ip_address(client_ip(request))
+    except ValueError:
+        return False
+    return (
+        address.is_loopback
+        or address.is_private
+        or any(
+            address in ipaddress.ip_network(net, strict=False) for net in settings.admin_allowed_ips
+        )
+    )
+
+
+def admin_enabled(request: Request, settings: Settings) -> bool:
+    if settings.demo or not settings.admin_password:
+        return False
+    return settings.admin_scope == "any" or is_local(request, settings)
+
+
+def admin_ok(settings: Settings, username: str, password: str) -> bool:
+    user_ok = hmac.compare_digest(username.encode(), settings.admin_username.encode())
+    password_ok = hmac.compare_digest(password.encode(), settings.admin_password.encode())
+    return user_ok and password_ok
 
 
 def current_actor(request: Request, settings: Settings) -> Actor | None:

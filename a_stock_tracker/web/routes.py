@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import uuid
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -41,7 +42,9 @@ LOGIN_ERRORS = {
     "state": "登录请求已过期或不是本浏览器发起，请重新登录。",
     "denied": "该 GitHub 账号未获授权。",
     "failed": "GitHub 登录未完成，请重新尝试。",
+    "admin": "账号或密码不正确。",
 }
+log = logging.getLogger(__name__)
 # Home reads: newest runs to find running work, per-mode previews, and one tab page.
 ACTIVE_LIMIT = 5
 OVERVIEW_LIMIT = 3
@@ -132,7 +135,8 @@ def create_app(
         if actor_of(request) is not None:
             return RedirectResponse("/", status_code=303)
         error = LOGIN_ERRORS.get(request.query_params.get("error", ""))
-        return render(request, None, "login.html", {"error": error})
+        admin = s.admin_enabled(request, settings)
+        return render(request, None, "login.html", {"error": error, "admin": admin})
 
     @app.get("/oauth/start")
     async def oauth_start() -> Response:
@@ -170,6 +174,28 @@ def create_app(
             return refused(request)
         response = RedirectResponse("/", status_code=303)
         s.start_session(response, settings, s.DEMO_USER)
+        return response
+
+    @app.post("/login/admin")
+    async def admin_login(request: Request) -> Response:
+        if not s.admin_enabled(request, settings):
+            raise StarletteHTTPException(404)
+        headers = {k.lower(): v for k, v in request.headers.items()}
+        if not origin.same_origin(headers):
+            return refused(request)
+        form = await request.form()
+        username, password = form.get("username"), form.get("password")
+        ip = s.client_ip(request)
+        if not (
+            isinstance(username, str)
+            and isinstance(password, str)
+            and s.admin_ok(settings, username, password)
+        ):
+            log.warning("admin login refused from %s", ip)
+            return RedirectResponse("/login?error=admin", status_code=303)
+        log.warning("admin login accepted from %s", ip)
+        response = RedirectResponse("/", status_code=303)
+        s.start_session(response, settings, settings.allowed_user_id)
         return response
 
     @app.post("/logout")

@@ -54,6 +54,7 @@ from tests.web_support import (
     csrf_of,
     form_fields,
     login,
+    production,
     request_form,
     reset_sessions,
 )
@@ -491,3 +492,83 @@ def test_demo_accepts_loopback_alias_origins_only():
     for origin in ("http://localhost:8550", "http://evil.example:8551", "https://localhost:8551"):
         refused = browser.post("/login/demo", headers={"origin": origin}, follow_redirects=False)
         assert refused.status_code == 403, origin
+
+
+ADMIN = {"admin_username": "owner", "admin_password": "p" * 16}
+LOCAL = {"x-real-ip": "172.24.0.1"}
+PUBLIC = {"x-real-ip": "104.22.100.151"}
+
+
+def admin_post(browser: TestClient, password: str, ip: dict[str, str], **headers: str):
+    return browser.post(
+        "/login/admin",
+        data={"username": "owner", "password": password},
+        headers=SAME | ip | headers,
+        follow_redirects=False,
+    )
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"admin_password": "p" * 15, "admin_username": "owner"},
+        {"admin_password": "p" * 16, "admin_username": " "},
+        {"admin_scope": "public"},
+        {"admin_allowed_ips": ("150.136.58.125", "not-an-ip")},
+    ],
+)
+def test_admin_login_configuration_fails_closed(overrides):
+    with pytest.raises(ValueError):
+        production(**overrides)
+
+
+def test_admin_login_is_off_without_a_password():
+    browser = app_client()
+    assert "/login/admin" not in browser.get("/login", headers=LOCAL).text
+    assert admin_post(browser, "p" * 16, LOCAL).status_code == 404
+    demo = Settings(mode="demo", public_base_url="http://127.0.0.1:8551", port=8551).validate()
+    local = TestClient(create_app(demo, FakeClient()), base_url="http://127.0.0.1:8551")
+    assert (
+        local.post("/login/admin", headers={"origin": "http://127.0.0.1:8551"}).status_code == 404
+    )
+
+
+def test_admin_login_issues_the_owner_session_only_for_the_right_password():
+    browser = app_client(settings=production(**ADMIN))
+    assert "/login/admin" in browser.get("/login", headers=LOCAL).text
+    wrong = admin_post(browser, "q" * 16, LOCAL)
+    assert wrong.headers["location"] == "/login?error=admin" and s.COOKIE not in browser.cookies
+    assert admin_post(browser, "p" * 16, LOCAL, origin="https://evil.example").status_code == 403
+    assert s.COOKIE not in browser.cookies
+    done = admin_post(browser, "p" * 16, LOCAL)
+    assert done.status_code == 303 and done.headers["location"] == "/"
+    assert [user for user, _ in ACTIVE_SESSIONS.values()] == [OWNER]
+    assert browser.get("/", follow_redirects=False).status_code == 200
+    # Same owner session: CSRF and logout revocation apply unchanged.
+    logout = browser.post(
+        "/logout",
+        data={"csrf": csrf_of(browser.get("/settings").text)},
+        headers=SAME,
+        follow_redirects=False,
+    )
+    assert logout.status_code == 303 and not ACTIVE_SESSIONS
+
+
+@pytest.mark.parametrize("scope, public_ok", [("local", False), ("any", True)])
+def test_admin_login_scope_limits_public_clients(scope, public_ok):
+    browser = app_client(settings=production(**ADMIN, admin_scope=scope))
+    assert ("/login/admin" in browser.get("/login", headers=PUBLIC).text) is public_ok
+    result = admin_post(browser, "p" * 16, PUBLIC)
+    assert result.status_code == (303 if public_ok else 404)
+    assert (s.COOKIE in browser.cookies) is public_ok
+    # Without a forwarded address the test client's peer is not an IP, so it is not local.
+    assert ("/login/admin" in app_client(settings=production(**ADMIN)).get("/login").text) is False
+
+
+def test_admin_login_allowlist_admits_only_listed_public_addresses():
+    settings = production(**ADMIN, admin_allowed_ips=("150.136.58.125", "203.0.113.0/24"))
+    for ip, ok in (("150.136.58.125", True), ("203.0.113.9", True), ("150.136.58.126", False)):
+        browser = app_client(settings=settings)
+        result = admin_post(browser, "p" * 16, {"x-real-ip": ip})
+        assert result.status_code == (303 if ok else 404), ip
+        assert (s.COOKIE in browser.cookies) is ok, ip
