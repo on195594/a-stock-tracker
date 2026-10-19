@@ -32,21 +32,25 @@ async function main() {
   const base = process.env.AUTOMATION_PI_RUNTIME;
   const load = name => import(pathToFileURL(join(base, "dist/core", name)).href);
   const { ModelRuntime } = await load("model-runtime.js");
-  const { loadExtensions } = await load("extensions/loader.js");
-  const loaded = await loadExtensions([process.env.AUTOMATION_PI_EXTENSION], base);
-  if (loaded.errors.length || loaded.extensions.some(e => e.tools.size || e.handlers.size)) {
-    throw new Error("Provider extension must not register tools or event handlers");
-  }
   const runtime = await ModelRuntime.create({
     authPath: join(process.env.AUTOMATION_PI_AGENT_DIR, "auth.json"),
     modelsPath: null,
     allowModelNetwork: false,
     refreshOnCreate: false,
   });
-  for (const entry of loaded.runtime.pendingProviderRegistrations) {
-    if (entry.name === request.provider) runtime.registerProvider(entry.name, entry.config);
+  let model = runtime.getModel(request.provider, request.model);
+  // Built-in providers must not load unrelated interactive extensions.
+  if (!model) {
+    const { loadExtensions } = await load("extensions/loader.js");
+    const loaded = await loadExtensions([process.env.AUTOMATION_PI_EXTENSION], base);
+    if (loaded.errors.length || loaded.extensions.some(e => e.tools.size || e.handlers.size)) {
+      throw new Error("Provider extension must not register tools or event handlers");
+    }
+    for (const entry of loaded.runtime.pendingProviderRegistrations) {
+      if (entry.name === request.provider) runtime.registerProvider(entry.name, entry.config);
+    }
+    model = runtime.getModel(request.provider, request.model);
   }
-  const model = runtime.getModel(request.provider, request.model);
   if (!model) throw new Error("Configured pi model not found");
   console.log(JSON.stringify(await infer(runtime, model, request)));
 }

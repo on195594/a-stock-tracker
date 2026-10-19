@@ -78,3 +78,55 @@ assert.equal(calls, 5);
         timeout=20,
     )
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("builtin,unsafe", [(True, True), (False, False), (False, True)])
+def test_pi_loads_extension_only_for_missing_model(tmp_path, builtin, unsafe):
+    import json
+    import os
+
+    core = tmp_path / "dist/core"
+    (core / "extensions").mkdir(parents=True)
+    (tmp_path / "package.json").write_text('{"type":"module"}')
+    (core / "model-runtime.js").write_text(
+        "export class ModelRuntime { static async create() { return new ModelRuntime(); }"
+        f" available = {str(builtin).lower()};"
+        " getModel(provider,id) { return this.available ? {provider,id} : undefined; }"
+        " registerProvider() { this.available = true; }"
+        " async completeSimple(model) { return {...model, model:model.id,"
+        " stopReason:'stop',content:[{type:'text',text:'{}'}],usage:{}}; }}"
+    )
+    (core / "extensions/loader.js").write_text(
+        "export async function loadExtensions() {"
+        + (
+            "throw new Error('Built-in model loaded extension');"
+            if builtin
+            else "return {errors:[],extensions:[{tools:new Map(),handlers:new Map("
+            + ("[['session_start',[]]]" if unsafe else "[]")
+            + ")}],runtime:{pendingProviderRegistrations:[{name:'p',config:{}}]}};"
+        )
+        + "}"
+    )
+    request = tmp_path / "request.json"
+    request.write_text(
+        json.dumps({"provider": "p", "model": "m", "prompt": "synthetic", "timeout": 1})
+    )
+    result = subprocess.run(
+        [
+            "node",
+            str(Path(__file__).resolve().parents[1] / "scripts/automation_model_pi.mjs"),
+            str(request),
+        ],
+        env={
+            **os.environ,
+            "AUTOMATION_PI_RUNTIME": str(tmp_path),
+            "AUTOMATION_PI_AGENT_DIR": str(tmp_path),
+            "AUTOMATION_PI_EXTENSION": str(tmp_path / "provider.ts"),
+        },
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert result.returncode == (1 if unsafe and not builtin else 0), result.stderr
+    envelope = json.loads(result.stdout)
+    assert envelope.get("failed", False) == (unsafe and not builtin)
