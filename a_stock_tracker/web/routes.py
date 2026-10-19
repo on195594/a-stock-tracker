@@ -195,7 +195,7 @@ def create_app(
         if not s.login_csrf_ok(request, form.get("csrf")):
             return refused(request)
         username, password = form.get("username"), form.get("password")
-        ip = s.client_ip(request)
+        ip = s.client_ip(request, settings)
         if not (
             isinstance(username, str)
             and isinstance(password, str)

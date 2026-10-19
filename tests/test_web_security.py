@@ -499,8 +499,13 @@ def test_demo_accepts_loopback_alias_origins_only():
         assert refused.status_code == 403, origin
 
 
-ADMIN = {"admin_username": "owner", "admin_password": "p" * 16}
-LOCAL = {"x-real-ip": "172.24.0.1"}
+# The test client's peer is "testclient"; production names the Nginx container instead.
+ADMIN = {
+    "admin_username": "owner",
+    "admin_password": "p" * 16,
+    "admin_trusted_proxies": ("testclient",),
+}
+LOCAL = {"x-real-ip": "127.0.0.1"}
 PUBLIC = {"x-real-ip": "104.22.100.151"}
 
 
@@ -526,6 +531,7 @@ def admin_post(
         {"admin_password": "p" * 16, "admin_username": " "},
         {"admin_scope": "public"},
         {"admin_allowed_ips": ("150.136.58.125", "not-an-ip")},
+        {"admin_trusted_proxies": ("nginx", "bad host!")},
     ],
 )
 def test_admin_login_configuration_fails_closed(overrides):
@@ -594,6 +600,30 @@ def test_admin_login_allowlist_admits_only_listed_public_addresses(allowed, ip, 
     result = admin_post(browser, "p" * 16, {"x-real-ip": ip})
     assert result.status_code == (303 if ok else 404)
     assert (s.COOKIE in browser.cookies) is ok
+
+
+def test_admin_login_ignores_forwarded_address_from_untrusted_peers_and_private_networks():
+    # A neighbouring container can reach the app directly and forge X-Real-IP.
+    untrusted = production(**(ADMIN | {"admin_trusted_proxies": ()}))
+    browser = app_client(settings=untrusted)
+    assert "/login/admin" not in browser.get("/login", headers=LOCAL).text
+    assert admin_post(browser, "p" * 16, LOCAL).status_code == 404
+    # Shared Docker networks are private, so private addresses are no longer local.
+    trusted = app_client(settings=production(**ADMIN))
+    assert admin_post(trusted, "p" * 16, {"x-real-ip": "172.24.0.1"}).status_code == 404
+    assert s.COOKIE not in browser.cookies and s.COOKIE not in trusted.cookies
+
+
+def test_trusted_proxy_matches_address_network_or_resolved_name(monkeypatch):
+    settings = production(**(ADMIN | {"admin_trusted_proxies": ("10.9.0.0/24", "nginx")}))
+    monkeypatch.setattr(
+        s.socket, "getaddrinfo", lambda host, port: [(0, 0, 0, "", ("172.31.0.8", 0))]
+    )
+    assert s.trusted_proxy("10.9.0.7", settings)
+    assert s.trusted_proxy("172.31.0.8", settings)
+    assert not s.trusted_proxy("172.31.0.9", settings)
+    monkeypatch.setattr(s.socket, "getaddrinfo", lambda *_: (_ for _ in ()).throw(OSError()))
+    assert not s.trusted_proxy("172.31.0.8", settings)
 
 
 @pytest.mark.parametrize("csrf", ["", "forged-token"])

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import re
 import secrets
 from dataclasses import dataclass, field
 from typing import Literal
@@ -14,6 +15,8 @@ from a_stock_tracker.auth import check_production_auth_config
 LOOPBACK = ("127.0.0.1", "localhost", "::1")
 ADMIN_SCOPES = ("local", "any")
 MIN_ADMIN_PASSWORD = 16
+# A container or host name; anything else must parse as an address or network.
+PROXY_NAME = re.compile(r"[A-Za-z][A-Za-z0-9-]*(?:\.[A-Za-z0-9-]+)*")
 
 
 @dataclass(frozen=True)
@@ -31,6 +34,9 @@ class Settings:
     admin_scope: str = "local"
     # Extra public addresses or networks treated as local, e.g. this host's egress IP.
     admin_allowed_ips: tuple[str, ...] = ()
+    # Reverse proxies (addresses, networks or container hostnames) whose X-Real-IP is believed;
+    # from any other peer the header is ignored and the TCP peer is the client.
+    admin_trusted_proxies: tuple[str, ...] = ()
     # Demo sessions are signed with a per-process secret and never outlive the process.
     session_secret: str = field(default_factory=lambda: secrets.token_urlsafe(32))
 
@@ -60,6 +66,9 @@ class Settings:
             raise ValueError("ADMIN_LOGIN_SCOPE must be 'local' or 'any'")
         for network in self.admin_allowed_ips:
             ipaddress.ip_network(network, strict=False)  # ValueError on a malformed entry
+        for proxy in self.admin_trusted_proxies:
+            if not PROXY_NAME.fullmatch(proxy):
+                ipaddress.ip_network(proxy, strict=False)
         if self.admin_password and (
             not self.admin_username.strip() or len(self.admin_password) < MIN_ADMIN_PASSWORD
         ):
@@ -89,6 +98,11 @@ def settings_from_env() -> Settings:
         admin_scope=os.getenv("ADMIN_LOGIN_SCOPE", "local"),
         admin_allowed_ips=tuple(
             item.strip() for item in os.getenv("ADMIN_ALLOWED_IPS", "").split(",") if item.strip()
+        ),
+        admin_trusted_proxies=tuple(
+            item.strip()
+            for item in os.getenv("ADMIN_TRUSTED_PROXIES", "").split(",")
+            if item.strip()
         ),
         **({"session_secret": secret} if mode == "production" else {}),
     ).validate()

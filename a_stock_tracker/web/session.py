@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import ipaddress
 import secrets
+import socket
 import time
 from collections.abc import Callable
 from typing import Any
@@ -41,28 +42,48 @@ def allowed_user(settings: Settings) -> str:
     return DEMO_USER if settings.demo else settings.allowed_user_id
 
 
-def client_ip(request: Request) -> str:
+def trusted_proxy(peer: str, settings: Settings) -> bool:
+    """Whether the TCP peer is a configured reverse proxy; names resolve via container DNS."""
+    for entry in settings.admin_trusted_proxies:
+        if entry == peer:
+            return True
+        try:
+            if ipaddress.ip_address(peer) in ipaddress.ip_network(entry, strict=False):
+                return True
+            continue
+        except ValueError:
+            pass
+        try:
+            # shortcut: resolved per admin request (login pages only); cache if that ever matters.
+            if peer in {info[4][0] for info in socket.getaddrinfo(entry, None)}:
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def client_ip(request: Request, settings: Settings) -> str:
     # Nginx overwrites X-Real-IP with the client address (Cloudflare's CF-Connecting-IP only
-    # for Cloudflare peers); only host-local peers reach the app directly.
-    forwarded = request.headers.get("x-real-ip", "").strip()
-    return forwarded or (request.client.host if request.client else "")
+    # for Cloudflare peers). Other containers on the same network can reach the app directly
+    # and send any header, so it is believed only from a configured proxy.
+    peer = request.client.host if request.client else ""
+    if trusted_proxy(peer, settings):
+        return request.headers.get("x-real-ip", "").strip() or peer
+    return peer
 
 
 def is_local(request: Request, settings: Settings) -> bool:
     try:
         address: ipaddress.IPv4Address | ipaddress.IPv6Address
-        address = ipaddress.ip_address(client_ip(request))
+        address = ipaddress.ip_address(client_ip(request, settings))
     except ValueError:
         return False
     # ::ffff:a.b.c.d must match IPv4 allowlist entries.
     if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
         address = address.ipv4_mapped
-    return (
-        address.is_loopback
-        or address.is_private
-        or any(
-            address in ipaddress.ip_network(net, strict=False) for net in settings.admin_allowed_ips
-        )
+    # Private networks are not local: neighbouring containers share them.
+    return address.is_loopback or any(
+        address in ipaddress.ip_network(net, strict=False) for net in settings.admin_allowed_ips
     )
 
 
