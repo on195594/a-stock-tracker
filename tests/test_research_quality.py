@@ -61,9 +61,12 @@ def fake_model(monkeypatch, case, repaired=None, review_passed=True):
             assert payload["report"] == case[4]
             assert payload["evidence"] == case[3]
             [error] = payload["errors"]
-            assert (error["id"], error["reason"]) == ("F1", "citation_mismatch")
-            assert error["detail"]["quote_diverges_at"] == "这不是逐字原文。"
-            assert error["detail"]["source_continues"].startswith("\n经营活动产生的现金流量")
+            if error["reason"] == "structure_invalid":
+                assert error["detail"]
+            else:
+                assert (error["id"], error["reason"]) == ("F1", "citation_mismatch")
+                assert error["detail"]["quote_diverges_at"] == "这不是逐字原文。"
+                assert error["detail"]["source_continues"].startswith("\n经营活动产生的现金流量")
             return copy.deepcopy(repaired if repaired is not None else case[4])
         assert label.endswith("-verify")
         payload = json.loads(prompt.removeprefix(d.VERIFY))
@@ -221,19 +224,46 @@ def test_repair_call_failure_falls_back(tmp_path, monkeypatch, case, error):
     assert result["quality"]["repair"] == "failed"
 
 
-def test_structural_first_round_never_repairs(tmp_path, monkeypatch, case):
+@pytest.mark.parametrize("damage", ["unknown_ref", "too_many", "missing_section", "facts_type"])
+@pytest.mark.parametrize("repair_ok", [True, False])
+def test_structural_first_round_repairs_once(tmp_path, monkeypatch, case, damage, repair_ok):
+    repaired = fixed_report(case)
+    if damage == "unknown_ref":
+        case[4]["analysis"]["financial"]["facts"] = ["unknown"]
+    elif damage == "too_many":
+        for i in range(6, 10):
+            case[4]["facts"].append({**case[4]["facts"][-1], "id": f"F{i}"})
+    elif damage == "missing_section":
+        del case[4]["analysis"]["summary"]
+    else:
+        case[4]["facts"] = None
+    calls, _ = fake_model(monkeypatch, case, repaired if repair_ok else case[4])
+    result = run_case(tmp_path, case)
+    assert calls[:2] == ["600001.SH-generate", "600001.SH-repair"]
+    if repair_ok:
+        assert_published(result, 5)
+        assert calls[-1] == "600001.SH-verify"
+        assert len(calls) == 3
+    else:
+        assert_hidden(result)
+        assert len(calls) == 2
+        assert result["diagnostic"]["category"] == "structure_invalid"
+
+
+def test_wrong_company_never_repairs(tmp_path, monkeypatch, case):
+    case[4]["code"] = "000001.SZ"
+    calls, _ = fake_model(monkeypatch, case)
+    assert_hidden(run_case(tmp_path, case))
+    assert calls == ["600001.SH-generate"]
+
+
+def test_structural_repair_reserves_review_budget(tmp_path, monkeypatch, case):
+    case[1]["model_calls"] = 8
     case[4]["analysis"]["financial"]["facts"] = ["unknown"]
     calls, _ = fake_model(monkeypatch, case)
     result = run_case(tmp_path, case)
     assert_hidden(result)
-    assert result["diagnostic"]["stage"] == "citation_validation"
-    assert result["quality"] == {
-        "generated": 5,
-        "repair": "none",
-        "dropped": [],
-        "unformed": {},
-        "passed": 0,
-    }
+    assert result["quality"]["repair"] == "skipped_budget"
     assert calls == ["600001.SH-generate"]
 
 
@@ -262,10 +292,13 @@ def test_failure_before_generation_has_no_quality(tmp_path, monkeypatch, case):
 
 
 @pytest.mark.parametrize("initial_calls", [0, 7])
-@pytest.mark.parametrize("crash_repair", [False, True])
+@pytest.mark.parametrize("crash_repair,structural", [(False, False), (True, False), (False, True)])
 def test_real_model_call_resume_never_recharges_repair(
-    tmp_path, monkeypatch, case, crash_repair, initial_calls
+    tmp_path, monkeypatch, case, crash_repair, initial_calls, structural
 ):
+    repaired = fixed_report(case)
+    if structural:
+        case[4]["analysis"]["financial"]["facts"] = ["unknown"]
     # 7 leaves room for exactly generate, repair and verify; resume must replay the repair.
     case[1]["model_calls"] = initial_calls
     monkeypatch.setattr(d, "model_command", lambda: (["synthetic"], tmp_path))
@@ -300,7 +333,7 @@ def test_real_model_call_resume_never_recharges_repair(
                 "issues": [],
             }
         else:
-            response = fixed_report(case) if "-repair." in path.name else case[4]
+            response = repaired if "-repair." in path.name else case[4]
         return SimpleNamespace(
             returncode=0,
             stdout=json.dumps(
