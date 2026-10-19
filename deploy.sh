@@ -33,18 +33,11 @@ if [[ -v PUBLICATION_WEB_ENABLED ]]; then
 fi
 research_enabled="${RESEARCH_WEB_ENABLED-}"
 # Explicit opt-in only; config-file presence alone never enables the bridge.
-compose=(docker compose)
-# Keep the ordinary interpolation environment when adding the bridge env file.
-# Compose loads these in order; exported environment variables still take precedence.
-if [[ -f .env ]]; then
-    compose+=(--env-file .env)
-fi
 if [[ "$research_enabled" == 1 ]]; then
-    if [[ ! -f .research-web.env || ! -f docker-compose.research.yml ]]; then
-        echo 'Missing .research-web.env or docker-compose.research.yml bridge configuration.' >&2
+    if [[ ! -f docker-compose.research.yml ]]; then
+        echo 'Missing docker-compose.research.yml bridge configuration.' >&2
         exit 1
     fi
-    compose+=(--env-file .research-web.env)
 fi
 # Omission may never silently remove the bridge from an existing (even stopped) web.
 # Inspect only presence markers: never print the container environment or its token.
@@ -59,7 +52,7 @@ if [[ ! -v RESEARCH_WEB_ENABLED ]]; then
     fi
 fi
 research_enabled="${research_enabled:-0}"
-compose+=(-f docker-compose.yml)
+compose=(docker compose --env-file .web.env -f docker-compose.yml)
 if [[ "$research_enabled" == 1 ]]; then
     compose+=(-f docker-compose.research.yml)
 fi

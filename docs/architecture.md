@@ -74,5 +74,5 @@ Web 不持行情或模型凭据，不打开数据库，不读取研究根目录�
 
 - **Web 容器**：只挂载私有、只含 socket 的桥目录。
 - **接收器**：从宿主工作区启动批处理，因此任务运行中不得改动该工作区；升级须按[运维](operations.md#接收器升级与回滚)单独授权。
-- **凭据**：`.research.env`、`.research-web.env`、`.research-mcp.env` 不进 Git，也不进镜像。
+- **凭据**：`.research.env`、`.web.env`、`.research-mcp.env` 不进 Git，也不进镜像。
 - **历史数据**：历史数据库、快照、日志与备份留在宿主目录，不提供在线读写入口。

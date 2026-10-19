@@ -69,7 +69,7 @@ def test_deploy_success_and_config_rollback(tmp_path: Path, research_bridge: boo
     assert site.read_text() == "new config\n"
     assert len(list(site.parent.glob("stock.conf.bak.*"))) == 1
     calls = log.read_text().splitlines()
-    assert any("--env-file .research-web.env" in line for line in calls) is research_bridge
+    assert any("-f docker-compose.research.yml" in line for line in calls) is research_bridge
     build = next(i for i, line in enumerate(calls) if " build web" in line)
     up = next(i for i, line in enumerate(calls) if " up -d " in line and line.endswith(" web"))
     reload = next(i for i, line in enumerate(calls) if "nginx -s reload" in line)
@@ -100,7 +100,6 @@ def deployment(tmp_path: Path):
     for name in (
         ".web.env",
         "docker-compose.yml",
-        ".research-web.env",
         "docker-compose.research.yml",
     ):
         (root / name).write_text("# synthetic configuration\n")
@@ -174,7 +173,7 @@ def test_omitted_flag_never_enables_from_config_files(deployment, existing):
     _, _, log, run = deployment
     result = run(EXISTING=existing)
     assert result.returncode == 0, result.stderr
-    assert "--env-file" not in log.read_text()
+    assert "docker-compose.research.yml" not in log.read_text()
     assert "a_stock_tracker.research_client" not in log.read_text()
 
 
@@ -207,20 +206,19 @@ def test_explicit_choice_overrides_existing_bridge(deployment, flag):
     result = run(RESEARCH_WEB_ENABLED=flag, EXISTING="bridge")
     assert result.returncode == 0, result.stderr
     calls = log.read_text()
-    assert ("--env-file .research-web.env" in calls) is (flag == "1")
+    assert ("-f docker-compose.research.yml" in calls) is (flag == "1")
     assert ("a_stock_tracker.research_client" in calls) is (flag == "1")
     if flag == "1":
         assert calls.index(" up -d ") < calls.index("a_stock_tracker.research_client")
         assert calls.index("a_stock_tracker.research_client") < calls.index("nginx -s reload")
 
 
-@pytest.mark.parametrize("missing", [".research-web.env", "docker-compose.research.yml"])
-def test_enabled_bridge_missing_configuration_stops_before_changes(deployment, missing):
+def test_enabled_bridge_missing_configuration_stops_before_changes(deployment):
     root, site, log, run = deployment
-    (root / missing).unlink()
+    (root / "docker-compose.research.yml").unlink()
     result = run(RESEARCH_WEB_ENABLED="1")
     assert result.returncode != 0
-    assert "Missing .research-web.env" in result.stderr
+    assert "Missing docker-compose.research.yml" in result.stderr
     assert log.read_text() == ""
     assert site.read_text() == "old config\n"
 
@@ -244,23 +242,15 @@ def test_probe_failure_does_not_reload_or_report_success(deployment):
     assert site.read_text() == "old config\n"
 
 
-@pytest.mark.parametrize("dotenv", [False, True])
 @pytest.mark.parametrize("research", ["0", "1"])
-def test_all_feature_combinations_preserve_environment(deployment, research, dotenv):
+def test_all_feature_combinations_preserve_environment(deployment, research):
     root, _, log, run = deployment
-    if dotenv:
-        (root / ".env").write_text("SYNTHETIC_SETTING=1\n")
     result = run(RESEARCH_WEB_ENABLED=research)
     assert result.returncode == 0, result.stderr
     calls = log.read_text().splitlines()
     compose = [line for line in calls if line.startswith("docker compose ")]
     assert len(compose) == 3  # config, build, up all use the same fixed configuration.
-    expected = "docker compose"
-    if dotenv:
-        expected += " --env-file .env"
-    if research == "1":
-        expected += " --env-file .research-web.env"
-    expected += " -f docker-compose.yml"
+    expected = "docker compose --env-file .web.env -f docker-compose.yml"
     if research == "1":
         expected += " -f docker-compose.research.yml"
     assert compose == [
