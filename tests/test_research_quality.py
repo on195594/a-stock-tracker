@@ -609,7 +609,7 @@ def test_regressed_repair_keeps_better_first_round(tmp_path, monkeypatch, case):
 def number_case():
     packet, report = __import__("tests.test_automation", fromlist=["x"]).packet_and_report()
     quote = "营业收入（元） 16,703,694,265.38 15,181,329,651.13 10.03% 经营活动产生的现金流量净额 -1,107,268,584.24"
-    packet["documents"][0]["pages"][0]["text"] += "\n" + quote
+    packet["documents"][0]["pages"].append({"page": 2, "text": quote})
     packet["documents"][0].update(period="2026-06-30", announced="2026-08-15")
     packet["structured"]["market_snapshot"] = {
         "date": "2026-10-16",
@@ -620,7 +620,7 @@ def number_case():
         {
             "id": "F5",
             "document": "123",
-            "page": 1,
+            "page": 2,
             "quote": quote,
             "claim": "营业收入同比增长10.03%",
         }
@@ -713,3 +713,44 @@ def test_number_guard_keeps_percent_and_amount_apart_and_accepts_cited_prior_yea
     # A percentage cannot be restated as an amount, nor a scaled amount as a percentage.
     report["analysis"]["financial"]["text"] = "净利润15亿元，订单下滑37.5%。"
     assert d.analysis_number_errors(report, packet) == {"financial": ["15", "37.5%"]}
+
+
+def test_percent_column_and_page_level_number_sources():
+    # Production 603606.SH: a one-row quote under a "(%)" header, and section figures that sit
+    # on the cited page next to a narrower quote.
+    page = "本报告期比上年同期增减(%)\n营业收入 5,799,552,532.02 4,432,278,764.22 30.85\n归属于上市公司股东的净利润 564,785,958.32 472,962,984.86 19.41"
+    fact = {
+        "id": "F1",
+        "document": "1",
+        "page": 1,
+        "quote": "营业收入 5,799,552,532.02 4,432,278,764.22 30.85",
+        "claim": "营业收入同比增减为30.85%",
+    }
+    assert d.unquoted_numbers(fact, None, page) == []
+    assert d.unquoted_numbers(fact, None, "") == ["30.85%"]
+    assert d.unquoted_numbers(fact | {"claim": "营业收入同比增减为-30.85%"}, None, page) == [
+        "-30.85%"
+    ]
+    packet = {
+        "structured": {"code": "603606.SH"},
+        "documents": [
+            {
+                "id": "1",
+                "period": "2026-06-30",
+                "announced": "2026-08-05",
+                "pages": [{"page": 1, "text": page}],
+            }
+        ],
+    }
+    report = {
+        "facts": [fact],
+        "analysis": {
+            "financial": {
+                "text": "收入57.9955亿元，增长30.85%；归母净利润5.6479亿元，增长19.41%。",
+                "facts": ["F1"],
+            }
+        },
+    }
+    assert d.analysis_number_errors(report, packet) == {}
+    report["analysis"]["financial"]["text"] = "归母净利润6.1亿元。"
+    assert d.analysis_number_errors(report, packet) == {"financial": ["6.1"]}
