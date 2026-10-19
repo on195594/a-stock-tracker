@@ -5,6 +5,7 @@
 ## 未发布：管理员密码登录
 
 - 可选的管理员账号密码登录：`ADMIN_USERNAME` / `ADMIN_PASSWORD` / `ADMIN_LOGIN_SCOPE`（`local` 默认，仅回环、私网或 `ADMIN_ALLOWED_IPS` 白名单来源；`any` 公网开放），签发与 GitHub 登录相同的所有者会话，供 AI 在生产环境验收与研究；未设密码时关闭。按用户要求不做哈希、限频、锁定与轮换，只在启动时校验用户名非空、密码至少 16 字符。
+- 审查修复（Codex）：管理员登录 POST 增加登录前 CSRF 令牌（与浏览器 cookie 绑定），符合“所有 POST 校验 CSRF”的安全基线；`::ffff:` IPv4 映射地址按 IPv4 匹配白名单；白名单测试改用公网地址，确保网段匹配被真实覆盖。
 - Nginx 对 Cloudflare 公布网段启用 `real_ip`（`CF-Connecting-IP`），`X-Real-IP` 与访问日志记录真实客户端地址。
 - README 发布门槛去掉真机验收，改为生产浏览器主流程（项目以网页为主，兼容手机浏览器即可）。
 

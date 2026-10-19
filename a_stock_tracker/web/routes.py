@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import secrets
 import uuid
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -136,7 +137,12 @@ def create_app(
             return RedirectResponse("/", status_code=303)
         error = LOGIN_ERRORS.get(request.query_params.get("error", ""))
         admin = s.admin_enabled(request, settings)
-        return render(request, None, "login.html", {"error": error, "admin": admin})
+        token = secrets.token_urlsafe(24) if admin else ""
+        context = {"error": error, "admin": admin, "login_csrf": token}
+        response = render(request, None, "login.html", context)
+        if admin:
+            s.issue_login_csrf(response, settings, token)
+        return response
 
     @app.get("/oauth/start")
     async def oauth_start() -> Response:
@@ -184,6 +190,8 @@ def create_app(
         if not origin.same_origin(headers):
             return refused(request)
         form = await request.form()
+        if not s.login_csrf_ok(request, form.get("csrf")):
+            return refused(request)
         username, password = form.get("username"), form.get("password")
         ip = s.client_ip(request)
         if not (
@@ -196,6 +204,7 @@ def create_app(
         log.warning("admin login accepted from %s", ip)
         response = RedirectResponse("/", status_code=303)
         s.start_session(response, settings, settings.allowed_user_id)
+        s.clear_cookie(response, settings, s.LOGIN_CSRF_COOKIE)
         return response
 
     @app.post("/logout")

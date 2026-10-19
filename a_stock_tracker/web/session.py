@@ -29,6 +29,7 @@ from a_stock_tracker.web.settings import Settings
 
 COOKIE = "stock_session"
 STATE_COOKIE = "stock_oauth_state"
+LOGIN_CSRF_COOKIE = "stock_login_csrf"
 STATE_SECONDS = 600
 MAX_OAUTH_STATES = 128
 DEMO_USER = "0"
@@ -49,9 +50,13 @@ def client_ip(request: Request) -> str:
 
 def is_local(request: Request, settings: Settings) -> bool:
     try:
+        address: ipaddress.IPv4Address | ipaddress.IPv6Address
         address = ipaddress.ip_address(client_ip(request))
     except ValueError:
         return False
+    # ::ffff:a.b.c.d must match IPv4 allowlist entries.
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+        address = address.ipv4_mapped
     return (
         address.is_loopback
         or address.is_private
@@ -65,6 +70,16 @@ def admin_enabled(request: Request, settings: Settings) -> bool:
     if settings.demo or not settings.admin_password:
         return False
     return settings.admin_scope == "any" or is_local(request, settings)
+
+
+def issue_login_csrf(response: Response, settings: Settings, token: str) -> None:
+    """Pre-login CSRF: the form echoes a token that must match this browser's cookie."""
+    set_cookie(response, settings, LOGIN_CSRF_COOKIE, token, STATE_SECONDS)
+
+
+def login_csrf_ok(request: Request, supplied: Any) -> bool:
+    bound = request.cookies.get(LOGIN_CSRF_COOKIE, "")
+    return isinstance(supplied, str) and bool(bound) and hmac.compare_digest(supplied, bound)
 
 
 def admin_ok(settings: Settings, username: str, password: str) -> bool:

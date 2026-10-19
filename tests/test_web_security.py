@@ -27,6 +27,7 @@ Mapping from the retired Flet tests/test_app.py security cases:
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 
@@ -499,10 +500,16 @@ LOCAL = {"x-real-ip": "172.24.0.1"}
 PUBLIC = {"x-real-ip": "104.22.100.151"}
 
 
-def admin_post(browser: TestClient, password: str, ip: dict[str, str], **headers: str):
+def admin_post(
+    browser: TestClient, password: str, ip: dict[str, str], csrf: str | None = None, **headers: str
+):
+    """Load the login page first (as a browser would) so the pre-login CSRF pair is set."""
+    if csrf is None:
+        found = re.search(r'name="csrf" value="([^"]*)"', browser.get("/login", headers=ip).text)
+        csrf = found.group(1) if found else ""
     return browser.post(
         "/login/admin",
-        data={"username": "owner", "password": password},
+        data={"username": "owner", "password": password, "csrf": csrf},
         headers=SAME | ip | headers,
         follow_redirects=False,
     )
@@ -565,10 +572,37 @@ def test_admin_login_scope_limits_public_clients(scope, public_ok):
     assert ("/login/admin" in app_client(settings=production(**ADMIN)).get("/login").text) is False
 
 
-def test_admin_login_allowlist_admits_only_listed_public_addresses():
-    settings = production(**ADMIN, admin_allowed_ips=("150.136.58.125", "203.0.113.0/24"))
-    for ip, ok in (("150.136.58.125", True), ("203.0.113.9", True), ("150.136.58.126", False)):
-        browser = app_client(settings=settings)
-        result = admin_post(browser, "p" * 16, {"x-real-ip": ip})
-        assert result.status_code == (303 if ok else 404), ip
-        assert (s.COOKIE in browser.cookies) is ok, ip
+@pytest.mark.parametrize(
+    "allowed, ip, ok",
+    [
+        (("150.136.58.125",), "150.136.58.125", True),
+        (("150.136.58.125",), "150.136.58.126", False),
+        (("150.136.58.125",), "::ffff:150.136.58.125", True),
+        (("150.136.58.125",), "::ffff:150.136.58.126", False),
+        (("8.8.8.0/24",), "8.8.8.9", True),
+        (("8.8.8.0/24",), "8.8.9.1", False),
+        ((), "8.8.8.9", False),
+    ],
+)
+def test_admin_login_allowlist_admits_only_listed_public_addresses(allowed, ip, ok):
+    # Public addresses only, so is_private never short-circuits the allowlist check.
+    browser = app_client(settings=production(**ADMIN, admin_allowed_ips=allowed))
+    result = admin_post(browser, "p" * 16, {"x-real-ip": ip})
+    assert result.status_code == (303 if ok else 404)
+    assert (s.COOKIE in browser.cookies) is ok
+
+
+@pytest.mark.parametrize("csrf", ["", "forged-token"])
+def test_admin_login_requires_the_browser_bound_csrf_token(csrf):
+    browser = app_client(settings=production(**ADMIN))
+    browser.get("/login", headers=LOCAL)
+    assert s.LOGIN_CSRF_COOKIE in browser.cookies
+    assert admin_post(browser, "p" * 16, LOCAL, csrf=csrf).status_code == 403
+    # A token copied from another browser does not match this browser's cookie.
+    other = app_client(settings=production(**ADMIN))
+    page = other.get("/login", headers=LOCAL).text
+    foreign = re.search(r'name="csrf" value="([^"]*)"', page).group(1)
+    assert admin_post(browser, "p" * 16, LOCAL, csrf=foreign).status_code == 403
+    assert s.COOKIE not in browser.cookies and not ACTIVE_SESSIONS
+    done = admin_post(browser, "p" * 16, LOCAL)
+    assert done.status_code == 303 and s.COOKIE in browser.cookies
