@@ -240,7 +240,7 @@ PRICE_FAILURE_REASONS = {
     "Mismatched price security": ("price_identity", "日线证券代码与目标不一致；须核查来源。"),
 }
 
-PRICE_FAILURE_MESSAGES = {cat: msg for cat, msg in PRICE_FAILURE_REASONS.values()} | {
+PRICE_FAILURE_MESSAGES = dict(PRICE_FAILURE_REASONS.values()) | {
     "missing_sessions": "日线数量不足，须核查停牌、缺失交易日或数据覆盖。",
     "session_mismatch": "日线日期重复、过旧或缺失，须核查交易日覆盖。",
     "invalid_number": "价格或成交量数值无效、非正或非有限值；须核查停牌与来源字段。",

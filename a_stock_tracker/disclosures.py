@@ -576,7 +576,7 @@ def analysis_number_errors(report: dict[str, Any], packet: dict[str, Any]) -> di
     report_dates = " ".join(
         str(doc.get(k, "")) for doc in packet.get("documents", []) for k in ("period", "announced")
     )
-    years = {y for y in YEAR_RE.findall(report_dates)} | {
+    years = set(YEAR_RE.findall(report_dates)) | {
         str(packet["structured"].get("valuation_date") or "")[:4]
     }
     errors = {}

@@ -289,7 +289,7 @@ def test_session_cookie_attributes():
 
 def test_unauthenticated_pages_redirect_and_json_is_401():
     browser = app_client()
-    for path in ("/", "/analysis", "/settings", "/analysis/" + "a" * 32):
+    for path in ("/", "/analysis", "/settings", "/stock/600001.SH", "/analysis/" + "a" * 32):
         response = browser.get(path, follow_redirects=False)
         assert response.status_code == 303 and response.headers["location"] == "/login"
     state = browser.get("/analysis/" + "a" * 32 + "/state.json")

@@ -12,7 +12,7 @@ def report_row(**changes):
         "update_flag": "0",
         "source": "tushare.fina_indicator",
         "acquired_at": "2026-09-20T16:00:00+08:00",
-        **{field: 2.0 for field in REPORT_FIELDS},
+        **dict.fromkeys(REPORT_FIELDS, 2.0),
         **changes,
     }
 

@@ -31,7 +31,7 @@ def records(code):
             "ann_date": f"{y + 1}0430",
             "update_flag": "0",
             "roe_waa": 10 + y % 3,
-            **{k: 1 for k in a.REPORT_FIELDS},
+            **dict.fromkeys(a.REPORT_FIELDS, 1),
         }
         for y in (2023, 2024, 2025)
     ]
@@ -366,9 +366,8 @@ def test_pdf_missing_page_or_identity_cannot_publish(tmp_path, monkeypatch, page
 def test_page_budget_is_explicit(monkeypatch):
     monkeypatch.setattr(d, "MAX_TEXT", 60)
     document = {"id": "123", "pages": [{"page": i + 1, "text": "财报正文" * 10} for i in range(3)]}
-    row = {
-        k: None
-        for k in (
+    row = dict.fromkeys(
+        (
             "code",
             "name",
             "industry",
@@ -377,8 +376,9 @@ def test_page_budget_is_explicit(monkeypatch):
             "annual_roes",
             "roe_mean",
             "research_report",
-        )
-    }
+        ),
+        None,
+    )
     packet = d.evidence_packet([document], row)
     assert len(packet["documents"][0]["pages"]) == 1 and len(packet["omitted_pages"]) == 2
 

@@ -124,7 +124,12 @@ class ResearchClient:
     ) -> list[RunState]:
         params = {
             key: value
-            for key, value in dict(mode=mode, code=code, limit=str(limit), cursor=cursor).items()
+            for key, value in {
+                "mode": mode,
+                "code": code,
+                "limit": str(limit),
+                "cursor": cursor,
+            }.items()
             if value is not None
         }
         return self._read(RunList, "/runs", params).runs

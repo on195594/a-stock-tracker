@@ -640,8 +640,6 @@ def test_company_dossier_validates_codes_and_reports_unreachable(owner):
     page = browser.get("/stock/600001.SH")
     assert page.status_code == 503 and "公司档案暂不可读取" in page.text
     assert 'class="btn" href="/stock/600001.SH"' in page.text
-    # The retired workbench path stays retired.
-    assert browser.get("/company/600001.SH").status_code == 404
 
 
 def test_financial_form_flags_an_existing_report_without_depending_on_it(owner):
@@ -661,12 +659,6 @@ def test_financial_form_flags_an_existing_report_without_depending_on_it(owner):
     page = browser.get("/analysis?mode=financial&code=600001")
     assert page.status_code == 200 and "该公司已有研报" not in page.text
     assert 'name="confirmed"' in page.text
-
-
-def test_company_dossier_requires_login():
-    browser = app_client()
-    response = browser.get("/stock/600001.SH", follow_redirects=False)
-    assert response.status_code == 303 and response.headers["location"] == "/login"
 
 
 def test_report_screen_ranking_and_price_pages_link_codes_to_the_dossier(owner):

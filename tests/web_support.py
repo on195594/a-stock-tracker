@@ -67,7 +67,7 @@ class FakeClient:
         limit: int = 10,
         cursor: str | None = None,
     ) -> list[RunState]:
-        self.recent_calls.append(dict(mode=mode, code=code, limit=limit, cursor=cursor))
+        self.recent_calls.append({"mode": mode, "code": code, "limit": limit, "cursor": cursor})
         self._maybe_fail("recent")
         if self.recent_runs is not None:
             # Same filters as the receiver; programmed runs are already newest first.

@@ -353,7 +353,9 @@ class ResearchStore:
         limit: int = 10,
         cursor: str | None = None,
     ) -> list[dict[str, Any]]:
-        RecentRunsQuery.model_validate(dict(mode=mode, code=code, limit=limit, cursor=cursor))
+        RecentRunsQuery.model_validate(
+            {"mode": mode, "code": code, "limit": limit, "cursor": cursor}
+        )
         # Filter and page compact chain metadata before loading full states/results.
         chains: dict[str, dict[str, Any]] = {}
         metadata = list(self.metadata())

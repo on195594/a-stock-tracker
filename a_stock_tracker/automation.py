@@ -350,7 +350,7 @@ def scan(
                 raise ScreenError("Scan result identity conflict")
             result_rows.append(result)
             continue
-        elif path.exists():
+        if path.exists():
             result = read_state(path)["result"]  # recover a published result before cursor commit
         elif original["status"] != "pending" or (frozen["sample"] and code not in frozen["sample"]):
             result_rows.append(original)
