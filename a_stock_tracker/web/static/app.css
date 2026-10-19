@@ -438,6 +438,7 @@ a {
 }
 
 input[type="text"],
+input[type="password"],
 input:not([type]),
 textarea,
 select {

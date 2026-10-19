@@ -60,7 +60,10 @@ def fake_model(monkeypatch, case, repaired=None, review_passed=True):
             payload = json.loads(prompt.removeprefix(d.REPAIR))
             assert payload["report"] == case[4]
             assert payload["evidence"] == case[3]
-            assert payload["errors"] == [{"id": "F1", "reason": "citation_mismatch"}]
+            [error] = payload["errors"]
+            assert (error["id"], error["reason"]) == ("F1", "citation_mismatch")
+            assert error["detail"]["quote_diverges_at"] == "这不是逐字原文。"
+            assert error["detail"]["source_continues"].startswith("\n经营活动产生的现金流量")
             return copy.deepcopy(repaired if repaired is not None else case[4])
         assert label.endswith("-verify")
         payload = json.loads(prompt.removeprefix(d.VERIFY))
@@ -554,3 +557,49 @@ def test_scoped_complete_preserved_with_omitted_pages(tmp_path, monkeypatch, cas
     assert result["evidence_review"] == "passed"
     summary = d.report_summary_status(d.structured_report(result))
     assert "有 2 页原文未纳入分析，结论范围受限" in summary
+
+
+def test_citation_details_locate_skipped_table_line(case):
+    # Production 002236.SZ: a multi-row table quote silently dropped a wrapped "（元）" line.
+    table = (
+        "营业收入（元）           16,703,694,265.38    15,181,329,651.13                10.03%\n"
+        "归属于上市公司股东的净利润\n"
+        "                   2,382,974,277.66     2,475,566,750.61                 -3.74%\n"
+        "（元）\n"
+        "归属于上市公司股东的扣除非\n"
+        "                   1,944,242,113.86     1,795,933,411.70                 8.26%\n"
+    )
+    case[3]["documents"][0]["pages"][0]["text"] += "\n" + table
+    report = fixed_report(case)
+    report["facts"][0]["quote"] = table.replace(
+        "（元）\n归属于上市公司股东的扣除非", "归属于上市公司股东的扣除非"
+    )
+    report["facts"][1]["claim"] = "2024年" + report["facts"][1]["claim"]
+    report["facts"][2]["page"] = 9
+    errors = d.citation_errors(report, case[3])
+    assert errors == {
+        "F1": "citation_mismatch",
+        "F2": "numeric_mismatch",
+        "F3": "citation_mismatch",
+    }
+    details = {e["id"]: e for e in d.citation_details(report, case[3], errors)}
+    skipped = details["F1"]["detail"]
+    assert skipped["quote_diverges_at"].startswith("归属于上市公司股东的扣除非")
+    assert skipped["source_continues"].startswith("\n（元）\n归属于上市公司股东的扣除非")
+    assert details["F2"]["detail"] == {"numbers_not_in_quote": ["2024"]}
+    assert details["F3"]["detail"] == {"matched_chars": 0, "note": "引用的页不存在"}
+    # Diagnostics never relax the reason codes used for pruning.
+    assert d.citation_errors(report, case[3]) == errors
+
+
+def test_regressed_repair_keeps_better_first_round(tmp_path, monkeypatch, case):
+    repaired = fixed_report(case)
+    for fact in repaired["facts"][1:4]:
+        fact["quote"] += "修复改坏。"
+    calls, _ = fake_model(monkeypatch, case, repaired)
+    result = run_case(tmp_path, case)
+    assert_published(result, 4)
+    assert result["quality"]["repair"] == "repaired"
+    assert result["quality"]["dropped"] == [{"id": "F1", "reason": "citation_mismatch"}]
+    assert [f["id"] for f in result["report"]["facts"]] == ["F2", "F3", "F4", "F5"]
+    assert calls[-1].endswith("-verify")
