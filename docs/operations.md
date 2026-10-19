@@ -139,7 +139,7 @@ systemctl --user disable --now a-stock-tracker-research.service
 
 ## 价格纪律参考批处理（维护与高级使用）
 
-批处理与 Web 分离；打开页面不请求行情或模型。demo 使用明确标记的合成资料，包含较大距离、缺口和过期状态。真实运行须另行授权，并准备环境变量 `TUSHARE_TOKEN` 及 TuShare `daily/index_daily/stock_basic/trade_cal` 权限；不需要模型，不自动读取 `.worker.env`。首次 root 须全新、私有（0700），不要指向历史私人目录。
+批处理与 Web 分离；打开页面不请求行情或模型。demo 使用明确标记的合成资料，包含较大距离、缺口和过期状态。真实运行须另行授权，并准备环境变量 `TUSHARE_TOKEN` 及 TuShare `daily/index_daily/stock_basic/trade_cal` 权限；不需要模型，不自动读取账户配置。首次 root 须全新、私有（0700），不要指向历史私人目录。
 
 ```bash
 # 用最近7天内已完成的交易日替换 YYYY-MM-DD；当日批次须在上海时间18:00以后
@@ -165,7 +165,7 @@ systemctl --user disable --now a-stock-tracker-research.service
 
 网页门槛对应的 CLI 是 `--pb-mv-screen --max-research 0`，新批次与续跑均须带此标志；不带标志的命令保留原始全市场/样本规则。以下命令仅为示例，不构成真实请求授权。
 
-不自动读取账户配置或 `.worker.env`。需要环境中的 `TUSHARE_TOKEN`；生成报告另需现有模型授权、已安装并配置的 Hermes 或 pi 运行时，以及 `pdfinfo/pdftotext`。只扫描不调用模型。运行时配置见上文管理员配置，provider/model 必须明确且与冻结值一致。以下是真实请求示例，不是执行授权；运行前须确认累计请求预算、模型身份及费用边界。
+不自动读取账户配置。需要环境中的 `TUSHARE_TOKEN`；生成报告另需现有模型授权、已安装并配置的 Hermes 或 pi 运行时，以及 `pdfinfo/pdftotext`。只扫描不调用模型。运行时配置见上文管理员配置，provider/model 必须明确且与冻结值一致。以下是真实请求示例，不是执行授权；运行前须确认累计请求预算、模型身份及费用边界。
 
 ```bash
 # 以下以 Hermes 为例；已配置 pi 时使用对应 pi 环境

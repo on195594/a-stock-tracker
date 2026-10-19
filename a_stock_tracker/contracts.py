@@ -217,25 +217,6 @@ class Quality(BaseModel):
     passed: int | None = None
 
 
-class ReportView(BaseModel):
-    model_config = ConfigDict(extra="allow", strict=True)
-
-    code: str
-    name: str | None = None
-    status: str
-    evidence_review: str | None = None
-    rule: str | None = None
-    quality: Quality | None = None
-    documents: list[dict[str, str | None]] = Field(default_factory=list)
-    clues: dict[str, Any] = Field(default_factory=dict)
-    analysis: dict[str, Section] = Field(default_factory=dict)
-    facts: list[Fact] = Field(default_factory=list)
-    gaps: list[str] = Field(default_factory=list)
-    omitted_pages: int | None = None
-    diagnostic: dict[str, Any] | None = None
-    error: str | None = None
-
-
 class ReportSummary(BaseModel):
     model_config = ConfigDict(extra="allow", strict=True)
 

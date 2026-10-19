@@ -123,7 +123,6 @@ def result_summary(result: dict[str, Any]) -> dict[str, Any]:
                             "expires",
                             "expired",
                             "levels",
-                            "adjustments",
                             "reasons",
                         )
                         if k in row

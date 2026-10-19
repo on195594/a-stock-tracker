@@ -41,6 +41,7 @@ def test_conditions_are_computed_and_not_claimed_triggered():
     assert row["expires"] == packet["future_sessions"][-1]
     assert "观察线" in row["facts"]["condition"]
     assert "不是最大损失承诺" in row["facts"]["distance"]
+    assert row["adjustments"] == [] and "adjustment" not in row["facts"]
 
 
 @pytest.mark.parametrize(
@@ -117,11 +118,6 @@ def test_ex_rights_break_is_forward_adjusted_and_disclosed():
     )
     # The disclosure is not a level, so expiry never blanks it.
     assert "adjustment" not in EXPIRED_FACTS
-
-
-def test_unbroken_series_has_no_adjustment_fact():
-    row = swing.evaluate(demo_packet())
-    assert row["adjustments"] == [] and "adjustment" not in row["facts"]
 
 
 @pytest.mark.parametrize(

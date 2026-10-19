@@ -19,7 +19,6 @@ from a_stock_tracker.contracts import (
     Quality,
     RankingPage,
     ReportList,
-    ReportView,
     Section,
     ServiceInfo,
 )
@@ -565,11 +564,8 @@ def test_projection_contracts_preserve_missing_and_extra_fields():
     }
     report = structured_report({"code": "600519.SH", "status": "failed"})
     assert report["rule"] is None and report["name"] is None
-    assert ReportView.model_validate(report).name is None
-    assert ReportView.model_validate(report).model_dump(exclude_unset=True) == report
     named_report = structured_report({"code": "600519.SH", "name": "贵州茅台", "status": "failed"})
     assert named_report["name"] == "贵州茅台"
-    assert ReportView.model_validate(named_report).name == "贵州茅台"
     for model, value in (
         (Fact, fact),
         (Section, {"text": "text", "facts": ["F1"], "future": True}),
@@ -577,14 +573,6 @@ def test_projection_contracts_preserve_missing_and_extra_fields():
         (PriceReference, {"code": "600519.SH", "status": "gap", "levels": None, "future": True}),
     ):
         assert model.model_validate(value).model_dump(exclude_unset=True) == value
-    report.update(
-        evidence_review="passed",
-        rule=TEMPLATE,
-        quality={"generated": 1, "passed": 1},
-        analysis={"business": {"text": "text", "facts": ["F1"]}},
-        facts=[fact],
-    )
-    assert ReportView.model_validate(report).model_dump(exclude_unset=True) == report
 
 
 @pytest.mark.parametrize(
