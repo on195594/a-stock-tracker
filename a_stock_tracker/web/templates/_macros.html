@@ -33,7 +33,7 @@
 
 {# Each fact id links to its source fact below; app.js opens the collapsed list. #}
 {% macro citations(code, ids) -%}
-<p class="muted">引用：{% for fid in ids %}<a class="citation" href="#fact-{{ code }}-{{ fid }}">{{ fid }}</a>{% if not loop.last %}、{% endif %}{% endfor %}</p>
+<p class="muted">引用：{% for fid in ids %}{% if fid == 'MKT' %}行情快照{% else %}<a class="citation" href="#fact-{{ code }}-{{ fid }}">{{ fid }}</a>{% endif %}{% if not loop.last %}、{% endif %}{% endfor %}</p>
 {%- endmacro %}
 
 {# Perforated line between a stub head and its body; decorative only. #}
