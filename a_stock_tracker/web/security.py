@@ -13,6 +13,9 @@ CSP = (
     "object-src 'none'; img-src 'self'"
 )
 CSP_BYTES = CSP.encode()
+# no-transform keeps proxies (Cloudflare) from rewriting pages, e.g. injecting an
+# analytics beacon the CSP would block; the origin Nginx already gzips HTML.
+PRIVATE_CACHE = b"no-store, no-transform"
 SECURITY_HEADERS = (
     (b"content-security-policy", CSP_BYTES),
     (b"x-content-type-options", b"nosniff"),
@@ -22,7 +25,7 @@ SECURITY_HEADERS = (
 )
 PLAIN_HEADERS = (
     (b"content-type", b"text/plain; charset=utf-8"),
-    (b"cache-control", b"no-store"),
+    (b"cache-control", PRIVATE_CACHE),
     (b"content-security-policy", CSP_BYTES),
     (b"x-content-type-options", b"nosniff"),
 )
@@ -150,7 +153,7 @@ class SecurityMiddleware:
                     extra.append(
                         (
                             b"cache-control",
-                            b"public, max-age=2592000, immutable" if static else b"no-store",
+                            b"public, max-age=2592000, immutable" if static else PRIVATE_CACHE,
                         )
                     )
                 message["headers"] = [*message.get("headers", []), *extra]

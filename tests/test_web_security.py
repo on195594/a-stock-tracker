@@ -173,7 +173,11 @@ def test_security_headers_and_cache_policy():
     page = browser.get("/")
     assert page.headers["content-security-policy"] == CSP
     assert "'unsafe-inline'" not in CSP and "'unsafe-eval'" not in CSP
-    assert page.headers["cache-control"] == "no-store"
+    assert page.headers["cache-control"] == "no-store, no-transform"
+    assert browser.get("/login").headers["cache-control"] == "no-store, no-transform"
+    assert browser.get("/static/app.css").headers["cache-control"] == (
+        "public, max-age=2592000, immutable"
+    )
     assert page.headers["x-content-type-options"] == "nosniff"
     assert page.headers["x-frame-options"] == "DENY"
     assert "max-age" in page.headers["strict-transport-security"]
@@ -225,7 +229,7 @@ def test_oauth_state_capacity_preserves_pending_login_and_recovers(monkeypatch):
         assert refused.status_code == 429
         assert "稍后重试" in refused.text
         assert "set-cookie" not in refused.headers
-        assert refused.headers["cache-control"] == "no-store"
+        assert refused.headers["cache-control"] == "no-store, no-transform"
         assert s.OAUTH_STATES == pending
 
     done = browser.get(f"/oauth_callback?code=c&state={state}", follow_redirects=False)

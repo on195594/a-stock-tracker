@@ -54,7 +54,7 @@ Web 不持行情或模型凭据，不打开数据库，不读取研究根目录�
 - **管理员密码登录（可选）**：`.web.env` 设置 `ADMIN_USERNAME` 与至少 16 字符的 `ADMIN_PASSWORD` 后，`POST /login/admin` 签发与 GitHub 登录相同的所有者会话；未设密码时该路由 404。`ADMIN_LOGIN_SCOPE=local`（默认）只接受 Nginx 写入的 `X-Real-IP`（缺失时用 TCP 对端）为回环、私网或 `ADMIN_ALLOWED_IPS` 所列地址/网段的请求，其他请求得到 404；`any` 对公网开放。Nginx 仅对 Cloudflare 公布网段内的对端采信 `CF-Connecting-IP` 作为客户端地址（`real_ip`），直连源站无法伪造；Cloudflare 网段变化时须同步 `docker/nginx-stock.conf`。表单 POST 除同源检查外还校验登录前 CSRF 令牌（登录页签发、与本浏览器 10 分钟 cookie 一致才放行）；IPv4 映射的 IPv6 地址按 IPv4 匹配白名单。比较用 `hmac.compare_digest`，不做哈希、限频、锁定或轮换，安全性取决于密码强度；成功与失败均记录来源 IP。
 - **在途撤权**：私有页在读取接收器之后、写出响应之前再次核验会话；轮询遇到 401 即停止并清空进度。
 - **请求来源**：所有 POST 都校验 CSRF 令牌（`HMAC(secret, sid)`），并校验 Sec-Fetch-Site、Origin、Referer 是否同源，缺失即拒绝。Host 严格匹配 `PUBLIC_BASE_URL`。
-- **响应头**：CSP 为 `default-src 'self'`，无内联脚本或样式，无 eval，无 WebSocket；私有响应一律 `no-store`；Jinja2 自动转义，模型文本与 URL 只作纯文本。
+- **响应头**：CSP 为 `default-src 'self'`，无内联脚本或样式，无 eval，无 WebSocket；私有响应一律 `no-store, no-transform`（`no-transform` 禁止 Cloudflare 等代理改写页面，如注入会被 CSP 拦截的统计脚本；HTML 压缩由源站 Nginx 完成）；Jinja2 自动转义，模型文本与 URL 只作纯文本。
 - **重放与退役**：0-RTT 早期数据携带的写请求返回 425；退役路由（`/published`、`/opportunity/*`、`/api/session`、旧工作台路径）返回 404。
 - **demo 模式**：只允许 loopback 与合成客户端；生产缺配置拒绝启动。
 

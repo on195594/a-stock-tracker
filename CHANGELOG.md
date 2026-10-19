@@ -12,6 +12,7 @@
 - 价格参考 `price-reference-v2`：个股遇交易所除权参考价（系数在 [0.3, 1)、61 日窗口内 ≤2 次）按 `pre_close` 前复权到最新价格口径并在事实中披露日期与系数，不再因分红送转拒绝；其余不连续与基准不连续仍拒绝，v1 历史产物原样读取。
 - 价格参考记录本次用量（请求数、上限、耗时、停止原因），网页与 MCP 不再显示用量未知；旧批次仍为未知。
 - 单家公司财报研究在所有报告复核通过时记为“已完成”，不再因全市场覆盖为 partial 显示“部分结果”；历史运行状态不改写。
+- 非静态响应改为 `Cache-Control: no-store, no-transform`，Cloudflare 不再向页面注入 Web Analytics 脚本（原被 CSP 拦截并在每页产生控制台错误）。
 - `docker-compose.yml` 写入 `RESEARCH_WEB_ENABLED: ${RESEARCH_WEB_ENABLED:-1}`，`./deploy.sh` 默认按该值挂载研究网关，环境变量可单次覆盖。
 - README 发布门槛去掉真机验收，改为生产浏览器主流程（项目以网页为主，兼容手机浏览器即可）。
 
