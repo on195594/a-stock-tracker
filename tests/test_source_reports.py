@@ -120,6 +120,8 @@ def test_dates_units_and_numbers_cannot_borrow_unselected_context(selected):
     assert d.citation_errors(report, packet)["F1"] == "numeric_mismatch"
     detail = d.citation_details(report, packet, d.citation_errors(report, packet))[0]
     assert set(detail["detail"]["numbers_not_in_quote"]) == {"2026", "6"}
+    assert detail["detail"]["selected_quote"] == report["facts"][0]["quote"]
+    assert "另一张表" not in detail["detail"]["selected_quote"]
     report["analysis"] = {"business": {"text": "利润为999.00亿元。", "facts": ["F1"]}}
     assert "business" in d.analysis_number_errors(report, packet)
     report["analysis"]["business"]["text"] = "2026年6月末应收账款100.00万元。"
