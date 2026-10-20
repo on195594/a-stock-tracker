@@ -317,8 +317,9 @@ def validate_report(report: dict, packet: dict) -> None:
         raise PipelineError("report_validation", "schema_invalid")
     if eb.context_size(report) > REPORT_LIMIT:
         raise PipelineError("report_validation", "context_budget_exceeded")
+    derived: dict[str, list[dict]] = {}
     for block in packet["blocks"]:
-        eb.validate_block(block, packet["documents"])
+        eb.validate_block(block, packet["documents"], derived)
     if selection_errors(
         {k: report[k] for k in ("code", "facts", "gaps")}, packet
     ) or composition_errors(report, packet):

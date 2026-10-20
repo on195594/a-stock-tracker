@@ -250,7 +250,10 @@ def document_blocks(doc: dict[str, Any]) -> tuple[list[dict], list[dict]]:
     return list({b["id"]: b for b in blocks}.values()), rejected
 
 
-def validate_block(value: dict, documents: list[dict]) -> None:
+def validate_block(
+    value: dict, documents: list[dict], derived: dict[str, list[dict]] | None = None
+) -> None:
+    """Callers checking many blocks share `derived` so each document's blocks are built once."""
     block = EvidenceBlock.model_validate(value).model_dump()
     identity = {k: v for k, v in block.items() if k != "id"}
     if block["version"] != VERSION or digest(identity) != block["id"]:
@@ -264,7 +267,13 @@ def validate_block(value: dict, documents: list[dict]) -> None:
     if bundle(block["fragments"], block["relation"]) != block:
         raise ScreenError("Invalid evidence block")
     source_ids = {f["document"] for f in block["fragments"]}
-    if len(source_ids) != 1 or block not in document_blocks(docs[next(iter(source_ids))])[0]:
+    if len(source_ids) != 1:
+        raise ScreenError("Unverified evidence relation")
+    source = next(iter(source_ids))
+    derived = {} if derived is None else derived
+    if source not in derived:
+        derived[source] = document_blocks(docs[source])[0]
+    if block not in derived[source]:
         raise ScreenError("Unverified evidence relation")
 
 
@@ -298,8 +307,9 @@ def select_blocks(
         if cached is not None:
             if cached["cache_key"] != digest({**cache_inputs, "expanded": cached["expanded"]}):
                 raise ScreenError("Evidence cache identity mismatch")
+            derived: dict[str, list[dict]] = {}
             for block in cached["blocks"]:
-                validate_block(block, documents)
+                validate_block(block, documents, derived)
             return cached
         result = select_blocks(documents, structured, limit)
         with locked_root(cache_root, blocking=True):

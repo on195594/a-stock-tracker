@@ -204,3 +204,22 @@ def test_recall_puts_mdna_risk_section_ahead_of_policy_risk_text():
     texts = [x["fragments"][0]["text"] for x in selected["blocks"] if "risk" in x["groups"]]
     assert any("有效需求恢复不及预期" in t for t in texts)
     assert not any("敬请投资者关注" in t for t in texts)
+
+
+def test_validating_many_blocks_derives_each_document_once(monkeypatch):
+    # Production: recent() re-verified every block by rebuilding all blocks of its document,
+    # so listing 20 reports took 17.6 s and the web client timed out.
+    doc = document(TEXT)
+    blocks = b.document_blocks(doc)[0]
+    assert len(blocks) > 1
+    calls = []
+    original = b.document_blocks
+    monkeypatch.setattr(b, "document_blocks", lambda d: calls.append(d["id"]) or original(d))
+    derived: dict = {}
+    for block in blocks:
+        b.validate_block(block, [doc], derived)
+    assert calls == ["doc"]
+    forged = copy.deepcopy(blocks[0])
+    forged["relation"] = {"kind": "paragraph", "forged": True}
+    with pytest.raises(ScreenError):
+        b.validate_block(forged, [doc], derived)
