@@ -1026,3 +1026,56 @@ def test_invocation_records_failure_before_freeze(tmp_path, monkeypatch, reason)
     usage = a.read_result(root / "invocation.json")
     assert usage["stop_reason"] == reason and usage["requests"] == 0
     assert usage["seconds_used"] >= 0 and usage["remaining"] is None
+
+
+def test_named_company_freeze_keeps_only_requested_rows(monkeypatch):
+    # Production: each single-company run froze 5575 securities (5 MB) and parsed them on reads.
+    basics = [basic(i) for i in range(1, 5)]
+    valuations = [{"ts_code": b["ts_code"], "pb": 1, "total_mv": 600000} for b in basics]
+    fetches = []
+    monkeypatch.setattr(a, "target_date", lambda *_: ("2026-09-30", []))
+    monkeypatch.setattr(
+        a, "fetch_universe", lambda *args: fetches.append(args) or (basics, valuations, {})
+    )
+    wanted = basics[2]["ts_code"]
+    frozen = a.freeze(None, "synthetic", "2026-10-06", [wanted])
+    assert [r["code"] for r in frozen["rows"]] == [wanted]
+    assert [r["ts_code"] for r in frozen["raw_basic"]] == [wanted]
+    assert [r["ts_code"] for r in frozen["raw_valuation"]] == [wanted]
+    assert len(fetches) == 1  # the same full lists still prove identity and uniqueness
+    assert a.coverage(frozen["rows"], frozen)["total"] == 1
+    with pytest.raises(ScreenError, match="absent"):
+        a.freeze(None, "synthetic", "2026-10-06", ["600999.SH"])
+
+
+def test_official_pdf_is_downloaded_once_and_rehashed_on_reuse(tmp_path, monkeypatch):
+    # Production: every run re-downloaded and re-stored the same filings (65 PDFs, 195 MB).
+    fetched = []
+    source = SimpleNamespace(request=lambda *_: fetched.append(1) or b"%PDF-offline")
+    monkeypatch.setattr(
+        d,
+        "run_bounded",
+        lambda args, **kwargs: SimpleNamespace(
+            stdout="Pages: 1\n"
+            if args[0] == "pdfinfo"
+            else "600001 合成 2025 年年度报告，合并财务报表及其他正文\f"
+        ),
+    )
+    document = {"url": "https://example.invalid/a.PDF", "code": "600001.SH"}
+    document |= {"official_name": "合成", "period": "2025-12-31"}
+    cache = tmp_path / "cache"
+    cache.mkdir(mode=0o700)
+    first_dir, second_dir = tmp_path / "one", tmp_path / "two"
+    first_dir.mkdir(), second_dir.mkdir()
+    first = d.extract_document(source, document, first_dir, cache_root=cache)
+    second = d.extract_document(source, document, second_dir, cache_root=cache)
+    assert fetched == [1]
+    assert second["sha256"] == first["sha256"] and second["retrieved_at"] == first["retrieved_at"]
+    shared = second_dir / f"source-{first['sha256']}.pdf"
+    assert shared.read_bytes() == b"%PDF-offline"
+    assert shared.stat().st_ino == (cache / f"source-{first['sha256']}.pdf").stat().st_ino
+    (cache / f"source-{first['sha256']}.pdf").unlink()
+    (cache / f"source-{first['sha256']}.pdf").write_bytes(b"%PDF-tampered")
+    with pytest.raises(ScreenError, match="hash conflict"):
+        d.extract_document(source, document, tmp_path, cache_root=cache)
+    assert fetched == [1]

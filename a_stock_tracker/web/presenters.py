@@ -140,16 +140,15 @@ def usage_text(usage: Any, mode: str | None = None) -> str:
         "time_budget": "时间预算用尽",
         "error": "执行异常",
     }.get(usage.get("stop_reason"), "未记录")
-    coverage = (
-        "冻结证券范围背景统计（非本次单家公司研究进度）：\n"
-        f"本轮新增财报扫描：{recorded('newly_covered')}；已归类或扫描：{recorded('covered')}；尚未扫描：{recorded('remaining')}\n"
-        "已归类或扫描包含预先排除和资料缺口；尚未扫描包含本次指定范围以外的证券。"
-        if mode == "financial"
-        else f"本轮新增覆盖：{recorded('newly_covered')}；累计覆盖：{recorded('covered')}；剩余未覆盖：{recorded('remaining')}"
-    )
-    return (
+    lines = (
         f"本轮请求：{recorded('requests')} / {recorded('request_limit')} 次；耗时：{recorded('seconds_used')} 秒\n"
-        f"停止原因：{reason}\n{coverage}"
+        f"停止原因：{reason}"
+    )
+    if mode == "financial":
+        return lines  # a named-company run freezes only that company; no market coverage
+    return (
+        f"{lines}\n本轮新增覆盖：{recorded('newly_covered')}；累计覆盖：{recorded('covered')}；"
+        f"剩余未覆盖：{recorded('remaining')}"
     )
 
 

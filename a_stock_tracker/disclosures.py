@@ -245,6 +245,48 @@ def parsed_pages(path: Path, sha: str, cache_root: Path) -> list[str]:
     return pages
 
 
+def share_file(source: Path, target: Path, payload: bytes) -> None:
+    """Hard-link an immutable verified file; copy where links are unavailable."""
+    try:
+        os.link(source, target)
+    except OSError:
+        _atomic_write_bytes(target, payload)
+
+
+def cached_source(cache_root: Path, url: str) -> tuple[Path, bytes, str] | None:
+    """A verified official PDF fetched before from this URL, re-hashed on every use."""
+    with locked_root(cache_root, blocking=True):
+        index = cache_root / f"source-index-{digest(url)}.json"
+        if index.is_symlink():
+            raise ScreenError("Symlink source cache refused")
+        if not index.exists():
+            return None
+        entry = read_state(index)
+        sha = entry.get("sha256")
+        if entry.get("url") != url or not re.fullmatch(r"[0-9a-f]{64}", str(sha)):
+            raise ScreenError("Source cache identity mismatch")
+        pdf = cache_root / f"source-{sha}.pdf"
+        if pdf.is_symlink() or not pdf.is_file():
+            raise ScreenError("Source cache identity mismatch")
+        payload = pdf.read_bytes()
+    if hashlib.sha256(payload).hexdigest() != sha:
+        raise ScreenError("Source cache hash conflict")
+    return pdf, payload, entry["retrieved_at"]
+
+
+def remember_source(
+    cache_root: Path, url: str, path: Path, sha: str, payload: bytes, retrieved_at: str
+) -> None:
+    with locked_root(cache_root, blocking=True):
+        pdf = cache_root / f"source-{sha}.pdf"
+        index = cache_root / f"source-index-{digest(url)}.json"
+        if pdf.is_symlink() or index.is_symlink():
+            raise ScreenError("Symlink source cache refused")
+        if not pdf.exists():
+            share_file(path, pdf, payload)
+        save_state(index, {"url": url, "sha256": sha, "retrieved_at": retrieved_at})
+
+
 def extract_document(
     source: OfficialSource,
     document: dict[str, Any],
@@ -252,7 +294,12 @@ def extract_document(
     *,
     cache_root: Path | None = None,
 ) -> dict[str, Any]:
-    payload = source.request("GET", document["url"])
+    # A cache hit keeps the original retrieval time; it never poses as a fresh download.
+    cached = cached_source(cache_root, document["url"]) if cache_root is not None else None
+    if cached is not None:
+        cached_pdf, payload, retrieved_at = cached
+    else:
+        payload, retrieved_at = source.request("GET", document["url"]), now_iso()
     if not payload.startswith(b"%PDF-"):
         raise ScreenError("Official response is not PDF")
     sha = hashlib.sha256(payload).hexdigest()
@@ -260,6 +307,8 @@ def extract_document(
     if path.exists():
         if hashlib.sha256(path.read_bytes()).hexdigest() != sha:
             raise ScreenError("Stored PDF hash conflict")
+    elif cached is not None:
+        share_file(cached_pdf, path, payload)
     else:
         _atomic_write_bytes(path, payload)
     pages = parsed_pages(path, sha, cache_root or directory / "parsed-cache")
@@ -318,10 +367,12 @@ def extract_document(
         or not re.search(rf"{document['period'][:4]}年?{title}", identity)
     ):
         raise ScreenError("PDF security/report-period identity not established")
+    if cache_root is not None and cached is None:
+        remember_source(cache_root, document["url"], path, sha, payload, retrieved_at)
     extracted = {
         **document,
         "sha256": sha,
-        "retrieved_at": now_iso(),
+        "retrieved_at": retrieved_at,
         "parser_version": PARSER_VERSION,
         "page_count": len(pages),
         "pages": [{"page": i + 1, "text": p} for i, p in enumerate(pages)],

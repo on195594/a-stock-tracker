@@ -173,7 +173,7 @@ systemctl --user disable --now a-stock-tracker-research.service
 ```bash
 # 以下以 Hermes 为例；已配置 pi 时使用对应 pi 环境
 export AUTOMATION_HERMES_RUNTIME=/absolute/path/to/installed/hermes-agent
-# 显式小样本验收；仍枚举全市场，财务覆盖永远 partial，累计最多研究 1 家
+# 显式小样本验收；取全市场清单核对身份，只冻结所列公司，累计最多研究 1 家
 .venv/bin/python -m a_stock_tracker.automation --root /private/market-research --sample 600519.SH,600900.SH,600019.SH --request-budget 100 --seconds 600 --max-research 1
 
 # 全市场只扫描：不请求公告或模型

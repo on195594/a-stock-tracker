@@ -61,13 +61,12 @@ def test_financial_usage_labels_frozen_scope_and_unknown_stays_unknown():
     before = deepcopy(usage)
     text = p.usage_text(usage, "financial")
     assert "本轮请求：8 / 100 次；耗时：121.16 秒" in text
-    assert "冻结证券范围背景统计（非本次单家公司研究进度）" in text
-    assert "本轮新增财报扫描：1；已归类或扫描：2654；尚未扫描：2920" in text
-    assert "本次指定范围以外的证券" in text and "累计覆盖" not in text
+    # A named-company run freezes only that company: no market coverage lines.
+    assert "停止原因：完成本轮" in text and "扫描" not in text and "覆盖" not in text
     assert usage == before
     assert "本轮新增覆盖：1；累计覆盖：2654" in p.usage_text(usage, "screen")
     assert p.usage_text(None, "financial") == "本轮用量：未记录"
-    assert "已归类或扫描：未记录；尚未扫描：未记录" in p.usage_text({"requests": 8}, "financial")
+    assert "停止原因：未记录" in p.usage_text({"requests": 8}, "financial")
 
 
 @pytest.mark.parametrize(

@@ -255,6 +255,12 @@ def freeze(
         raise ScreenError("Duplicate scope identifiers")
     if not set(sample) <= {r["code"] for r in rows}:
         raise ScreenError("Sample identifier absent from universe")
+    if sample:
+        # The full lists proved identity and uniqueness; freeze only the named companies.
+        wanted = set(sample)
+        rows = [r for r in rows if r["code"] in wanted]
+        basics = [r for r in basics if r["ts_code"] in wanted]
+        valuations = [r for r in valuations if r["ts_code"] in wanted]
     return {
         **({"prefilter": dict(PB_MV_SCREEN)} if pb_mv_screen else {}),
         "rule": RULE,
