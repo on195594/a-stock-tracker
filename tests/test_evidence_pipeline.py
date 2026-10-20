@@ -151,6 +151,19 @@ def test_sentence_only_repair_freezes_facts_and_other_sections(case):
         p.apply_patch(report, patch, targets)
 
 
+def test_deleting_an_unused_new_sentence_slot_is_a_no_op(case):
+    packet, report = case
+    errors = [{"kind": "section", "id": "counterevidence", "reason": "遗漏风险"}]
+    targets = p.repair_targets(report, errors, packet)
+    slot = targets["new_sentences"][-1]
+    result = p.apply_patch(
+        report, {"facts": {}, "sentences": {slot: {"action": "delete"}}}, targets
+    )
+    assert result == report
+    with pytest.raises(p.PipelineError, match="patch_scope"):
+        p.apply_patch(report, {"facts": {}, "sentences": {"S_x_9": {"action": "delete"}}}, targets)
+
+
 @pytest.mark.parametrize(
     "failure,expected",
     [
