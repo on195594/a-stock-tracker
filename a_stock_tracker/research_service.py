@@ -108,6 +108,26 @@ def quote(
     return Quote.model_validate(value).model_dump(by_alias=True, exclude_unset=True)
 
 
+SCOPE_REASONS = {
+    "OUTSIDE_SCOPE": "不在财报研究范围（仅沪深主板非金融公司）",
+    "KNOWN_ST_WARNING": "带 ST 风险警示，不做财报研究",
+    "NON_POSITIVE_PB": "市净率不为正，不做财报研究",
+    "NON_POSITIVE_ROE_MEAN": "近年平均 ROE 不为正，不做财报研究",
+}
+
+
+def scope_message(result: dict[str, Any], reports: list[dict[str, Any]]) -> str | None:
+    """Why a named company got no report before any model call, from its verified batch row."""
+    done = {r.get("code") for r in reports}
+    notes = [
+        f"{row.get('name') or code}（{row.get('industry') or '行业未知'}）"
+        + SCOPE_REASONS.get(row.get("reason") or "", f"资料缺口（{row.get('reason')}），未能研究")
+        for code, row in (result.get("scope") or {}).items()
+        if code not in done and row.get("status") in {"excluded", "gap"}
+    ]
+    return "；".join(notes) + "；未调用模型。" if notes else None
+
+
 def result_summary(result: dict[str, Any]) -> dict[str, Any]:
     if "board" in result:
         board = result["board"]
@@ -703,7 +723,7 @@ class ResearchStore:
                 args += ["--model-cache", str(self.root / "validated-model-cache")]
         return args
 
-    def result(self, directory: Path, mode: str) -> dict[str, Any]:
+    def result(self, directory: Path, mode: str, codes: list[str] | None = None) -> dict[str, Any]:
         root = directory / "batch"
         if mode == "swing":
             board = load_board(root)
@@ -711,7 +731,7 @@ class ResearchStore:
                 raise ScreenError("No verified board")
             # Boards published before usage was recorded keep usage unknown (null).
             return {"board": board, "usage": board.get("usage")}
-        result, _ = self.batch_result(directory, mode)
+        result, _ = self.batch_result(directory, mode, codes)
         result["truncated"] = False
         # Leave room for request metadata under the client's 4 MB response ceiling.
         if len(json.dumps(result, ensure_ascii=False).encode()) > 3_800_000:
@@ -737,7 +757,9 @@ class ResearchStore:
                     break
         return result
 
-    def batch_result(self, directory: Path, mode: str) -> tuple[dict[str, Any], str]:
+    def batch_result(
+        self, directory: Path, mode: str, codes: list[str] | None = None
+    ) -> tuple[dict[str, Any], str]:
         """Verify and project the full batch before response-size truncation."""
         root = directory / "batch"
         runs = list(root.glob("run-*"))
@@ -786,6 +808,12 @@ class ResearchStore:
             ],
             "reports": reports,
         }
+        if codes:
+            result["scope"] = {
+                c: {k: by_code[c].get(k) for k in ("name", "industry", "status", "reason")}
+                for c in codes
+                if c in by_code
+            }
         result["groups"] = [
             {
                 "industry": group["industry"],
@@ -948,7 +976,10 @@ class ResearchStore:
                     process.wait()
             if code not in (0, 2) or disk_bytes(directory) > MAX_RUN_BYTES:
                 raise ScreenError("Batch failed")
-            result = self.result(directory, state["request"]["mode"])
+            mode = state["request"]["mode"]
+            result = self.result(
+                directory, mode, state["request"]["codes"] if mode == "financial" else None
+            )
             counts = result.get("coverage", {}).get("counts", {})
             reports = result.get("reports") or []
             complete = (
@@ -973,7 +1004,8 @@ class ResearchStore:
             state.update(
                 exit_code=code,
                 status="completed" if complete else "partial",
-                message="本次研究已结束。请核对覆盖、缺口与证据，不是买入信号。",
+                message=scope_message(result, reports)
+                or "本次研究已结束。请核对覆盖、缺口与证据，不是买入信号。",
             )
         except Exception:
             state.pop("result", None)

@@ -195,7 +195,9 @@ def test_financial_result_reads_verified_envelopes_not_unchecked_markdown(tmp_pa
     )
     (run / "report-600519.SH.md").write_text("unverified claims")
     result = store.result(directory, "financial")
-    assert result["candidates"][0]["code"] == row["code"]
+    assert result["candidates"][0]["code"] == row["code"] and "scope" not in result
+    scope = store.result(directory, "financial", [row["code"], "600000.SH"])["scope"]
+    assert scope == {row["code"]: {k: row[k] for k in ("name", "industry", "status", "reason")}}
     assert "合成证据缺口" in result["reports"][0]["error"]
     assert "unverified claims" not in result["reports"][0]["error"]
     (run / "report-600519.SH.json").write_text("{}")
@@ -265,6 +267,22 @@ def test_execute_handles_child_process_exiting_before_killpg(tmp_path, monkeypat
         ),
         ("financial", {"reports": [{"code": "600519.SH", "evidence_review": "failed"}]}, "partial"),
         ("financial", {"reports": []}, "partial"),
+        # Production 600036.SH: a bank is out of scope; say so instead of an empty basis.
+        (
+            "financial",
+            {
+                "reports": [],
+                "scope": {
+                    "600519.SH": {
+                        "name": "招商银行",
+                        "industry": "银行",
+                        "status": "excluded",
+                        "reason": "OUTSIDE_SCOPE",
+                    }
+                },
+            },
+            "partial",
+        ),
         ("swing", {"board": {"rows": []}, "usage": {"requests": 4}}, "partial"),
     ],
 )
@@ -294,6 +312,8 @@ def test_exit_two_status_and_usage_by_mode(tmp_path, monkeypatch, mode, result, 
     saved = read_state(directory / "request.json")
     assert saved["status"] == status
     assert saved["usage"] == result.get("usage")
+    scoped = "招商银行（银行）不在财报研究范围（仅沪深主板非金融公司）；未调用模型。"
+    assert (saved["message"] == scoped) == ("scope" in result)
 
 
 def test_swing_result_carries_board_usage(tmp_path, monkeypatch):
