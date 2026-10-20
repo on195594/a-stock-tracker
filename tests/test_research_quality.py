@@ -102,6 +102,10 @@ def test_percent_column_and_page_level_number_sources():
     fell = {"quote": page.replace(" 30.85", " -30.85")}
     assert d.unquoted_numbers(fact | fell | {"claim": "营业收入同比下降30.85%"}) == []
     assert d.unquoted_numbers(fact | fell | {"claim": "营业收入同比增长30.85%"}) == ["30.85%"]
+    assert d.unquoted_numbers(fact | fell | {"claim": "营业收入同比下降了30.85%"}) == []
+    # Codex review: a decline word that is negated or turned around carries no sign.
+    for claim in ("营业收入同比由下降转增30.85%", "营业收入同比未下降30.85%"):
+        assert d.unquoted_numbers(fact | fell | {"claim": claim}) == ["30.85%"]
     assert d.unquoted_numbers(fact | {"claim": "营业收入同比增减为-30.85%", "quote": page}) == [
         "-30.85%"
     ]

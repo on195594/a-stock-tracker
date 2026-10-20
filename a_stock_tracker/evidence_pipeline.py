@@ -766,7 +766,19 @@ def run(
         waived = sorted({e["id"] for e in errors if e["kind"] == "section" and e["id"] in carried})
         if waived:
             quality["carried_sections"] = waived
-            errors = [e for e in errors if not (e["kind"] == "section" and e["id"] in carried)]
+            # Publish the effective verdict so read-time revalidation agrees; the raw recheck
+            # response stays in its call record.
+            groups = {SECTION_GROUP.get(s) for s in waived}
+            review = {
+                **review,
+                "coverage": {g: ok or g in groups for g, ok in review["coverage"].items()},
+                "issues": [
+                    i
+                    for i in review["issues"]
+                    if not (i["kind"] == "section" and i["id"] in waived)
+                ],
+            }
+            errors = review_errors(review, report)
         if errors:
             raise PipelineError("independent_review", "semantic_failed")
         accepted("recheck")

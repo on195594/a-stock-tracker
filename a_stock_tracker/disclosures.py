@@ -417,7 +417,7 @@ def stable_evidence(packet: dict[str, Any], model: dict[str, str]) -> str:
 CLAIM_UNITS = ("万元", "亿元", "元/股", "万美元", "亿美元")
 
 
-DECLINE_WORDS = ("下降", "减少", "降低", "下滑")
+DECLINE_BEFORE = re.compile(r"(?<![未不没无])(?:下降|减少|降低|下滑)(?:了|幅度为|幅度|为)?$")
 
 
 def unquoted_numbers(fact: dict[str, Any]) -> list[str]:
@@ -432,8 +432,9 @@ def unquoted_numbers(fact: dict[str, Any]) -> list[str]:
         bare = m.group()[:-1]
         if not (percent_column and m.group().endswith("%")):
             return False
-        # "下降2.35%" restates a signed "-2.35"; the direction word carries the sign.
-        declined = any(w in claim[max(0, m.start() - 4) : m.start()] for w in DECLINE_WORDS)
+        # "下降2.35%" restates a signed "-2.35"; only a plain decline word right before the
+        # number carries the sign ("由下降转增2.35%" and "未下降2.35%" do not).
+        declined = bool(DECLINE_BEFORE.search(claim[: m.start()]))
         return bare in quoted_numbers or (declined and f"-{bare}" in quoted_numbers)
 
     return [

@@ -278,7 +278,9 @@ def test_recheck_keeps_first_verdict_only_for_untouched_sections(case, tmp_path,
         with pytest.raises(p.PipelineError, match="semantic_failed"):
             p.run(packet, tmp_path, state, Budget(100, 1800), call, quality)
         return
-    report, _ = p.run(packet, tmp_path, state, Budget(100, 1800), call, quality)
+    report, review = p.run(packet, tmp_path, state, Budget(100, 1800), call, quality)
+    # Codex review: the published review must still bind at read time.
+    assert p.validate_review(review, report)
     assert quality["carried_sections"] == outcome and quality["passed"] == 3
     assert "未改动的主要风险提出新意见，沿用首轮复核结论" in quality_text(quality)
     assert report["analysis"]["summary"][0]["text"].startswith("需要谨慎")
