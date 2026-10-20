@@ -1102,56 +1102,17 @@ def test_price_quote_has_no_model_and_rejects_old_model_consent(tmp_path, monkey
 
 def test_structured_projection_joins_sources_and_never_returns_rejected_draft():
     from a_stock_tracker.disclosures import structured_report
+    from tests.test_evidence_integration import envelope
+    from tests.test_evidence_pipeline import evidence_case
 
-    result = {
-        "code": "600001.SH",
-        "status": "incomplete",
-        "evidence_review": "passed",
-        "evidence": {
-            "structured": {
-                "industry": "合成行业",
-                "valuation_date": "2026-04-01",
-                "pb": 1.2,
-                "roe_mean": 12.0,
-            },
-            "documents": [
-                {
-                    "id": "D1",
-                    "title": "合成年报",
-                    "period": "2025-12-31",
-                    "announced": "2026-04-01",
-                    "url": "https://example.invalid/a.pdf",
-                    "pages": [{"page": 12, "text": "私人全文"}],
-                }
-            ],
-            "scope_gaps": ["未核查新闻"],
-            "omitted_pages": [{"page": 13}],
-        },
-        "report": {
-            "analysis": {"business": {"text": "推论", "facts": ["F1"]}},
-            "facts": [
-                {"id": "F1", "claim": "合成事实", "document": "D1", "page": 12, "quote": "合成引文"}
-            ],
-            "gaps": ["回款缺口"],
-        },
-    }
+    result = envelope(evidence_case())
     before = deepcopy(result)
     report = structured_report(result)
-    assert report["facts"][0] == {
-        "id": "F1",
-        "claim": "合成事实",
-        "page": 12,
-        "quote": "合成引文",
-        "title": "合成年报",
-        "period": "2025-12-31",
-        "announced": "2026-04-01",
-        "url": "https://example.invalid/a.pdf",
-    }
-    assert report["documents"] == [{"period": "2025-12-31", "announced": "2026-04-01"}]
-    assert report["gaps"] == ["回款缺口"] and report["scope"] == ["未核查新闻"]
-    assert report["omitted_pages"] == 1
+    assert report["facts"][0]["fragments"]
+    assert report["facts"][0]["title"] == "合成定期报告"
+    assert report["documents"] == [{"period": "2026-06-30", "announced": "2026-08-01"}]
     assert report["analysis"]["business"]["facts"] == ["F1"]
-    assert "私人全文" not in json.dumps(report, ensure_ascii=False)
+    assert "pages" not in json.dumps(report, ensure_ascii=False).replace("omitted_pages", "")
     assert result == before
     result["evidence_review"] = "failed"
     result["rejected_draft"] = result["report"]

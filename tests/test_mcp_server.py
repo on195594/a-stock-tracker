@@ -162,22 +162,41 @@ def seed_report(bridge, number=1, review="passed", code=CODE):
         "category": "validation_failed",
         "message": "private traceback",
     }
-    packet["report"].update(
-        analysis={
-            key: {"text": MALICIOUS + key, "facts": ["F1"]}
-            for key in (
-                "business",
-                "financial",
-                "valuation",
-                "counterevidence",
-                "change_conditions",
-            )
-        },
-        facts=[
-            {"id": f"F{i}", "claim": MALICIOUS, "quote": MALICIOUS, "document": "D1", "page": i}
-            for i in range(1, 8)
-        ],
+    from a_stock_tracker import evidence_blocks as eb
+    from a_stock_tracker import evidence_pipeline as ep
+    from tests.test_evidence_blocks import document
+    from tests.test_evidence_pipeline import supported
+
+    doc = document(
+        "\n\n".join(
+            "主要业务营业收入风险：" + MALICIOUS + suffix
+            for suffix in ("", "甲", "乙", "丙", "丁", "戊", "己")
+        )
     )
+    doc.update(title="合成年报", announced="2026-04-01", url="https://example.invalid/<script>")
+    blocks, _ = eb.document_blocks(doc)
+    packet["evidence"].update(documents=[doc], blocks=blocks)
+    packet["report"]["facts"] = [
+        {"id": f"F{i}", "block_id": block["id"], "claim": MALICIOUS + suffix}
+        for i, (block, suffix) in enumerate(
+            zip(blocks, ("", "甲", "乙", "丙", "丁", "戊", "己"), strict=True), 1
+        )
+    ]
+    packet["report"]["analysis"] = {
+        key: [
+            {
+                "id": f"S_{key}_1",
+                "kind": "assertion",
+                "text": ("需要谨慎" if key == "summary" else "") + MALICIOUS + key,
+                "refs": [f"F{i}" for i in range(1, 8)],
+            }
+        ]
+        for key in ep.SECTIONS
+    }
+    packet["review"] = {
+        **supported(packet["report"]),
+        "report_hash": service.digest(packet["report"]),
+    }
     save_state(report_path, {"result": packet})
     state = read_state(directory / "state.json")
     state["research"][code] = service.digest(json.loads(report_path.read_text()))
@@ -300,7 +319,7 @@ def test_report_summaries_sections_and_citations(bridge):
             assert report["quality"]["dropped"] == [{"id": "F8", "reason": "removed_by_repair"}]
             assert "facts" not in report and "quote" not in report
             full = success(await client.call_tool("get_report", {"run_id": run_id, "code": CODE}))
-            assert len(full["analysis"]) == 5
+            assert len(full["analysis"]) == 6
             error(
                 await client.call_tool("get_report", {"run_id": run_id, "code": "000002.SZ"}),
                 "not_found",
@@ -319,8 +338,8 @@ def test_report_summaries_sections_and_citations(bridge):
                 for f in facts
                 for key in ("id", "claim", "quote", "title", "page", "period", "announced", "url")
             )
-            assert all(f.get("fragments") is None and f.get("relation") is None for f in facts)
-            assert facts[0]["claim"] == facts[0]["quote"] == MALICIOUS
+            assert all(f.get("fragments") and f.get("relation") for f in facts)
+            assert facts[0]["claim"] == MALICIOUS and MALICIOUS in facts[0]["quote"]
             selected = success(await client.call_tool("get_facts", {**args, "ids": ["F7", "F1"]}))
             assert [f["id"] for f in selected["facts"]] == ["F7", "F1"]
             error(await client.call_tool("get_facts", {**args, "ids": ["unknown"]}), "not_found")

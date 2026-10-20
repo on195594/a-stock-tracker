@@ -135,7 +135,7 @@ def test_channel_records_limit_idempotency_and_info(tmp_path):
             "mcp",
             3,
             False,
-            TEMPLATE,
+            "cited-machine-research-v4",
         )
         assert service.quote(info, "financial") == service.quote(
             service.request_info(), "financial"
@@ -264,17 +264,15 @@ def saved_report(
         run / "universe.json",
         {"rows": [row], "mode": "sample", "sample": [code], "data_date": "2026-10-01"},
     )
-    packet = {
-        "code": code,
-        "status": "scoped_complete",
-        "evidence_review": review,
-        "evidence": {
-            "template": rule,
-            "documents": [{"id": "D1", "period": "2025-12-31", "announced": "2026-04-01"}],
-            "omitted_pages": [],
-        },
-        "report": {"gaps": ["合成缺口"]},
-    }
+    from a_stock_tracker.automation import digest
+    from tests.test_evidence_integration import envelope
+    from tests.test_evidence_pipeline import evidence_case
+
+    packet = envelope(evidence_case())
+    packet["code"] = packet["report"]["code"] = packet["evidence"]["structured"]["code"] = code
+    packet["evidence_review"] = review
+    packet["evidence"]["template"] = rule
+    packet["review"]["report_hash"] = digest(packet["report"])
     report_sha = save(
         run / f"report-{code}.json",
         {"sha256": service.digest({"result": packet}), "state": {"result": packet}},
@@ -292,7 +290,7 @@ def test_find_reports_verified_passed_newest_twenty_and_rules(tmp_path):
             store,
             number,
             status="partial" if number % 2 else "completed",
-            rule="cited-machine-research-v1" if number % 2 else TEMPLATE,
+            rule=TEMPLATE,
         )
     saved_report(store, 23, status="failed")
     saved_report(store, 24, review="failed")
@@ -305,9 +303,9 @@ def test_find_reports_verified_passed_newest_twenty_and_rules(tmp_path):
         reports = ReportList.model_validate(response.json()).reports
         assert [report.run_id for report in reports] == [f"{i:032x}" for i in range(22, 2, -1)]
         assert damaged_id not in [report.run_id for report in reports]
-        assert {report.rule for report in reports} == {"cited-machine-research-v1", TEMPLATE}
-        assert all(report.code == "600519.SH" and report.gap_count == 1 for report in reports)
-        assert reports[0].documents == [{"period": "2025-12-31", "announced": "2026-04-01"}]
+        assert {report.rule for report in reports} == {TEMPLATE}
+        assert all(report.code == "600519.SH" and report.gap_count == 0 for report in reports)
+        assert reports[0].documents == [{"period": "2026-06-30", "announced": "2026-08-01"}]
         assert all(report.omitted_pages == 0 and report.quality is None for report in reports)
         assert (
             client.get("/reports", params={"code": "600001.SH"}, headers=auth()).json()["reports"]

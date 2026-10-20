@@ -150,14 +150,13 @@ def selection_errors(selection: dict, packet: dict) -> list[dict]:
         seen_claims.add(identity)
         text = fact_text(fact, packet)
         virtual = {"claim": fact["claim"], "quote": text}
-        missing = d.unquoted_numbers(virtual, None) + d.unquoted_units(virtual)
+        missing = d.unquoted_numbers(virtual) + d.unquoted_units(virtual)
         date_checked = d.analysis_number_errors(
             {
                 "facts": [{**virtual, "id": fid, "document": "selected", "page": 1}],
                 "analysis": {"claim": {"text": fact["claim"], "facts": [fid]}},
             },
             {
-                "citation_format": d.SOURCE_FORMAT,
                 "documents": [],
                 "structured": packet["structured"],
             },
@@ -231,7 +230,6 @@ def composition_errors(report: dict, packet: dict) -> list[dict]:
         for f in facts.values()
     ]
     virtual_packet = {
-        "citation_format": d.SOURCE_FORMAT,
         "documents": [],
         "structured": packet["structured"],
     }

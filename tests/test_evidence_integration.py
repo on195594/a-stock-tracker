@@ -110,19 +110,20 @@ def test_new_packet_and_batch_use_three_stage_path(case, tmp_path, monkeypatch):
 def test_pipeline_changes_quote_and_child_command(monkeypatch, tmp_path):
     monkeypatch.setenv("RESEARCH_PROVIDER", "synthetic")
     monkeypatch.setenv("RESEARCH_MODEL", "synthetic")
-    monkeypatch.setenv("RESEARCH_PIPELINE", "legacy")
+    monkeypatch.delenv("RESEARCH_PIPELINE", raising=False)
     old = quote(request_info(), "financial")
     monkeypatch.setenv("RESEARCH_PIPELINE", ep.VERSION)
     info = request_info()
     new = quote(info, "financial")
-    assert new != old and new["pipeline"] == ep.VERSION
+    assert new == old and new["pipeline"] == ep.VERSION
     assert any("正常 3 次" in line for line in quote_lines(info, "financial", new))
     store = ResearchStore(tmp_path / "service")
     command = store.command(tmp_path, {"mode": "financial", "codes": ["600001.SH"], "quote": new})
     assert command[command.index("--pipeline") + 1] == ep.VERSION
-    monkeypatch.setenv("RESEARCH_PIPELINE", "unknown")
-    with pytest.raises(ScreenError, match="Unknown configured"):
-        request_info()
+    for retired in ("legacy", "unknown"):
+        monkeypatch.setenv("RESEARCH_PIPELINE", retired)
+        with pytest.raises(ScreenError, match="Unknown configured"):
+            request_info()
 
 
 def test_context_budget_is_quoted_and_child_checks_before_acquisition(monkeypatch, tmp_path):
@@ -155,3 +156,32 @@ def test_context_budget_is_quoted_and_child_checks_before_acquisition(monkeypatc
     with pytest.raises(SystemExit) as error:
         a.main()
     assert error.value.code == 2 and not (tmp_path / "batch").exists()
+
+
+@pytest.mark.parametrize("pipeline", [None, "legacy"])
+def test_retired_batch_cannot_resume_or_charge(tmp_path, monkeypatch, pipeline):
+    frozen, state, summary, *_ = research_case(tmp_path)
+    state["pipeline"] = pipeline
+    monkeypatch.setattr(d, "model_call", lambda *args: pytest.fail("retired batch must not charge"))
+    before = (tmp_path / "evidence-600001.SH.json").read_bytes()
+    with pytest.raises(ScreenError, match="Retired research pipeline"):
+        d.research_batch(tmp_path, frozen, summary, state, [], a.Budget(0, 1800), 1)
+    assert (tmp_path / "evidence-600001.SH.json").read_bytes() == before
+
+
+def test_retiring_research_does_not_block_scan_only_batch(tmp_path, monkeypatch):
+    frozen, state, summary, *_ = research_case(tmp_path)
+    state.pop("pipeline")
+    monkeypatch.setattr(d, "model_call", lambda *args: pytest.fail("scan only must not charge"))
+    d.research_batch(tmp_path, frozen, summary, state, [], a.Budget(0, 1800), 0)
+    assert state["research"] == {} and state["cursor"] == 0
+    assert (tmp_path / "summary.md").is_file()
+
+
+@pytest.mark.parametrize("old_format", [None, "line-ranges-v1"])
+def test_retired_report_reader_refuses_old_formats(case, old_format):
+    result = envelope(case)
+    result["evidence"]["citation_format"] = old_format
+    with pytest.raises(ScreenError, match="Retired report format"):
+        d.structured_report(result)
+    assert not d.validate_review({}, {"facts": []})

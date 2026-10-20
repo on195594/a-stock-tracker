@@ -20,7 +20,7 @@ GOLDEN = {
             },
             "financial": {
                 "title": "单家公司财报研究",
-                "pipeline": "legacy",
+                "pipeline": "evidence-first-v1",
                 "requests": 100,
                 "seconds": 1800,
                 "reports": 1,
@@ -47,11 +47,21 @@ GOLDEN = {
         },
         "financial": {
             "title": "单家公司财报研究",
-            "pipeline": "legacy",
+            "pipeline": "evidence-first-v1",
             "requests": 100,
             "seconds": 1800,
             "reports": 1,
             "model": {"provider": "synthetic", "model": "synthetic"},
+            "context_budget": {
+                "method": "utf8_bytes",
+                "limits": {
+                    "select": 75000,
+                    "compose": 18000,
+                    "review": 90000,
+                    "repair": 18000,
+                    "recheck": 90000,
+                },
+            },
             "model_budget": {
                 "calls": 10,
                 "local_timeout_seconds": 240,
@@ -84,7 +94,7 @@ def service_info(monkeypatch):
     monkeypatch.setenv("TUSHARE_TOKEN", "synthetic")
     monkeypatch.setenv("RESEARCH_PROVIDER", "synthetic")
     monkeypatch.setenv("RESEARCH_MODEL", "synthetic")
-    monkeypatch.setenv("RESEARCH_PIPELINE", "legacy")
+    monkeypatch.setenv("RESEARCH_PIPELINE", "evidence-first-v1")
     monkeypatch.setattr("a_stock_tracker.research_service.model_command", lambda: ["synthetic"])
     return deepcopy(GOLDEN["info"])
 
@@ -253,7 +263,6 @@ def test_receiver_and_client_round_trip(tmp_path, monkeypatch, service_info):
     from fastapi.testclient import TestClient
 
     from a_stock_tracker.contracts import ErrorBody, RunState, ServiceInfo
-    from a_stock_tracker.disclosures import TEMPLATE
     from a_stock_tracker.research_client import ResearchClient
     from a_stock_tracker.research_service import ResearchStore, create_service
 
@@ -293,7 +302,7 @@ def test_receiver_and_client_round_trip(tmp_path, monkeypatch, service_info):
                 "channel": "web",
                 "channel_remaining": None,
                 "busy": False,
-                "rule": TEMPLATE,
+                "rule": "cited-machine-research-v4",
             }
             value = request("screen")
             submitted = client.submit(value)

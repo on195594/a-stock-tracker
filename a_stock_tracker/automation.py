@@ -499,7 +499,7 @@ def main() -> int:
         type=Path,
         help="Private validated-stage cache; omit for independent experiments",
     )
-    parser.add_argument("--pipeline", choices=("legacy", "evidence-first-v1"), default="legacy")
+    parser.add_argument("--pipeline", choices=("evidence-first-v1",), default="evidence-first-v1")
     args = parser.parse_args()
     if args.context_contract is not None:
         from a_stock_tracker.evidence_pipeline import CONTEXT_LIMITS
@@ -566,7 +566,7 @@ def main() -> int:
                     raise ScreenError("Frozen run expired; create a new run explicitly")
                 if state["model"] != {"provider": args.provider, "model": args.model}:
                     raise ScreenError("Resume model mismatch")
-                if state.get("pipeline", "legacy") != args.pipeline:
+                if args.max_research and state.get("pipeline") != args.pipeline:
                     raise ScreenError("Resume pipeline mismatch; preserve artifacts without replay")
             else:
                 frozen = freeze(

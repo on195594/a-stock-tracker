@@ -8,7 +8,7 @@
 
 - 根据 `.research.env.example` 创建 Git 忽略的 `.research.env`，选择全新私有 `RESEARCH_SERVICE_ROOT`、单独的 `RESEARCH_SERVICE_SOCKET` 目录、已有的授权行情/模型和明确 provider/model。共享令牌用 `secrets.token_urlsafe(32)` 生成，不用示例占位值。
 - 模型运行时可选已安装的 Hermes 或 pi。pi 配置 `AUTOMATION_PI_RUNTIME`（安装包目录）、`AUTOMATION_PI_AGENT_DIR`（凭据目录）及 `AUTOMATION_PI_EXTENSION`（仅模型提供方入口），并将其默认 provider/model 明确写入 `RESEARCH_PROVIDER` / `RESEARCH_MODEL`；不会随 pi 默认设置变化而静默换模型。仅直接调用提供方推理，不启动编码会话、不加载技能、个人上下文或工具；每次本地最多等待 240 秒，向运行时请求 6000 输出 token；已安装 pi 的 openai-codex 提供方不会把该上限传给服务端，因此不能把它当作 token 或费用硬上限。pi 固定 SSE、关闭传输重试，无模型调用回退。优先使用固定 provider/model 对应的内置模型，不加载无关扩展；仅内置目录不存在该模型时才加载配置的提供方扩展，扩展若注册工具或事件回调则拒绝执行。pi 与 Hermes 的原始调用缓存分开核验。
-- `RESEARCH_PIPELINE=legacy`（默认）保持旧写者；`evidence-first-v1` 启用证据选择、正文、独立复核及共享一次修复，正常 3 次、单份最多 5 次模型调用，批次仍最多 10 次。流程版本参与报价，切换后须重新确认；CLI 对应 `--pipeline`，续跑与冻结版本不符时拒绝。本地输入上限按 UTF-8 字节进入报价（选择 75 KB、正文/修复 18 KB、复核/再复核 90 KB），子进程用 `--context-contract` 在采集前核对，变化须重新确认；字节计数不是 token 或费用保证。此开关不是部署或收费授权，启用前须完成下述兼容读者部署和配对实验闸门。
+- `evidence-first-v1` 是唯一研究流程，`RESEARCH_PIPELINE` 可省略或显式设为该值；`legacy` 与未知值不再提供研究报价或接受请求。CLI 的 `--pipeline` 也只接受该版本，旧研究检查点不可恢复。正常三次、单报告最多五次模型调用，批次仍最多十次；报价绑定流程和 UTF-8 上下文预算（选择 75 KB、正文/修复 18 KB、复核/再复核 90 KB），子进程在采集前核对 `--context-contract`。这不是 token 或费用硬上限，配置与命令示例不构成收费授权。
 - 新流程的 `RESEARCH_RESPONSE_CACHE=1`（默认）允许在接收器私有根目录 `validated-model-cache/` 复用解析、证据召回及已校验阶段响应。阶段响应须先通过机械校验，且对应事实/正文在最终语义复核通过后未被修复替换，才写入共享索引；请求、响应和用量账本仍保留在各请求目录，缓存命中记录为 `reused_validated_stage`，不冒充提供方调用。模型身份、完整输入和校验版本须完全相同，读取仍执行阶段校验。独立收费比较设为 `0`，每次使用新请求编号；CLI 不传 `--model-cache` 并为每个实验使用独立研究根目录。不得删除原编号账本换取再次收费机会。
 - 明确授权后，在宿主启动一次 `.venv/bin/python -m a_stock_tracker.research_service`（仅启动接收器，不主动研究），启动前用 `set -a; source .research.env; set +a` 加载宿主环境，勿将此文件传给 Web。默认仅 loopback；配置 socket 时通过私有 Unix socket 通信。此源码不安装 cron、定时或进程管理器。
 - 管理员密码登录（可选，见[架构](architecture.md#安全基线)）：在 `.web.env` 设置 `ADMIN_USERNAME`、`ADMIN_PASSWORD`（用 `secrets.token_urlsafe(24)` 生成）、`ADMIN_LOGIN_SCOPE`（`local` 默认，`any` 为公网开放）、`ADMIN_TRUSTED_PROXIES=nginx`（只采信 Nginx 容器转发的 `X-Real-IP`）与 `ADMIN_ALLOWED_IPS`（逗号分隔的地址或网段，通常为本机出口 IP，可用 `curl -4 -s https://stock.keyi.win/cdn-cgi/trace` 的 `ip=` 查看），重新部署 Web 后生效；清空 `ADMIN_PASSWORD` 并重新部署即关闭。`local` 下宿主本机浏览器正常经 Cloudflare 访问即可，白名单以外的来源看不到该表单。出口 IP 变化时须更新白名单。
@@ -132,6 +132,8 @@ systemctl --user disable --now a-stock-tracker-research.service
 
 ### 运维安全红线与历史隔离
 
+已获明确授权的数据删除须在接收器空闲并持有执行锁时进行；删除报告或初筛产物后，保留最小请求回执并标记数据已删除，阻止同编号重新执行和重复收费。不能把删除产物当作允许重跑，也不能连带删除新流程报告、价格参考、共享资料或凭据。
+
 遵循 [AGENTS.md](../AGENTS.md) 约束：
 - **明确授权原则**：代码修改、命令示例与测试通过均不构成生产操作授权。提交、推送、部署、重启、定时/投递启停及历史数据归档/删除，均须当前会话明确授权；
 - **数据不可动原则**：历史数据库（`tracker.db` / `tushare-primary.db`）、笔记、不可变事实 JSON、历史日志与备份原样保留在宿主目录，不挂载给 Web，禁止线上迁移、重算或删除；
@@ -203,7 +205,7 @@ export AUTOMATION_HERMES_RUNTIME=/absolute/path/to/installed/hermes-agent
 1. 先在合成接收器上验证新接收器与现网 Web 兼容：报价、提交、状态与结果读取不受影响。
 2. 只在 `get_service_info` 显示无任务执行时更新宿主代码并重启接收器；批处理子进程从宿主工作区启动，任务运行中不改动工作区。
 3. 记录接收器当前提交作为回滚点；启用 MCP 时 `.research-mcp.env` 为 0600，并已被 Git 与 Docker 构建排除。
-4. 新流水线先部署可读旧格式和 `cited-machine-research-v4` 的兼容读者，保持 `RESEARCH_PIPELINE=legacy`；核验 Web/MCP 的分片引文和旧报告读取后，记录该提交与镜像为回滚下限，再按独立授权启用新写者。产生新格式报告后不得退回不认识 v4 的读者。
+4. 升级前确认配置未设已退役的 `RESEARCH_PIPELINE=legacy`。旧财报格式读取已退役；回滚版本必须能读取 `cited-machine-research-v4`，不得退回不认识 v4 的读者。回滚不自动续跑旧研究任务，也不重算已发布报告。
 5. 回滚等待接收器空闲；如另获授权紧急中断，保留新版本非终态中间产物，只读展示停止/中断状态，不交给旧写者续跑。不改写、不删除研究目录，不自动重跑任务。
 
 ### Web 切换前

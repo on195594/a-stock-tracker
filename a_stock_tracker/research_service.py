@@ -48,7 +48,7 @@ from a_stock_tracker.contracts import (
     RunState,
     ServiceInfo,
 )
-from a_stock_tracker.disclosures import TEMPLATE, model_command, structured_report
+from a_stock_tracker.disclosures import model_command, structured_report
 from a_stock_tracker.evidence_pipeline import CONTEXT_LIMITS
 from a_stock_tracker.opportunities import load_board
 from a_stock_tracker.research import SHANGHAI, ScreenError, parse_date, public_data_diagnostic
@@ -170,10 +170,10 @@ def validate_request(value: Any) -> dict[str, Any]:
 
 
 def request_info() -> dict[str, Any]:
-    pipeline = os.getenv("RESEARCH_PIPELINE", "legacy")
+    pipeline = os.getenv("RESEARCH_PIPELINE", "evidence-first-v1")
     if os.getenv("RESEARCH_RESPONSE_CACHE", "1") not in {"0", "1"}:
         raise ScreenError("Invalid response cache configuration")
-    if pipeline not in {"legacy", "evidence-first-v1"}:
+    if pipeline != "evidence-first-v1":
         raise ScreenError("Unknown configured research pipeline")
     market_token = os.getenv("TUSHARE_TOKEN", "")
     market = bool(market_token and not market_token.startswith("REPLACE_"))
@@ -1063,9 +1063,7 @@ def create_service(root: Path, tokens: dict[str, str]) -> FastAPI:
             if channel == "mcp"
             else None,
             "busy": busy,
-            "rule": "cited-machine-research-v4"
-            if info["modes"]["financial"]["pipeline"] == "evidence-first-v1"
-            else TEMPLATE,
+            "rule": "cited-machine-research-v4",
         }
 
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)

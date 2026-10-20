@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pandas as pd
@@ -222,88 +223,18 @@ def test_root_does_not_adopt_unsafe_initialization_remnants(tmp_path, entry):
     assert not (tmp_path / "missing").exists()
 
 
-def packet_and_report():
-    quotes = [
-        "本公司主要从事电力生产和销售业务，主要客户为电网公司。",
-        "经营活动产生的现金流量净额受到电费结算周期的影响。",
-        "公司面临来水量波动风险，极端气候可能影响发电量。",
-        "审计意见：我们认为财务报表在所有重大方面公允反映财务状况。",
-    ]
-    packet = {
-        "structured": {"code": "600001.SH"},
-        "documents": [{"id": "123", "pages": [{"page": 1, "text": "\n".join(quotes)}]}],
-        "omitted_pages": [],
-        "scope_gaps": [],
-    }
-    facts = [
-        {"id": f"F{i + 1}", "document": "123", "page": 1, "quote": q, "claim": q}
-        for i, q in enumerate(quotes)
-    ]
-    report = {
-        "code": "600001.SH",
-        "facts": facts,
-        "analysis": {
-            k: {"text": "假设：现金流持续性需要验证。", "facts": ["F1", "F2"]}
-            for k in d.REQUIRED_SECTIONS + d.OPTIONAL_SECTIONS
-        },
-        "gaps": ["假设未验证"],
-    }
-    return packet, report
-
-
-def test_source_bound_report_and_independent_gate():
-    packet, report = packet_and_report()
-    d.validate_report(report, packet)
-    review = {
-        "facts": [
-            {"id": f["id"], "supported": True, "reason": "原文支持"} for f in report["facts"]
-        ],
-        "analysis_supported": True,
-        "issues": [],
-    }
-    assert d.validate_review(review, report)
-    review["facts"][2]["supported"] = False
-    review["issues"] = ["断章取义"]
-    assert not d.validate_review(review, report)
-    review["facts"].pop()
-    with pytest.raises(ScreenError):
-        d.validate_review(review, report)
-
-
-@pytest.mark.parametrize(
-    "damage", ["security", "page", "quote", "unit", "amount", "tool", "unbound"]
-)
-def test_citation_and_instruction_counterexamples(damage):
-    packet, report = packet_and_report()
-    if damage == "security":
-        report["code"] = "600002.SH"
-    elif damage == "page":
-        report["facts"][0]["page"] = 2
-    elif damage == "quote":
-        report["facts"][0]["quote"] += "未发现任何风险"
-    elif damage == "unit":
-        report["facts"][0]["claim"] += "营收亿元"
-    elif damage == "amount":
-        report["facts"][0]["claim"] += "营收999亿元"
-    elif damage == "tool":
-        report["command"] = "set-analysis --confirm-write; read /production; notify"
-    elif damage == "unbound":
-        report["analysis"]["financial"]["facts"] = ["invented"]
-    with pytest.raises(ScreenError):
-        d.validate_report(report, packet)
-
-
 def test_evidence_version_ignores_retrieval_but_detects_corrections(monkeypatch):
-    packet, _ = packet_and_report()
+    from tests.test_evidence_pipeline import evidence_case
+
+    packet, _ = evidence_case()
     model = {"model": "m1", "provider": "p1"}
     first = d.stable_evidence(packet, model)
     packet["retrieved_at"] = "later"
     assert d.stable_evidence(packet, model) == first
-    for name in ("GENERATE", "VERIFY"):
-        template = getattr(d, name)
-        monkeypatch.setattr(d, name, template + "合同更正")
-        assert d.stable_evidence(packet, model) != first
-        monkeypatch.setattr(d, name, template)
+    from a_stock_tracker import evidence_pipeline as ep
+
+    monkeypatch.setattr(ep, "PROMPTS", {**ep.PROMPTS, "select": ep.SELECT + "合同更正"})
+    assert d.stable_evidence(packet, model) != first
     packet["documents"][0]["pages"][0]["text"] += "同日更正"
     assert d.stable_evidence(packet, model) != first
 
@@ -363,26 +294,6 @@ def test_pdf_missing_page_or_identity_cannot_publish(tmp_path, monkeypatch, page
         )
 
 
-def test_page_budget_is_explicit(monkeypatch):
-    monkeypatch.setattr(d, "MAX_TEXT", 60)
-    document = {"id": "123", "pages": [{"page": i + 1, "text": "财报正文" * 10} for i in range(3)]}
-    row = dict.fromkeys(
-        (
-            "code",
-            "name",
-            "industry",
-            "pb",
-            "valuation_date",
-            "annual_roes",
-            "roe_mean",
-            "research_report",
-        ),
-        None,
-    )
-    packet = d.evidence_packet([document], row)
-    assert len(packet["documents"][0]["pages"]) == 1 and len(packet["omitted_pages"]) == 2
-
-
 def test_model_budget_and_no_implicit_runtime(tmp_path, monkeypatch):
     state = {"model_calls": 10}
     with pytest.raises(a.BudgetStop):
@@ -409,6 +320,9 @@ def test_model_budget_and_no_implicit_runtime(tmp_path, monkeypatch):
 
 
 def research_case(directory):
+    from a_stock_tracker import evidence_pipeline as ep
+    from tests.test_evidence_pipeline import evidence_case, supported
+
     frozen, state = fixture(1)
     rows = [a.evaluate(r, records(r["code"]), frozen) for r in frozen["rows"]]
     summary = a.coverage(rows, frozen)
@@ -419,25 +333,34 @@ def research_case(directory):
         model_calls=0,
         model={"provider": "p", "model": "m"},
     )
-    packet, report = packet_and_report()
+    packet, report = evidence_case()
+    packet.update(
+        pipeline=ep.VERSION,
+        template="cited-machine-research-v4",
+        citation_format="evidence-bundles-v1",
+        scope_gaps=[],
+        omitted_pages=[],
+    )
     packet["structured"] = rows[0]
     packet["documents"][0].update(
-        title="合成2025年年度报告",
-        url="https://example.invalid/report.pdf",
-        period="2025-12-31",
-        announced="2026-04-30",
+        title="合成报告", url="https://example.invalid/report.pdf", announced="2026-08-30"
     )
+    state["pipeline"] = ep.VERSION
     a.save_state(
         directory / "evidence-600001.SH.json", {"freeze": state["freeze"], "packet": packet}
     )
-    review = {
-        "facts": [
-            {"id": f["id"], "supported": True, "reason": "原文支持"} for f in report["facts"]
-        ],
-        "analysis_supported": True,
-        "issues": [],
-    }
-    return frozen, state, summary, packet, report, review
+    return frozen, state, summary, packet, report, supported(report)
+
+
+def model_response(label, report, review):
+    stage = label.rsplit("-", 1)[-1]
+    if stage == "select":
+        return {k: report[k] for k in ("code", "facts", "gaps")}
+    if stage == "compose":
+        return {k: report[k] for k in ("code", "analysis")}
+    if stage == "repair":
+        return {"facts": {}, "sentences": {}}
+    return review
 
 
 def test_api_budget_interruption_is_not_a_terminal_gap(tmp_path, monkeypatch):
@@ -521,11 +444,10 @@ def test_cli_reports_actual_research_outcome(tmp_path, monkeypatch, capsys, outc
 
     def model(directory, label, *args):
         calls.append(label)
-        return review if label.endswith("verify") else report
+        return model_response(label, report, review)
 
     if outcome == "review_failed":
-        review["analysis_supported"] = False
-        review["issues"] = ["合成复核失败"]
+        review["coverage"]["risk"] = False
     monkeypatch.setattr(tushare, "pro_api", lambda *_, **__: Client())
     monkeypatch.setattr(a, "freeze", lambda *_, **__: frozen)
     monkeypatch.setattr(a, "now_iso", lambda: frozen["created_at"])
@@ -579,10 +501,10 @@ def test_unchanged_reports_remain_readable_and_reusable(tmp_path, monkeypatch):
 
         def model(directory, label, *args, _review=review, _report=report):
             calls.append(label)
-            return _review if label.endswith("verify") else _report
+            return model_response(label, _report, _review)
 
         monkeypatch.setattr(d, "model_call", model)
-        d.research_batch(directory, frozen, summary, state, previous, a.Budget(50, 300), 5)
+        d.research_batch(directory, frozen, summary, state, previous, a.Budget(50, 1800), 5)
         result = a.read_state(directory / "report-600001.SH.json")["result"]
         assert result["evidence_review"] == "passed"
         assert result["report"] == report and result["evidence"] == packet
@@ -590,7 +512,7 @@ def test_unchanged_reports_remain_readable_and_reusable(tmp_path, monkeypatch):
         markdown = (directory / "report-600001.SH.md").read_text()
         assert "业务判断" in markdown and "原文/模型验证未完成" not in markdown
         previous = [(directory, state)]
-    assert len(calls) == 2
+    assert len(calls) == 3
 
 
 def test_resume_after_announcement_publish_reuses_frozen_list(tmp_path, monkeypatch):
@@ -602,7 +524,7 @@ def test_resume_after_announcement_publish_reuses_frozen_list(tmp_path, monkeypa
     monkeypatch.setattr(
         d, "extract_document", lambda *_: (_ for _ in ()).throw(a.BudgetStop("REQUEST_BUDGET"))
     )
-    d.research_batch(tmp_path, frozen, summary, state, [], a.Budget(50, 300), 5)
+    d.research_batch(tmp_path, frozen, summary, state, [], a.Budget(50, 1800), 5)
     assert state["cursor"] == 0 and state["research"] == {}
     monkeypatch.setattr(d, "now_iso", lambda: "2026-10-07T10:00:00+08:00")
     monkeypatch.setattr(d, "extract_document", lambda *_: {})
@@ -610,22 +532,11 @@ def test_resume_after_announcement_publish_reuses_frozen_list(tmp_path, monkeypa
     monkeypatch.setattr(
         d,
         "model_call",
-        lambda directory, label, *args: review if label.endswith("verify") else report,
+        lambda directory, label, *args: model_response(label, report, review),
     )
-    d.research_batch(tmp_path, frozen, summary, state, [], a.Budget(50, 300), 5)
+    d.research_batch(tmp_path, frozen, summary, state, [], a.Budget(50, 1800), 5)
     assert calls == ["fetch"] and state["cursor"] == 1
     assert a.read_state(tmp_path / "report-600001.SH.json")["result"]["evidence_review"] == "passed"
-
-
-@pytest.mark.parametrize("malformed", [None, [], "not a fact", {"id": []}])
-def test_malformed_model_facts_fail_closed(malformed):
-    packet, report = packet_and_report()
-    review = {"facts": [malformed, *[{"id": f["id"]} for f in report["facts"][1:]]]}
-    with pytest.raises(ScreenError):
-        d.validate_review(review, report)
-    report["facts"][0] = malformed
-    with pytest.raises(ScreenError):
-        d.validate_report(report, packet)
 
 
 @pytest.mark.parametrize(
@@ -637,27 +548,9 @@ def test_malformed_model_facts_fail_closed(malformed):
     ],
 )
 def test_numeric_substrings_and_sign_changes_are_not_evidence(claim, sign):
-    packet, report = packet_and_report()
     quote = f"合并口径本期营业收入1,234万元，同比增长{sign}10%。"
-    packet["documents"][0]["pages"][0]["text"] += quote
-    report["facts"][0].update(quote=quote, claim=quote)
-    d.validate_report(report, packet)
-    report["facts"][0]["claim"] = claim
-    with pytest.raises(ScreenError, match="Numeric"):
-        d.validate_report(report, packet)
-
-
-@pytest.mark.parametrize("length,accepted", [(14, False), (15, True), (1600, True), (1601, False)])
-def test_verbatim_citation_length_boundary_is_explicit(length, accepted):
-    packet, report = packet_and_report()
-    quote = "原" * length
-    packet["documents"][0]["pages"][0]["text"] += quote
-    report["facts"][0].update(quote=quote, claim=quote)
-    if accepted:
-        d.validate_report(report, packet)
-    else:
-        with pytest.raises(ScreenError, match="Citation length"):
-            d.validate_report(report, packet)
+    assert not d.unquoted_numbers({"quote": quote, "claim": quote})
+    assert d.unquoted_numbers({"quote": quote, "claim": claim})
 
 
 @pytest.mark.parametrize(
@@ -671,13 +564,8 @@ def test_verbatim_citation_length_boundary_is_explicit(length, accepted):
     ],
 )
 def test_table_units_and_relative_periods_do_not_authorize_new_numeric_literals(quote, claim):
-    packet, report = packet_and_report()
-    packet["documents"][0]["pages"][0]["text"] += quote
-    report["facts"][0].update(quote=quote, claim=quote)
-    d.validate_report(report, packet)
-    report["facts"][0]["claim"] = claim
-    with pytest.raises(ScreenError, match="Numeric"):
-        d.validate_report(report, packet)
+    assert not d.unquoted_numbers({"quote": quote, "claim": quote})
+    assert d.unquoted_numbers({"quote": quote, "claim": claim})
 
 
 @pytest.mark.parametrize("period, accepted", [("2025-12-31", True), ("2025-06-30", False)])
@@ -904,14 +792,14 @@ def test_model_generation_resumes_across_packet_serialization(tmp_path, monkeypa
 
     def model(*args):
         nonlocal interrupted
-        if args[1].endswith("verify") and not interrupted:
+        if args[1].endswith("review") and not interrupted:
             interrupted = True
             raise a.BudgetStop("TIME_BUDGET")
         return original_call(*args)
 
     def command(args, **kwargs):
         calls.append(args[-1])
-        answer = review if "verify" in args[-1] else report
+        answer = model_response(Path(args[-1]).name.removesuffix(".request.json"), report, review)
         return SimpleNamespace(
             returncode=0,
             stdout=json.dumps(
@@ -927,10 +815,10 @@ def test_model_generation_resumes_across_packet_serialization(tmp_path, monkeypa
 
     monkeypatch.setattr(d, "run_bounded", command)
     monkeypatch.setattr(d, "model_call", model)
-    d.research_batch(tmp_path, frozen, summary, state, [], a.Budget(50, 300), 5)
-    assert state["cursor"] == 0 and len(calls) == 1
-    d.research_batch(tmp_path, frozen, summary, state, [], a.Budget(50, 300), 5)
-    assert state["cursor"] == 1 and len(calls) == state["model_calls"] == 2
+    d.research_batch(tmp_path, frozen, summary, state, [], a.Budget(50, 1800), 5)
+    assert state["cursor"] == 0 and len(calls) == 2
+    d.research_batch(tmp_path, frozen, summary, state, [], a.Budget(50, 1800), 5)
+    assert state["cursor"] == 1 and len(calls) == state["model_calls"] == 3
     assert a.read_state(tmp_path / "report-600001.SH.json")["result"]["evidence_review"] == "passed"
 
 

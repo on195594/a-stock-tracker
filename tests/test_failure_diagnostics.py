@@ -10,12 +10,10 @@ from a_stock_tracker import disclosures as d
 from a_stock_tracker import opportunities as p
 from a_stock_tracker.opportunity_demo import demo_packet
 from a_stock_tracker.research import ScreenError
-from tests.test_automation import research_case
+from tests.test_automation import model_response, research_case
 
 
-@pytest.mark.parametrize(
-    "stage", ["report_generation", "citation_validation", "independent_review", "review_validation"]
-)
+@pytest.mark.parametrize("stage", ["select", "compose", "review"])
 def test_financial_failure_preserves_evidence_and_hides_draft(tmp_path, monkeypatch, stage):
     frozen, state, summary, packet, report, review = research_case(tmp_path)
     secret = "token=SECRET /private/provider-response draft-private"
@@ -24,25 +22,21 @@ def test_financial_failure_preserves_evidence_and_hides_draft(tmp_path, monkeypa
         raise ScreenError(secret)
 
     def model(directory, label, *_):
-        if (label.endswith("generate") and stage == "report_generation") or (
-            label.endswith("verify") and stage == "independent_review"
-        ):
+        if label.endswith("-" + stage):
             fail()
-        return review if label.endswith("verify") else report
+        return model_response(label, report, review)
 
     monkeypatch.setattr(d, "model_call", model)
-    if stage == "citation_validation":
-        monkeypatch.setattr(d, "validate_report", fail)
-    if stage == "review_validation":
-        monkeypatch.setattr(d, "validate_review", fail)
-    d.research_batch(tmp_path, frozen, summary, state, [], a.Budget(50, 300), 5)
+    d.research_batch(tmp_path, frozen, summary, state, [], a.Budget(50, 1800), 5)
     result = a.read_state(tmp_path / "report-600001.SH.json")["result"]
     public = d.structured_report(result)
     assert result["evidence"] == packet
     assert public["diagnostic"]["stage"] == stage
     assert public["diagnostic"]["category"] == "validation_failed"
     assert public["omitted_pages"] == len(packet["omitted_pages"])
-    assert public["documents"] == [{"period": "2025-12-31", "announced": "2026-04-30"}]
+    assert public["documents"] == [
+        {k: doc[k] for k in ("period", "announced")} for doc in packet["documents"]
+    ]
     assert public["clues"]["pb"] == packet["structured"]["pb"]
     assert public["analysis"] == {} and public["facts"] == []
     assert "report" not in result and "rejected_draft" not in result
@@ -145,39 +139,13 @@ def test_passed_summary_with_unknown_page_count_is_not_complete():
 
 
 def test_render_passed_report_uses_review_status_with_omitted_pages():
-    result = {
-        "code": "600001.SH",
-        "status": "unchanged",
-        "evidence_review": "passed",
-        "evidence": {
-            "documents": [],
-            "structured": {
-                "industry": "银行",
-                "valuation_date": "2026-10-14",
-                "pb": 0.8,
-                "roe_mean": 10,
-            },
-            "scope_gaps": [],
-            "omitted_pages": [1, 2],
-        },
-        "report": {
-            "facts": [],
-            "analysis": {
-                field: {"text": "合成判断", "facts": []}
-                for field in (
-                    "business",
-                    "financial",
-                    "valuation",
-                    "counterevidence",
-                    "change_conditions",
-                )
-            },
-            "gaps": [],
-        },
-    }
+    from tests.test_evidence_integration import envelope
+    from tests.test_evidence_pipeline import evidence_case
 
+    result = envelope(evidence_case())
+    result["status"] = "unchanged"
+    result["evidence"]["omitted_pages"] = [1, 2]
     rendered = d.render(result)
-
     assert "研究完成" in rendered and "未送入模型的全文页数：2" in rendered
     assert "补齐后再研究" not in rendered
 
