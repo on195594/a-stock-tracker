@@ -280,6 +280,7 @@ def select_blocks(
         "structured": structured,
         "limit": limit,
         "quotas": [2, 6],
+        "ranking": "specific-table-first-v1",
     }
     if cache_root is not None:
         with locked_root(cache_root, blocking=True):
@@ -306,11 +307,18 @@ def select_blocks(
         all_blocks.extend(blocks)
         rejected.extend({"document": doc["id"], **o} for o in omissions)
     by_group = {g: [b for b in all_blocks if g in b["groups"]] for g in GROUPS}
-    # Prefer the latest source in every group; IDs break ties deterministically.
+    # Prefer current measured evidence over broad accounting-policy keyword matches.
     periods = {d["id"]: d["period"] for d in documents}
-    for candidates in by_group.values():
+    for group, candidates in by_group.items():
         candidates.sort(
-            key=lambda b: (periods[b["fragments"][0]["document"]], len(b["matches"]), b["id"]),
+            key=lambda b: (
+                periods[b["fragments"][0]["document"]],
+                b["relation"]["kind"] != "paragraph",
+                sum(word in compact(b["fragments"][0]["text"]) for word in GROUPS[group]),
+                -b["fragments"][0]["page"],
+                -b["fragments"][0]["start"],
+                b["id"],
+            ),
             reverse=True,
         )
     chosen: dict[str, dict] = {}

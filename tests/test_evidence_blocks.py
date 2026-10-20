@@ -173,3 +173,18 @@ def test_evidence_cache_binds_all_inputs_and_revalidates_sources(tmp_path):
         path.write_text("{}")
     with pytest.raises(ScreenError, match="checksum"):
         b.select_blocks([doc], {"code": "600001.SH"}, cache_root=root)
+
+
+def test_recall_keeps_specific_balance_table_ahead_of_broad_policies():
+    policy = "本公司按会计政策评估应收账款、其他应收款、现金流量、公允价值变动及减值风险。"
+    pages = [f"政策编号{i}。{policy}" for i in range(4)]
+    pages.append(
+        "资产负债状况\n\n单位：元\n项目             本期        上期\n"
+        "应收账款         120.00      100.00\n其他应收款       20.00       10.00\n"
+    )
+    doc = document(*pages)
+    selected = b.select_blocks([doc], {"code": "600001.SH"})
+    assert any(
+        x["relation"]["kind"] == "same_page_table" and "应收账款" in x["fragments"][0]["text"]
+        for x in selected["blocks"]
+    )

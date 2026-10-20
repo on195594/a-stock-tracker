@@ -98,7 +98,10 @@ def test_every_selected_risk_fact_must_appear_in_counterevidence(case):
     extra = {**report["facts"][2], "id": "F4"}
     report["facts"].append(extra)
     report["analysis"]["summary"][0]["refs"].append("F4")
-    assert any(e["reason"] == "risk_facts_uncited" for e in p.composition_errors(report, packet))
+    error = next(
+        e for e in p.composition_errors(report, packet) if e["reason"] == "risk_facts_uncited"
+    )
+    assert error["missing_fact_ids"] == ["F4"]
 
 
 def test_fact_deletion_invalidates_all_cross_section_dependents(case):
@@ -299,3 +302,94 @@ def test_same_claim_in_same_block_does_not_count_as_another_fact(case):
     report["facts"].append({**report["facts"][0], "id": "F4"})
     errors = p.selection_errors({k: report[k] for k in ("code", "facts", "gaps")}, packet)
     assert any(e["id"] == "F4" and e["reason"] == "duplicate_fact" for e in errors)
+
+
+def test_compose_sends_shared_evidence_once_without_dropping_facts(case, tmp_path):
+    packet, report = case
+    report["facts"].append(
+        {"id": "F4", "block_id": report["facts"][1]["block_id"], "claim": "净利润20.00元。"}
+    )
+    report["analysis"]["financial"].append(
+        {"id": "S_financial_2", "kind": "assertion", "text": "净利润20.00元。", "refs": ["F4"]}
+    )
+    stages = []
+
+    def call(directory, label, prompt, model, state, budget):
+        stage = label.rsplit("-", 1)[-1]
+        stages.append(stage)
+        payload = json.loads(prompt[len(p.PROMPTS[stage]) :])
+        if stage == "select":
+            return {k: report[k] for k in ("code", "facts", "gaps")}
+        if stage == "compose":
+            assert payload["facts"] == report["facts"]
+            assert payload["risk_fact_ids"] == ["F3"]
+            expected = {f["block_id"] for f in report["facts"]}
+            assert len(payload["blocks"]) == len(expected) == 3
+            assert {b["id"] for b in payload["blocks"]} == expected
+            assert all(b == p.block_map(packet)[b["id"]] for b in payload["blocks"])
+            return {k: report[k] for k in ("code", "analysis")}
+        return supported(payload["report"])
+
+    result, review = p.run(
+        packet, tmp_path, {"model_calls": 0, "model": "synthetic/model"}, Budget(0, 1800), call, {}
+    )
+    assert stages == ["select", "compose", "review"]
+    assert p.validate_review(review, result)
+
+
+def test_repair_rejects_plain_text_and_accepts_explicit_sentence_object(case):
+    packet, report = case
+    sid = "S_counterevidence_1"
+    targets = p.repair_targets(
+        report,
+        [{"kind": "section", "id": "counterevidence", "reason": "risk_facts_uncited"}],
+        packet,
+    )
+    sentence = report["analysis"]["counterevidence"][0]
+    with pytest.raises(ValueError):
+        p.apply_patch(
+            report, {"facts": {}, "sentences": {sid: replacement(sentence["text"])}}, targets
+        )
+    patched = p.apply_patch(
+        report, {"facts": {}, "sentences": {sid: replacement(sentence)}}, targets
+    )
+    assert patched == report
+    assert not p.composition_errors(patched, packet)
+
+
+def test_review_section_issue_opens_its_facts_even_when_coverage_says_true(case):
+    packet, report = case
+    report["analysis"]["counterevidence"].append(
+        {
+            "id": "S_counterevidence_2",
+            "kind": "assertion",
+            "text": "营业收入120.00元。",
+            "refs": ["F2"],
+        }
+    )
+    review = {**supported(report), "report_hash": digest(report)}
+    review["issues"] = [{"kind": "section", "id": "counterevidence", "reason": "遗漏重要财务变化"}]
+    errors = p.review_errors(review, report)
+    targets = p.repair_targets(report, errors, packet)
+    assert targets["facts"] == ["F2", "F3"]
+    assert "S_financial_1" in targets["sentences"]
+    assert "S_summary_1" in targets["sentences"]
+    assert "S_business_1" not in targets["sentences"]
+    assert not p.validate_review(review, report)
+
+
+def test_unknown_block_repair_gets_valid_alternatives(case):
+    packet, report = case
+    original = copy.deepcopy(report["facts"][0])
+    report["facts"][0]["block_id"] = "unknown"
+    targets, payload = p.repair_input(
+        report, [{"kind": "fact", "id": "F1", "reason": "unknown_block"}], packet
+    )
+    assert original["block_id"] in targets["blocks"]
+    assert any(b["id"] == original["block_id"] for b in payload["blocks"])
+    patch = {"facts": {"F1": original}, "sentences": {}}
+    for sid in targets["sentences"]:
+        sentence = p.sentence_map(report["analysis"])[sid]
+        patch["sentences"][sid] = replacement(sentence)
+    fixed = p.apply_patch(report, patch, targets)
+    assert fixed["facts"][0] == original
