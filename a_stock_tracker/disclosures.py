@@ -952,6 +952,18 @@ def quality_text(quality: Any) -> str | None:
         text.append(parts[repair])
     if dropped:
         text.append(f"剔除 {len(dropped)} 条未通过校验的事实")
+    carried = quality.get("carried_sections")
+    if isinstance(carried, list) and carried:
+        names = {
+            "summary": "摘要",
+            "business": "业务",
+            "financial": "财务",
+            "counterevidence": "主要风险",
+            "valuation": "估值",
+            "change_conditions": "改变判断的条件",
+        }
+        waived = "、".join(names.get(str(c), "其他段落") for c in carried)
+        text.append(f"修复后复核对未改动的{waived}提出新意见，沿用首轮复核结论")
     sections = [("valuation", "估值方法"), ("change_conditions", "改变判断的条件")]
     titles = [title for key, title in sections if unformed.get(key)]
     if titles:

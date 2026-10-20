@@ -529,6 +529,26 @@ def repair_input(report: dict, errors: list[dict], packet: dict) -> tuple[dict, 
     return targets, value
 
 
+def touched_sections(before: dict, after: dict, errors: list[dict]) -> set[str]:
+    """Sections the first review flagged or the repair changed, directly or via a fact."""
+    old_facts = {f["id"]: f for f in before["facts"]}
+    new_facts = {f["id"]: f for f in after["facts"]}
+    changed = {
+        f for f in old_facts.keys() | new_facts.keys() if old_facts.get(f) != new_facts.get(f)
+    }
+    changed |= {e["id"] for e in errors if e["kind"] == "fact"}
+    flagged = {e["id"] for e in errors if e["kind"] == "sentence"}
+    return {e["id"] for e in errors if e["kind"] == "section"} | {
+        section
+        for section in SECTIONS
+        if before["analysis"][section] != after["analysis"][section]
+        or any(
+            s["id"] in flagged or changed.intersection(s["refs"])
+            for s in before["analysis"][section] + after["analysis"][section]
+        )
+    }
+
+
 def apply_patch(report: dict, patch: dict, targets: dict) -> dict:
     if set(patch) != {"facts", "sentences"} or not all(isinstance(patch[k], dict) for k in patch):
         raise PipelineError("repair", "patch_scope")
@@ -725,6 +745,7 @@ def run(
     errors = review_errors(review, report)
     quality["semantic_passed"] = sum(f["supported"] for f in review["facts"])
     if errors:
+        reviewed, first_errors = copy.deepcopy(report), errors
         repair(errors, False, "recheck")
         validate_report(report, packet)
         review = dispatch("recheck", review_payload(report, packet), [])
@@ -732,6 +753,13 @@ def run(
         review["report_hash"] = digest(report)
         errors = review_errors(review, report)
         quality["semantic_passed"] = sum(f["supported"] for f in review["facts"])
+        # Untouched sections keep the first review's verdict: the same bar as a report that
+        # passes without repair. Fact and sentence support is always rechecked in full.
+        carried = set(SECTIONS) - touched_sections(reviewed, report, first_errors)
+        waived = sorted({e["id"] for e in errors if e["kind"] == "section" and e["id"] in carried})
+        if waived:
+            quality["carried_sections"] = waived
+            errors = [e for e in errors if not (e["kind"] == "section" and e["id"] in carried)]
         if errors:
             raise PipelineError("independent_review", "semantic_failed")
         accepted("recheck")

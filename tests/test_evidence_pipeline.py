@@ -8,6 +8,7 @@ import pytest
 from a_stock_tracker import evidence_blocks as eb
 from a_stock_tracker import evidence_pipeline as p
 from a_stock_tracker.automation import Budget, BudgetStop, digest, encoded
+from a_stock_tracker.disclosures import quality_text
 from tests.test_evidence_blocks import TEXT, document
 
 
@@ -203,6 +204,55 @@ def test_bounded_paths_and_same_request_replay(case, tmp_path, failure, expected
     assert quality["passed"] == quality["mechanical_passed"] == quality["semantic_passed"] == 3
     replay, _ = p.run(packet, tmp_path, state, Budget(100, 1800), call, {})
     assert replay == report and stages == expected
+
+
+@pytest.mark.parametrize(
+    "recheck,outcome",
+    [
+        ("untouched_section", ["counterevidence"]),
+        ("touched_section", None),
+        ("untouched_sentence", None),
+    ],
+)
+def test_recheck_keeps_first_verdict_only_for_untouched_sections(case, tmp_path, recheck, outcome):
+    packet, original = case
+    state = {"model_calls": 0, "model": "synthetic/model"}
+
+    def call(directory, label, prompt, model, state, budget):
+        stage = label.rsplit("-", 1)[-1]
+        payload = json.loads(prompt[len(p.PROMPTS[stage]) :])
+        state["model_calls"] += 1
+        (directory / f"{label}.request.json").write_bytes(encoded({"prompt": prompt}))
+        if stage == "select":
+            return {k: copy.deepcopy(original[k]) for k in ("code", "facts", "gaps")}
+        if stage == "compose":
+            return {k: copy.deepcopy(original[k]) for k in ("code", "analysis")}
+        if stage == "repair":
+            fixed = {**original["analysis"]["summary"][0], "text": "需要谨慎，回款存在不确定性。"}
+            return {"facts": {}, "sentences": {"S_summary_1": replacement(fixed)}}
+        result = supported(payload["report"])
+        if stage == "review":
+            next(s for s in result["sentences"] if s["id"] == "S_summary_1").update(
+                supported=False, reason="合成语义失败"
+            )
+        elif recheck == "untouched_sentence":
+            sid = original["analysis"]["counterevidence"][0]["id"]
+            next(s for s in result["sentences"] if s["id"] == sid).update(supported=False)
+        else:
+            section = "counterevidence" if recheck == "untouched_section" else "summary"
+            result["coverage"]["risk"] = recheck != "untouched_section"
+            result["issues"] = [{"kind": "section", "id": section, "reason": "合成新意见"}]
+        return result
+
+    quality = {}
+    if outcome is None:
+        with pytest.raises(p.PipelineError, match="semantic_failed"):
+            p.run(packet, tmp_path, state, Budget(100, 1800), call, quality)
+        return
+    report, _ = p.run(packet, tmp_path, state, Budget(100, 1800), call, quality)
+    assert quality["carried_sections"] == outcome and quality["passed"] == 3
+    assert "未改动的主要风险提出新意见，沿用首轮复核结论" in quality_text(quality)
+    assert report["analysis"]["summary"][0]["text"].startswith("需要谨慎")
 
 
 @pytest.mark.parametrize("calls,seconds", [(8, 1800), (0, 700)])
