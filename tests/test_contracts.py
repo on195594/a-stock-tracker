@@ -56,9 +56,9 @@ GOLDEN = {
                 "method": "utf8_bytes",
                 "limits": {
                     "select": 75000,
-                    "compose": 18000,
+                    "compose": 32000,
                     "review": 90000,
-                    "repair": 36000,
+                    "repair": 50000,
                     "recheck": 90000,
                 },
             },

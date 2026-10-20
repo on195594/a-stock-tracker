@@ -22,9 +22,10 @@ SECTION_GROUP = {"business": "business", "financial": "financial", "counterevide
 # Local UTF-8 byte limits, not token or billing guarantees. Actual usage is retained by model_call.
 CONTEXT_LIMITS = {
     "select": 75000,
-    "compose": 18000,
+    # Compose holds up to 8 distinct fact blocks (prod max ~3.8 KB each).
+    "compose": 32000,
     "review": 90000,
-    "repair": 36000,
+    "repair": 50000,
     "recheck": 90000,
 }
 GAP_TEXT = {
