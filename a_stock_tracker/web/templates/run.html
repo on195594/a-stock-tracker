@@ -28,7 +28,7 @@
 </section>
 {% elif not result %}
 <h1>没有可用研究结果</h1>
-<p>研究没有完成，原因见下方“执行与依据”。重新研究需要再次确认费用。</p>
+<p>研究没有完成，原因见{{ "上方执行说明" if execution_on_top else "下方“执行与依据”" }}。重新研究需要再次确认费用。</p>
 <p class="lines">{{ usage }}</p>
 {% elif board %}
 {% if rows|selectattr('status', 'equalto', 'gap')|first is defined %}<section class="notice caution"><p>部分公司资料不全，没有算出价格参考，原因见各公司条目。</p></section>{% endif %}

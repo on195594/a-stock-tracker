@@ -808,6 +808,13 @@ FAILURE_MESSAGES = dict(FAILURE_REASONS.values()) | {
     "evidence_insufficient": "业务、财务或风险证据不足，未生成正文。",
     "repair_exhausted": "一次修复机会已用完，后续核验仍未通过，未发布草稿。",
     "semantic_failed": "独立语义复核未通过，未发布草稿。",
+    "schema_invalid": "模型输出不符合约定结构，未发布草稿。",
+    "identity_mismatch": "模型返回的公司与本次请求不一致，未发布草稿。",
+    "review_binding": "复核结果未绑定本次报告，未发布草稿。",
+    "review_incomplete": "复核未逐条覆盖全部事实与句子，未发布草稿。",
+    "patch_scope": "局部修复返回了获准范围以外的对象或格式，未发布草稿。",
+    "dependency_not_repaired": "局部修复未正确处理受影响的句子，未发布草稿。",
+    "repair_incomplete": "局部修复后仍有核验错误，未发布草稿。",
 }
 
 FAILURE_STAGES = {

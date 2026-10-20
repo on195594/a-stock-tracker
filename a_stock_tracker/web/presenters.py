@@ -399,7 +399,10 @@ def company_cards(runs: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]
 
 
 def latest_screen(runs: list[dict[str, Any]]) -> dict[str, Any] | None:
-    finished = [r for r in runs if run_mode(r) == "screen" and r["status"] != "running"]
+    # Failed or interrupted screens have no candidates; they collapse like other failures.
+    finished = [
+        r for r in runs if run_mode(r) == "screen" and r["status"] in ("completed", "partial")
+    ]
     return recent_item(finished[0]) if finished else None
 
 

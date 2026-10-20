@@ -1,12 +1,15 @@
 """Offline failure diagnostics preserve evidence without publishing unsafe output."""
 
 import json
+import re
 import subprocess
+from pathlib import Path
 
 import pytest
 
 from a_stock_tracker import automation as a
 from a_stock_tracker import disclosures as d
+from a_stock_tracker import evidence_pipeline as ep
 from a_stock_tracker import opportunities as p
 from a_stock_tracker.opportunity_demo import demo_packet
 from a_stock_tracker.research import ScreenError
@@ -168,3 +171,13 @@ def test_render_failed_result_uses_summary_failure_status_and_gap_line():
 
     assert "状态：未能生成结论" in rendered
     assert "缺口：原文/模型验证未完成" in rendered
+
+
+def test_every_pipeline_error_category_has_a_specific_message():
+    source = Path(ep.__file__).read_text()
+    categories = set(re.findall(r'PipelineError\("[a-z_]+", "([a-z_]+)"\)', source))
+    assert categories and categories <= set(d.FAILURE_MESSAGES)
+    assert (
+        d.failure_diagnostic("repair", ep.PipelineError("repair", "patch_scope"))["category"]
+        == "patch_scope"
+    )

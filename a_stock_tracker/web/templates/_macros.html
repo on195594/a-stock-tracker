@@ -124,7 +124,7 @@
     <p>{{ r.scope_text }}</p>
     {% for line in r.scope %}<p>{{ line }}</p>{% endfor %}
     {% if r.quality %}<p>{{ r.quality }}</p>{% endif %}
-    {% if r.clues %}<p>入选初筛时的指标：行业 {{ r.clues.industry }}；估值日 {{ r.clues.valuation_date }}；市净率 {{ r.clues.pb }}；近年平均 ROE {{ r.roe }}。</p>{% endif %}
+    {% if r.clues %}<p>研究时的基础指标：行业 {{ r.clues.industry }}；估值日 {{ r.clues.valuation_date }}；市净率 {{ r.clues.pb }}；近年平均 ROE {{ r.roe }}。</p>{% endif %}
   </details>
 </section>
 {%- endmacro %}

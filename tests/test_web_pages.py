@@ -167,6 +167,9 @@ def test_home_overview_reads_every_mode_concurrently_and_links_tabs(owner):
     visible = text(page)
     assert visible.index("我研究过的公司") < visible.index("最近一次初筛")
     assert f'href="/analysis/{OTHER}"' in page.text
+    # A failed screen has no candidates to offer; it collapses with other failures.
+    client.recent_runs[1] = run_state("screen", status="failed") | {"id": OTHER}
+    assert "最近一次初筛" not in text(browser.get("/"))
 
 
 def test_home_mode_tab_lists_only_that_mode_and_pages_by_cursor(owner):
@@ -325,6 +328,7 @@ def test_failed_run_has_no_result_and_shows_usage(owner):
     client.runs[RUN] = run_state(status="failed", message="本次研究未通过或预算已耗尽。")
     visible = text(browser.get("/analysis/" + RUN))
     assert "执行：失败" in visible and "没有可用研究结果" in visible
+    assert "原因见上方执行说明" in visible  # the failure note leads the page
     assert "本轮用量：未记录" in visible
 
 
