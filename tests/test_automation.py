@@ -757,7 +757,7 @@ def test_model_subprocess_success_and_response_resume(tmp_path, monkeypatch, eng
                     "tool_count": 0,
                     "model": "m",
                     "provider": "p",
-                    "text": '```json\n{"ok":true}\n```',
+                    "text": '```JSON\n{"ok":true}\n```',
                     "usage": {},
                 }
             ),
@@ -855,6 +855,8 @@ def test_failed_model_preserves_usage_and_never_retries(tmp_path, monkeypatch, o
         d.model_call(*args)
     assert len(calls) == state["model_calls"] == 1
     assert not (tmp_path / "failed.response.json").exists()
+    if outcome == "invalid_json":
+        assert audit["unparsed_text"] == "not JSON"
 
 
 def test_small_industry_completes_within_budget_without_repeating_cached_rows(

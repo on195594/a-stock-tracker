@@ -702,9 +702,15 @@ def model_call(
     ):
         raise ScreenError("Model isolation/identity mismatch")
     text = envelope["text"].strip()
-    if text.startswith("```json") and text.endswith("```"):
-        text = text[7:-3].strip()
-    report = json.loads(text)
+    if text.startswith("```") and text.endswith("```"):
+        text = text.split("\n", 1)[-1][:-3].strip()  # any fence language tag
+    try:
+        report = json.loads(text)
+    except ValueError:
+        # The call is paid either way; keep its output so the failure can be diagnosed.
+        audit["unparsed_text"] = envelope["text"]
+        save_state(usage_path, audit)
+        raise ScreenError("Model result not JSON") from None
     if not isinstance(report, dict):
         raise ScreenError("Model result not an object")
     save_state(
@@ -784,6 +790,10 @@ FAILURE_REASONS = {
     "Model report structure invalid after bounded repair": (
         "structure_invalid",
         "报告结构未通过校验，且一次修复失败或预算不足；未发布草稿。",
+    ),
+    "Model result not JSON": (
+        "model_output_invalid",
+        "模型输出不是可解析的 JSON，原始输出已留存在批次中；失败调用仍可能计费。",
     ),
     "Tool-free model invocation failed": (
         "model_failed",
