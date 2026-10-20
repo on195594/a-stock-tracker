@@ -107,7 +107,7 @@ def test_new_packet_and_batch_use_three_stage_path(case, tmp_path, monkeypatch):
     assert state["cursor"] == 1
 
 
-def test_pipeline_changes_quote_and_child_command(monkeypatch, tmp_path):
+def test_only_evidence_first_pipeline_is_quoted_and_passed_to_child(monkeypatch, tmp_path):
     monkeypatch.setenv("RESEARCH_PROVIDER", "synthetic")
     monkeypatch.setenv("RESEARCH_MODEL", "synthetic")
     monkeypatch.delenv("RESEARCH_PIPELINE", raising=False)

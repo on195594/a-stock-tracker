@@ -937,29 +937,19 @@ def quality_text(quality: Any) -> str | None:
     dropped = dropped if isinstance(dropped, (list, tuple)) else []
     unformed = quality.get("unformed")
     unformed = unformed if isinstance(unformed, dict) else {}
-    modern = quality.get("pipeline") == ep.VERSION
-    if repair == "none" and not dropped and not unformed and not modern:
-        return None
-    parts = {
-        "repaired": "修复 1 次",
-        "failed": "修复 1 次未成功",
-        "skipped_budget": "调用预算不足，未修复",
-    }
-    text = [parts[repair]] if repair in parts else []
-    if modern:
-        text.insert(
-            0,
-            f"机械校验通过 {quality.get('mechanical_passed', 0)} 条 / 语义复核通过 {quality.get('semantic_passed', 0)} 条",
-        )
+    parts = {"repaired": "修复 1 次", "failed": "修复 1 次未成功"}
+    text = [
+        f"机械校验通过 {quality.get('mechanical_passed', 0)} 条 / 语义复核通过 {quality.get('semantic_passed', 0)} 条"
+    ]
+    if repair in parts:
+        text.append(parts[repair])
     if dropped:
         text.append(f"剔除 {len(dropped)} 条未通过校验的事实")
     sections = [("valuation", "估值方法"), ("change_conditions", "改变判断的条件")]
     titles = [title for key, title in sections if unformed.get(key)]
     if titles:
         text.append("未形成：" + "、".join(titles))
-    if "numbers_unsupported" in unformed.values():
-        text.append("数字缺出处的段落已撤下")
-    return "质量：" + " / ".join(text) if text else None
+    return "质量：" + " / ".join(text)
 
 
 def render(result: dict[str, Any]) -> str:
@@ -994,14 +984,11 @@ def render(result: dict[str, Any]) -> str:
         lines += [
             f"- [{fact['id']}] {fact['claim']} — [{fact['title']}]({fact['url']}) PDF第{fact['page']}页，报告期{fact['period']}，公告{fact['announced']}",
         ]
-        if fact.get("fragments"):
-            for fragment in fact["fragments"]:
-                lines += [
-                    f"  - {fragment['role']} · PDF第{fragment['page']}页 · 原文行{fragment['start']}–{fragment['end']}",
-                    f"    > {fragment['text']}",
-                ]
-        else:
-            lines.append(f"  > {fact['quote']}")
+        for fragment in fact["fragments"]:
+            lines += [
+                f"  - {fragment['role']} · PDF第{fragment['page']}页 · 原文行{fragment['start']}–{fragment['end']}",
+                f"    > {fragment['text']}",
+            ]
     for field, title in (
         ("business", "业务判断"),
         ("financial", "财务判断"),

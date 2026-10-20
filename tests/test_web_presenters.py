@@ -288,17 +288,7 @@ def test_frozen_costs_repeat_the_confirmed_offer():
     )
 
 
-def test_legacy_conclusion_drops_fact_ids_and_snapshot_rounds():
-    report = {
-        "evidence_review": "passed",
-        "analysis": {
-            "counterevidence": {
-                "text": "推论（F2、F6）：最强反证是现金流为负（F4、F5）。其后不显示。",
-                "facts": ["F4"],
-            }
-        },
-    }
-    assert p.conclusion_text(report) == "主要风险：现金流为负。"
+def test_snapshot_text_rounds_valuation():
     text = p.snapshot_text({"date": "2026-10-16", "close": 33.72, "pe_ttm": 20.4019, "pb": 3.2889})
     assert text == "收盘 33.72 元 · 市盈率(TTM) 20.4 倍 · 市净率 3.29 倍（2026-10-16）"
 

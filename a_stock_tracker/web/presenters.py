@@ -48,7 +48,6 @@ SECTION_TITLES = (
     ("change_conditions", "什么会改变结论"),
 )
 UNFORMED_TEXT = "资料不足，本次没有形成判断。"
-LEGACY_NOISE = re.compile(r"(?:推论)?[（(]F[0-9]+(?:[、,，]\s*F[0-9]+)*[）)][：:]?")
 CODE = re.compile(r"(?:60\d{4}\.SH|00\d{4}\.SZ)")
 RUN_ID = re.compile(r"[a-f0-9]{32}")
 CURSOR_RE = re.compile(r"^(?:[a-f0-9]{32}|[0-9]+(?:\.[0-9]+)?_[a-f0-9]{32})$")
@@ -224,17 +223,10 @@ def well_formed_sections(report: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 
 def conclusion_text(report: dict[str, Any]) -> str:
-    """One readable line: the v3 summary, else the first sentence of the main risk."""
+    """One readable line: the report's required summary."""
     if not readable_report(report):
         return ""
-    analysis = well_formed_sections(report)
-    summary = (analysis.get("summary") or {}).get("text", "")
-    if summary:
-        return summary
-    counter = (analysis.get("counterevidence") or {}).get("text", "")
-    # Older reports carry inline fact ids and engine prefixes; the card shows plain words.
-    first = LEGACY_NOISE.sub("", counter.split("。", 1)[0]).removeprefix("最强反证是")
-    return "主要风险：" + first + "。" if first else ""
+    return (well_formed_sections(report).get("summary") or {}).get("text", "")
 
 
 def disclosure_text(report: dict[str, Any]) -> str:

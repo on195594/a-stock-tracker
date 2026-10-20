@@ -89,8 +89,7 @@ def submit(browser, mode, code=""):
 def test_home_orders_entries_and_groups_recent_runs(owner):
     client, browser = owner
     report = demo_report("600001.SH")
-    del report["analysis"]["summary"]  # a v2 report falls back to its main risk
-    report["analysis"]["counterevidence"]["text"] = "反证第一句。第二句不在摘要。"
+    report["analysis"]["summary"]["text"] = "需要谨慎：摘要一句。"
     done = run_state(summary=result_summary({"reports": [report]}), continuations=2, reused=True)
     running = run_state(status="running") | {"id": OTHER}
     client.recent_runs = [running, done]
@@ -107,7 +106,7 @@ def test_home_orders_entries_and_groups_recent_runs(owner):
     assert body.count(f'href="/analysis/{OTHER}"') == 1 and 'aria-label="查看进度' in body
     assert visible.index("进行中") < visible.index("我研究过的公司 演示公司 · 600001.SH")
     assert 'href="/stock/600001.SH"' in body
-    assert "主要风险：反证第一句。" in visible and "第二句不在摘要" not in visible
+    assert "需要谨慎：摘要一句。" in visible
     assert "披露期：2025-12-31（公告 2026-04-01）" in visible
     assert "历史发布批次" not in visible and "/published" not in body
     # Chain details stay in the per-type records.
@@ -368,7 +367,10 @@ def test_financial_report_hierarchy_and_failed_draft_is_hidden(owner, review):
         assert "来源 URL：https://example.invalid/synthetic.pdf" in visible
         summary = visible.split("业务")[0]
         assert "缺口2" in summary and "缺口3" not in summary
-        assert "缺口4" in visible and "质量：修复 1 次" in visible
+        assert (
+            "缺口4" in visible
+            and "质量：机械校验通过 1 条 / 语义复核通过 1 条 / 修复 1 次" in visible
+        )
     else:
         assert "未能生成结论：独立复核未通过" in visible
         assert "完整反证第一句" not in visible and "合成收入集中事实" not in visible

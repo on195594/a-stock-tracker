@@ -97,8 +97,7 @@ def quote(
     if mode == "screen":
         value["prefilter"] = info["modes"][mode].get("prefilter")
     elif mode == "financial":
-        if value.get("pipeline") == "evidence-first-v1":
-            value["context_budget"] = {"method": "utf8_bytes", "limits": dict(CONTEXT_LIMITS)}
+        value["context_budget"] = {"method": "utf8_bytes", "limits": dict(CONTEXT_LIMITS)}
         value["model_budget"] = {
             "calls": 10,
             "local_timeout_seconds": 240,
@@ -696,16 +695,12 @@ class ResearchStore:
                 "--model",
                 os.environ["RESEARCH_MODEL"],
                 "--pipeline",
-                limits.get("pipeline", "legacy"),
+                limits["pipeline"],
+                "--context-contract",
+                digest(limits["context_budget"]),
             ]
-        if (
-            mode == "financial"
-            and limits.get("pipeline") == "evidence-first-v1"
-            and os.getenv("RESEARCH_RESPONSE_CACHE", "1") == "1"
-        ):
-            args += ["--model-cache", str(self.root / "validated-model-cache")]
-        if mode == "financial" and limits.get("pipeline") == "evidence-first-v1":
-            args += ["--context-contract", digest(limits["context_budget"])]
+            if os.getenv("RESEARCH_RESPONSE_CACHE", "1") == "1":
+                args += ["--model-cache", str(self.root / "validated-model-cache")]
         return args
 
     def result(self, directory: Path, mode: str) -> dict[str, Any]:

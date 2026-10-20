@@ -8,7 +8,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 Mode = Literal["screen", "financial", "swing"]
-ResearchPipeline = Literal["legacy", "evidence-first-v1"]
+ResearchPipeline = Literal["evidence-first-v1"]
 ErrorCode = Literal[
     "invalid_request",
     "unauthorized",

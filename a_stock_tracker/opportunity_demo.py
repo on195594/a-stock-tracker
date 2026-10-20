@@ -72,9 +72,12 @@ def demo_report(code):
         "status": "synthetic",
         "evidence_review": "not_real",
         "quality": {
+            "pipeline": "evidence-first-v1",
             "generated": 2,
+            "mechanical_passed": 1,
+            "semantic_passed": 1,
             "repair": "repaired",
-            "dropped": [{"id": "F2", "reason": "citation_mismatch"}],
+            "dropped": [],
             "unformed": {},
             "passed": 1,
         },

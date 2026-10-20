@@ -181,7 +181,14 @@ class DemoResearchClient:
         return ServiceInfo.model_validate(
             {
                 "demo": True,
-                "modes": {k: {**v, "available": True} for k, v in LIMITS.items()},
+                "modes": {
+                    k: {
+                        **v,
+                        "available": True,
+                        **({"pipeline": "evidence-first-v1"} if k == "financial" else {}),
+                    }
+                    for k, v in LIMITS.items()
+                },
                 "model": {"provider": "synthetic", "model": "no-real-calls"},
             }
         )
