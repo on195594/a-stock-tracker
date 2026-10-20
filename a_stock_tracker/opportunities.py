@@ -26,8 +26,6 @@ from a_stock_tracker.research import SHANGHAI, BudgetStop, ScreenError, call_api
 
 RULE = "swing-observation-v1"
 REFERENCE_RULE = "price-reference-v2"
-# Unadjusted-only references stay readable as published; never rewritten.
-REFERENCE_RULE_V1 = "price-reference-v1"
 LIMITS = (
     "量价仅作风险纪律参考。重放未发现稳定超额，不代表投资价值或交易建议。"
     "未覆盖公告、财报与资金变化；A股T+1、跳空、停牌和涨跌停可能使退出条件无法执行。"
@@ -445,11 +443,7 @@ def load_board(root: Path | None, *, on: date | None = None) -> dict[str, Any] |
     if directory.is_symlink() or output.is_symlink() or output.stat().st_size > 1_000_000:
         raise ScreenError("Invalid opportunity artifact")
     result = read_state(output)
-    if digest(result) != pointer["digest"] or result.get("rule") not in {
-        RULE,
-        REFERENCE_RULE_V1,
-        REFERENCE_RULE,
-    }:
+    if digest(result) != pointer["digest"] or result.get("rule") not in {RULE, REFERENCE_RULE}:
         raise ScreenError("Opportunity integrity mismatch")
     if not isinstance(result.get("rows"), list) or len(result["rows"]) > 5:
         raise ScreenError("Invalid bounded board")

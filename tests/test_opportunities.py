@@ -305,16 +305,13 @@ def test_legacy_reader_keeps_explanation_validation():
 def saved_board(tmp_path, legacy=False):
     run = "swing-" + "a" * 32
     (tmp_path / run).mkdir()
-    board = legacy_board() if legacy is True else demo_board()
-    if legacy == "v1":
-        # Unadjusted price-reference-v1 artifacts stay readable as published.
-        board["rule"] = swing.REFERENCE_RULE_V1
+    board = legacy_board() if legacy else demo_board()
     save_state(tmp_path / run / "result.json", board)
     save_state(tmp_path / "latest.json", {"run": run, "digest": digest(board)})
     return board
 
 
-@pytest.mark.parametrize("legacy", [False, True, "v1"])
+@pytest.mark.parametrize("legacy", [False, True])
 def test_board_integrity_and_expiry(tmp_path, legacy):
     board = saved_board(tmp_path, legacy)
     output = tmp_path / ("swing-" + "a" * 32) / "result.json"
@@ -327,7 +324,7 @@ def test_board_integrity_and_expiry(tmp_path, legacy):
     assert output.read_bytes() == before
 
 
-@pytest.mark.parametrize("damage", ["hash", "status", "symlink", "traversal"])
+@pytest.mark.parametrize("damage", ["hash", "status", "retired_rule", "symlink", "traversal"])
 def test_invalid_board_artifacts_refused(tmp_path, damage):
     board = saved_board(tmp_path)
     run = "swing-" + "a" * 32
@@ -335,8 +332,11 @@ def test_invalid_board_artifacts_refused(tmp_path, damage):
     root = tmp_path
     if damage == "hash":
         output.write_text(output.read_text().replace("演示公司", "篡改公司"))
-    elif damage == "status":
-        board["rows"][0]["status"] = "buy"
+    elif damage in {"status", "retired_rule"}:
+        if damage == "status":
+            board["rows"][0]["status"] = "buy"
+        else:
+            board["rule"] = "price-reference-v1"
         save_state(output, board)
         save_state(tmp_path / "latest.json", {"run": run, "digest": digest(board)})
     elif damage == "symlink":
