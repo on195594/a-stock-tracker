@@ -1,4 +1,5 @@
 // Use pi's provider runtime directly: no agent session, tools, skills or context files.
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -15,6 +16,9 @@ export async function infer(runtime, model, request) {
     transport: "sse",
     maxRetries: 0,
     reasoning: "medium",
+    // pi sends prompt_cache_key only with a sessionId; calls sharing a long stable prefix
+    // (review and recheck of one report) share this key.
+    sessionId: createHash("sha256").update(request.prompt.slice(0, 4096)).digest("hex").slice(0, 32),
     signal: AbortSignal.timeout(request.timeout * 1000),
   });
   if (response.provider !== model.provider || response.model !== model.id ||

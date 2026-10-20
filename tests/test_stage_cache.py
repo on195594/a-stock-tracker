@@ -48,7 +48,7 @@ def test_validated_stages_reuse_across_requests_but_still_validate(monkeypatch, 
             return {k: report[k] for k in ("code", "facts", "gaps")}
         if prompt.startswith(ep.COMPOSE):
             return {k: report[k] for k in ("code", "analysis")}
-        return supported(json.loads(prompt[len(ep.REVIEW) :])["report"])
+        return supported(json.loads(prompt[len(ep.REVIEW) :])["subject_report"])
 
     calls = runtime(monkeypatch, tmp_path, answer)
     root = tmp_path / "cache"
@@ -174,7 +174,7 @@ def test_semantically_rejected_phases_never_poison_later_requests(monkeypatch, t
             return {k: report[k] for k in ("code", "analysis")}
         if prompt.startswith(ep.REPAIR):
             return {"facts": {}, "sentences": {}}
-        review = supported(json.loads(prompt[len(ep.REVIEW) :])["report"])
+        review = supported(json.loads(prompt[len(ep.REVIEW) :])["subject_report"])
         review["facts"][0].update(supported=False, reason="不受原文支持")
         return review
 

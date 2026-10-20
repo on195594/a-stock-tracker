@@ -42,21 +42,35 @@ const {infer} = await import(pathToFileURL(process.argv[2]).href);
 const model = {provider: 'p', id: 'm'};
 const request = {provider: 'p', model: 'm', prompt: 'synthetic', timeout: 240};
 let calls = 0;
+const keys = [];
+let expected = 'synthetic';
 let response = {provider:'p', model:'m', stopReason: 'stop', content: [{type:'text',text:'{"ok":true}'}], usage:{}};
 const runtime = {completeSimple: async (selected, context, options) => {
   calls++;
   assert.equal(selected, model);
   assert.deepEqual(context.tools, []);
   assert.equal(context.messages.length, 1);
-  assert.equal(context.messages[0].content, 'synthetic');
+  assert.equal(context.messages[0].content, expected);
   assert.equal(options.maxTokens, 6000);
   assert.equal(options.transport, "sse");
   assert.equal(options.maxRetries, 0);
   assert.ok(options.signal instanceof AbortSignal);
+  assert.match(options.sessionId, /^[0-9a-f]{32}$/);
+  keys.push(options.sessionId);
   return response;
 }};
 assert.equal((await infer(runtime, model, request)).text, '{"ok":true}');
 assert.equal(calls, 1);
+// Same long prefix, different tail: same provider cache key.
+const long = 'x'.repeat(5000);
+for (const tail of ['review', 'recheck']) {
+  expected = long + tail;
+  await infer(runtime, model, {...request, prompt: expected});
+}
+expected = 'synthetic';
+assert.equal(keys[1], keys[2]);
+assert.notEqual(keys[0], keys[1]);
+calls = 1;
 await assert.rejects(infer(runtime, model, {...request, model:'other'}));
 assert.equal(calls, 1);
 for (const bad of [

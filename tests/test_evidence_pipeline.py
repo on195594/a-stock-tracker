@@ -213,7 +213,7 @@ def test_bounded_paths_and_same_request_replay(case, tmp_path, failure, expected
             else:
                 result["sentences"]["S_summary_1"] = replacement(original["analysis"]["summary"][0])
         else:
-            result = supported(payload["report"])
+            result = supported(payload["subject_report"])
             if stage == failure or (failure == "compose+review" and stage == "review"):
                 next(s for s in result["sentences"] if s["id"] == "S_summary_1").update(
                     supported=False, reason="合成语义失败"
@@ -259,7 +259,7 @@ def test_recheck_keeps_first_verdict_only_for_untouched_sections(case, tmp_path,
         if stage == "repair":
             fixed = {**original["analysis"]["summary"][0], "text": "需要谨慎，回款存在不确定性。"}
             return {"facts": {}, "sentences": {"S_summary_1": replacement(fixed)}}
-        result = supported(payload["report"])
+        result = supported(payload["subject_report"])
         if stage == "review":
             next(s for s in result["sentences"] if s["id"] == "S_summary_1").update(
                 supported=False, reason="合成语义失败"
@@ -409,7 +409,7 @@ def test_compose_sends_shared_evidence_once_without_dropping_facts(case, tmp_pat
             assert {b["id"] for b in payload["blocks"]} == expected
             assert all(b == p.block_map(packet)[b["id"]] for b in payload["blocks"])
             return {k: report[k] for k in ("code", "analysis")}
-        return supported(payload["report"])
+        return supported(payload["subject_report"])
 
     result, review = p.run(
         packet, tmp_path, {"model_calls": 0, "model": "synthetic/model"}, Budget(0, 1800), call, {}

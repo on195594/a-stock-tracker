@@ -394,8 +394,10 @@ def review_payload(report: dict, packet: dict, blocks: list[dict] | None = None)
         }.values()
     )
     risks = [b for b in packet["blocks"] if "risk" in b["groups"]]
+    # Keys serialize sorted: the changing report sorts last, so review and recheck share a
+    # long stable prefix the provider can cache.
     return {
-        "report": report,
+        "subject_report": report,
         "blocks": selected,
         "risk_blocks": risks,
         "source_context": eb.review_pages([*selected, *risks], packet["documents"]),
@@ -406,7 +408,7 @@ def review_payload(report: dict, packet: dict, blocks: list[dict] | None = None)
 
 def review_size_bound(report: dict, packet: dict, blocks: list[dict] | None = None) -> int:
     payload = review_payload(report, packet, blocks)
-    payload["report"] = None
+    payload["subject_report"] = None
     # Prompt strings are counted directly; REPORT_LIMIT already includes JSON escaping.
     return eb.context_size(REVIEW + encoded(payload).decode()) + REPORT_LIMIT
 

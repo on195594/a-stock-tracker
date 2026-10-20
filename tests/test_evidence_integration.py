@@ -96,7 +96,7 @@ def test_new_packet_and_batch_use_three_stage_path(case, tmp_path, monkeypatch):
             return {k: result["report"][k] for k in ("code", "facts", "gaps")}
         if stage == "compose":
             return {k: result["report"][k] for k in ("code", "analysis")}
-        return supported(payload["report"])
+        return supported(payload["subject_report"])
 
     monkeypatch.setattr(d, "model_call", call)
     d.research_batch(tmp_path, frozen, summary, state, [], a.Budget(100, 1800), 1)
