@@ -24,7 +24,7 @@ CONTEXT_LIMITS = {
     "select": 75000,
     "compose": 18000,
     "review": 90000,
-    "repair": 18000,
+    "repair": 36000,
     "recheck": 90000,
 }
 GAP_TEXT = {

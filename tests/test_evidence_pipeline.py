@@ -151,6 +151,13 @@ def test_sentence_only_repair_freezes_facts_and_other_sections(case):
         p.apply_patch(report, patch, targets)
 
 
+def test_repair_budget_holds_the_frozen_compose_context_and_whole_report():
+    # A section repair carries every frozen fact block (bounded like compose) plus the report;
+    # prod reports with six facts needed ~19 KB before any alternative under the old 18 KB.
+    floor = p.CONTEXT_LIMITS["compose"] + p.REPORT_LIMIT + len(p.REPAIR.encode())
+    assert p.CONTEXT_LIMITS["repair"] >= floor
+
+
 def test_deleting_an_unused_new_sentence_slot_is_a_no_op(case):
     packet, report = case
     errors = [{"kind": "section", "id": "counterevidence", "reason": "遗漏风险"}]
