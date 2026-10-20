@@ -314,7 +314,12 @@ def test_report_summaries_sections_and_citations(bridge):
             assert second["is_last"] and second["next_cursor"] is None
             facts = first["facts"] + second["facts"]
             assert [f["id"] for f in facts] == [f"F{i}" for i in range(1, 8)]
-            assert all(isinstance(v, str) for f in facts for v in f.values())
+            assert all(
+                isinstance(f[key], str)
+                for f in facts
+                for key in ("id", "claim", "quote", "title", "page", "period", "announced", "url")
+            )
+            assert all(f.get("fragments") is None and f.get("relation") is None for f in facts)
             assert facts[0]["claim"] == facts[0]["quote"] == MALICIOUS
             selected = success(await client.call_tool("get_facts", {**args, "ids": ["F7", "F1"]}))
             assert [f["id"] for f in selected["facts"]] == ["F7", "F1"]

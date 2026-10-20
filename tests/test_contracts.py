@@ -20,6 +20,7 @@ GOLDEN = {
             },
             "financial": {
                 "title": "单家公司财报研究",
+                "pipeline": "legacy",
                 "requests": 100,
                 "seconds": 1800,
                 "reports": 1,
@@ -46,6 +47,7 @@ GOLDEN = {
         },
         "financial": {
             "title": "单家公司财报研究",
+            "pipeline": "legacy",
             "requests": 100,
             "seconds": 1800,
             "reports": 1,
@@ -82,6 +84,7 @@ def service_info(monkeypatch):
     monkeypatch.setenv("TUSHARE_TOKEN", "synthetic")
     monkeypatch.setenv("RESEARCH_PROVIDER", "synthetic")
     monkeypatch.setenv("RESEARCH_MODEL", "synthetic")
+    monkeypatch.setenv("RESEARCH_PIPELINE", "legacy")
     monkeypatch.setattr("a_stock_tracker.research_service.model_command", lambda: ["synthetic"])
     return deepcopy(GOLDEN["info"])
 

@@ -20,6 +20,7 @@ from a_stock_tracker.atomic_io import _atomic_write_bytes
 from a_stock_tracker.evidence import REPORT_FIELDS, select_latest_report
 from a_stock_tracker.research import (
     BudgetStop,
+    DataError,
     ScreenError,
     average_ranks,
     call_api,
@@ -479,6 +480,9 @@ def main() -> int:
     parser.add_argument(
         "--pb-mv-screen", action="store_true", help="PB <= 3, total market cap >= 50亿元"
     )
+    parser.add_argument(
+        "--context-contract", help="Expected digest of the confirmed model context limits"
+    )
     parser.add_argument("--screen-contract", help="Expected digest of the confirmed screen profile")
     parser.add_argument(
         "--sample",
@@ -490,7 +494,22 @@ def main() -> int:
     parser.add_argument("--max-research", type=int, default=5)
     parser.add_argument("--model", default="gpt-6-astra")
     parser.add_argument("--provider", default="openai-codex")
+    parser.add_argument(
+        "--model-cache",
+        type=Path,
+        help="Private validated-stage cache; omit for independent experiments",
+    )
+    parser.add_argument("--pipeline", choices=("legacy", "evidence-first-v1"), default="legacy")
     args = parser.parse_args()
+    if args.context_contract is not None:
+        from a_stock_tracker.evidence_pipeline import CONTEXT_LIMITS
+
+        if args.pipeline != "evidence-first-v1" or args.context_contract != digest(
+            {"method": "utf8_bytes", "limits": CONTEXT_LIMITS}
+        ):
+            parser.error(
+                "Confirmed context budget changed; confirm a new request before acquisition"
+            )
     if args.screen_contract is not None and (
         not args.pb_mv_screen or args.screen_contract != digest(PB_MV_SCREEN)
     ):
@@ -547,6 +566,8 @@ def main() -> int:
                     raise ScreenError("Frozen run expired; create a new run explicitly")
                 if state["model"] != {"provider": args.provider, "model": args.model}:
                     raise ScreenError("Resume model mismatch")
+                if state.get("pipeline", "legacy") != args.pipeline:
+                    raise ScreenError("Resume pipeline mismatch; preserve artifacts without replay")
             else:
                 frozen = freeze(
                     client, token, now_iso()[:10], sample, pb_mv_screen=args.pb_mv_screen
@@ -564,6 +585,7 @@ def main() -> int:
                     "queue": [],
                     "cursor": 0,
                     "model_calls": 0,
+                    "pipeline": args.pipeline,
                     "model": {"provider": args.provider, "model": args.model},
                     "last_industry": previous[-1][1].get("last_industry", "") if previous else "",
                     "notification": "not_enabled",
@@ -601,7 +623,16 @@ def main() -> int:
             save_state(directory / "state.json", state)
             from a_stock_tracker.disclosures import research_batch
 
-            research_batch(directory, frozen, summary, state, previous, budget, args.max_research)
+            research_batch(
+                directory,
+                frozen,
+                summary,
+                state,
+                previous,
+                budget,
+                args.max_research,
+                **({"cache_root": args.model_cache} if args.model_cache is not None else {}),
+            )
             reports = [
                 read_state(directory / f"report-{code}.json")["result"]
                 for code in state["research"]
@@ -622,6 +653,8 @@ def main() -> int:
                 },
             )
         except BaseException as exc:
+            if isinstance(exc, DataError):
+                invocation["diagnostic"] = {**exc.diagnostic, "attempt": budget.used}
             budget.stop_reason = (
                 "time_budget"
                 if isinstance(exc, BudgetStop) and str(exc) in {"TIME_BUDGET", "HARD_TIMEOUT"}

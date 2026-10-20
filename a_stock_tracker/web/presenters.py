@@ -32,6 +32,14 @@ STAGES = {
     "independent_review": "独立复核",
     "review_validation": "校验复核结果",
     "cached_review": "读取既有复核",
+    "select": "选择事实",
+    "fact_selection": "核验事实",
+    "compose": "生成正文",
+    "composition": "核验正文",
+    "review": "独立复核",
+    "recheck": "再次独立复核",
+    "repair": "局部修复",
+    "report_validation": "发布前核验",
 }
 SECTION_TITLES = (
     ("business", "业务"),
@@ -462,6 +470,25 @@ def company_view(
     }
 
 
+def context_budget_text(offer: dict[str, Any]) -> str | None:
+    context = offer.get("context_budget")
+    if not context:
+        return None
+    limits = context["limits"]
+    labels = (
+        ("select", "选证据"),
+        ("compose", "写正文"),
+        ("review", "复核"),
+        ("repair", "修复"),
+        ("recheck", "再复核"),
+    )
+    return (
+        "每步输入上限："
+        + "、".join(f"{title} {limits[key] / 1000:g} KB" for key, title in labels)
+        + "（UTF-8 文本字节，不是 token 或费用保证）。"
+    )
+
+
 def quote_lines(info: dict[str, Any], mode: str, offer: dict[str, Any]) -> list[str]:
     """Cost boundary for the selected mode shown before confirmation."""
     lines = [
@@ -484,6 +511,12 @@ def quote_lines(info: dict[str, Any], mode: str, offer: dict[str, Any]) -> list[
         )
     elif mode == "financial":
         model, budget = offer.get("model") or {}, offer.get("model_budget") or {}
+        if context := context_budget_text(offer):
+            lines.append(context)
+        if offer.get("pipeline") == "evidence-first-v1":
+            lines.append(
+                "流程：先选证据，再写正文并独立复核；正常 3 次模型调用，共享一次修复机会，单份报告最多 5 次。"
+            )
         lines.append(
             f"模型：{model.get('provider')} / {model.get('model')}，"
             f"最多 {budget.get('calls')} 次调用，每次本地等待 ≤"
@@ -515,6 +548,12 @@ def frozen_cost_lines(payload: dict[str, Any]) -> list[str]:
     ]
     model = offer.get("model")
     if model:
+        if context := context_budget_text(offer):
+            lines.append(context)
+        if offer.get("pipeline") == "evidence-first-v1":
+            lines.append(
+                "已确认流程：先选证据，再写正文并独立复核；正常 3 次，单份报告最多 5 次调用。"
+            )
         budget = offer.get("model_budget") or {}
         lines.append(f"已确认模型：{model['provider']} / {model['model']}")
         lines.append(
@@ -567,7 +606,28 @@ def report_view(report: dict[str, Any]) -> dict[str, Any]:
             for key, title in SECTION_TITLES
             if key in analysis
         ],
-        "facts": report.get("facts", []) if readable else [],
+        "facts": [
+            {
+                **fact,
+                "fragments": [
+                    {
+                        **fragment,
+                        "role_title": {
+                            "main": "主片段",
+                            "header": "表头",
+                            "unit": "单位",
+                            "period": "期间",
+                            "footnote": "脚注",
+                            "relation": "跨页关系标记",
+                        }.get(fragment["role"], "上下文"),
+                    }
+                    for fragment in (fact.get("fragments") or [])
+                ],
+            }
+            for fact in report.get("facts", [])
+        ]
+        if readable
+        else [],
         "omitted": omitted_pages_text(report.get("omitted_pages")),
     }
 

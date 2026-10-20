@@ -8,6 +8,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 Mode = Literal["screen", "financial", "swing"]
+ResearchPipeline = Literal["legacy", "evidence-first-v1"]
 ErrorCode = Literal[
     "invalid_request",
     "unauthorized",
@@ -39,6 +40,13 @@ class ModelBudget(BaseModel):
     timeout_guarantees_billing_stop: bool | None = None
 
 
+class ContextBudget(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    method: Literal["utf8_bytes"]
+    limits: dict[Literal["select", "compose", "review", "repair", "recheck"], int]
+
+
 class Quote(BaseModel):
     model_config = ConfigDict(extra="allow", strict=True)
 
@@ -49,6 +57,8 @@ class Quote(BaseModel):
     prefilter: dict[str, Any] | None = None
     model: ModelRef | None = None
     model_budget: ModelBudget | None = None
+    context_budget: ContextBudget | None = None
+    pipeline: ResearchPipeline | None = None
 
 
 class ModeInfo(BaseModel):
@@ -60,6 +70,7 @@ class ModeInfo(BaseModel):
     reports: int | None = None
     prefilter: dict[str, Any] | None = None
     available: bool | None = None
+    pipeline: ResearchPipeline | None = None
 
 
 class ServiceInfo(BaseModel):
@@ -187,6 +198,22 @@ class RunList(BaseModel):
     runs: list[RunState]
 
 
+class SourceFragment(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    document: str
+    document_hash: str
+    page: int = Field(ge=1)
+    start: int = Field(ge=1)
+    end: int = Field(ge=1)
+    role: Literal["main", "header", "unit", "period", "footnote", "relation"]
+    text: str
+    title: str
+    period: str
+    announced: str
+    url: str
+
+
 class Fact(BaseModel):
     model_config = ConfigDict(extra="allow", strict=True)
 
@@ -198,6 +225,8 @@ class Fact(BaseModel):
     announced: str
     quote: str
     url: str
+    fragments: list[SourceFragment] | None = None
+    relation: dict[str, Any] | None = None
 
 
 class Section(BaseModel):
@@ -211,6 +240,10 @@ class Quality(BaseModel):
     model_config = ConfigDict(extra="allow", strict=True)
 
     generated: int | None = None
+    mechanical_passed: int | None = None
+    semantic_passed: int | None = None
+    pipeline: ResearchPipeline | None = None
+    stage: str | None = None
     repair: str | None = None
     dropped: list[dict[str, Any]] | None = None
     unformed: dict[str, str] | None = None

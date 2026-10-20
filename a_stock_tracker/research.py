@@ -26,6 +26,42 @@ class ScreenError(RuntimeError):
     pass
 
 
+class DataError(ScreenError):
+    """Host-owned diagnostics: never serialize provider messages or request parameters."""
+
+    def __init__(self, endpoint: str, category: str, message: str):
+        super().__init__(message)
+        self.diagnostic = {
+            "stage": "data_preparation",
+            "endpoint": endpoint
+            if endpoint in {"trade_cal", "stock_basic", "daily_basic", "fina_indicator"}
+            else "other",
+            "category": category,
+        }
+
+
+def public_data_diagnostic(value: Any) -> dict[str, str] | None:
+    messages = {
+        "timeout": "数据准备超时",
+        "request_failed": "数据来源请求失败",
+        "missing_fields": "数据来源缺少必需字段",
+        "empty_data": "数据来源返回空结果",
+        "truncated_data": "数据来源返回的证券范围不完整",
+        "duplicate_security": "数据来源返回重复证券",
+        "date_mismatch": "数据日期与本次请求不符",
+    }
+    if not isinstance(value, dict) or value.get("stage") != "data_preparation":
+        return None
+    category = value.get("category")
+    if not isinstance(category, str) or category not in messages:
+        return None
+    return {
+        "stage": "data_preparation",
+        "category": category,
+        "message": messages[category] + "；本次未生成报告，不会自动重试。",
+    }
+
+
 class BudgetStop(RuntimeError):
     """Acquisition was interrupted, not a failed observation."""
 
@@ -79,7 +115,9 @@ def frame_records(frame: Any, required: set[str], endpoint: str) -> list[dict[st
     columns = set(getattr(frame, "columns", []))
     missing = required - columns
     if missing:
-        raise ScreenError(f"{endpoint} 缺少字段: {', '.join(sorted(missing))}")
+        raise DataError(
+            endpoint, "missing_fields", f"{endpoint} 缺少字段: {', '.join(sorted(missing))}"
+        )
     return json.loads(frame.to_json(orient="records", force_ascii=False, date_format="iso"))
 
 
@@ -89,8 +127,14 @@ def call_api(client: Any, endpoint: str, token: str, **params: Any) -> Any:
     except BudgetStop:
         raise
     except Exception as exc:
-        message = str(exc).replace(token, "[REDACTED]")
-        raise ScreenError(f"{endpoint} 请求失败: {message}") from exc
+        # Even a token-redacted provider message may contain headers or private URLs.
+        category = (
+            "timeout"
+            if isinstance(exc, TimeoutError)
+            or type(exc).__name__ in {"Timeout", "ReadTimeout", "ConnectTimeout"}
+            else "request_failed"
+        )
+        raise DataError(endpoint, category, f"{endpoint} 请求失败 ({category})") from exc
 
 
 def fetch_universe(
@@ -111,9 +155,13 @@ def fetch_universe(
     )
     stock_basic_acquired_at = now_iso()
     if not basic or len(basic) >= 6000:
-        raise ScreenError("stock_basic 为空或疑似达到 6000 行截断上限")
+        raise DataError(
+            "stock_basic",
+            "empty_data" if not basic else "truncated_data",
+            "stock_basic 为空或疑似达到 6000 行截断上限",
+        )
     if len({str(row["ts_code"]) for row in basic}) != len(basic):
-        raise ScreenError("stock_basic 含重复证券代码")
+        raise DataError("stock_basic", "duplicate_security", "stock_basic 含重复证券代码")
 
     valuation_frame = call_api(
         client,
@@ -127,12 +175,16 @@ def fetch_universe(
     )
     daily_basic_acquired_at = now_iso()
     if not valuation or len(valuation) >= 6000:
-        raise ScreenError("daily_basic 为空或疑似达到 6000 行截断上限")
+        raise DataError(
+            "daily_basic",
+            "empty_data" if not valuation else "truncated_data",
+            "daily_basic 为空或疑似达到 6000 行截断上限",
+        )
     if len({str(row["ts_code"]) for row in valuation}) != len(valuation):
-        raise ScreenError("daily_basic 含重复证券代码")
+        raise DataError("daily_basic", "duplicate_security", "daily_basic 含重复证券代码")
     dates = {iso_date(row["trade_date"]) for row in valuation}
     if dates != {data_date}:
-        raise ScreenError(f"daily_basic 返回了非目标日期: {sorted(dates)}")
+        raise DataError("daily_basic", "date_mismatch", "daily_basic 返回了非目标日期")
     return (
         basic,
         valuation,

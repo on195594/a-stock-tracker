@@ -98,7 +98,15 @@
     <div class="fact" id="fact-{{ r.code }}-{{ fact.id }}">
       <p><strong>[{{ fact.id }}]</strong> {{ fact.claim }}</p>
       <p class="muted">来源：{{ fact.title }} · PDF 第 {{ fact.page }} 页；报告期 {{ fact.period }}；公告 {{ fact.announced }}</p>
+      {% if fact.fragments %}
+      <p class="muted">以下为分别定位的原文片段，表头与脚注不与主片段合并。</p>
+      {% for fragment in fact.fragments %}
+      <p class="muted">{{ fragment.role_title }} · PDF 第 {{ fragment.page }} 页 · 原文行 {{ fragment.start }}–{{ fragment.end }}</p>
+      <blockquote class="lines">{{ fragment.text }}</blockquote>
+      {% endfor %}
+      {% else %}
       <blockquote class="lines">{{ fact.quote }}</blockquote>
+      {% endif %}
       <p class="muted url">来源 URL：{{ fact.url }}</p>
     </div>
     {% endfor %}

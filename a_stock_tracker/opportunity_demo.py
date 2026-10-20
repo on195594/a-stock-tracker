@@ -122,6 +122,26 @@ def demo_report(code):
                 "period": "2025-12-31",
                 "announced": "2026-04-01",
                 "quote": "合成引文：收入主要来自单一产品。",
+                "fragments": [
+                    {
+                        "document": "synthetic",
+                        "document_hash": "a" * 64,
+                        "page": page,
+                        "start": 1,
+                        "end": 1,
+                        "role": role,
+                        "text": text,
+                        "title": "合成年报",
+                        "period": "2025-12-31",
+                        "announced": "2026-04-01",
+                        "url": "https://example.invalid/synthetic.pdf",
+                    }
+                    for page, role, text in [
+                        (12, "main", "合成引文：收入主要来自单一产品。"),
+                        (11, "header", "合成表头：产品类别与收入构成。"),
+                        (12, "relation", "合成关系标记：收入构成（续表）。"),
+                    ]
+                ],
                 "url": "https://example.invalid/synthetic.pdf",
             }
         ],

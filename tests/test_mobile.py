@@ -140,6 +140,9 @@ def main_flow(page: Page, base: str, width: int) -> None:
     summary.focus()
     page.keyboard.press("Enter")
     expect(page.locator(".fact").first).to_contain_text("PDF 第 12 页")
+    expect(page.locator(".fact").first).to_contain_text("表头 · PDF 第 11 页")
+    expect(page.locator(".fact").first).to_contain_text("跨页关系标记")
+    expect(page.locator(".fact").first.locator("blockquote")).to_have_count(3)
     assert_layout(page, width, "report")
     # A citation reopens the collapsed fact list and lands on the cited fact.
     page.keyboard.press("Enter")

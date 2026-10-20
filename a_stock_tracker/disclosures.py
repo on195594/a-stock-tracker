@@ -10,17 +10,21 @@ import shutil
 import subprocess
 import time
 from datetime import datetime, timedelta
+from functools import partial
 from pathlib import Path
 from typing import Any
 
 import requests
 
+from a_stock_tracker import evidence_blocks as eb
+from a_stock_tracker import evidence_pipeline as ep
 from a_stock_tracker.atomic_io import _atomic_write_bytes
 from a_stock_tracker.automation import (
     Budget,
     BudgetStop,
     digest,
     encoded,
+    locked_root,
     read_result,
     read_state,
     save,
@@ -220,19 +224,27 @@ def select_documents(
     return chosen
 
 
-def extract_document(
-    source: OfficialSource, document: dict[str, Any], directory: Path
-) -> dict[str, Any]:
-    payload = source.request("GET", document["url"])
-    if not payload.startswith(b"%PDF-"):
-        raise ScreenError("Official response is not PDF")
-    sha = hashlib.sha256(payload).hexdigest()
-    path = directory / f"source-{sha}.pdf"
-    if path.exists():
-        if hashlib.sha256(path.read_bytes()).hexdigest() != sha:
-            raise ScreenError("Stored PDF hash conflict")
-    else:
-        _atomic_write_bytes(path, payload)
+PARSER_VERSION = "pdftotext-layout-v1"
+
+
+def parsed_pages(path: Path, sha: str, cache_root: Path) -> list[str]:
+    key = digest({"pdf": sha, "parser": PARSER_VERSION})
+    with locked_root(cache_root, blocking=True):
+        cached_path = cache_root / f"parsed-{key}.json"
+        if cached_path.is_symlink():
+            raise ScreenError("Symlink parsed cache refused")
+        cached = read_state(cached_path) if cached_path.exists() else None
+    if cached is not None:
+        if cached.get("pdf") != sha or cached.get("parser") != PARSER_VERSION:
+            raise ScreenError("Parsed cache identity mismatch")
+        pages = cached.get("pages")
+        if (
+            not isinstance(pages, list)
+            or not 1 <= len(pages) <= 1000
+            or any(not isinstance(page, str) or len(compact(page)) < 15 for page in pages)
+        ):
+            raise ScreenError("Invalid parsed cache pages")
+        return pages
     info = run_bounded(["pdfinfo", str(path)], timeout=40, check=True).stdout
     match = re.search(r"^Pages:\s+([0-9]+)$", info, re.M)
     if not match or not 1 <= int(match[1]) <= 1000:
@@ -245,8 +257,33 @@ def extract_document(
     pages = text.split("\f")
     if pages[-1] == "":
         pages.pop()
-    if len(pages) != int(match[1]) or any(len(compact(p)) < 15 for p in pages):
+    if len(pages) != int(match[1]) or any(len(compact(page)) < 15 for page in pages):
         raise ScreenError("Missing, blank or non-extractable PDF pages")
+    with locked_root(cache_root, blocking=True):
+        if cached_path.is_symlink():
+            raise ScreenError("Symlink parsed cache refused")
+        save_state(cached_path, {"pdf": sha, "parser": PARSER_VERSION, "pages": pages})
+    return pages
+
+
+def extract_document(
+    source: OfficialSource,
+    document: dict[str, Any],
+    directory: Path,
+    *,
+    cache_root: Path | None = None,
+) -> dict[str, Any]:
+    payload = source.request("GET", document["url"])
+    if not payload.startswith(b"%PDF-"):
+        raise ScreenError("Official response is not PDF")
+    sha = hashlib.sha256(payload).hexdigest()
+    path = directory / f"source-{sha}.pdf"
+    if path.exists():
+        if hashlib.sha256(path.read_bytes()).hexdigest() != sha:
+            raise ScreenError("Stored PDF hash conflict")
+    else:
+        _atomic_write_bytes(path, payload)
+    pages = parsed_pages(path, sha, cache_root or directory / "parsed-cache")
     identity = compact("".join(pages[:6]))
     issuer = compact(document["official_name"])
     code_token = rf"(?<![0-9]){re.escape(document['code'][:6])}(?![0-9])"
@@ -304,6 +341,7 @@ def extract_document(
         **document,
         "sha256": sha,
         "retrieved_at": now_iso(),
+        "parser_version": PARSER_VERSION,
         "page_count": len(pages),
         "pages": [{"page": i + 1, "text": p} for i, p in enumerate(pages)],
     }
@@ -311,10 +349,18 @@ def extract_document(
     return extracted
 
 
-def evidence_packet(documents: list[dict[str, Any]], row: dict[str, Any]) -> dict[str, Any]:
+def evidence_packet(
+    documents: list[dict[str, Any]],
+    row: dict[str, Any],
+    pipeline: str = "legacy",
+    *,
+    cache_root: Path | None = None,
+) -> dict[str, Any]:
+    if pipeline not in {"legacy", ep.VERSION}:
+        raise ScreenError("Unknown research pipeline")
     selected, omitted = [], []
     remaining = MAX_TEXT
-    for doc in documents:
+    for doc in documents if pipeline == "legacy" else []:
         # ponytail: bounded full-page selection, not full-document understanding; broaden only with measured budgets.
         first = doc["pages"][:6]
         relevant: list[dict[str, Any]] = []
@@ -357,7 +403,7 @@ def evidence_packet(documents: list[dict[str, Any]], row: dict[str, Any]) -> dic
         "total_mv_yi": round(total_mv / 10000, 2) if isinstance(total_mv, (int, float)) else None,
         "dv_ttm": row.get("dv_ttm"),
     }
-    return {
+    packet = {
         "template": TEMPLATE,
         "citation_format": SOURCE_FORMAT,
         "structured": financial,
@@ -369,6 +415,30 @@ def evidence_packet(documents: list[dict[str, Any]], row: dict[str, Any]) -> dic
             "PB分母符号/资产质量未由行情接口独立证明",
         ],
     }
+
+    if pipeline == ep.VERSION:
+        frozen_documents = [
+            {k: v for k, v in doc.items() if k != "retrieved_at"} for doc in documents
+        ]
+        selection = eb.select_blocks(frozen_documents, financial, cache_root=cache_root)
+        selected_pages = {
+            (f["document"], f["page"]) for block in selection["blocks"] for f in block["fragments"]
+        }
+        packet.update(
+            template=eb.REPORT_VERSION,
+            citation_format=eb.VERSION,
+            pipeline=ep.VERSION,
+            documents=frozen_documents,
+            **selection,
+            gaps=[g for g, coverage in selection["coverage"].items() if not coverage["selected"]],
+            omitted_pages=[
+                {"document": d["id"], "page": page["page"]}
+                for d in frozen_documents
+                for page in d["pages"]
+                if (d["id"], page["page"]) not in selected_pages
+            ],
+        )
+    return packet
 
 
 SOURCE_FORMAT = "line-ranges-v1"
@@ -511,6 +581,19 @@ def stable_evidence(packet: dict[str, Any], model: dict[str, str]) -> str:
             return [clean(v) for v in value]
         return value
 
+    if packet.get("citation_format") == eb.VERSION:
+        return digest(
+            {
+                "packet": clean(packet),
+                "model": model,
+                "pipeline": ep.VERSION,
+                "validation": ep.CACHE_VERSION,
+                "prompts": ep.PROMPTS,
+                "context_limits": ep.CONTEXT_LIMITS,
+                "report_limit": ep.REPORT_LIMIT,
+                "analysis_limit": ep.ANALYSIS_LIMIT,
+            }
+        )
     return digest(
         {
             "packet": clean(packet),
@@ -886,6 +969,11 @@ def support_rank(report: dict[str, Any]) -> tuple[bool, int, int]:
 
 
 def validate_report(report: dict[str, Any], packet: dict[str, Any]) -> None:
+    if packet.get("citation_format") == eb.VERSION:
+        ep.validate_report(report, packet)
+        return
+    if report.get("version") == ep.VERSION:
+        raise ScreenError("Report/evidence version mismatch")
     check_structure(report, packet)
     if errors := citation_errors(report, packet):
         raise ScreenError(CITATION_MESSAGES[next(iter(errors.values()))])
@@ -923,6 +1011,8 @@ def prune_report(
 
 
 def validate_review(review: dict[str, Any], report: dict[str, Any]) -> bool:
+    if report.get("version") == ep.VERSION:
+        return ep.validate_review(review, report)
     findings = review.get("facts")
     ids = {f["id"] for f in report["facts"]}
     if (
@@ -972,6 +1062,39 @@ def model_command() -> tuple[list[str], Path]:
     ], runtime
 
 
+def stage_cache_path(root: Path, request_hash: str) -> Path:
+    path = root / f"stage-{digest({'request': request_hash, 'contract': ep.CACHE_VERSION})}.json"
+    if path.is_symlink():
+        raise ScreenError("Symlink stage cache refused")
+    return path
+
+
+def cache_validated_response(directory: Path, label: str, root: Path) -> None:
+    """Only called after the current stage's complete mechanical validation."""
+    saved = read_state(directory / f"{label}.response.json")
+    request = read_result(directory / f"{label}.request.json")
+    if saved["request_hash"] != digest(request):
+        raise ScreenError("Validated stage request mismatch")
+    with locked_root(root, blocking=True):
+        path = stage_cache_path(root, saved["request_hash"])
+        if path.exists():
+            previous = read_state(path)
+            if (
+                previous["request_hash"] != saved["request_hash"]
+                or previous["contract"] != ep.CACHE_VERSION
+            ):
+                raise ScreenError("Stage cache identity mismatch")
+            return
+        save_state(
+            path,
+            {
+                "contract": ep.CACHE_VERSION,
+                "request_hash": saved["request_hash"],
+                "response": saved["response"],
+            },
+        )
+
+
 def model_call(
     directory: Path,
     label: str,
@@ -979,9 +1102,13 @@ def model_call(
     model: dict[str, str],
     state: dict[str, Any],
     budget: Budget,
+    *,
+    cache_root: Path | None = None,
 ) -> dict[str, Any]:
     output = directory / f"{label}.response.json"
     request = {**model, "prompt": prompt, "timeout": 240}
+    if "-v4-" in label:
+        request["validation_contract"] = ep.CACHE_VERSION
     if os.getenv("AUTOMATION_PI_RUNTIME"):
         request["runtime"] = "pi"
     request_path = directory / f"{label}.request.json"
@@ -995,6 +1122,35 @@ def model_call(
         raise ScreenError(
             "Previous model attempt has no verified response; refusing another charge"
         )
+    if cache_root is not None:
+        with locked_root(cache_root, blocking=True):
+            cached_path = stage_cache_path(cache_root, digest(request))
+            cached = read_state(cached_path) if cached_path.exists() else None
+        if cached is not None:
+            if cached["contract"] != ep.CACHE_VERSION or cached["request_hash"] != digest(request):
+                raise ScreenError("Stage cache identity mismatch")
+            save(request_path, request, immutable=True)
+            save_state(
+                usage_path,
+                {
+                    "request_hash": digest(request),
+                    "model": model,
+                    "status": "reused_validated_stage",
+                    "usage": None,
+                },
+            )
+            save_state(
+                output,
+                {
+                    "request_hash": digest(request),
+                    "response": cached["response"],
+                    "usage": None,
+                    "model": model,
+                    "tool_count": 0,
+                    "cache": "validated_stage",
+                },
+            )
+            return cached["response"]
     budget.check(260)
     if state["model_calls"] >= 10:
         raise BudgetStop("MODEL_CALL_BUDGET")
@@ -1132,6 +1288,10 @@ FAILURE_MESSAGES = dict(FAILURE_REASONS.values()) | {
     "timeout": "本阶段处理超时；核查运行时与用量记录，模型失败仍可能计费。",
     "process_failed": "本阶段处理程序失败；核查提取工具或模型运行时。",
     "source_unavailable": "原文来源请求失败；核查网络与来源服务。",
+    "context_budget_exceeded": "必要证据或复核上下文超过本次预算，已停止后续模型调用。",
+    "evidence_insufficient": "业务、财务或风险证据不足，未生成正文。",
+    "repair_exhausted": "一次修复机会已用完，后续核验仍未通过，未发布草稿。",
+    "semantic_failed": "独立语义复核未通过，未发布草稿。",
 }
 
 FAILURE_STAGES = {
@@ -1145,12 +1305,23 @@ FAILURE_STAGES = {
     "independent_review",
     "review_validation",
     "cached_review",
+    "select",
+    "compose",
+    "review",
+    "repair",
+    "recheck",
+    "fact_selection",
+    "composition",
+    "report_validation",
 }
 
 
 def failure_diagnostic(stage: str, exc: Exception) -> dict[str, str]:
     category = FAILURE_REASONS.get(str(exc), ("validation_failed", ""))[0]
-    if isinstance(exc, subprocess.TimeoutExpired):
+    if isinstance(exc, ep.PipelineError):
+        stage = exc.stage if exc.stage in FAILURE_STAGES else "report_validation"
+        category = exc.category if exc.category in FAILURE_MESSAGES else "validation_failed"
+    elif isinstance(exc, subprocess.TimeoutExpired):
         category = "timeout"
     elif isinstance(exc, subprocess.SubprocessError):
         category = "process_failed"
@@ -1181,6 +1352,22 @@ def structured_report(result: dict[str, Any]) -> dict[str, Any]:
     packet = result.get("evidence", {})
     report = result.get("report", {}) if result.get("evidence_review") == "passed" else {}
     docs = {d["id"]: d for d in packet.get("documents", [])}
+    modern = packet.get("citation_format") == eb.VERSION
+    if modern and report:
+        validate_report(report, packet)
+        if not validate_review(result.get("review", {}), report):
+            raise ScreenError("Published report review binding invalid")
+    analysis = ep.projected_analysis(report) if modern and report else report.get("analysis", {})
+    facts = (
+        ep.projected_facts(report, packet)
+        if modern and report
+        else [
+            {k: fact[k] for k in ("id", "claim", "page", "quote")}
+            | {k: docs[fact["document"]][k] for k in ("title", "period", "announced", "url")}
+            for fact in report.get("facts", [])
+        ]
+    )
+    gaps = [ep.GAP_TEXT[g] for g in report.get("gaps", [])] if modern else report.get("gaps", [])
     name = (
         result.get("name")
         or packet.get("structured", {}).get("name")
@@ -1202,14 +1389,10 @@ def structured_report(result: dict[str, Any]) -> dict[str, Any]:
             for k in ("industry", "valuation_date", "pb", "roe_mean")
         },
         "snapshot": packet.get("structured", {}).get("market_snapshot"),
-        "analysis": report.get("analysis", {}),
-        "facts": [
-            {k: fact[k] for k in ("id", "claim", "page", "quote")}
-            | {k: docs[fact["document"]][k] for k in ("title", "period", "announced", "url")}
-            for fact in report.get("facts", [])
-        ],
+        "analysis": analysis,
+        "facts": facts,
         # Fixed system disclaimers stay apart from the report's own, company-specific gaps.
-        "gaps": report.get("gaps", []),
+        "gaps": gaps,
         "scope": packet.get("scope_gaps", []),
         "omitted_pages": len(packet["omitted_pages"])
         if isinstance(packet.get("omitted_pages"), list)
@@ -1247,7 +1430,8 @@ def quality_text(quality: Any) -> str | None:
     dropped = dropped if isinstance(dropped, (list, tuple)) else []
     unformed = quality.get("unformed")
     unformed = unformed if isinstance(unformed, dict) else {}
-    if repair == "none" and not dropped and not unformed:
+    modern = quality.get("pipeline") == ep.VERSION
+    if repair == "none" and not dropped and not unformed and not modern:
         return None
     parts = {
         "repaired": "修复 1 次",
@@ -1255,6 +1439,11 @@ def quality_text(quality: Any) -> str | None:
         "skipped_budget": "调用预算不足，未修复",
     }
     text = [parts[repair]] if repair in parts else []
+    if modern:
+        text.insert(
+            0,
+            f"机械校验通过 {quality.get('mechanical_passed', 0)} 条 / 语义复核通过 {quality.get('semantic_passed', 0)} 条",
+        )
     if dropped:
         text.append(f"剔除 {len(dropped)} 条未通过校验的事实")
     sections = [("valuation", "估值方法"), ("change_conditions", "改变判断的条件")]
@@ -1267,10 +1456,11 @@ def quality_text(quality: Any) -> str | None:
 
 
 def render(result: dict[str, Any]) -> str:
+    projected = structured_report(result)
     lines = [
         f"# {result['code']} 自动研究",
         "",
-        f"状态：{report_summary_status(structured_report(result))}；规则：{result.get('evidence', {}).get('template', TEMPLATE)}；非交易建议、非个人研究状态。",
+        f"状态：{report_summary_status(projected)}；规则：{result.get('evidence', {}).get('template', TEMPLATE)}；非交易建议、非个人研究状态。",
         f"报告版本：{result.get('evidence_key', 'none')}",
         "",
     ]
@@ -1279,7 +1469,7 @@ def render(result: dict[str, Any]) -> str:
         lines.append(quality)
     if "report" not in result:
         return "\n".join(lines + ["缺口：" + result.get("error", "原文/模型验证未完成")])
-    packet, report = result["evidence"], result["report"]
+    packet, report = result["evidence"], projected
     row = packet["structured"]
     if summary := report["analysis"].get("summary"):
         lines += ["## 一句话结论", summary["text"], ""]
@@ -1293,13 +1483,18 @@ def render(result: dict[str, Any]) -> str:
         "",
         "## 原文事实（仅放行已复核的引用）",
     ]
-    docs = {d["id"]: d for d in packet["documents"]}
     for fact in report["facts"]:
-        doc = docs[fact["document"]]
         lines += [
-            f"- [{fact['id']}] {fact['claim']} — [{doc['title']}]({doc['url']}) PDF第{fact['page']}页，报告期{doc['period']}，公告{doc['announced']}",
-            f"  > {fact['quote']}",
+            f"- [{fact['id']}] {fact['claim']} — [{fact['title']}]({fact['url']}) PDF第{fact['page']}页，报告期{fact['period']}，公告{fact['announced']}",
         ]
+        if fact.get("fragments"):
+            for fragment in fact["fragments"]:
+                lines += [
+                    f"  - {fragment['role']} · PDF第{fragment['page']}页 · 原文行{fragment['start']}–{fragment['end']}",
+                    f"    > {fragment['text']}",
+                ]
+        else:
+            lines.append(f"  > {fact['quote']}")
     for field, title in (
         ("business", "业务判断"),
         ("financial", "财务判断"),
@@ -1331,6 +1526,8 @@ def research_batch(
     previous: list,
     budget: Budget,
     maximum: int,
+    *,
+    cache_root: Path | None = None,
 ) -> None:
     source = OfficialSource(budget)
     rows = {r["code"]: r for r in summary["rows"]}
@@ -1394,11 +1591,28 @@ def research_batch(
                     selected_documents = select_documents(anns, row, frozen["cutoff"])
                     stage = "document_extraction"
                     documents = [
-                        extract_document(source, doc, directory) for doc in selected_documents
+                        extract_document(
+                            source,
+                            doc,
+                            directory,
+                            **(
+                                {"cache_root": cache_root}
+                                if cache_root is not None and state.get("pipeline") == ep.VERSION
+                                else {}
+                            ),
+                        )
+                        for doc in selected_documents
                     ]
                     stage = "evidence_selection"
-                    packet = evidence_packet(documents, row)
+                    packet = evidence_packet(
+                        documents,
+                        row,
+                        state.get("pipeline", "legacy"),
+                        **({"cache_root": cache_root} if cache_root is not None else {}),
+                    )
                     save_state(packet_path, {"packet": packet, "freeze": state["freeze"]})
+                if packet.get("pipeline", "legacy") != state.get("pipeline", "legacy"):
+                    raise ScreenError("Evidence pipeline mismatch")
                 key = stable_evidence(packet, state["model"])
                 old = known.get(code)
                 if old and old["evidence_key"] == key:
@@ -1415,6 +1629,31 @@ def research_batch(
                         "evidence_key": key,
                         "evidence": packet,
                         "previous_report": old["evidence_key"],
+                    }
+                elif packet.get("citation_format") == eb.VERSION:
+                    quality = {}
+                    call = partial(model_call, cache_root=cache_root) if cache_root else model_call
+                    on_validated = (
+                        (lambda label: cache_validated_response(directory, label, cache_root))
+                        if cache_root is not None
+                        else None
+                    )
+                    report, review = ep.run(
+                        packet, directory, state, budget, call, quality, on_validated
+                    )
+                    result = {
+                        "code": code,
+                        "name": row.get("name", ""),
+                        "freeze": state["freeze"],
+                        "status": "scoped_complete",
+                        "evidence_review": "passed",
+                        "evidence_key": key,
+                        "evidence": packet,
+                        "report": report,
+                        "review": review,
+                        "quality": quality,
+                        "change": "new" if not old else "evidence_changed",
+                        "model": state["model"],
                     }
                 else:
                     stage = "report_generation"
@@ -1566,6 +1805,8 @@ def research_batch(
             subprocess.SubprocessError,
             requests.RequestException,
         ) as exc:
+            if quality is not None and quality.get("pipeline") == ep.VERSION:
+                stage = quality.get("stage", stage)
             diagnostic = failure_diagnostic(stage, exc)
             result = {
                 "code": code,

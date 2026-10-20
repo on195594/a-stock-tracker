@@ -31,6 +31,7 @@ from a_stock_tracker.contracts import (
     RunState,
     Section,
     ServiceInfo,
+    SourceFragment,
 )
 from a_stock_tracker.disclosures import public_diagnostic, quality_text, report_summary_status
 from a_stock_tracker.research import SHANGHAI
@@ -192,6 +193,8 @@ class Citation(BaseModel):
     period: str
     announced: str
     url: str
+    fragments: list[SourceFragment] | None = None
+    relation: dict[str, Any] | None = None
 
 
 class FactPage(BaseModel):

@@ -49,8 +49,9 @@ from a_stock_tracker.contracts import (
     ServiceInfo,
 )
 from a_stock_tracker.disclosures import TEMPLATE, model_command, structured_report
+from a_stock_tracker.evidence_pipeline import CONTEXT_LIMITS
 from a_stock_tracker.opportunities import load_board
-from a_stock_tracker.research import SHANGHAI, ScreenError, parse_date
+from a_stock_tracker.research import SHANGHAI, ScreenError, parse_date, public_data_diagnostic
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LIMITS: dict[str, dict[str, Any]] = {
@@ -96,6 +97,8 @@ def quote(
     if mode == "screen":
         value["prefilter"] = info["modes"][mode].get("prefilter")
     elif mode == "financial":
+        if value.get("pipeline") == "evidence-first-v1":
+            value["context_budget"] = {"method": "utf8_bytes", "limits": dict(CONTEXT_LIMITS)}
         value["model_budget"] = {
             "calls": 10,
             "local_timeout_seconds": 240,
@@ -167,6 +170,11 @@ def validate_request(value: Any) -> dict[str, Any]:
 
 
 def request_info() -> dict[str, Any]:
+    pipeline = os.getenv("RESEARCH_PIPELINE", "legacy")
+    if os.getenv("RESEARCH_RESPONSE_CACHE", "1") not in {"0", "1"}:
+        raise ScreenError("Invalid response cache configuration")
+    if pipeline not in {"legacy", "evidence-first-v1"}:
+        raise ScreenError("Unknown configured research pipeline")
     market_token = os.getenv("TUSHARE_TOKEN", "")
     market = bool(market_token and not market_token.startswith("REPLACE_"))
     try:
@@ -184,7 +192,12 @@ def request_info() -> dict[str, Any]:
     return {
         "demo": False,
         "modes": {
-            k: {**v, "available": market and (k != "financial" or model)} for k, v in LIMITS.items()
+            k: {
+                **v,
+                "available": market and (k != "financial" or model),
+                **({"pipeline": pipeline} if k == "financial" else {}),
+            }
+            for k, v in LIMITS.items()
         },
         "model": {
             "provider": os.getenv("RESEARCH_PROVIDER", ""),
@@ -682,7 +695,17 @@ class ResearchStore:
                 os.environ["RESEARCH_PROVIDER"],
                 "--model",
                 os.environ["RESEARCH_MODEL"],
+                "--pipeline",
+                limits.get("pipeline", "legacy"),
             ]
+        if (
+            mode == "financial"
+            and limits.get("pipeline") == "evidence-first-v1"
+            and os.getenv("RESEARCH_RESPONSE_CACHE", "1") == "1"
+        ):
+            args += ["--model-cache", str(self.root / "validated-model-cache")]
+        if mode == "financial" and limits.get("pipeline") == "evidence-first-v1":
+            args += ["--context-contract", digest(limits["context_budget"])]
         return args
 
     def result(self, directory: Path, mode: str) -> dict[str, Any]:
@@ -992,6 +1015,18 @@ class ResearchStore:
                             if value
                             else None
                         )
+                        invocation = audit.parent / "invocation.json"
+                        if (
+                            state["status"] == "failed"
+                            and invocation.is_file()
+                            and not invocation.is_symlink()
+                        ):
+                            diagnostic = public_data_diagnostic(
+                                read_result(invocation).get("diagnostic")
+                            )
+                            if diagnostic:
+                                state["diagnostic"] = diagnostic
+                                state["message"] = diagnostic["message"]
                 except (OSError, ValueError, ScreenError):
                     state["usage"] = None
             state["finished_at"] = datetime.now(timezone.utc).isoformat()
@@ -1028,7 +1063,9 @@ def create_service(root: Path, tokens: dict[str, str]) -> FastAPI:
             if channel == "mcp"
             else None,
             "busy": busy,
-            "rule": TEMPLATE,
+            "rule": "cited-machine-research-v4"
+            if info["modes"]["financial"]["pipeline"] == "evidence-first-v1"
+            else TEMPLATE,
         }
 
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
