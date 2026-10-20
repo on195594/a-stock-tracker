@@ -98,6 +98,13 @@ def test_percent_column_and_page_level_number_sources():
     }
     assert d.unquoted_numbers(fact | {"quote": page}) == []
     assert d.unquoted_numbers(fact) == ["30.85%"]
+    # Production 601088.SH: the percent column header is a bare "%" cell.
+    bare = {
+        "quote": "项目   本期   上期   变动\n                      %\n营业收入 189,338 175,423 7.9"
+    }
+    assert d.unquoted_numbers(fact | bare | {"claim": "营业收入变动7.9%"}) == []
+    assert d.unquoted_numbers(fact | bare | {"claim": "营业收入变动7.8%"}) == ["7.8%"]
+    assert d.unquoted_numbers({"quote": "增长率为7.9", "claim": "增长7.9%"}) == ["7.9%"]
     # Production 600900/600519: "下降2.35%" for a "-2.35" cell; only a decline word drops the sign.
     fell = {"quote": page.replace(" 30.85", " -30.85")}
     assert d.unquoted_numbers(fact | fell | {"claim": "营业收入同比下降30.85%"}) == []

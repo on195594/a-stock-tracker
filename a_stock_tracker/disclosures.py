@@ -478,7 +478,10 @@ def unquoted_numbers(fact: dict[str, Any]) -> list[str]:
     claim = fact["claim"]
     # A "(%)" table header in the selected evidence lets "30.85" be restated as "30.85%";
     # sign and digits stay exact.
-    percent_column = any(h in fact["quote"] for h in ("(%)", "（%）"))
+    # A "(%)" header, or a bare "%" header cell as in 601088.SH's tables.
+    percent_column = any(h in fact["quote"] for h in ("(%)", "（%）")) or bool(
+        re.search(r"(?m)(?:^|\s)[%％](?:\s|$)", fact["quote"])
+    )
 
     def restated(m: re.Match[str]) -> bool:
         bare = m.group()[:-1]
