@@ -64,6 +64,7 @@ GOLDEN = {
             },
             "model_budget": {
                 "calls": 10,
+                "report_calls": 6,
                 "local_timeout_seconds": 240,
                 "output_token_hard_limit": None,
                 "cost_hard_limit": None,

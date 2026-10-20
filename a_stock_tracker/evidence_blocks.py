@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,12 @@ NUMBER = re.compile(r"[-+]?\d[\d,.]*(?:%|％)?")
 UNIT = re.compile(r"单位\s*[:：]|币种\s*[:：]")
 TABLE_TITLE = re.compile(r"[^\n]{2,60}(?:表|状况|项目和金额|会计数据|财务指标)[）)\s]*$")
 PAGE_FOOTER = re.compile(r"\s*\d+\s*/\s*\d+\s*")
+# The MD&A risk section, e.g. "(四)可能面对的风险" or "十、公司面临的风险和应对措施";
+# not the cover-page pointer to it or accounting-policy "主要风险".
+RISK_SECTION = re.compile(
+    r"(?m)^\s*(?:[(（][一二三四五六七八九十]+[)）]|[一二三四五六七八九十]+、)\s*"
+    r"(?:可能面对的风险|公司面临的风险和应对措施)"
+)
 
 
 class Fragment(BaseModel):
@@ -279,8 +286,8 @@ def select_blocks(
         ],
         "structured": structured,
         "limit": limit,
-        "quotas": [2, 6],
-        "ranking": "specific-table-first-v1",
+        "quotas": {"default": [2, 6], "risk_extra": 1},
+        "ranking": "specific-table-first-v2-risk-section",
     }
     if cache_root is not None:
         with locked_root(cache_root, blocking=True):
@@ -309,26 +316,36 @@ def select_blocks(
     by_group = {g: [b for b in all_blocks if g in b["groups"]] for g in GROUPS}
     # Prefer current measured evidence over broad accounting-policy keyword matches.
     periods = {d["id"]: d["period"] for d in documents}
-    for group, candidates in by_group.items():
-        candidates.sort(
-            key=lambda b: (
-                periods[b["fragments"][0]["document"]],
-                b["relation"]["kind"] != "paragraph",
-                sum(word in compact(b["fragments"][0]["text"]) for word in GROUPS[group]),
-                -b["fragments"][0]["page"],
-                -b["fragments"][0]["start"],
-                b["id"],
-            ),
-            reverse=True,
+    lines = {(d["id"], p["page"]): p["text"].splitlines() for d in documents for p in d["pages"]}
+
+    def risk_section(block: dict) -> bool:
+        # The heading often sits on its own line just above the block's first fragment.
+        first = block["fragments"][0]
+        page = lines[(first["document"], first["page"])]
+        return bool(RISK_SECTION.search("\n".join(page[max(0, first["start"] - 5) : first["end"]])))
+
+    def rank(group: str, b: dict) -> tuple:
+        return (
+            periods[b["fragments"][0]["document"]],
+            group == "risk" and risk_section(b),
+            b["relation"]["kind"] != "paragraph",
+            sum(word in compact(b["fragments"][0]["text"]) for word in GROUPS[group]),
+            -b["fragments"][0]["page"],
+            -b["fragments"][0]["start"],
+            b["id"],
         )
+
+    for group, candidates in by_group.items():
+        candidates.sort(key=partial(rank, group), reverse=True)
     chosen: dict[str, dict] = {}
     expanded = False
     for quota in (2, 6):
         expanded = quota == 6
-        for index in range(quota):
+        for index in range(quota + 1):
             for group in GROUPS:
                 candidates = by_group[group]
-                if index < len(candidates):
+                # Risk keeps one extra slot so the MD&A risk section does not displace a table.
+                if index < min(len(candidates), quota + (group == "risk")):
                     b = candidates[index]
                     proposal = {**chosen, b["id"]: b}
                     if context_size(list(proposal.values())) <= limit:

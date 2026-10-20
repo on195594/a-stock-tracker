@@ -178,6 +178,10 @@ def test_deleting_an_unused_new_sentence_slot_is_a_no_op(case):
         ("select", ["select", "repair", "compose", "review"]),
         ("compose", ["select", "compose", "repair", "review"]),
         ("review", ["select", "compose", "review", "repair", "recheck"]),
+        # A mechanical slip no longer spends the repair a review finding needs.
+        ("compose+review", ["select", "compose", "repair", "review", "repair2", "recheck"]),
+        # Two mechanical slips still stop: each kind of repair is used once.
+        ("select+compose", None),
     ],
 )
 def test_bounded_paths_and_same_request_replay(case, tmp_path, failure, expected):
@@ -196,21 +200,21 @@ def test_bounded_paths_and_same_request_replay(case, tmp_path, failure, expected
         (directory / f"{label}.request.json").write_bytes(encoded({"prompt": prompt}))
         if stage == "select":
             result = {k: copy.deepcopy(original[k]) for k in ("code", "facts", "gaps")}
-            if failure == "select":
+            if failure in ("select", "select+compose"):
                 result["facts"][1]["claim"] = "营业收入999.00元。"
         elif stage == "compose":
             result = {k: copy.deepcopy(original[k]) for k in ("code", "analysis")}
-            if failure == "compose":
+            if failure in ("compose", "compose+review", "select+compose"):
                 result["analysis"]["summary"][0]["text"] = "需要谨慎，2099年存在风险。"
-        elif stage == "repair":
+        elif stage in ("repair", "repair2"):
             result = {"facts": {}, "sentences": {}}
-            if failure == "select":
+            if failure.startswith("select") and stage == "repair":
                 result["facts"]["F2"] = original["facts"][1]
             else:
                 result["sentences"]["S_summary_1"] = replacement(original["analysis"]["summary"][0])
         else:
             result = supported(payload["report"])
-            if stage == failure:
+            if stage == failure or (failure == "compose+review" and stage == "review"):
                 next(s for s in result["sentences"] if s["id"] == "S_summary_1").update(
                     supported=False, reason="合成语义失败"
                 )
@@ -218,6 +222,11 @@ def test_bounded_paths_and_same_request_replay(case, tmp_path, failure, expected
         return result
 
     quality = {}
+    if expected is None:
+        with pytest.raises(p.PipelineError, match="repair_exhausted"):
+            p.run(packet, tmp_path, state, Budget(100, 1800), call, quality)
+        assert stages == ["select", "repair", "compose"]
+        return
     report, review = p.run(packet, tmp_path, state, Budget(100, 1800), call, quality)
     assert stages == expected
     assert p.validate_review(review, report)

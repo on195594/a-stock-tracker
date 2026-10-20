@@ -57,8 +57,10 @@ PROMPTS = {
     "compose": COMPOSE,
     "review": REVIEW,
     "repair": REPAIR,
+    "repair2": REPAIR,
     "recheck": REVIEW,
 }
+REPORT_CALLS = 6  # select, compose, review + one mechanical and one review repair, recheck
 
 
 class StrictModel(BaseModel):
@@ -648,7 +650,7 @@ def run(
         "analysis": {s: [] for s in SECTIONS},
         "gaps": packet["gaps"],
     }
-    repaired = False
+    used: dict[str, str] = {}  # repair kind -> call label
 
     def accepted(stage: str) -> None:
         if on_validated is not None:
@@ -662,25 +664,26 @@ def run(
         if state["model_calls"] + missing > 10:
             raise BudgetStop("MODEL_CALL_BUDGET")
         own_calls = len(list(directory.glob(f"{code}-v4-*.request.json")))
-        if own_calls + missing > 5:
+        if own_calls + missing > REPORT_CALLS:
             raise BudgetStop("MODEL_CALL_BUDGET")
         budget.check(260 * missing + 5)
         prompt = PROMPTS[stage] + encoded(payload).decode()
-        if eb.context_size(prompt) > CONTEXT_LIMITS[stage]:
-            raise PipelineError(stage, "context_budget_exceeded")
-        quality["stage"] = stage
+        step = "repair" if stage == "repair2" else stage  # a second repair shares its contract
+        if eb.context_size(prompt) > CONTEXT_LIMITS[step]:
+            raise PipelineError(step, "context_budget_exceeded")
+        quality["stage"] = step
         return call(directory, f"{code}-v4-{stage}", prompt, state["model"], state, budget)
 
     def repair(errors: list[dict], before_compose: bool, final_stage: str = "review") -> None:
-        nonlocal report, repaired
-        if repaired:
+        nonlocal report
+        # Mechanical errors and review findings each get one repair.
+        kind = "review" if final_stage == "recheck" else "mechanical"
+        if kind in used:
             raise PipelineError("repair", "repair_exhausted")
         targets, payload = repair_input(report, errors, packet)
-        repaired = True
-        quality["repair"] = "failed"
-        patch = dispatch(
-            "repair", payload, ["compose", "review"] if before_compose else [final_stage]
-        )
+        label = used[kind] = "repair2" if used else "repair"
+        quality.update(repair="failed", repairs=len(used))
+        patch = dispatch(label, payload, ["compose", "review"] if before_compose else [final_stage])
         report = apply_patch(report, patch, targets)
         issues = selection_errors({k: report[k] for k in ("code", "facts", "gaps")}, packet)
         if not before_compose:
@@ -774,8 +777,8 @@ def run(
         accepted("select")
     if report["analysis"] == composition["analysis"] and report["facts"] == composed_facts:
         accepted("compose")
-    if repaired:
-        accepted("repair")
+    for label in used.values():
+        accepted(label)
     quality["mechanical_passed"] = quality["semantic_passed"] = quality["passed"] = len(
         report["facts"]
     )

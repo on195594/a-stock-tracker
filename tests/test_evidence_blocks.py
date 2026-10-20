@@ -188,3 +188,19 @@ def test_recall_keeps_specific_balance_table_ahead_of_broad_policies():
         x["relation"]["kind"] == "same_page_table" and "应收账款" in x["fragments"][0]["text"]
         for x in selected["blocks"]
     )
+
+
+def test_recall_puts_mdna_risk_section_ahead_of_policy_risk_text():
+    # Production 000858/603606/600519: the MD&A risk section lost to policy text and tables.
+    policy = "本公司按会计政策评估应收账款减值风险与信用风险，并关注诉讼与担保事项。"
+    pages = [TEXT, *(f"政策编号{i}。{policy}" for i in range(5))]
+    pages.insert(
+        0, "十、重大风险提示\n本公司已在本报告中阐述了公司可能面对的风险，敬请投资者关注。\n"
+    )
+    pages.append(
+        "五、其他披露事项\n(一) 可能面对的风险\n  一是有效需求恢复不及预期；二是行业持续深度调整。\n"
+    )
+    selected = b.select_blocks([document(*pages)], {"code": "600001.SH"})
+    texts = [x["fragments"][0]["text"] for x in selected["blocks"] if "risk" in x["groups"]]
+    assert any("有效需求恢复不及预期" in t for t in texts)
+    assert not any("敬请投资者关注" in t for t in texts)

@@ -504,7 +504,8 @@ def quote_lines(info: dict[str, Any], mode: str, offer: dict[str, Any]) -> list[
             lines.append(context)
         if offer.get("pipeline") == "evidence-first-v1":
             lines.append(
-                "流程：先选证据，再写正文并独立复核；正常 3 次模型调用，共享一次修复机会，单份报告最多 5 次。"
+                "流程：先选证据，再写正文并独立复核；正常 3 次模型调用，机械错误与复核意见各有一次修复机会，"
+                f"单份报告最多 {budget.get('report_calls', 5)} 次。"
             )
         lines.append(
             f"模型：{model.get('provider')} / {model.get('model')}，"
@@ -539,11 +540,12 @@ def frozen_cost_lines(payload: dict[str, Any]) -> list[str]:
     if model:
         if context := context_budget_text(offer):
             lines.append(context)
+        budget = offer.get("model_budget") or {}
         if offer.get("pipeline") == "evidence-first-v1":
             lines.append(
-                "已确认流程：先选证据，再写正文并独立复核；正常 3 次，单份报告最多 5 次调用。"
+                "已确认流程：先选证据，再写正文并独立复核；正常 3 次，"
+                f"单份报告最多 {budget.get('report_calls', 5)} 次调用。"
             )
-        budget = offer.get("model_budget") or {}
         lines.append(f"已确认模型：{model['provider']} / {model['model']}")
         lines.append(
             f"最多 {budget.get('calls')} 次调用，每次本地等待 ≤{budget.get('local_timeout_seconds')} 秒。"

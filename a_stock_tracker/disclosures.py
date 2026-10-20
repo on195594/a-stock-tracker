@@ -829,7 +829,7 @@ FAILURE_MESSAGES = dict(FAILURE_REASONS.values()) | {
     "source_unavailable": "原文来源请求失败；核查网络与来源服务。",
     "context_budget_exceeded": "必要证据或复核上下文超过本次预算，已停止后续模型调用。",
     "evidence_insufficient": "业务、财务或风险证据不足，未生成正文。",
-    "repair_exhausted": "一次修复机会已用完，后续核验仍未通过，未发布草稿。",
+    "repair_exhausted": "该类修复机会已用完，后续核验仍未通过，未发布草稿。",
     "semantic_failed": "独立语义复核未通过，未发布草稿。",
     "schema_invalid": "模型输出不符合约定结构，未发布草稿。",
     "identity_mismatch": "模型返回的公司与本次请求不一致，未发布草稿。",
@@ -967,7 +967,8 @@ def quality_text(quality: Any) -> str | None:
     dropped = dropped if isinstance(dropped, (list, tuple)) else []
     unformed = quality.get("unformed")
     unformed = unformed if isinstance(unformed, dict) else {}
-    parts = {"repaired": "修复 1 次", "failed": "修复 1 次未成功"}
+    count = quality.get("repairs", 1)
+    parts = {"repaired": f"修复 {count} 次", "failed": f"修复 {count} 次未成功"}
     text = [
         f"机械校验通过 {quality.get('mechanical_passed', 0)} 条 / 语义复核通过 {quality.get('semantic_passed', 0)} 条"
     ]

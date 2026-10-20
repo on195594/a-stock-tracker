@@ -49,7 +49,7 @@ from a_stock_tracker.contracts import (
     ServiceInfo,
 )
 from a_stock_tracker.disclosures import model_command, structured_report
-from a_stock_tracker.evidence_pipeline import CONTEXT_LIMITS
+from a_stock_tracker.evidence_pipeline import CONTEXT_LIMITS, REPORT_CALLS
 from a_stock_tracker.opportunities import load_board
 from a_stock_tracker.research import SHANGHAI, ScreenError, parse_date, public_data_diagnostic
 
@@ -100,6 +100,7 @@ def quote(
         value["context_budget"] = {"method": "utf8_bytes", "limits": dict(CONTEXT_LIMITS)}
         value["model_budget"] = {
             "calls": 10,
+            "report_calls": REPORT_CALLS,
             "local_timeout_seconds": 240,
             "output_token_hard_limit": None,
             "cost_hard_limit": None,
