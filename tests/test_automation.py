@@ -556,7 +556,8 @@ def test_numeric_substrings_and_sign_changes_are_not_evidence(claim, sign):
 @pytest.mark.parametrize(
     "quote,claim",
     [
-        ("本期比上年同期增减(%)：-1.21，原文比较口径一致。", "本期较上年同期下降1.21%。"),
+        # A decline word may carry the sign ("下降1.21%"); an opposite direction may not.
+        ("本期比上年同期增减(%)：-1.21，原文比较口径一致。", "本期较上年同期增长1.21%。"),
         (
             "2026年半年度报告，上年同期营业收入及本期比较数据。",
             "2026年上半年较2025年上半年营业收入变化。",
@@ -597,6 +598,8 @@ def test_pdf_identity_checks_report_kind_not_only_year(tmp_path, monkeypatch, pe
         (6, "600001", "", None, True),
         (7, "股票代码:600001", "合成", None, True),
         (12, "股票代码" + " " * 18 + "600001", "合成", None, True),
+        (8, "股票代码  600001（A 股）、0300（H 股）", "合成", None, True),
+        (8, "股票代码  600001（B 股）", "合成", None, False),
         (16, "证券代码：600001", "合成", None, True),
         (17, "股票代码600001", "合成", None, False),
         (12, "600001", "合成", None, False),

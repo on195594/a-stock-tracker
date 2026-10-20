@@ -98,6 +98,10 @@ def test_percent_column_and_page_level_number_sources():
     }
     assert d.unquoted_numbers(fact | {"quote": page}) == []
     assert d.unquoted_numbers(fact) == ["30.85%"]
+    # Production 600900/600519: "下降2.35%" for a "-2.35" cell; only a decline word drops the sign.
+    fell = {"quote": page.replace(" 30.85", " -30.85")}
+    assert d.unquoted_numbers(fact | fell | {"claim": "营业收入同比下降30.85%"}) == []
+    assert d.unquoted_numbers(fact | fell | {"claim": "营业收入同比增长30.85%"}) == ["30.85%"]
     assert d.unquoted_numbers(fact | {"claim": "营业收入同比增减为-30.85%", "quote": page}) == [
         "-30.85%"
     ]

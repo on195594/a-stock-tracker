@@ -278,7 +278,9 @@ def extract_document(
         for page in pages[6:16]:
             code_label = r"(?m)(?:^|[ \t]{2,})(?:股票代码|证券代码)"
             name_label = r"(?m)(?:^|[ \t]{2,})(?:股票简称|证券简称)"
-            codes = re.findall(code_label + r"[ \t:：]{0,64}([0-9]{6})(?=[ \t]{2,}|[ \t]*$)", page)
+            # A+H issuers annotate the A-share code, e.g. "000333（A 股）、0300（H 股）".
+            code_end = r"(?=[ \t]{2,}|[ \t]*$|[ \t]*[（(]A[ \t]*股[）)])"
+            codes = re.findall(code_label + r"[ \t:：]{0,64}([0-9]{6})" + code_end, page)
             names = re.findall(
                 name_label + r"[ \t:：]{0,64}(\S(?:[^\r\n]{0,62}?\S)?)(?=[ \t]{2,}|[ \t]*$)",
                 page,
@@ -415,6 +417,9 @@ def stable_evidence(packet: dict[str, Any], model: dict[str, str]) -> str:
 CLAIM_UNITS = ("万元", "亿元", "元/股", "万美元", "亿美元")
 
 
+DECLINE_WORDS = ("下降", "减少", "降低", "下滑")
+
+
 def unquoted_numbers(fact: dict[str, Any]) -> list[str]:
     # A number cannot be invented or converted into a different unit by the model.
     quoted_numbers = set(NUMBERS_RE.findall(fact["quote"]))
@@ -422,11 +427,19 @@ def unquoted_numbers(fact: dict[str, Any]) -> list[str]:
     # A "(%)" table header in the selected evidence lets "30.85" be restated as "30.85%";
     # sign and digits stay exact.
     percent_column = any(h in fact["quote"] for h in ("(%)", "（%）"))
+
+    def restated(m: re.Match[str]) -> bool:
+        bare = m.group()[:-1]
+        if not (percent_column and m.group().endswith("%")):
+            return False
+        # "下降2.35%" restates a signed "-2.35"; the direction word carries the sign.
+        declined = any(w in claim[max(0, m.start() - 4) : m.start()] for w in DECLINE_WORDS)
+        return bare in quoted_numbers or (declined and f"-{bare}" in quoted_numbers)
+
     return [
         m.group()
         for m in NUMBERS_RE.finditer(claim)
-        if m.group() not in quoted_numbers
-        and not (percent_column and m.group().endswith("%") and m.group()[:-1] in quoted_numbers)
+        if m.group() not in quoted_numbers and not restated(m)
     ]
 
 
