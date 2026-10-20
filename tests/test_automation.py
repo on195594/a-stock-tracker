@@ -254,6 +254,12 @@ def test_official_document_wrong_security_stale_and_ambiguous():
         "adjunctUrl": "finalpage/2026-04-30/123.PDF",
     }
     assert d.select_documents([raw], row, "2026-10-06")[0]["period"] == "2025-12-31"
+    # Production 601088.SH: "中国神华2025年度报告" has a single 年.
+    single = {**raw, "announcementTitle": "合成2025年度报告"}
+    assert d.select_documents([single], row, "2026-10-06")[0]["period"] == "2025-12-31"
+    for other in ("合成2025年度社会责任报告", "合成2025年度报告摘要"):
+        with pytest.raises(ScreenError, match="unavailable"):
+            d.select_documents([{**raw, "announcementTitle": other}], row, "2026-10-06")
     with pytest.raises(ScreenError):
         d.select_documents([{**raw, "secCode": "600002"}], row, "2026-10-06")
     with pytest.raises(ScreenError):

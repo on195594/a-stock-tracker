@@ -159,8 +159,9 @@ def select_documents(
         title = raw.get("announcementTitle", "")
         if any(word in title for word in ("摘要", "英文", "English", "取消", "更正公告")):
             continue
+        # Some issuers title the annual report "2025年度报告" rather than "2025年年度报告".
         match = re.search(
-            r"([0-9]{4})\s*年\s*(年度报告|半年度报告|第一季度报告|第三季度报告)", title
+            r"([0-9]{4})\s*年?\s*(年度报告|半年度报告|第一季度报告|第三季度报告)", title
         )
         if not match:
             continue
