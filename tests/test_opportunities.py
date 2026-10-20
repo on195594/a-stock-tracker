@@ -262,58 +262,17 @@ def test_publish_has_no_model_path_and_preserves_company_gaps(tmp_path, monkeypa
     assert result["usage"]["stop_reason"] == "completed"
 
 
-def legacy_board():
-    packet = demo_packet()
-    row = {
-        "code": packet["code"],
-        "name": packet["name"],
-        "status": "observation",
-        "as_of": packet["sessions"][-1],
-        "expires": packet["future_sessions"][-1],
-        "facts": {
-            "trend": "合成历史趋势",
-            "relative": "合成历史相对强弱",
-            "limits": "历史资料范围有限",
-            "condition": "历史区间 11.23–11.45 元；量能 15000 手",
-            "invalidation": "历史失效价 11.00 元",
-            "distance": "旧规则距离 3.93%",
-        },
-        # Historical artifacts must not depend on the current pricing algorithm.
-        "levels": {"trigger": 11.23, "ceiling": 11.45, "stop": 11.0, "volume": 15000},
-        "explanation": {
-            k: {
-                "text": "合成历史说明：只引用当时日线中的资料，不表示现在仍然有效。",
-                "refs": ["trend"],
-            }
-            for k in swing.SECTIONS
-        },
-        "review": {"supported": True, "reason": "synthetic"},
-    }
-    return {"rule": swing.RULE, "source": "合成历史资料", "rows": [row]}
-
-
-def test_legacy_reader_keeps_explanation_validation():
-    row = legacy_board()["rows"][0]
-    swing.validate_explanation(row["explanation"], row["facts"])
-    for field, value in (("text", "无依据价格12元"), ("refs", ["invented"])):
-        report = deepcopy(row["explanation"])
-        report["reason"][field] = value
-        with pytest.raises(ScreenError):
-            swing.validate_explanation(report, row["facts"])
-
-
-def saved_board(tmp_path, legacy=False):
+def saved_board(tmp_path):
     run = "swing-" + "a" * 32
     (tmp_path / run).mkdir()
-    board = legacy_board() if legacy else demo_board()
+    board = demo_board()
     save_state(tmp_path / run / "result.json", board)
     save_state(tmp_path / "latest.json", {"run": run, "digest": digest(board)})
     return board
 
 
-@pytest.mark.parametrize("legacy", [False, True])
-def test_board_integrity_and_expiry(tmp_path, legacy):
-    board = saved_board(tmp_path, legacy)
+def test_board_integrity_and_expiry(tmp_path):
+    board = saved_board(tmp_path)
     output = tmp_path / ("swing-" + "a" * 32) / "result.json"
     before = output.read_bytes()
     expiry = date.fromisoformat(board["rows"][0]["expires"])
@@ -324,7 +283,10 @@ def test_board_integrity_and_expiry(tmp_path, legacy):
     assert output.read_bytes() == before
 
 
-@pytest.mark.parametrize("damage", ["hash", "status", "retired_rule", "symlink", "traversal"])
+@pytest.mark.parametrize(
+    "damage",
+    ["hash", "status", "price-reference-v1", "swing-observation-v1", "symlink", "traversal"],
+)
 def test_invalid_board_artifacts_refused(tmp_path, damage):
     board = saved_board(tmp_path)
     run = "swing-" + "a" * 32
@@ -332,11 +294,11 @@ def test_invalid_board_artifacts_refused(tmp_path, damage):
     root = tmp_path
     if damage == "hash":
         output.write_text(output.read_text().replace("演示公司", "篡改公司"))
-    elif damage in {"status", "retired_rule"}:
+    elif damage in {"status", "price-reference-v1", "swing-observation-v1"}:
         if damage == "status":
             board["rows"][0]["status"] = "buy"
         else:
-            board["rule"] = "price-reference-v1"
+            board["rule"] = damage
         save_state(output, board)
         save_state(tmp_path / "latest.json", {"run": run, "digest": digest(board)})
     elif damage == "symlink":

@@ -488,17 +488,6 @@ def test_unavailable_references_never_render_actionable_conditions(owner, state)
             assert "下一步：核对并补齐资料后，再明确确认新的研究。" in visible
 
 
-def test_legacy_observation_rows_keep_counterevidence(owner):
-    from tests.test_opportunities import legacy_board
-
-    client, browser = owner
-    board = legacy_board()
-    client.runs[RUN] = run_state("swing", result={"board": board})
-    visible = text(browser.get("/analysis/" + RUN))
-    assert "旧规则批次" in visible and "历史反证" in visible
-    assert "查看历史条件与反证" in visible
-
-
 def test_bad_ids_and_unreachable_receiver(owner):
     client, browser = owner
     assert browser.get("/analysis/xyz").status_code == 404

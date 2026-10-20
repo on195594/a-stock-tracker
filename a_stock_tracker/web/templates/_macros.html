@@ -135,9 +135,6 @@
 <h2>价格参考</h2>
 <p>价位由程序按近期行情计算，不调用模型；有效期是后续 5 个交易日，不是建议持有多久。</p>
 {% endif %}
-{% if board.rule == p.LEGACY_PRICE_RULE %}
-<section class="notice"><p class="notice-title">旧规则批次</p><p>历史结果只读，按原有效期隐藏过期条件。</p></section>
-{% endif %}
 {% if board.demo %}<section class="notice"><p class="notice-title">合成演示 · 非真实股票、非AI研究结果</p></section>{% endif %}
 {% if code and not rows %}<h1>本批次没有该公司的价格参考记录。</h1>{% endif %}
 {% if not code %}
@@ -184,61 +181,12 @@
     {% endif %}
     {% if row.expired %}<a class="link" href="/analysis?mode=swing&amp;code={{ row.code }}">重新核对价格参考</a>{% endif %}
     {% if not code %}<a class="btn" href="/analysis/{{ run_id }}/{{ row.code }}" aria-label="查看价格参考 · {{ row.name }}">查看价格参考</a>{% endif %}
-  {% elif row.status != 'observation' %}
+  {% else %}
     <section class="notice caution">
-      <{{ sub }} class="notice-title">{{ '未入选' if row.status == 'excluded' else '资料核验失败' }}</{{ sub }}>
+      <{{ sub }} class="notice-title">资料核验失败</{{ sub }}>
       <p class="lines">{{ row.reasons|join('\n') }}</p>
     </section>
-    {% if row.status == 'excluded' %}
-    <p class="lines">{{ (row.facts or {}).get('distance', '实际距离：未记录') }}
-规则上限：8%
-依据日期：{{ row.as_of or '未记录' }}
-下一步：未满足量价纪律条件，可返回初筛核查其他公司或另行确认财报研究。</p>
-    {% else %}
     <p>下一步：核对并补齐资料后，再明确确认新的研究。</p>
-    {% endif %}
-  {% else %}
-    <section class="notice">
-      <p class="muted">依据截至 {{ row.as_of }}</p>
-      <p class="muted">历史条件有效至 {{ row.expires }}</p>
-    </section>
-    {% if row.expired %}
-    <section class="notice caution"><{{ sub }} class="notice-title">已过期 · 仅供历史核查</{{ sub }}><p>价格条件已隐藏；历史解释与量价依据不代表当前仍有效。</p></section>
-    <a class="link" href="/analysis?mode=swing&amp;code={{ row.code }}">重新核对价格参考</a>
-    {% else %}
-    <p class="accent-text">旧规则历史条件，仅供核查</p>
-    {% endif %}
-    {% for key, title in p.PRICE_SECTIONS.items() %}
-      {% if key == 'counter' %}
-      <section class="notice caution"><{{ sub }} class="notice-title">{{ title }}</{{ sub }}><p class="lines">{{ row.explanation[key].text }}</p></section>
-      {% else %}
-      <{{ sub }}>{{ title }}</{{ sub }}><p class="lines">{{ row.explanation[key].text }}</p>
-      {% endif %}
-    {% endfor %}
-    {% if code %}
-      {% if not row.expired %}
-      <section class="conditions-panel" data-expires="{{ row.expires }}">
-        <div data-levels>
-          <h2>程序价格条件</h2>
-          <h3>什么条件才重新评估</h3><p>{{ row.facts.condition }}</p>
-          <h3>什么时候放弃</h3><p>{{ row.facts.invalidation }}</p>
-          <h3>价格距离，不是损失上限</h3><p>{{ row.facts.distance }}</p>
-        </div>
-        <p class="caution-text" data-expired hidden>已过期 · 仅供历史核查；观察线、失效线和距离已隐藏。</p>
-      </section>
-      {% endif %}
-      <p>旧批次仅含量价资料，不含公告催化、财报拐点或资金验证。</p>
-      <details>
-        <summary>核查依据与AI引用</summary>
-        {% if row.facts.trend %}<p>趋势：{{ row.facts.trend }}</p>{% endif %}
-        {% if row.facts.relative %}<p>相对强弱：{{ row.facts.relative }}</p>{% endif %}
-        {% if row.facts.limits and row.facts.limits != p.PRICE_LIMITS %}<p>缺口与执行风险：{{ row.facts.limits }}</p>{% endif %}
-        {% for key, section in row.explanation.items() %}<p class="muted">{{ p.PRICE_SECTIONS[key] }}依据：{{ section.refs|join('、') }}</p>{% endfor %}
-        {% if row.model %}<p class="muted">解释与复核模型：{{ row.model.provider }} / {{ row.model.model }}</p>{% endif %}
-      </details>
-    {% else %}
-      <a class="btn" href="/analysis/{{ run_id }}/{{ row.code }}" aria-label="查看历史条件与反证 · {{ row.name }}">查看历史条件与反证</a>
-    {% endif %}
   {% endif %}
 </article>
 {% endfor %}

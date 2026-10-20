@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any
 
 from a_stock_tracker.disclosures import UNFORMED, quality_text, report_summary_status, scope_text
-from a_stock_tracker.opportunities import LIMITS, RULE, SECTIONS
+from a_stock_tracker.opportunities import LIMITS
 from a_stock_tracker.research import SHANGHAI, finite_number
 
 STATUS_LABELS = {
@@ -52,8 +52,6 @@ CODE = re.compile(r"(?:60\d{4}\.SH|00\d{4}\.SZ)")
 RUN_ID = re.compile(r"[a-f0-9]{32}")
 CURSOR_RE = re.compile(r"^(?:[a-f0-9]{32}|[0-9]+(?:\.[0-9]+)?_[a-f0-9]{32})$")
 PRICE_LIMITS = LIMITS
-PRICE_SECTIONS = SECTIONS
-LEGACY_PRICE_RULE = RULE
 
 
 def local_time(value: Any) -> str:
@@ -191,7 +189,7 @@ def recent_result_label(run: dict[str, Any]) -> str:
     rows = result.get("board", {}).get("rows", [])
     reports = result.get("reports", [])
     if rows:
-        available = [r for r in rows if r["status"] in {"reference", "observation"}]
+        available = [r for r in rows if r["status"] == "reference"]
         return (
             "价格参考已过期"
             if available and all(r.get("expired") for r in available)
@@ -242,11 +240,9 @@ def price_badge(row: dict[str, Any]) -> dict[str, str]:
     """Validity tag only; tones are neutral or caution, never a success colour."""
     if row["status"] == "gap":
         return {"text": "资料缺口", "tone": "caution"}
-    if row["status"] == "excluded":
-        return {"text": "旧规则未入选", "tone": "plain"}
     if row.get("expired"):
         return {"text": "已过期", "tone": "caution"}
-    return {"text": "有效期内" if row["status"] == "reference" else "旧规则 · 有效期内", "tone": ""}
+    return {"text": "有效期内", "tone": ""}
 
 
 def validity_text(row: dict[str, Any]) -> str:
@@ -271,19 +267,17 @@ def report_summary(report: dict[str, Any]) -> dict[str, Any]:
 def board_summary(row: dict[str, Any]) -> dict[str, Any]:
     """Recent/dossier price line; only a live reference carries levels."""
     live = row["status"] == "reference" and not row.get("expired")
-    if row["status"] in {"gap", "excluded"}:
+    if row["status"] == "gap":
         text = "；".join(row.get("reasons") or [])
     elif row.get("expired"):
         text = "已过期，价位已隐藏；需要时重新核对。"
-    elif row["status"] == "observation":
-        text = "旧规则批次；请进入详情核查历史条件。"
     else:
         text = ""
     return {
         "code": row["code"],
         "badge": price_badge(row),
         "text": text,
-        "helper": validity_text(row) if row["status"] not in {"gap", "excluded"} else "",
+        "helper": validity_text(row) if row["status"] != "gap" else "",
         # Live levels are a separate element so the page script can hide them at expiry.
         "levels": price_levels_text(row) if live else None,
         "expires": row.get("expires") if live else None,
@@ -394,7 +388,7 @@ def company_cards(runs: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]
             continue
         for row in (run.get("summary") or {}).get("board", {}).get("rows", []):
             if row["status"] != "reference":
-                continue  # gaps and legacy rows stay in the price records
+                continue  # gaps stay in the price records
             entry = card(row["code"], row.get("name"), run.get("created_at"))
             if entry["price"] is None:
                 entry["price"] = {"run_id": run["id"], **board_summary(row)}
@@ -701,6 +695,4 @@ def board_rows(board: dict[str, Any], code: str | None = None) -> list[dict[str,
 
 
 def available_count(rows: list[dict[str, Any]]) -> int:
-    return sum(
-        1 for r in rows if r["status"] in {"observation", "reference"} and not r.get("expired")
-    )
+    return sum(1 for r in rows if r["status"] == "reference" and not r.get("expired"))

@@ -118,9 +118,7 @@ def test_board_summary_hides_expired_levels_and_explains_gaps():
     "row,text,tone",
     [
         ({"status": "reference"}, "有效期内", ""),
-        ({"status": "observation"}, "旧规则 · 有效期内", ""),
-        ({"status": "observation", "expired": True}, "已过期", "caution"),
-        ({"status": "excluded"}, "旧规则未入选", "plain"),
+        ({"status": "reference", "expired": True}, "已过期", "caution"),
         ({"status": "gap"}, "资料缺口", "caution"),
     ],
 )

@@ -24,13 +24,11 @@ from a_stock_tracker.automation import (
 )
 from a_stock_tracker.research import SHANGHAI, BudgetStop, ScreenError, call_api, frame_records
 
-RULE = "swing-observation-v1"
 REFERENCE_RULE = "price-reference-v2"
 LIMITS = (
     "量价仅作风险纪律参考。重放未发现稳定超额，不代表投资价值或交易建议。"
     "未覆盖公告、财报与资金变化；A股T+1、跳空、停牌和涨跌停可能使退出条件无法执行。"
 )
-SECTIONS = {"reason": "历史解释", "counter": "历史反证", "wait": "历史待核查事项"}
 
 
 def today() -> date:
@@ -165,23 +163,6 @@ def evaluate(packet: dict[str, Any]) -> dict[str, Any]:
         "levels": {k: c[k] for k in ("close", "ma20", "ma60", "relative", "trigger", "stop")}
         | {"distance": distance, "uptrend": c["close"] > c["ma20"] > c["ma60"]},
     }
-
-
-def validate_explanation(value: Any, facts: dict[str, str]) -> None:
-    if not isinstance(value, dict) or set(value) != set(SECTIONS):
-        raise ScreenError("Invalid explanation sections")
-    for section in value.values():
-        if not isinstance(section, dict) or set(section) != {"text", "refs"}:
-            raise ScreenError("Invalid explanation shape")
-        text, refs = section["text"], section["refs"]
-        if not isinstance(text, str) or not 20 <= len(text) <= 240 or re.search(r"\d", text):
-            raise ScreenError("Explanation must leave numeric levels to the program")
-        if (
-            not isinstance(refs, list)
-            or not refs
-            or any(not isinstance(r, str) or r not in facts for r in refs)
-        ):
-            raise ScreenError("Unknown evidence reference")
 
 
 PRICE_FAILURE_REASONS = {
@@ -443,22 +424,15 @@ def load_board(root: Path | None, *, on: date | None = None) -> dict[str, Any] |
     if directory.is_symlink() or output.is_symlink() or output.stat().st_size > 1_000_000:
         raise ScreenError("Invalid opportunity artifact")
     result = read_state(output)
-    if digest(result) != pointer["digest"] or result.get("rule") not in {RULE, REFERENCE_RULE}:
+    if digest(result) != pointer["digest"] or result.get("rule") != REFERENCE_RULE:
         raise ScreenError("Opportunity integrity mismatch")
     if not isinstance(result.get("rows"), list) or len(result["rows"]) > 5:
         raise ScreenError("Invalid bounded board")
     current = on or today()
-    statuses = (
-        {"excluded", "gap", "observation"} if result["rule"] == RULE else {"reference", "gap"}
-    )
     for row in result["rows"]:
-        if not isinstance(row, dict) or row.get("status") not in statuses:
+        if not isinstance(row, dict) or row.get("status") not in {"reference", "gap"}:
             raise ScreenError("Invalid opportunity row")
-        if row["status"] == "observation":
-            validate_explanation(row["explanation"], row["facts"])
-            if row.get("review", {}).get("supported") is not True:
-                raise ScreenError("Unreviewed observation")
-        if row["status"] in {"observation", "reference"}:
+        if row["status"] == "reference":
             if date.fromisoformat(row["as_of"]) > current:
                 raise ScreenError("Future observation")
             row["expired"] = current > date.fromisoformat(row["expires"])

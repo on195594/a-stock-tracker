@@ -145,11 +145,6 @@ ul {
   font-weight: 700;
 }
 
-.accent-text {
-  color: var(--accent);
-  font-size: 14px;
-}
-
 a {
   color: var(--accent);
   text-underline-offset: 3px;
@@ -401,13 +396,11 @@ a {
   outline-offset: -3px;
 }
 
-.conditions [data-levels] > :first-child,
-.conditions-panel [data-levels] > :first-child {
+.conditions [data-levels] > :first-child {
   margin-top: 0;
 }
 
-.conditions,
-.conditions-panel {
+.conditions {
   background: var(--surface);
   border-left: 3px solid var(--accent);
   padding: var(--inset);
