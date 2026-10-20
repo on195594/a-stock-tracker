@@ -205,6 +205,23 @@ def test_financial_result_reads_verified_envelopes_not_unchecked_markdown(tmp_pa
         store.result(directory, "financial")
 
 
+def test_report_projection_reused_only_for_byte_identical_verified_files(tmp_path, monkeypatch):
+    # Production: listing 20 reports re-ran deterministic validation for each one on every read.
+    import a_stock_tracker.research_service as rs
+
+    monkeypatch.setattr(rs, "PROJECTIONS", rs.OrderedDict())
+    monkeypatch.setattr(rs, "PROJECTION_LIMIT", 2)
+    calls = []
+    monkeypatch.setattr(rs, "structured_report", lambda r: calls.append(r["code"]) or dict(r))
+    first = rs.verified_projection("a" * 64, {"code": "600001.SH"})
+    first["code"] = "mutated by caller"
+    assert rs.verified_projection("a" * 64, {"code": "600001.SH"}) == {"code": "600001.SH"}
+    assert calls == ["600001.SH"]
+    rs.verified_projection("b" * 64, {"code": "600002.SH"})
+    rs.verified_projection("c" * 64, {"code": "600003.SH"})
+    assert list(rs.PROJECTIONS) == ["b" * 64, "c" * 64]
+
+
 def test_publish_sync_failure_never_returns_completed_state(tmp_path, monkeypatch):
     store = ResearchStore(tmp_path / "service")
     p = payload()

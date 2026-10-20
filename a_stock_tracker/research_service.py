@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import copy
 import fcntl
 import hmac
 import json
@@ -17,7 +18,8 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import Thread
+from collections import OrderedDict
+from threading import Lock, Thread
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
@@ -107,6 +109,28 @@ def quote(
             "timeout_guarantees_billing_stop": False,
         }
     return Quote.model_validate(value).model_dump(by_alias=True, exclude_unset=True)
+
+
+# Projections of hash-verified report files, keyed by that file's sha256. Every read still
+# re-reads and re-hashes the file; only byte-identical reports skip the deterministic
+# re-validation. Memory only, so a receiver restart (upgrade) re-validates everything.
+PROJECTIONS: OrderedDict[str, dict[str, Any]] = OrderedDict()
+PROJECTIONS_LOCK = Lock()
+PROJECTION_LIMIT = 128
+
+
+def verified_projection(sha: str, report: dict[str, Any]) -> dict[str, Any]:
+    with PROJECTIONS_LOCK:
+        cached = PROJECTIONS.get(sha)
+        if cached is not None:
+            PROJECTIONS.move_to_end(sha)
+            return copy.deepcopy(cached)
+    projected = structured_report(report)
+    with PROJECTIONS_LOCK:
+        PROJECTIONS[sha] = projected
+        while len(PROJECTIONS) > PROJECTION_LIMIT:
+            PROJECTIONS.popitem(last=False)
+    return copy.deepcopy(projected)
 
 
 SCOPE_REASONS = {
@@ -783,7 +807,7 @@ class ResearchStore:
         reports = []
         for code, sha in state["research"].items():
             report = read_result(run / f"report-{code}.json", sha)["state"]["result"]
-            reports.append(structured_report(report))
+            reports.append(verified_projection(sha, report))
         result: dict[str, Any] = {
             "coverage": {
                 **{k: summary[k] for k in ("mode", "data_date", "status", "total", "counts")},
